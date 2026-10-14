@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::route::code;
+use crate::route::runs;
 
 /// On a wide screen, output (a job's log) takes the whole width, lists
 /// grow to 200 columns, and reading (an issue) stays at 160 with a
@@ -20,13 +21,13 @@ fn output_takes_the_screen_and_reading_stays_narrow() {
             aside,
         )
     };
-    let job = Route::Job {
+    let job = Route::Runs(runs::Job {
         repo: ghtui(),
         run: Some(7),
         job: 2,
         step: None,
         query: String::new(),
-    };
+    });
     assert!(width(220, job).0 > 200);
     assert_eq!(width(220, issues(OPEN)), (200, None));
     assert_eq!(width(220, issue(1)), (160, Some(36)));
@@ -40,13 +41,13 @@ fn output_takes_the_screen_and_reading_stays_narrow() {
 #[test]
 fn a_jobs_log_search_goes_through_its_matches() {
     let mut s = with_repo();
-    let job_route = Route::Job {
+    let job_route = Route::Runs(runs::Job {
         repo: ghtui(),
         run: Some(7),
         job: 2,
         step: Some((1, 1)),
         query: String::new(),
-    };
+    });
     let _ = s.push(job_route.clone());
     let depth = s.screens.len();
     let (job, log) = crate::fixtures::job();
@@ -59,7 +60,9 @@ fn a_jobs_log_search_goes_through_its_matches() {
     press(&mut s, "/");
     press(&mut s, "TEST");
     press(&mut s, "<Enter>");
-    assert!(matches!(route(&s), Route::Job { query, step: Some(_), .. } if query == "TEST"));
+    assert!(
+        matches!(route(&s), Route::Runs(runs::Job { query, step: Some(_), .. }) if query == "TEST")
+    );
     let Screen::Page(p) = s.screen() else {
         panic!()
     };
@@ -103,13 +106,13 @@ fn a_jobs_log_search_goes_through_its_matches() {
 #[test]
 fn a_failed_job_opens_at_its_first_error() {
     let mut s = with_repo();
-    let _ = s.push(Route::Job {
+    let _ = s.push(Route::Runs(runs::Job {
         repo: ghtui(),
         run: Some(7),
         job: 2,
         step: None,
         query: String::new(),
-    });
+    }));
     let (job, log) = crate::fixtures::job();
     fetched(&mut s, DataKey::Job(ghtui(), 2), Data::Job(Box::new(job)));
     fetched(
@@ -140,13 +143,13 @@ fn a_failed_job_opens_at_its_first_error() {
 #[test]
 fn a_running_jobs_log_is_checked_again() {
     let mut s = with_repo();
-    let job_route = Route::Job {
+    let job_route = Route::Runs(runs::Job {
         repo: ghtui(),
         run: Some(7),
         job: 2,
         step: None,
         query: String::new(),
-    };
+    });
     let _ = s.push(job_route);
     let (mut job, _) = crate::fixtures::job();
     job.outcome = crate::api::browse::CheckOutcome::Pending;

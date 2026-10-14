@@ -3,6 +3,7 @@ use crate::api::change::MergeMethod;
 use crate::api::model::MergeState;
 use crate::api::notifications::ThreadAt;
 use crate::route::app;
+use crate::route::runs;
 use crate::store::DraftSide;
 
 use super::*;
@@ -642,7 +643,7 @@ fn a_rerun_job_is_followed_to_its_new_attempt() {
         Data::Job(Box::new(job.clone())),
     );
     assert!(
-        matches!(s.route(), Some(Route::Job { job: 2, .. })),
+        matches!(s.route(), Some(Route::Runs(runs::Job { job: 2, .. }))),
         "not there yet"
     );
     job.run.rerun = Some(9);
@@ -655,7 +656,7 @@ fn a_rerun_job_is_followed_to_its_new_attempt() {
         },
     );
     assert!(
-        matches!(s.route(), Some(Route::Job { job: 9, .. })),
+        matches!(s.route(), Some(Route::Runs(runs::Job { job: 9, .. }))),
         "{:?}",
         s.route()
     );

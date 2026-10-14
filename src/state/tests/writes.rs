@@ -5,6 +5,7 @@
 use crate::api::gist::{FileChange, MadeGist};
 use crate::api::release::{Made, NewRelease, TagLook};
 use crate::api::watch::{Subscription, SubscriptionState, Watched};
+use crate::route::releases;
 use ratatui_textarea::CursorMove;
 
 use super::*;
@@ -42,7 +43,10 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
     let mut s = with_repo();
     let cmds = press(&mut s, ",V");
     let repo = ghtui();
-    assert_eq!(s.route(), Some(&Route::NewRelease(repo.clone())));
+    assert_eq!(
+        s.route(),
+        Some(&Route::Releases(releases::NewRelease(repo.clone())))
+    );
     assert!(
         crate::fixtures::asks(&cmds, &DataKey::Tags(repo.clone())),
         "{cmds:?}"
@@ -82,7 +86,7 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
         prerelease: false,
         latest: true,
     };
-    let route = Route::NewRelease(repo.clone());
+    let route = Route::Releases(releases::NewRelease(repo.clone()));
     let create = Cmd::Write(Work::Release(crate::release::Work::Save {
         route: route.clone(),
         id: None,
@@ -97,10 +101,10 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
     };
     let done = crate::release::Done::Saved(route, Ok(made));
     update(&mut s, Msg::Write(Done::Release(done)));
-    let page = Route::Release {
+    let page = Route::Releases(releases::Release {
         repo: repo.clone(),
         tag: "v9.0".into(),
-    };
+    });
     assert_eq!(s.route(), Some(&page));
     says(&s, "Published v9.0");
     assert!(s.busy().is_some_and(|b| b.contains("Waiting for GitHub")));

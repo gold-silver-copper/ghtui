@@ -8,9 +8,12 @@
 pub mod app;
 pub mod code;
 pub mod issues;
+pub mod people;
 pub mod pulls;
+pub mod releases;
+pub mod runs;
 
-use crate::api::browse::{DiscussionsOf, RepoSort, SearchKind};
+use crate::api::browse::{DiscussionsOf, SearchKind};
 use crate::api::model::{PrRef, RepoId};
 use crate::api::project::{ProjectOwner, ProjectRef, ProjectsOf};
 use crate::api::security::AlertKind;
@@ -36,12 +39,12 @@ pub enum Route {
     Issues(issues::Page),
     /// Its pull requests.
     Pulls(pulls::Page),
-    /// Workflow runs, filtered as GitHub's Actions tab filters them
-    /// (`branch:main is:failure`).
-    Actions {
-        repo: RepoId,
-        query: String,
-    },
+    /// Profiles, teams, and a repository's stargazers, watchers and forks.
+    People(people::Page),
+    /// Its releases.
+    Releases(releases::Page),
+    /// Its Actions: runs, jobs, workflows and deployments.
+    Runs(runs::Page),
     /// Discussions, in a category (by its slug) if given.
     Discussions {
         of: DiscussionsOf,
@@ -50,40 +53,6 @@ pub enum Route {
     Discussion {
         of: DiscussionsOf,
         number: u64,
-    },
-    /// A workflow run, or one attempt of it.
-    WorkflowRun {
-        repo: RepoId,
-        run: u64,
-        attempt: Option<u64>,
-    },
-    /// A job: its steps and its log. `step` is the step and line a link
-    /// points at (expanded and scrolled to); `query` filters the log.
-    Job {
-        repo: RepoId,
-        run: Option<u64>,
-        job: u64,
-        step: Option<(u32, u32)>,
-        query: String,
-    },
-    /// A workflow, by its file name, and its runs.
-    Workflow {
-        repo: RepoId,
-        file: String,
-    },
-    /// The form that runs a workflow by hand (GitHub's "Run workflow"
-    /// menu, on the workflow's page).
-    Dispatch {
-        repo: RepoId,
-        file: String,
-    },
-    Stargazers(RepoId),
-    Watchers(RepoId),
-    Forks(RepoId),
-    Releases(RepoId),
-    Release {
-        repo: RepoId,
-        tag: String,
     },
     /// A wiki page (its Home without one; its pages for `_pages`).
     Wiki {
@@ -115,12 +84,6 @@ pub enum Route {
         repo: RepoId,
         page: crate::api::settings::SettingsPage,
     },
-    /// An organization's teams.
-    Teams(String),
-    Team {
-        org: String,
-        slug: String,
-    },
     /// A gist, by its ID (its owner, when the URL names them).
     Gist {
         owner: Option<String>,
@@ -128,15 +91,6 @@ pub enum Route {
     },
     /// Someone's gists.
     Gists(String),
-    /// Deployments, to one environment if given.
-    Deployments {
-        repo: RepoId,
-        environment: Option<String>,
-    },
-    User {
-        login: String,
-        tab: ProfileTab,
-    },
     Search {
         kind: SearchKind,
         query: String,
@@ -158,13 +112,6 @@ pub enum Route {
         project: ProjectRef,
         view: Option<u64>,
         item: u64,
-    },
-    /// A new release's form.
-    NewRelease(RepoId),
-    /// The form editing a release, by its tag.
-    EditRelease {
-        repo: RepoId,
-        tag: String,
     },
     /// A new gist's form.
     NewGist,
@@ -278,6 +225,9 @@ impl Route {
         match self {
             Route::App(p) => p.also_reads(key),
             Route::Code(p) => p.also_reads(key),
+            Route::People(p) => p.also_reads(key),
+            Route::Releases(p) => p.also_reads(key),
+            Route::Runs(p) => p.also_reads(key),
             Route::Issues(p) => p.also_reads(key),
             Route::Pulls(p) => p.also_reads(key),
             Route::Site(p) => p.also_reads(key),
@@ -292,6 +242,9 @@ impl Route {
         match self {
             Route::App(p) => p.needs(),
             Route::Code(p) => p.needs(),
+            Route::People(p) => p.needs(),
+            Route::Releases(p) => p.needs(),
+            Route::Runs(p) => p.needs(),
             Route::Issues(p) => p.needs(),
             Route::Pulls(p) => p.needs(),
             Route::Site(p) => p.needs(),
@@ -305,6 +258,9 @@ impl Route {
         match self {
             Route::App(p) => p.starts_on_row(),
             Route::Code(p) => p.starts_on_row(),
+            Route::People(p) => p.starts_on_row(),
+            Route::Releases(p) => p.starts_on_row(),
+            Route::Runs(p) => p.starts_on_row(),
             Route::Issues(p) => p.starts_on_row(),
             Route::Pulls(p) => p.starts_on_row(),
             Route::Site(p) => p.starts_on_row(),
@@ -349,74 +305,29 @@ impl Route {
 
     /// A profile's overview.
     pub fn user(login: &str) -> Route {
-        Route::User {
+        Route::People(people::User {
             login: login.to_owned(),
             tab: ProfileTab::Overview,
-        }
+        })
     }
 
     /// A repository's Actions tab: all its runs.
     pub fn actions(repo: RepoId) -> Route {
-        Route::Actions {
+        Route::Runs(runs::Actions {
             repo,
             query: String::new(),
-        }
+        })
     }
 
     pub fn url(&self) -> String {
         match self {
             Route::App(p) => p.url(),
             Route::Code(p) => p.url(),
+            Route::People(p) => p.url(),
+            Route::Releases(p) => p.url(),
+            Route::Runs(p) => p.url(),
             Route::Issues(p) => p.url(),
             Route::Pulls(p) => p.url(),
-            Route::Actions { repo, query } if query.is_empty() => {
-                format!("{}/actions", links::repo(repo))
-            }
-            Route::Actions { repo, query } => {
-                format!(
-                    "{}/actions?query={}",
-                    links::repo(repo),
-                    links::encode(query)
-                )
-            }
-            Route::WorkflowRun { repo, run, attempt } => {
-                let url = format!("{}/actions/runs/{run}", links::repo(repo));
-                match attempt {
-                    Some(n) => format!("{url}/attempts/{n}"),
-                    None => url,
-                }
-            }
-            Route::Job {
-                repo,
-                run,
-                job,
-                step,
-                query,
-            } => {
-                let mut url = match run {
-                    Some(run) => format!("{}/actions/runs/{run}/job/{job}", links::repo(repo)),
-                    None => format!("{}/runs/{job}", links::repo(repo)),
-                };
-                if !query.is_empty() {
-                    url.push_str(&format!("?q={}", links::encode(query)));
-                }
-                if let Some((step, line)) = step {
-                    url.push_str(&format!("#step:{step}:{line}"));
-                }
-                url
-            }
-            Route::Workflow { repo, file } | Route::Dispatch { repo, file } => {
-                format!(
-                    "{}/actions/workflows/{}",
-                    links::repo(repo),
-                    links::encode_path(file)
-                )
-            }
-            Route::Stargazers(repo) => format!("{}/stargazers", links::repo(repo)),
-            Route::Watchers(repo) => format!("{}/watchers", links::repo(repo)),
-            Route::Forks(repo) => format!("{}/forks", links::repo(repo)),
-            Route::Releases(repo) => format!("{}/releases", links::repo(repo)),
-            Route::Release { repo, tag } => links::release(repo, tag),
             Route::Discussions { of, category } => match category {
                 Some(slug) => format!(
                     "{}/categories/{}",
@@ -452,27 +363,11 @@ impl Route {
             Route::Settings { repo, page } => {
                 format!("{}/settings{}", links::repo(repo), page.slug())
             }
-            Route::Teams(org) => format!("{}/orgs/{org}/teams", links::base()),
-            Route::Team { org, slug } => format!("{}/orgs/{org}/teams/{slug}", links::base()),
             Route::Gist { owner, id } => match owner {
                 Some(owner) => format!("{}/{owner}/{id}", links::gists()),
                 None => format!("{}/{id}", links::gists()),
             },
             Route::Gists(login) => format!("{}/{login}", links::gists()),
-            Route::Deployments { repo, environment } => match environment {
-                Some(env) => format!(
-                    "{}/deployments/activity_log?environments_filter={}",
-                    links::repo(repo),
-                    links::encode(env)
-                ),
-                None => format!("{}/deployments", links::repo(repo)),
-            },
-            Route::NewRelease(repo) => format!("{}/releases/new", links::repo(repo)),
-            Route::EditRelease { repo, tag } => format!(
-                "{}/releases/edit/{}",
-                links::repo(repo),
-                links::encode_path(tag)
-            ),
             Route::NewGist => format!("{}/", links::gists()),
             Route::EditGist { owner, id } => format!("{}/{owner}/{id}/edit", links::gists()),
             Route::WikiEdit { repo, page } => match page {
@@ -484,21 +379,6 @@ impl Route {
                 None => format!("{}/wiki/_new", links::repo(repo)),
             },
             Route::Site(page) => page.url(),
-            Route::User { login, tab } => match tab {
-                ProfileTab::Overview => links::user(login),
-                ProfileTab::Repositories(sort) => {
-                    let sort = match sort {
-                        RepoSort::Updated => "",
-                        RepoSort::Name => "&sort=name",
-                        RepoSort::Stars => "&sort=stargazers",
-                    };
-                    format!("{}?tab=repositories{sort}", links::user(login))
-                }
-                ProfileTab::Stars => format!("{}?tab=stars", links::user(login)),
-                ProfileTab::Followers => format!("{}?tab=followers", links::user(login)),
-                ProfileTab::Following => format!("{}?tab=following", links::user(login)),
-                ProfileTab::People => format!("{}/orgs/{login}/people", links::base()),
-            },
             Route::Search { kind, query } => links::search(*kind, query),
             Route::Notifications { query } if query.is_empty() => {
                 format!("{}/notifications", links::base())
@@ -527,18 +407,11 @@ impl Route {
         match self {
             Route::App(p) => p.title(),
             Route::Code(p) => p.title(),
+            Route::People(p) => p.title(),
+            Route::Releases(p) => p.title(),
+            Route::Runs(p) => p.title(),
             Route::Issues(p) => p.title(),
             Route::Pulls(p) => p.title(),
-            Route::Actions { repo, .. } => format!("{repo} · Actions"),
-            Route::WorkflowRun { repo, run, .. } => format!("{repo} · Run {run}"),
-            Route::Job { repo, job, .. } => format!("{repo} · Job {job}"),
-            Route::Workflow { repo, file } => format!("{repo} · {file}"),
-            Route::Dispatch { repo, file } => format!("{repo} · Run {file}"),
-            Route::Stargazers(repo) => format!("{repo} · Stargazers"),
-            Route::Watchers(repo) => format!("{repo} · Watchers"),
-            Route::Forks(repo) => format!("{repo} · Forks"),
-            Route::Releases(repo) => format!("{repo} · Releases"),
-            Route::Release { repo, tag } => format!("{repo} {tag}"),
             Route::Discussions { of, .. } => format!("{} · Discussions", of_title(of)),
             Route::Discussion { of, number } => format!("{} · Discussion {number}", of_title(of)),
             Route::Wiki { repo, page } => match page {
@@ -557,13 +430,8 @@ impl Route {
                 page: crate::api::settings::SettingsPage::Hook(id),
             } => format!("{repo} · Webhook {id}"),
             Route::Settings { repo, page } => format!("{repo} · Settings · {}", page.name()),
-            Route::Teams(org) => format!("@{org} · Teams"),
-            Route::Team { org, slug } => format!("@{org}/{slug}"),
             Route::Gist { id, .. } => format!("Gist {}", id.get(..7).unwrap_or(id)),
             Route::Gists(login) => format!("@{login} · Gists"),
-            Route::Deployments { repo, .. } => format!("{repo} · Deployments"),
-            Route::NewRelease(repo) => format!("{repo} · New release"),
-            Route::EditRelease { repo, tag } => format!("{repo} · Editing {tag}"),
             Route::NewGist => "New gist".to_owned(),
             Route::EditGist { id, .. } => format!("Editing gist {}", id.get(..7).unwrap_or(id)),
             Route::WikiEdit { repo, page: None } => format!("{repo} · New wiki page"),
@@ -572,7 +440,6 @@ impl Route {
                 page: Some(page),
             } => format!("{repo} · Editing {page}"),
             Route::Site(page) => page.title(),
-            Route::User { login, .. } => format!("@{login}"),
             Route::Search { query, .. } => format!("Search “{query}”"),
             Route::Notifications { .. } => "Notifications".to_owned(),
             Route::Projects(ProjectsOf::Owner(owner)) => format!("@{} · Projects", owner.login()),
@@ -592,16 +459,7 @@ impl Route {
     /// The repository the page belongs to.
     pub fn repo(&self) -> Option<&RepoId> {
         match self {
-            Route::Actions { repo, .. }
-            | Route::WorkflowRun { repo, .. }
-            | Route::Job { repo, .. }
-            | Route::Workflow { repo, .. }
-            | Route::Stargazers(repo)
-            | Route::Watchers(repo)
-            | Route::Forks(repo)
-            | Route::Releases(repo)
-            | Route::Release { repo, .. }
-            | Route::Discussions {
+            Route::Discussions {
                 of: DiscussionsOf::Repo(repo),
                 ..
             }
@@ -617,13 +475,12 @@ impl Route {
             | Route::Alerts { repo, .. }
             | Route::Alert { repo, .. }
             | Route::Settings { repo, .. }
-            | Route::Deployments { repo, .. }
-            | Route::NewRelease(repo)
-            | Route::EditRelease { repo, .. }
             | Route::WikiEdit { repo, .. }
-            | Route::Dispatch { repo, .. }
             | Route::Projects(ProjectsOf::Repo(repo)) => Some(repo),
             Route::Code(p) => p.repo(),
+            Route::People(p) => p.repo(),
+            Route::Releases(p) => p.repo(),
+            Route::Runs(p) => p.repo(),
             Route::Issues(p) => p.repo(),
             Route::Pulls(p) => p.repo(),
             Route::Site(page) => page.repo(),
@@ -632,15 +489,12 @@ impl Route {
             | Route::Project { .. }
             | Route::ProjectItem { .. }
             | Route::App(_)
-            | Route::User { .. }
             | Route::Search { .. }
             | Route::Notifications { .. }
             | Route::Gist { .. }
             | Route::Gists(_)
             | Route::NewGist
             | Route::EditGist { .. }
-            | Route::Teams(_)
-            | Route::Team { .. }
             | Route::Advisories(None)
             | Route::Advisory { repo: None, .. }
             | Route::Discussions {
@@ -659,9 +513,11 @@ impl Route {
     pub fn list_query(&self) -> Option<&str> {
         match self {
             Route::Issues(p) => p.query(),
+            Route::People(p) => p.query(),
+            Route::Releases(p) => p.query(),
+            Route::Runs(p) => p.query(),
             Route::Pulls(p) => p.query(),
-            Route::Actions { query, .. }
-            | Route::Alerts { query, .. }
+            Route::Alerts { query, .. }
             | Route::Search { query, .. }
             | Route::Notifications { query } => Some(query),
             _ => None,
@@ -672,12 +528,11 @@ impl Route {
     pub fn with_query(&self, query: String) -> Option<Route> {
         Some(match self {
             Route::Issues(p) => return p.with_query(query),
+            Route::People(p) => return p.with_query(query),
+            Route::Releases(p) => return p.with_query(query),
+            Route::Runs(p) => return p.with_query(query),
             Route::Pulls(p) => return p.with_query(query),
             Route::Search { kind, .. } => Route::Search { kind: *kind, query },
-            Route::Actions { repo, .. } => Route::Actions {
-                repo: repo.clone(),
-                query,
-            },
             Route::Notifications { .. } => Route::Notifications { query },
             Route::Alerts { repo, kind, .. } => Route::Alerts {
                 repo: repo.clone(),
@@ -755,7 +610,13 @@ type RepoParse = fn(&RepoId, &[&str], &Url<'_>) -> Option<Target>;
 
 /// What the families make of a URL's path, asked in this order (after
 /// [`crate::site::parse`]); the first to know the page says.
-const TOP: &[fn(&Url<'_>) -> Option<Target>] = &[app::parse, crate::housekeeping::parse, top];
+const TOP: &[fn(&Url<'_>) -> Option<Target>] = &[
+    app::parse,
+    crate::housekeeping::parse,
+    top,
+    // A profile is any name GitHub hasn't taken.
+    people::parse,
+];
 
 /// What they make of the path after `/<owner>/<repo>`, asked in this
 /// order: housekeeping's forms (`milestones/new`) before the milestones.
@@ -764,6 +625,9 @@ const REPO: &[RepoParse] = &[
     code::parse_repo,
     issues::parse_repo,
     pulls::parse_repo,
+    runs::parse_repo,
+    releases::parse_repo,
+    people::parse_repo,
     repo_page,
 ];
 
@@ -823,13 +687,6 @@ fn parse(parsed: &url::Url) -> Option<Target> {
 fn top(url: &Url<'_>) -> Option<Target> {
     let param = |name: &str| url.param(name);
     let (query, kind, tab) = (param("q"), param("type"), param("tab"));
-    let repos = || {
-        ProfileTab::Repositories(match param("sort").as_deref() {
-            Some("name") => RepoSort::Name,
-            Some("stargazers") => RepoSort::Stars,
-            _ => RepoSort::Updated,
-        })
-    };
     let route = match url.segments {
         ["search"] => Route::Search {
             kind: match kind.as_deref().map(str::to_ascii_lowercase).as_deref() {
@@ -886,11 +743,6 @@ fn top(url: &Url<'_>) -> Option<Target> {
             };
             project(owner, rest, url)?
         }
-        ["stars", login] => Route::User {
-            login: (*login).to_owned(),
-            tab: ProfileTab::Stars,
-        },
-        ["orgs", login] => Route::user(login),
         ["notifications"] => Route::Notifications {
             query: param("query")
                 .map(|q| q.trim().to_owned())
@@ -901,25 +753,9 @@ fn top(url: &Url<'_>) -> Option<Target> {
             repo: None,
             ghsa: (*ghsa).to_owned(),
         },
-        ["orgs", org, "teams"] => Route::Teams((*org).to_owned()),
-        // GitHub's form for a new team.
-        ["orgs", _, "teams", "new"] => return None,
-        // Its members, repositories and child teams are on its page.
-        ["orgs", org, "teams", slug, ..] if valid_slug(slug) => Route::Team {
-            org: (*org).to_owned(),
-            slug: (*slug).to_owned(),
-        },
         ["orgs", org, "discussions", rest @ ..] => {
             discussions(DiscussionsOf::Org((*org).to_owned()), rest)?
         }
-        ["orgs", login, page @ ("repositories" | "people")] => Route::User {
-            login: (*login).to_owned(),
-            tab: if *page == "people" {
-                ProfileTab::People
-            } else {
-                repos()
-            },
-        },
         // A profile's projects are an organization's at `/orgs/…/projects`.
         [login]
             if tab.as_deref() == Some("projects")
@@ -928,18 +764,6 @@ fn top(url: &Url<'_>) -> Option<Target> {
         {
             Route::Projects(ProjectsOf::Owner(ProjectOwner::User((*login).to_owned())))
         }
-        [login] if !RESERVED.contains(login) && valid_login(login) => Route::User {
-            login: (*login).to_owned(),
-            tab: match tab.as_deref() {
-                None | Some("overview") => ProfileTab::Overview,
-                Some("repositories") => repos(),
-                Some("stars") => ProfileTab::Stars,
-                Some("followers") => ProfileTab::Followers,
-                Some("following") => ProfileTab::Following,
-                // Packages need a scope gh doesn't grant.
-                Some(_) => return None,
-            },
-        },
         _ => return None,
     };
     Some(Target::Page(route))
@@ -956,28 +780,9 @@ fn param(url: &url::Url, name: &str) -> Option<String> {
 fn repo_page(repo: &RepoId, rest: &[&str], url: &Url<'_>) -> Option<Target> {
     let repo = repo.clone();
     let param = |name: &str| url.param(name);
-    let fragment = url.fragment();
     let route = match rest {
-        ["actions"] => Route::Actions {
-            repo,
-            query: param("query")
-                .map(|q| q.trim().to_owned())
-                .unwrap_or_default(),
-        },
         // Its linked projects; a classic project (`projects/1`) is gone.
         ["projects"] => Route::Projects(ProjectsOf::Repo(repo)),
-        ["stargazers"] => Route::Stargazers(repo),
-        ["watchers"] => Route::Watchers(repo),
-        ["forks"] | ["network", "members"] => Route::Forks(repo),
-        ["releases", "tag", tag @ ..] if !tag.is_empty() => Route::Release {
-            repo,
-            tag: tag.join("/"),
-        },
-        ["releases", "new"] => Route::NewRelease(repo),
-        ["releases", "edit", tag @ ..] if !tag.is_empty() => Route::EditRelease {
-            repo,
-            tag: tag.join("/"),
-        },
         ["wiki", "_new"] => Route::WikiEdit { repo, page: None },
         ["wiki", page, "_edit"] if !page.contains(char::is_control) => Route::WikiEdit {
             repo,
@@ -991,7 +796,6 @@ fn repo_page(repo: &RepoId, rest: &[&str], url: &Url<'_>) -> Option<Target> {
         | ["security", "advisories", "new"] => return None,
         // A wiki's own pages but its list (history, comparisons).
         ["wiki", special, ..] if special.starts_with('_') && *special != "_pages" => return None,
-        ["releases", ..] => Route::Releases(repo),
         // The security overview's part ghtui can show: advisories.
         ["security"] | ["security", "advisories"] => Route::Advisories(Some(repo)),
         ["security", "advisories", ghsa] if valid_ghsa(ghsa) => Route::Advisory {
@@ -1032,56 +836,7 @@ fn repo_page(repo: &RepoId, rest: &[&str], url: &Url<'_>) -> Option<Target> {
             repo,
             page: rest.first().map(|p| (*p).to_owned()),
         },
-        ["deployments", rest @ ..] => {
-            let environment = match rest {
-                [] => None,
-                ["activity_log"] => param("environments_filter"),
-                [env] if !env.contains(char::is_control) => Some((*env).to_owned()),
-                _ => return None,
-            };
-            Route::Deployments { repo, environment }
-        }
         ["discussions", rest @ ..] => discussions(DiscussionsOf::Repo(repo), rest)?,
-        ["actions", "runs", run, rest @ ..] => {
-            let run = run.parse().ok()?;
-            match rest {
-                // The run's workflow file shows on the run's page.
-                [] | ["workflow"] => Route::WorkflowRun {
-                    repo,
-                    run,
-                    attempt: None,
-                },
-                ["attempts", n] => Route::WorkflowRun {
-                    repo,
-                    run,
-                    attempt: Some(n.parse().ok()?),
-                },
-                ["job", job] => Route::Job {
-                    repo,
-                    run: Some(run),
-                    job: job.parse().ok()?,
-                    step: fragment.and_then(step_line),
-                    query: param("q").unwrap_or_default(),
-                },
-                _ => return None,
-            }
-        }
-        // A check run's URL, which is its job's for Actions.
-        ["runs", job] | ["runs", _, "jobs", job] => Route::Job {
-            repo,
-            run: None,
-            job: job.parse().ok()?,
-            step: fragment.and_then(step_line),
-            query: param("q").unwrap_or_default(),
-        },
-        ["actions", "workflows", file]
-            if !file.contains(|c: char| c.is_control() || c.is_whitespace()) =>
-        {
-            Route::Workflow {
-                repo,
-                file: (*file).to_owned(),
-            }
-        }
         _ => return None,
     };
     Some(Target::Page(route))
@@ -1204,14 +959,6 @@ fn of_title(of: &DiscussionsOf) -> String {
     }
 }
 
-/// `step:3:12`, as GitHub links a line of a job's log.
-fn step_line(fragment: &str) -> Option<(u32, u32)> {
-    let mut parts = fragment.strip_prefix("step:")?.split(':');
-    let step = parts.next()?.parse().ok()?;
-    let line = parts.next().and_then(|l| l.parse().ok()).unwrap_or(1);
-    Some((step, line))
-}
-
 /// Top-level GitHub paths that aren't users.
 const RESERVED: &[&str] = &[
     "about",
@@ -1246,6 +993,7 @@ const RESERVED: &[&str] = &[
     "readme",
     "repos",
     "resources",
+    "search",
     "security",
     "sessions",
     "settings",
@@ -1423,6 +1171,7 @@ pub(crate) mod arb {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::api::browse::RepoSort;
     use crate::git::Oid;
 
     /// Names GitHub can't have aren't pages (found by fuzzing: a user
@@ -1665,29 +1414,29 @@ pub(crate) mod tests {
         );
         assert_eq!(
             page("https://github.com/o/r/actions?query=branch%3Amain+is%3Afailure"),
-            Route::Actions {
+            Route::Runs(runs::Actions {
                 repo: pr.repo.clone(),
                 query: "branch:main is:failure".into()
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/o/r/stargazers"),
-            Route::Stargazers(pr.repo.clone())
+            Route::People(people::Stargazers(pr.repo.clone()))
         );
         assert_eq!(
             page("https://github.com/o/r/network/members"),
-            Route::Forks(pr.repo.clone())
+            Route::People(people::Forks(pr.repo.clone()))
         );
         assert_eq!(
             page("https://github.com/o/r/releases/tag/v1.0/rc"),
-            Route::Release {
+            Route::Releases(releases::Release {
                 repo: pr.repo.clone(),
                 tag: "v1.0/rc".into()
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/o/r/releases/latest"),
-            Route::Releases(pr.repo.clone())
+            Route::Releases(releases::Releases(pr.repo.clone()))
         );
         assert_eq!(
             page("https://github.com/o/r/tags"),
@@ -1744,39 +1493,39 @@ pub(crate) mod tests {
         );
         assert_eq!(
             page("https://github.com/octocat?tab=repositories&sort=stargazers"),
-            Route::User {
+            Route::People(people::User {
                 login: "octocat".into(),
                 tab: ProfileTab::Repositories(RepoSort::Stars)
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/octocat?tab=followers"),
-            Route::User {
+            Route::People(people::User {
                 login: "octocat".into(),
                 tab: ProfileTab::Followers
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/orgs/rust-lang/people"),
-            Route::User {
+            Route::People(people::User {
                 login: "rust-lang".into(),
                 tab: ProfileTab::People
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/orgs/rust-lang/repositories"),
-            Route::User {
+            Route::People(people::User {
                 login: "rust-lang".into(),
                 tab: ProfileTab::Repositories(RepoSort::Updated)
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/o/r/actions/runs/9"),
-            Route::WorkflowRun {
+            Route::Runs(runs::WorkflowRun {
                 repo: pr.repo.clone(),
                 run: 9,
                 attempt: None
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/o/r/milestone/3"),
@@ -1922,7 +1671,12 @@ pub(crate) mod tests {
         // A family's page by its own name.
         let family = word(&named);
         match named.strip_prefix(&format!("{family}(")) {
-            Some(page) if ["App", "Code", "Issues", "Pulls", "Site"].contains(&family.as_str()) => {
+            Some(page)
+                if [
+                    "App", "Code", "People", "Releases", "Runs", "Issues", "Pulls", "Site",
+                ]
+                .contains(&family.as_str()) =>
+            {
                 word(page)
             }
             _ => family,
@@ -2016,10 +1770,10 @@ pub(crate) mod tests {
                 kind: SearchKind::Pulls,
                 query: "author:linus".into(),
             },
-            Route::User {
+            Route::People(people::User {
                 login: "octocat".into(),
                 tab: ProfileTab::Stars,
-            },
+            }),
         ] {
             assert_eq!(reopened(&route), Target::Page(route));
         }
@@ -2383,12 +2137,6 @@ pub(crate) mod tests {
                 app::arb(),
                 prop_oneof![Just(String::new()), query()]
                     .prop_map(|query| Route::Notifications { query }),
-                (repo(), query()).prop_map(|(repo, query)| Route::Actions { repo, query }),
-                repo().prop_map(Route::Stargazers),
-                repo().prop_map(Route::Watchers),
-                repo().prop_map(Route::Forks),
-                repo().prop_map(Route::Releases),
-                repo().prop_map(Route::NewRelease),
                 Just(Route::NewGist),
                 (login(), "[0-9a-f]{20}")
                     .prop_filter("an owner isn't a gist ID or a gist page", |(o, _)| {
@@ -2397,24 +2145,6 @@ pub(crate) mod tests {
                     .prop_map(|(owner, id)| Route::EditGist { owner, id }),
                 (repo(), prop::option::of("[A-Za-z0-9][A-Za-z0-9 _-]{0,15}"))
                     .prop_map(|(repo, page)| Route::WikiEdit { repo, page }),
-                (repo(), 1..u64::MAX, prop::option::of(1..100u64))
-                    .prop_map(|(repo, run, attempt)| Route::WorkflowRun { repo, run, attempt }),
-                (
-                    repo(),
-                    prop::option::of(1..u64::MAX),
-                    1..u64::MAX,
-                    prop::option::of((1..100u32, 1..10_000u32)),
-                    prop_oneof![Just(String::new()), query()],
-                )
-                    .prop_map(|(repo, run, job, step, query)| Route::Job {
-                        repo,
-                        run,
-                        job,
-                        step,
-                        query
-                    }),
-                (repo(), "[A-Za-z0-9_-][A-Za-z0-9_.-]{0,11}\\.ya?ml")
-                    .prop_map(|(repo, file)| Route::Workflow { repo, file }),
                 (
                     discussions_of(),
                     prop::option::of("[a-z0-9][a-z0-9-]{0,11}")
@@ -2463,10 +2193,6 @@ pub(crate) mod tests {
                     .prop_map(|(repo, page)| Route::Settings { repo, page }),
                 (prop::option::of(repo()), "GHSA(-[2-9a-z]{4}){3}")
                     .prop_map(|(repo, ghsa)| Route::Advisory { repo, ghsa }),
-                login().prop_map(Route::Teams),
-                (login(), segment())
-                    .prop_filter("not the new-team form", |(_, slug)| slug != "new")
-                    .prop_map(|(org, slug)| Route::Team { org, slug }),
                 (prop::option::of(login()), "[0-9a-f]{20}|[0-9]{1,8}")
                     .prop_filter("an owner isn't a gist ID or a gist page", |(o, _)| {
                         o.as_deref()
@@ -2481,33 +2207,6 @@ pub(crate) mod tests {
                         !is_lone_gist_id(l) && !GIST_PAGES.contains(&l.as_str())
                     })
                     .prop_map(Route::Gists),
-                (repo(), prop::option::of("[A-Za-z0-9 _-]{1,12}"))
-                    .prop_filter("not the log", |(_, e)| e.as_deref() != Some("activity_log"))
-                    .prop_map(|(repo, environment)| Route::Deployments { repo, environment }),
-                (repo(), "[A-Za-z0-9._-]{1,12}")
-                    .prop_filter("not . or ..", |(_, t)| t != "." && t != "..")
-                    .prop_map(|(repo, tag)| Route::Release { repo, tag }),
-                (repo(), "[A-Za-z0-9._-]{1,12}")
-                    .prop_filter("not . or ..", |(_, t)| t != "." && t != "..")
-                    .prop_map(|(repo, tag)| Route::EditRelease { repo, tag }),
-                login()
-                    .prop_filter("not a reserved path", |l| !RESERVED.contains(&l.as_str()))
-                    .prop_flat_map(|login| {
-                        let tabs = prop::sample::select(vec![
-                            ProfileTab::Overview,
-                            ProfileTab::Repositories(RepoSort::Updated),
-                            ProfileTab::Repositories(RepoSort::Name),
-                            ProfileTab::Repositories(RepoSort::Stars),
-                            ProfileTab::Stars,
-                            ProfileTab::Followers,
-                            ProfileTab::Following,
-                            ProfileTab::People,
-                        ]);
-                        tabs.prop_map(move |tab| Route::User {
-                            login: login.clone(),
-                            tab,
-                        })
-                    }),
                 repo().prop_map(|repo| Route::Projects(ProjectsOf::Repo(repo))),
                 (
                     login(),
@@ -2555,6 +2254,9 @@ pub(crate) mod tests {
                 code::arb(),
                 issues::arb(),
                 pulls::arb(),
+                runs::arb(),
+                releases::arb(),
+                people::arb(),
             ]
         }
 

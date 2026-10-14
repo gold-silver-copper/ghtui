@@ -10,6 +10,7 @@ use crate::data::{Data, DataKey};
 use crate::diff_screen::DiffOf;
 use crate::git::Oid;
 use crate::route::pulls;
+use crate::route::runs;
 use crate::state::State;
 use crate::ui::pages::{self, url as links};
 use crate::ui::text::short_sha;
@@ -595,13 +596,13 @@ pub(super) fn parse_repo(repo: &RepoId, rest: &[&str], url: &Url<'_>) -> Option<
         ["commit", rev, ..] | ["git", "commit", rev] if !valid_rev(rev) => return None,
         // A check run's logs, from a pull request's checks.
         ["commit", _, "checks", job, ..] => {
-            return Some(Target::Page(Route::Job {
+            return Some(Target::Page(Route::Runs(runs::Job {
                 repo,
                 run: None,
                 job: job.parse().ok()?,
                 step: None,
                 query: String::new(),
-            }));
+            })));
         }
         ["commit", sha, "checks"] => CommitChecks {
             repo,

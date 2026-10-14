@@ -132,6 +132,9 @@ pub fn shown(route: &Route) -> Option<DataKey> {
     let key = match route {
         Route::Site(p) => return p.shown_source(),
         Route::Code(p) => return p.shown_source(),
+        Route::People(p) => return p.shown_source(),
+        Route::Releases(p) => return p.shown_source(),
+        Route::Runs(p) => return p.shown_source(),
         Route::Search {
             kind: SearchKind::Code,
             query,

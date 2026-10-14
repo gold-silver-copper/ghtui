@@ -1,6 +1,8 @@
 //! Lists: their state and sort.
 
 use super::*;
+use crate::route::people;
+use crate::route::runs;
 
 /// The list query with its state (`is:open`, `is:unread`…) replaced by
 /// `state`.
@@ -77,7 +79,7 @@ pub(super) fn cycle_state(state: &mut State) -> Vec<Cmd> {
         state.info(format!("{what} aren't open or closed"));
         return Vec::new();
     }
-    if let Some(Route::Actions { .. }) = state.route() {
+    if let Some(Route::Runs(runs::Actions { .. })) = state.route() {
         let filter = state.first_key(Action::Search);
         state.info(format!(
             "Runs aren't open or closed · {filter} filters them: is:failure, is:success…"
@@ -94,20 +96,20 @@ pub(super) fn cycle_state(state: &mut State) -> Vec<Cmd> {
 #[must_use]
 pub(super) fn cycle_sort(state: &mut State) -> Vec<Cmd> {
     // A profile's repositories sort by GraphQL order, not a search word.
-    if let Some(Route::User {
+    if let Some(Route::People(people::User {
         login,
         tab: ProfileTab::Repositories(sort),
-    }) = state.route()
+    })) = state.route()
     {
         let next = sort.next();
-        let route = Route::User {
+        let route = Route::People(people::User {
             login: login.clone(),
             tab: ProfileTab::Repositories(next),
-        };
+        });
         state.info(format!("Sorted: {}", next.label()));
         return state.replace(route, true, None);
     }
-    if let Some(Route::Actions { .. }) = state.route() {
+    if let Some(Route::Runs(runs::Actions { .. })) = state.route() {
         state.info("Runs are newest first: GitHub doesn't sort them otherwise");
         return Vec::new();
     }

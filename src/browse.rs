@@ -6,15 +6,13 @@ use std::collections::HashSet;
 
 use std::collections::BTreeSet;
 
-use crate::api::browse::{
-    CommitInfo, DiscussionsOf, Gist, PrActivity, Release, RepoOverview, UserList, WikiPage,
-};
+use crate::api::browse::{CommitInfo, DiscussionsOf, Gist, PrActivity, RepoOverview, WikiPage};
 use crate::api::model::{PrDetail, PrRef, RepoId};
 use crate::api::project::{Project, ProjectsOf};
 use crate::api::security::AlertRef;
 use crate::ui::Fetched;
 use crate::ui::page::{Page, PageLine, Role, Seg};
-use crate::ui::pages::{self, Keys, ProfileList, ProfileTab};
+use crate::ui::pages::{self, Keys};
 
 use crate::data::{Data, DataKey, Picked};
 use crate::diff_screen::{DiffOf, DiffState};
@@ -32,33 +30,10 @@ const LISTS: u16 = 200;
 /// The list a page loads more of.
 pub fn paged(route: &Route) -> Option<DataKey> {
     match route {
-        Route::Stargazers(repo) => Some(DataKey::Users(UserList::Stargazers(repo.clone()))),
-        Route::Watchers(repo) => Some(DataKey::Users(UserList::Watchers(repo.clone()))),
-        Route::Forks(repo) => Some(DataKey::Forks(repo.clone())),
-        Route::Releases(repo) => Some(DataKey::Releases(repo.clone())),
         Route::Discussions { of, category } => {
             Some(DataKey::Discussions(of.clone(), category.clone()))
         }
-        Route::Actions { repo, query } => Some(DataKey::Runs(repo.clone(), query.clone())),
-        Route::Workflow { repo, file } => {
-            Some(DataKey::Runs(repo.clone(), format!("workflow:{file}")))
-        }
-        Route::User { login, tab } => {
-            let login = login.to_lowercase();
-            Some(match tab {
-                ProfileTab::Overview => return None,
-                ProfileTab::Repositories(sort) => DataKey::OwnerRepos(login, *sort),
-                ProfileTab::Stars => DataKey::Stars(login),
-                ProfileTab::Followers => DataKey::Users(UserList::Followers(login)),
-                ProfileTab::Following => DataKey::Users(UserList::Following(login)),
-                ProfileTab::People => DataKey::Users(UserList::People(login)),
-            })
-        }
-        Route::Teams(org) => Some(DataKey::Teams(org.to_lowercase())),
         Route::Gists(login) => Some(DataKey::Gists(login.to_lowercase())),
-        Route::Deployments { repo, environment } => {
-            Some(DataKey::Deployments(repo.clone(), environment.clone()))
-        }
         Route::Advisories(repo) => Some(DataKey::Advisories(repo.clone())),
         Route::Notifications { query } => Some(DataKey::Notifications(query.clone())),
         Route::Projects(of) => Some(DataKey::Projects(of.clone())),
@@ -70,6 +45,9 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         }
         Route::App(p) => p.paged(),
         Route::Code(p) => p.paged(),
+        Route::People(p) => p.paged(),
+        Route::Releases(p) => p.paged(),
+        Route::Runs(p) => p.paged(),
         Route::Issues(p) => p.paged(),
         Route::Pulls(p) => p.paged(),
         Route::Site(p) => p.paged(),
@@ -100,6 +78,9 @@ pub(crate) fn needs(route: &Route) -> Vec<DataKey> {
         | Route::Code(_)
         | Route::Issues(_)
         | Route::Pulls(_)
+        | Route::People(_)
+        | Route::Releases(_)
+        | Route::Runs(_)
         | Route::NewGist
         | Route::Site(_)
         | Route::Housekeeping(_) => Vec::new(),
@@ -113,26 +94,13 @@ pub(crate) fn needs(route: &Route) -> Vec<DataKey> {
             repo.iter().map(header).chain([own]).collect()
         }
         Route::Gists(_)
-        | Route::Teams(_)
         | Route::Notifications { .. }
         | Route::Project { .. }
         | Route::ProjectItem { .. }
         | Route::Projects(ProjectsOf::Owner(_)) => paged(route).into_iter().collect(),
-        Route::Team { org, slug } => vec![K::Team(org.to_lowercase(), slug.clone())],
         Route::Gist { id, .. } | Route::EditGist { id, .. } => {
             vec![K::Gist(id.clone())]
         }
-        Route::NewRelease(repo) => vec![
-            header(repo),
-            K::Tags(repo.clone()),
-            K::Branches(repo.clone()),
-        ],
-        Route::EditRelease { repo, tag } => vec![
-            header(repo),
-            K::Release(repo.clone(), tag.clone()),
-            K::Tags(repo.clone()),
-            K::Branches(repo.clone()),
-        ],
         Route::WikiEdit { repo, page } => {
             vec![header(repo), crate::wiki::form::key(repo, page.as_ref())]
         }
@@ -147,30 +115,7 @@ pub(crate) fn needs(route: &Route) -> Vec<DataKey> {
             };
             header.into_iter().chain(own).collect()
         }
-        Route::WorkflowRun { repo, run, attempt } => {
-            vec![header(repo), K::Run(repo.clone(), *run, *attempt)]
-        }
-        Route::Job { repo, job, .. } => vec![
-            header(repo),
-            K::Job(repo.clone(), *job),
-            K::JobLog(repo.clone(), *job),
-        ],
-        Route::Workflow { repo, file } => std::iter::once(header(repo))
-            .chain([K::Workflow(repo.clone(), file.clone())])
-            .chain(paged(route))
-            .collect(),
-        Route::Dispatch { repo, file } => crate::actions::needs(repo, file),
-        Route::Release { repo, tag } => {
-            vec![header(repo), K::Release(repo.clone(), tag.clone())]
-        }
-        Route::Actions { repo, .. }
-        | Route::Stargazers(repo)
-        | Route::Watchers(repo)
-        | Route::Forks(repo)
-        | Route::Releases(repo)
-        | Route::Deployments { repo, .. }
-        | Route::Alerts { repo, .. }
-        | Route::Projects(ProjectsOf::Repo(repo)) => {
+        Route::Alerts { repo, .. } | Route::Projects(ProjectsOf::Repo(repo)) => {
             std::iter::once(header(repo)).chain(paged(route)).collect()
         }
         Route::Alert { repo, kind, number } => {
@@ -183,14 +128,6 @@ pub(crate) fn needs(route: &Route) -> Vec<DataKey> {
         }
         Route::Settings { repo, page } => {
             vec![header(repo), K::Settings(repo.clone(), *page)]
-        }
-        Route::User { login, tab } => {
-            // A user's lists show above what they starred.
-            let lists = (*tab == ProfileTab::Stars).then(|| K::StarLists(login.to_lowercase()));
-            std::iter::once(K::Profile(login.to_lowercase()))
-                .chain(lists)
-                .chain(paged(route))
-                .collect()
         }
     }
 }
@@ -220,24 +157,18 @@ fn width_of(route: &Route) -> Width {
     match route {
         Route::Wiki { .. }
         | Route::Discussion { .. }
-        | Route::Release { .. }
         | Route::Advisory { .. }
         | Route::Alert { .. }
-        | Route::NewRelease(_)
-        | Route::EditRelease { .. }
         | Route::NewGist
         | Route::EditGist { .. }
         | Route::WikiEdit { .. }
-        | Route::Dispatch { .. }
         | Route::ProjectItem { .. } => Width::Reading,
-        Route::Actions { .. }
-        | Route::WorkflowRun { .. }
-        | Route::Job { .. }
-        | Route::Workflow { .. }
-        | Route::Project { .. }
-        | Route::Deployments { .. } => Width::Full,
+        Route::Project { .. } => Width::Full,
         Route::App(p) => p.width(),
         Route::Code(p) => p.width(),
+        Route::People(p) => p.width(),
+        Route::Releases(p) => p.width(),
+        Route::Runs(p) => p.width(),
         Route::Issues(p) => p.width(),
         Route::Pulls(p) => p.width(),
         Route::Site(p) => p.width(),
@@ -467,23 +398,14 @@ impl State {
         match route {
             Route::App(p) => p.build(b, &mut page),
             Route::Code(p) => p.build(b, &mut page),
+            Route::People(p) => p.build(b, &mut page),
+            Route::Releases(p) => p.build(b, &mut page),
+            Route::Runs(p) => p.build(b, &mut page),
             Route::Issues(p) => p.build(b, &mut page),
             Route::Pulls(p) => p.build(b, &mut page),
             Route::Search { kind, query } => {
                 let results = f.paged(route);
                 pages::search(&mut page, *kind, query, results, icons, keys, now);
-            }
-            Route::NewRelease(repo) => {
-                let header = f.get::<RepoOverview>(&DataKey::Repo(repo.clone()));
-                if header.show(&mut page, &title).is_some() {
-                    crate::release::build(self, &mut page, route, repo);
-                }
-            }
-            Route::EditRelease { repo, tag } => {
-                let key = DataKey::Release(repo.clone(), tag.clone());
-                if f.get::<Release>(&key).show(&mut page, &title).is_some() {
-                    crate::release::build(self, &mut page, route, repo);
-                }
             }
             Route::NewGist => crate::gist::build(self, &mut page, route),
             Route::EditGist { id, .. } => {
@@ -500,23 +422,6 @@ impl State {
                     crate::wiki::form::build(self, &mut page, route);
                 }
             }
-            Route::Stargazers(repo) => {
-                // GitHub lists none of a big repository's stargazers.
-                let stars = self.overview(repo).map_or(0, |o| o.summary.stars);
-                let empty = match stars {
-                    0 => "Nobody here yet.".to_owned(),
-                    n => format!(
-                        "GitHub doesn't list this repository's {} stargazers.",
-                        pages::compact(n)
-                    ),
-                };
-                pages::people_list(&mut page, "Stargazers", f.paged(route), &empty);
-            }
-            Route::Watchers(_) => {
-                pages::people_list(&mut page, "Watchers", f.paged(route), "Nobody here yet.");
-            }
-            Route::Forks(_) => pages::repos(&mut page, "Forks", f.paged(route), now),
-            Route::Releases(repo) => pages::releases(&mut page, repo, f.paged(route), now),
             Route::Wiki { repo, page: name } => {
                 let key = DataKey::Wiki(repo.clone(), name.clone());
                 if let Some(w) = f.get(&key).show(&mut page, &title) {
@@ -553,23 +458,12 @@ impl State {
                     pages::advisory(&mut page, a, now);
                 }
             }
-            Route::Teams(org) => pages::teams(&mut page, org, f.paged(route)),
-            Route::Team { org, slug } => {
-                let key = DataKey::Team(org.to_lowercase(), slug.clone());
-                if let Some(t) = f.get(&key).show(&mut page, &title) {
-                    pages::team(&mut page, org, t);
-                }
-            }
             Route::Gist { id, .. } => {
                 if let Some(g) = f.get(&DataKey::Gist(id.clone())).show(&mut page, &title) {
                     pages::gist(&mut page, g, now);
                 }
             }
             Route::Gists(login) => pages::gists(&mut page, login, f.paged(route), now),
-            Route::Deployments { repo, environment } => {
-                let env = environment.as_deref();
-                pages::deployments(&mut page, repo, f.paged(route), env, now);
-            }
             Route::Discussions { of, category } => {
                 let list = f.paged(route);
                 let base = Route::Discussions {
@@ -585,45 +479,6 @@ impl State {
                 if let Some(d) = f.get(&key).show(&mut page, &title) {
                     pages::discussion(&mut page, d, fresh, &self.talk.unfolded, cx);
                 }
-            }
-            Route::WorkflowRun { repo, run, attempt } => {
-                let key = DataKey::Run(repo.clone(), *run, *attempt);
-                if let Some(r) = f.get(&key).show(&mut page, &title) {
-                    pages::workflow_run(&mut page, repo, r, now);
-                }
-            }
-            Route::Job {
-                repo,
-                job,
-                step,
-                query,
-                ..
-            } => {
-                let key = DataKey::Job(repo.clone(), *job);
-                if let Some(j) = f.get(&key).show(&mut page, &title) {
-                    let log = f.get(&DataKey::JobLog(repo.clone(), *job));
-                    let at = pages::JobAt {
-                        step: *step,
-                        query,
-                        keys,
-                        follows: crate::live::page::follows(self, repo, *job),
-                    };
-                    pages::job(&mut page, repo, j, log, at, now);
-                }
-            }
-            Route::Workflow { repo, file } => {
-                let wf = f.get(&DataKey::Workflow(repo.clone(), file.clone()));
-                pages::workflow(&mut page, repo, wf, f.paged(route), now);
-            }
-            Route::Dispatch { repo, file } => crate::actions::build(self, &mut page, repo, file),
-            Route::Release { repo, tag } => {
-                let key = DataKey::Release(repo.clone(), tag.clone());
-                if let Some(r) = f.get(&key).show(&mut page, &title) {
-                    pages::release(&mut page, repo, r, now);
-                }
-            }
-            Route::Actions { repo, query } => {
-                pages::actions(&mut page, repo, query, f.paged(route), cx);
             }
             Route::Notifications { query } => {
                 pages::notifications(&mut page, query, f.paged(route), cx);
@@ -641,22 +496,6 @@ impl State {
             } => {
                 if let Some(p) = f.paged::<Project>(route).show(&mut page, &title) {
                     pages::project_item(&mut page, project, *view, p, *item, cx);
-                }
-            }
-            Route::User { login, tab } => {
-                let key = DataKey::Profile(login.to_lowercase());
-                if let Some(p) = f.get(&key).show(&mut page, &format!("@{login}")) {
-                    let list = match paged(route) {
-                        Some(key @ DataKey::Users(_)) => ProfileList::People(f.get(&key)),
-                        Some(key) if *tab == ProfileTab::Stars => {
-                            let lists = DataKey::StarLists(login.to_lowercase());
-                            let lists = f.get(&lists);
-                            ProfileList::Starred(lists, f.get(&key))
-                        }
-                        Some(key) => ProfileList::Repos(f.get(&key)),
-                        None => ProfileList::None,
-                    };
-                    pages::profile(&mut page, p, *tab, list, now);
                 }
             }
             Route::Site(p) => p.build(b, &mut page),

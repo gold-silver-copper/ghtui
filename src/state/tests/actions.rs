@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::actions::{Done, Work};
+use crate::route::runs;
 use crate::ui::page::{DispatchLink, Link};
 
 /// Selects the row on screen whose link is `link`.
@@ -35,10 +36,10 @@ const WORKFLOW: &str = "name: CI\non:\n  workflow_dispatch:\n    inputs:\n      
 
 fn on_workflow() -> State {
     let mut s = with_repo();
-    let _ = s.push(Route::Workflow {
+    let _ = s.push(Route::Runs(runs::Workflow {
         repo: ghtui(),
         file: "ci.yml".into(),
-    });
+    }));
     let (workflow, runs) = crate::fixtures::workflow_runs();
     fetched(
         &mut s,
@@ -57,10 +58,10 @@ fn on_workflow() -> State {
 fn a_workflow_runs_by_hand_with_its_inputs_and_is_followed() {
     let mut s = on_workflow();
     press(&mut s, ",E");
-    let dispatch = Route::Dispatch {
+    let dispatch = Route::Runs(runs::Dispatch {
         repo: ghtui(),
         file: "ci.yml".into(),
-    };
+    });
     assert_eq!(route(&s), dispatch);
     let blob = crate::api::browse::Blob {
         path: ".github/workflows/ci.yml".into(),
@@ -95,11 +96,11 @@ fn a_workflow_runs_by_hand_with_its_inputs_and_is_followed() {
         result: Ok(Some(55)),
     };
     update(&mut s, Msg::Actions(done));
-    let run = Route::WorkflowRun {
+    let run = Route::Runs(runs::WorkflowRun {
         repo: ghtui(),
         run: 55,
         attempt: None,
-    };
+    });
     assert_eq!(route(&s), run);
     says(&s, "Started ci.yml: following its run");
 }
@@ -127,11 +128,11 @@ fn a_workflow_that_cant_run_by_hand_says_so() {
 #[test]
 fn an_artifact_is_saved_where_you_say() {
     let mut s = with_repo();
-    let _ = s.push(Route::WorkflowRun {
+    let _ = s.push(Route::Runs(runs::WorkflowRun {
         repo: ghtui(),
         run: 7,
         attempt: None,
-    });
+    }));
     let run = crate::fixtures::workflow_run();
     fetched(
         &mut s,

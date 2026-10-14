@@ -3,6 +3,7 @@
 //! (`workflow_dispatch`) from a form of its inputs, read from its file,
 //! then following the run it started.
 
+use crate::route::runs;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -330,7 +331,7 @@ pub fn describe(link: &Link) -> &'static str {
 /// Asks where to save artifact `id` of the run on screen.
 #[must_use]
 fn save(state: &mut State, id: u64, name: &str) -> Vec<Cmd> {
-    let Some(Route::WorkflowRun { repo, run, attempt }) = state.route().cloned() else {
+    let Some(Route::Runs(runs::WorkflowRun { repo, run, attempt })) = state.route().cloned() else {
         return Vec::new();
     };
     let key = DataKey::Run(repo.clone(), run, attempt);
@@ -355,10 +356,10 @@ fn save(state: &mut State, id: u64, name: &str) -> Vec<Cmd> {
 fn workflow_here(state: &State) -> Option<(RepoId, String)> {
     let file = |path: &str| path.rsplit('/').next().unwrap_or(path).to_owned();
     match state.route()? {
-        Route::Workflow { repo, file } | Route::Dispatch { repo, file } => {
+        Route::Runs(runs::Workflow { repo, file }) | Route::Runs(runs::Dispatch { repo, file }) => {
             Some((repo.clone(), file.clone()))
         }
-        Route::WorkflowRun { repo, run, attempt } => {
+        Route::Runs(runs::WorkflowRun { repo, run, attempt }) => {
             let key = DataKey::Run(repo.clone(), *run, *attempt);
             let r = state.picked::<WorkflowRun>(&key)?;
             Some((repo.clone(), file(&r.path))).filter(|(_, f)| !f.is_empty())
@@ -370,7 +371,7 @@ fn workflow_here(state: &State) -> Option<(RepoId, String)> {
 /// The form on screen: its repository and workflow file.
 fn here(state: &State) -> Option<(RepoId, String)> {
     match state.route()? {
-        Route::Dispatch { repo, file } => Some((repo.clone(), file.clone())),
+        Route::Runs(runs::Dispatch { repo, file }) => Some((repo.clone(), file.clone())),
         _ => None,
     }
 }
@@ -481,7 +482,7 @@ pub fn action(state: &mut State) -> Vec<Cmd> {
         state.info(why);
         return Vec::new();
     }
-    state.push(Route::Dispatch { repo, file })
+    state.push(Route::Runs(runs::Dispatch { repo, file }))
 }
 
 /// Runs the form's workflow, if it can.
@@ -581,16 +582,16 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
                     let route = match run {
                         Some(run) => {
                             state.info(format!("Started {file}: following its run"));
-                            Route::WorkflowRun {
+                            Route::Runs(runs::WorkflowRun {
                                 repo,
                                 run,
                                 attempt: None,
-                            }
+                            })
                         }
                         // GitHub didn't say which: its runs show it soon.
                         None => {
                             state.info(format!("Started {file}: it shows in its runs in a moment"));
-                            Route::Workflow { repo, file }
+                            Route::Runs(runs::Workflow { repo, file })
                         }
                     };
                     state.replace(route, true, None)

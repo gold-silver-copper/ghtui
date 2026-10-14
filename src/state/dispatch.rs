@@ -3,6 +3,7 @@
 use super::*;
 use crate::route::app;
 use crate::route::issues;
+use crate::route::runs;
 
 /// Handles a message and settles the screen.
 #[cfg(test)]
@@ -413,7 +414,7 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
             }
             state.info("Cleared");
         }
-        Action::Cancel if matches!(state.route(), Some(Route::Job { query, .. }) if !query.is_empty()) =>
+        Action::Cancel if matches!(state.route(), Some(Route::Runs(runs::Job { query, .. })) if !query.is_empty()) =>
         {
             nav::search_log(state, "");
         }

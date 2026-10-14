@@ -4,6 +4,7 @@
 
 use crate::route::app;
 use crate::route::code;
+use crate::route::runs;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -619,7 +620,7 @@ impl State {
             Screen::Diff(d) if d.focus == Pane::Tree && d.prefs.tree_visible => Context::Tree,
             Screen::Diff(_) => Context::Diff,
             Screen::Page(p) => match &p.route {
-                Route::Job { .. } => Context::Log,
+                Route::Runs(runs::Job { .. }) => Context::Log,
                 Route::Code(code::Blob { .. }) | Route::Code(code::Blame { .. }) => Context::File,
                 Route::Project { .. } | Route::ProjectItem { .. } => Context::Project,
                 Route::Settings { .. } => Context::Settings,

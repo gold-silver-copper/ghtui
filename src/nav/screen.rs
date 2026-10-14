@@ -1,6 +1,7 @@
 //! The page on screen: its selection and scrolling.
 
 use super::*;
+use crate::route::releases;
 
 /// What a page was built for: the data's generation, its diff's inputs
 /// (a pull request's Review tab shows them), the width and the density.
@@ -49,7 +50,10 @@ impl PageScreen {
         // lines linked; reading pages (issues, pull requests, files) start
         // with nothing selected.
         let list = route.starts_on_row()
-            && !matches!(route, Route::Release { .. } | Route::Discussion { .. });
+            && !matches!(
+                route,
+                Route::Releases(releases::Release { .. }) | Route::Discussion { .. }
+            );
         Self {
             route,
             scroll: 0,

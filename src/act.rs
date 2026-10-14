@@ -17,6 +17,7 @@ use crate::api::notifications::Inbox;
 use crate::api::project::ProjectRef;
 use crate::route::issues;
 use crate::route::pulls;
+use crate::route::runs;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::data::{DataKey, Picked};
@@ -219,8 +220,10 @@ impl Subject {
         Some(match route {
             Route::Pulls(pulls::Pr { pr, .. }) => Subject::Pr(pr.clone()),
             Route::Issues(issues::Issue { repo, number }) => Subject::Issue(repo.clone(), *number),
-            Route::WorkflowRun { repo, run, attempt } => Subject::Run(repo.clone(), *run, *attempt),
-            Route::Job { repo, run, job, .. } => Subject::Job(repo.clone(), *run, *job),
+            Route::Runs(runs::WorkflowRun { repo, run, attempt }) => {
+                Subject::Run(repo.clone(), *run, *attempt)
+            }
+            Route::Runs(runs::Job { repo, run, job, .. }) => Subject::Job(repo.clone(), *run, *job),
             Route::Alert { repo, kind, number } => Subject::Alert(crate::api::security::AlertRef {
                 repo: repo.clone(),
                 kind: *kind,
@@ -239,18 +242,18 @@ impl Subject {
                 repo: repo.clone(),
                 number: *number,
             }),
-            Subject::Run(repo, run, attempt) => Route::WorkflowRun {
+            Subject::Run(repo, run, attempt) => Route::Runs(runs::WorkflowRun {
                 repo: repo.clone(),
                 run: *run,
                 attempt: *attempt,
-            },
-            Subject::Job(repo, run, job) => Route::Job {
+            }),
+            Subject::Job(repo, run, job) => Route::Runs(runs::Job {
                 repo: repo.clone(),
                 run: *run,
                 job: *job,
                 step: None,
                 query: String::new(),
-            },
+            }),
             Subject::Thread { query, .. } | Subject::Inbox { query } => Route::Notifications {
                 query: query.clone(),
             },

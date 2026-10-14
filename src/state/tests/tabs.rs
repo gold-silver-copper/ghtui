@@ -1,6 +1,7 @@
 use super::*;
 use crate::route::code;
 use crate::route::issues;
+use crate::route::releases;
 
 /// Two routes to tell tabs apart by.
 fn issue(n: u64) -> Route {
@@ -143,7 +144,7 @@ fn a_tab_on_a_slashed_branch_reopens_on_it() {
 /// last of the reopened tabs.
 #[test]
 fn the_page_asked_for_loads_after_reopened_tabs() {
-    let releases = Route::Releases(RepoId::new("o", "r"));
+    let releases = Route::Releases(releases::Releases(RepoId::new("o", "r")));
     let mut s = state();
     s.restore_tabs(&[issue(1).url(), releases.url()]);
     let cmds = s.start_at(Target::Page(releases).into());

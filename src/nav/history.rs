@@ -191,6 +191,9 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
     Some(match route {
         Route::App(p) => return p.up(state),
         Route::Code(p) => return p.up(state),
+        Route::People(p) => return p.up(state),
+        Route::Releases(p) => return p.up(state),
+        Route::Runs(p) => return p.up(state),
         Route::Issues(p) => return p.up(state),
         Route::Pulls(p) => return p.up(state),
         Route::Settings {
@@ -205,14 +208,8 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             of: DiscussionsOf::Repo(repo),
             ..
         }
-        | Route::Stargazers(repo)
-        | Route::Watchers(repo)
-        | Route::Forks(repo)
-        | Route::Releases(repo)
-        | Route::Deployments { repo, .. }
         | Route::Wiki { repo, page: None }
-        | Route::Projects(ProjectsOf::Repo(repo))
-        | Route::Actions { repo, .. } => Route::Code(code::Repo(repo.clone())),
+        | Route::Projects(ProjectsOf::Repo(repo)) => Route::Code(code::Repo(repo.clone())),
         Route::Discussion { of, .. } => Route::Discussions {
             of: of.clone(),
             category: None,
@@ -221,33 +218,8 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             of: DiscussionsOf::Org(org),
             ..
         } => Route::user(org),
-        Route::Release { repo, .. } | Route::NewRelease(repo) => Route::Releases(repo.clone()),
-        Route::EditRelease { repo, tag } => Route::Release {
-            repo: repo.clone(),
-            tag: tag.clone(),
-        },
-        Route::Dispatch { repo, file } => Route::Workflow {
-            repo: repo.clone(),
-            file: file.clone(),
-        },
         Route::Housekeeping(p) => return p.up(state),
-        Route::WorkflowRun { repo, .. }
-        | Route::Workflow { repo, .. }
-        | Route::Job {
-            repo, run: None, ..
-        } => Route::actions(repo.clone()),
-        Route::Job {
-            repo,
-            run: Some(run),
-            ..
-        } => Route::WorkflowRun {
-            repo: repo.clone(),
-            run: *run,
-            attempt: None,
-        },
-        Route::User { .. } | Route::Search { .. } | Route::Notifications { .. } => {
-            Route::App(app::Home)
-        }
+        Route::Search { .. } | Route::Notifications { .. } => Route::App(app::Home),
         Route::Gist { owner, .. } => Route::Gists(owner.clone()?),
         Route::NewGist => Route::Gists(state.viewer.clone()?),
         Route::EditGist { owner, id } => Route::Gist {
@@ -258,8 +230,7 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             repo: repo.clone(),
             page: page.clone(),
         },
-        Route::Gists(login) | Route::Teams(login) => Route::user(login),
-        Route::Team { org, .. } => Route::Teams(org.clone()),
+        Route::Gists(login) => Route::user(login),
         Route::Wiki {
             repo,
             page: Some(_),

@@ -3,6 +3,7 @@
 use super::*;
 use crate::route::code;
 use crate::route::pulls;
+use crate::route::runs;
 
 /// Delivers a failed fetch of `key`.
 fn failed(state: &mut State, key: DataKey) {
@@ -114,10 +115,10 @@ fn a_search_in_flight_says_searching() {
 #[test]
 fn failed_workflow_runs_say_why_instead_of_loading() {
     let mut state = with_repo();
-    let _ = state.push(Route::Workflow {
+    let _ = state.push(Route::Runs(runs::Workflow {
         repo: ghtui(),
         file: "ci.yml".into(),
-    });
+    }));
     let (workflow, _) = fixtures::workflow_runs();
     let key = DataKey::Workflow(ghtui(), "ci.yml".into());
     fetched(&mut state, key, Data::Workflow(Box::new(workflow)));

@@ -1,5 +1,6 @@
 use crate::api::explore::Since;
 use crate::api::packages::PackagesOf;
+use crate::route::people;
 
 use super::*;
 use crate::site::{InsightsTab, Page, fixtures};
@@ -135,10 +136,10 @@ fn topics_and_starred_lists_read_as_on_github() {
     assert!(text.contains("Repositories  2"), "{text}");
 
     let mut s = state();
-    let _ = s.push(Route::User {
+    let _ = s.push(Route::People(people::User {
         login: "octocat".into(),
         tab: crate::ui::pages::ProfileTab::Stars,
-    });
+    }));
     let profile = Data::Profile(Box::new(crate::fixtures::profile()));
     fetched(&mut s, DataKey::Profile("octocat".into()), profile);
     let lists = DataKey::StarLists("octocat".into());

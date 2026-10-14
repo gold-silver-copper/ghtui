@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::route::code;
+use crate::route::people;
+use crate::route::runs;
 
 pub struct SearchBox {
     pub input: TextArea<'static>,
@@ -60,7 +62,7 @@ impl State {
     pub fn open_search(&mut self, github: bool) -> Vec<Cmd> {
         let filter_query = match self.route() {
             _ if github => None,
-            Some(Route::Job { query, .. }) => Some(query.clone()),
+            Some(Route::Runs(runs::Job { query, .. })) => Some(query.clone()),
             route => route.and_then(Route::list_query).map(str::to_owned),
         };
         let mut input = new_input(&self.theme, Bg::ContainerHighest);
@@ -70,10 +72,10 @@ impl State {
         }
         // A profile's repositories filter by searching that owner's.
         if !github
-            && let Some(Route::User {
+            && let Some(Route::People(people::User {
                 login,
                 tab: ProfileTab::Repositories(_),
-            }) = self.route()
+            })) = self.route()
         {
             input.insert_str(format!("user:{login} "));
         }
@@ -144,7 +146,7 @@ impl State {
         let mut out = Vec::new();
         if sb.filter {
             // A job's log filters by its text alone.
-            if let Some(Route::Job { .. }) = self.route() {
+            if let Some(Route::Runs(runs::Job { .. })) = self.route() {
                 let pick = Pick::Filter(q.to_owned());
                 let what = if q.is_empty() {
                     "clear the search"
@@ -178,7 +180,7 @@ impl State {
                 return out;
             }
             // Runs filter by GitHub's Actions words, and aren't searched.
-            if let Some(Route::Actions { repo, .. }) = self.route() {
+            if let Some(Route::Runs(runs::Actions { repo, .. })) = self.route() {
                 if let Some(b) = self.overview(repo).and_then(|o| o.default_branch.as_ref()) {
                     let f = format!("branch:{b}");
                     let pick = Pick::Filter(f.clone());
@@ -402,7 +404,7 @@ pub(super) fn choose(state: &mut State, pick: Pick) -> Vec<Cmd> {
     match pick {
         Pick::Go(dest) => state.go(dest),
         Pick::Search(kind, query) => state.push(Route::Search { kind, query }),
-        Pick::Filter(query) if matches!(state.route(), Some(Route::Job { .. })) => {
+        Pick::Filter(query) if matches!(state.route(), Some(Route::Runs(runs::Job { .. }))) => {
             search_log(state, &query);
             Vec::new()
         }
@@ -423,12 +425,12 @@ pub fn search_log(state: &mut State, query: &str) {
     let Screen::Page(p) = state.screen_mut() else {
         return;
     };
-    let Route::Job {
+    let Route::Runs(runs::Job {
         repo,
         job,
         query: q,
         ..
-    } = &mut p.route
+    }) = &mut p.route
     else {
         return;
     };

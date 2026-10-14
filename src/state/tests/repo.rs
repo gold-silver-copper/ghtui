@@ -4,6 +4,7 @@ use super::*;
 use crate::route::code;
 use crate::route::issues;
 use crate::route::pulls;
+use crate::route::runs;
 
 /// An empty repository says what it's about, in its sidebar on a
 /// wide screen and above its note on a narrow one.
@@ -71,13 +72,13 @@ fn a_repositorys_pages_are_under_their_tabs() {
         ),
         (Route::Code(code::Branches(ghtui())), "Code"),
         (
-            Route::Job {
+            Route::Runs(runs::Job {
                 repo: ghtui(),
                 run: Some(1),
                 job: 2,
                 step: None,
                 query: String::new(),
-            },
+            }),
             "Actions",
         ),
     ];

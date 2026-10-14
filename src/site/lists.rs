@@ -12,6 +12,7 @@ use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::fuzzy_score;
 use crate::route::Route;
+use crate::route::people;
 use crate::state::{Cmd, Remote, State};
 use crate::writes::{Chosen, Pick, item, row};
 
@@ -372,10 +373,10 @@ pub fn on_deleted(state: &mut State, d: Delete, result: Result<(), String>) -> V
             if state.route() != Some(&route) {
                 return Vec::new();
             }
-            let stars = Route::User {
+            let stars = Route::People(people::User {
                 login: d.login.clone(),
                 tab: crate::ui::pages::ProfileTab::Stars,
-            };
+            });
             let gone = super::Expected::Lists(Expected::Gone {
                 login: d.login,
                 slug: d.slug,

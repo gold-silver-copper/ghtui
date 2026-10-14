@@ -6,6 +6,7 @@
 use crate::api::release::{Made, NewRelease};
 use crate::release::assets::{self, Of};
 use crate::release::{Done as ReleaseDone, Work as ReleaseWork};
+use crate::route::releases;
 use ratatui_textarea::CursorMove;
 
 use super::*;
@@ -16,10 +17,10 @@ use crate::writes::{Done, Work};
 const ID: u64 = 272_100_001;
 
 fn page() -> Route {
-    Route::Release {
+    Route::Releases(releases::Release {
         repo: ghtui(),
         tag: "v0.2.0".into(),
-    }
+    })
 }
 
 fn asked(s: &State) -> &crate::create::Ask {
@@ -59,10 +60,10 @@ fn done(s: &mut State, d: ReleaseDone) -> Vec<Cmd> {
 fn a_release_is_edited_and_its_page_follows() {
     let mut s = with_release();
     press(&mut s, ",e");
-    let form = Route::EditRelease {
+    let form = Route::Releases(releases::EditRelease {
         repo: ghtui(),
         tag: "v0.2.0".into(),
-    };
+    });
     assert_eq!(s.route(), Some(&form));
     assert!(page_text(&s).contains("Editing v0.2.0"));
     assert!(page_text(&s).contains("Scope names in hunk headers"));
@@ -141,7 +142,10 @@ fn a_release_is_deleted_then_its_tag_asked_about() {
         &mut s,
         ReleaseDone::Deleted(ghtui(), "v0.2.0".into(), Ok(true)),
     );
-    assert_eq!(s.route(), Some(&Route::Releases(ghtui())));
+    assert_eq!(
+        s.route(),
+        Some(&Route::Releases(releases::Releases(ghtui())))
+    );
     assert_eq!(asked(&s).title, "Delete the tag v0.2.0 as well?");
     let sent = release_work(&press(&mut s, "<Enter>"));
     assert_eq!(sent, ReleaseWork::DeleteTag(ghtui(), "v0.2.0".into()));

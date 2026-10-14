@@ -6,6 +6,7 @@ use crate::route::app;
 use crate::route::code;
 use crate::route::issues;
 use crate::route::pulls;
+use crate::route::runs;
 
 /// Something you can do here.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -262,7 +263,7 @@ impl State {
         let here = |action, label: &str, short| doable("This page", action, label, short);
         let route = &p.route;
         // A file's line is this page, as a log's is: nothing to open.
-        let line = matches!(route, Route::Job { .. }) && p.code_line().is_some();
+        let line = matches!(route, Route::Runs(runs::Job { .. })) && p.code_line().is_some();
         if !matches!(route, Route::Code(code::Blob { .. })) && !line {
             let mut open = here(Action::Open, "Open the selected row", "open");
             match p.selected_link() {
@@ -295,7 +296,7 @@ impl State {
         let list = route.search().map(|(_, q)| q);
         // `/` searches the page, or filters a list; then n/N.
         let searched = match route {
-            Route::Job { query, .. } => {
+            Route::Runs(runs::Job { query, .. }) => {
                 out.push(here(Action::Search, "Search the log", "search"));
                 Some(query.clone())
             }
@@ -351,7 +352,9 @@ impl State {
         // A word cursor moves along a line of code.
         if matches!(
             route,
-            Route::Code(code::Blob { .. }) | Route::Code(code::Blame { .. }) | Route::Job { .. }
+            Route::Code(code::Blob { .. })
+                | Route::Code(code::Blame { .. })
+                | Route::Runs(runs::Job { .. })
         ) {
             let why = (p.word_cursor().is_none()).then(|| "no line of code is selected".to_owned());
             for action in [
@@ -541,7 +544,7 @@ impl State {
             Some(Overlay::Search(sb)) => {
                 let enter = match self.route() {
                     _ if !sb.filter => "go",
-                    Some(Route::Job { .. }) => "search",
+                    Some(Route::Runs(runs::Job { .. })) => "search",
                     _ => "filter",
                 };
                 return vec![

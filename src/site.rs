@@ -21,6 +21,7 @@ use crate::api::lists::ListPage;
 use crate::api::model::RepoId;
 use crate::api::packages::{Kind, PackageRef, PackagesOf};
 use crate::route::code;
+use crate::route::people;
 use crate::ui::pages::url as links;
 
 use crate::browse::{Build, Width};
@@ -166,10 +167,10 @@ impl Family for Page {
                 Route::Code(code::Repo(repo.clone()))
             }
             Page::Explore { .. } | Page::Topic(_) => Route::App(app::Home),
-            Page::StarList { login, .. } => Route::User {
+            Page::StarList { login, .. } => Route::People(people::User {
                 login: login.clone(),
                 tab: crate::ui::pages::ProfileTab::Stars,
-            },
+            }),
             Page::Packages(PackagesOf::Owner(login)) => Route::user(login),
             Page::Package { at, version: None } => {
                 Route::Site(Page::Packages(PackagesOf::Owner(at.owner.clone())))
@@ -274,10 +275,10 @@ impl Family for Page {
             }
             Page::StarList { login, .. } => {
                 c.crumb(login, user(login));
-                let stars = Route::User {
+                let stars = Route::People(people::User {
                     login: login.clone(),
                     tab: ProfileTab::Stars,
-                };
+                });
                 c.crumb("Stars", Some(Target::Page(stars)));
                 let list = (self.paged())
                     .and_then(|k| state.picked::<ListPage>(&k))

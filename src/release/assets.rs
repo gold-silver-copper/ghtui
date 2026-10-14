@@ -5,6 +5,7 @@
 //! asking. The page follows GitHub until it shows an upload or a
 //! deletion.
 
+use crate::route::releases;
 use std::path::{Path, PathBuf};
 
 use crate::api::GitHub;
@@ -129,7 +130,10 @@ pub fn open(state: &mut State, name: &str) -> Vec<Cmd> {
 /// `,U`: a file to upload.
 #[must_use]
 pub fn open_upload(state: &mut State) -> Vec<Cmd> {
-    if !matches!(state.route(), Some(Route::Release { .. })) {
+    if !matches!(
+        state.route(),
+        Some(Route::Releases(releases::Release { .. }))
+    ) {
         state.info("Assets are uploaded to a release: open its page");
         return Vec::new();
     }
@@ -302,7 +306,7 @@ pub fn ask_delete(state: &mut State, name: &str) -> Vec<Cmd> {
     )];
     crate::writes::ask(
         state,
-        Route::Release { repo, tag },
+        Route::Releases(releases::Release { repo, tag }),
         format!("Delete {name}?"),
         facts,
         vec![("Delete asset".into(), Answer::DeleteAsset(name.to_owned()))],
@@ -345,10 +349,10 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
             Vec::new()
         }
         Done::Deleted(of, Ok(())) => {
-            let route = Route::Release {
+            let route = Route::Releases(releases::Release {
                 repo: of.repo.clone(),
                 tag: of.tag.clone(),
-            };
+            });
             crate::writes::close_sender(state, &route);
             state.info(format!("Deleted {}", of.name));
             follow(state, of, false)
@@ -363,10 +367,10 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
 /// The release's page, if it's on screen, follows GitHub until it shows
 /// the asset there (or gone).
 fn follow(state: &mut State, of: Of, there: bool) -> Vec<Cmd> {
-    let route = Route::Release {
+    let route = Route::Releases(releases::Release {
         repo: of.repo.clone(),
         tag: of.tag.clone(),
-    };
+    });
     if state.route() != Some(&route) {
         return Vec::new();
     }

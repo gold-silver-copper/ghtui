@@ -7,6 +7,7 @@
 //! until the page shows what changed, as [`crate::act`] does for its
 //! changes.
 
+use crate::route::releases;
 use std::collections::HashMap;
 
 use crate::api::GitHub;
@@ -151,8 +152,8 @@ pub fn reason(err: &crate::api::ApiError) -> String {
 pub fn is_form(route: &Route) -> bool {
     matches!(
         route,
-        Route::NewRelease(_)
-            | Route::EditRelease { .. }
+        Route::Releases(releases::NewRelease(_))
+            | Route::Releases(releases::EditRelease { .. })
             | Route::NewGist
             | Route::EditGist { .. }
             | Route::WikiEdit { .. }
@@ -168,11 +169,17 @@ pub fn claims(state: &State, action: Action) -> bool {
         || match action {
             Action::EditComment => matches!(
                 route,
-                Some(Route::Wiki { .. } | Route::Gist { .. } | Route::Release { .. })
+                Some(
+                    Route::Wiki { .. }
+                        | Route::Gist { .. }
+                        | Route::Releases(releases::Release { .. })
+                )
             ),
             Action::DeleteComment => {
-                matches!(route, Some(Route::Gist { .. } | Route::Release { .. }))
-                    || crate::site::deletes_here(route)
+                matches!(
+                    route,
+                    Some(Route::Gist { .. } | Route::Releases(releases::Release { .. }))
+                ) || crate::site::deletes_here(route)
             }
             Action::Create => route.is_some_and(is_form),
             _ => false,
@@ -187,8 +194,12 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
         (Action::Watch, _) => crate::watch::open(state),
         (Action::NewRelease, _) => crate::release::open(state),
         (Action::UploadAsset, _) => crate::release::assets::open_upload(state),
-        (Action::EditComment, Some(Route::Release { .. })) => crate::release::open_edit(state),
-        (Action::DeleteComment, Some(Route::Release { .. })) => crate::release::ask_delete(state),
+        (Action::EditComment, Some(Route::Releases(releases::Release { .. }))) => {
+            crate::release::open_edit(state)
+        }
+        (Action::DeleteComment, Some(Route::Releases(releases::Release { .. }))) => {
+            crate::release::ask_delete(state)
+        }
         (Action::NewGist, _) => crate::gist::open_new(state),
         (Action::NewWikiPage, _) => crate::wiki::form::open_new(state),
         (Action::EditComment, Some(Route::Wiki { .. })) => crate::wiki::form::open_edit(state),
@@ -196,9 +207,13 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
         (Action::DeleteComment, Some(Route::Gist { .. })) => crate::gist::ask_delete(state),
         (Action::Lists, _) => crate::site::lists::open(state),
         (Action::DeleteComment, Some(Route::Site(_))) => crate::site::ask_delete(state),
-        (Action::Create, Some(Route::NewRelease(_) | Route::EditRelease { .. })) => {
-            crate::release::submit(state)
-        }
+        (
+            Action::Create,
+            Some(
+                Route::Releases(releases::NewRelease(_))
+                | Route::Releases(releases::EditRelease { .. }),
+            ),
+        ) => crate::release::submit(state),
         (Action::Create, Some(Route::NewGist | Route::EditGist { .. })) => {
             crate::gist::submit(state)
         }
@@ -264,7 +279,7 @@ impl Text {
     /// The composer's title.
     pub fn title(&self, state: &State) -> String {
         match self {
-            Text::Release(Route::EditRelease { tag, .. }) => {
+            Text::Release(Route::Releases(releases::EditRelease { tag, .. })) => {
                 format!("Editing {tag}: its title on the first line, then its notes")
             }
             Text::Release(_) => {
@@ -279,7 +294,7 @@ impl Text {
     /// What ctrl-s does, for the composer's hint.
     pub fn save(&self) -> &'static str {
         match self {
-            Text::Release(Route::EditRelease { .. }) => "save…",
+            Text::Release(Route::Releases(releases::EditRelease { .. })) => "save…",
             Text::Release(_) => "publish…",
             Text::GistFile(Route::NewGist, _) => "create gist…",
             Text::GistFile(..) => "save gist",
@@ -310,7 +325,10 @@ impl Text {
 #[must_use]
 pub fn compose(state: &mut State) -> Vec<Cmd> {
     match state.route() {
-        Some(Route::NewRelease(_) | Route::EditRelease { .. }) => crate::release::compose(state),
+        Some(
+            Route::Releases(releases::NewRelease(_))
+            | Route::Releases(releases::EditRelease { .. }),
+        ) => crate::release::compose(state),
         Some(Route::NewGist | Route::EditGist { .. }) => {
             let selected = match state.screen() {
                 crate::state::Screen::Page(p) => p.selected_link().cloned(),
@@ -361,10 +379,11 @@ pub fn follow_link(state: &mut State, link: &WriteLink) -> Vec<Cmd> {
         return crate::housekeeping::follow_link(state, *row);
     }
     match state.route() {
-        Some(Route::NewRelease(_) | Route::EditRelease { .. }) => {
-            crate::release::follow_link(state, link)
-        }
-        Some(Route::Release { .. }) => match link {
+        Some(
+            Route::Releases(releases::NewRelease(_))
+            | Route::Releases(releases::EditRelease { .. }),
+        ) => crate::release::follow_link(state, link),
+        Some(Route::Releases(releases::Release { .. })) => match link {
             WriteLink::Asset(name) => crate::release::assets::open(state, name),
             _ => Vec::new(),
         },
@@ -647,7 +666,7 @@ pub fn answer(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
         Answer::DeleteTag => crate::release::delete_tag(state, route),
         Answer::KeepTag => {
             close_sender(state, route);
-            if let Route::Release { tag, .. } = route {
+            if let Route::Releases(releases::Release { tag, .. }) = route {
                 state.info(format!("Kept the tag {tag}"));
             }
             Vec::new()

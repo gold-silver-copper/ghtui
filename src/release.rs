@@ -19,6 +19,7 @@ use crate::api::model::RepoId;
 use crate::api::release::{Made, NewRelease, Notes, TagLook};
 use crate::create::Look;
 use crate::create::templates;
+use crate::route::releases;
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{Link, Page, WriteLink};
 use crate::ui::pages::{FormRow, Mark, TextBox, WriteFormView};
@@ -234,7 +235,9 @@ impl Work {
 fn here(state: &State) -> Option<(Route, RepoId, &Form)> {
     static BLANK: std::sync::LazyLock<Form> = std::sync::LazyLock::new(Form::default);
     let route = state.route()?;
-    let (Route::NewRelease(repo) | Route::EditRelease { repo, .. }) = route else {
+    let (Route::Releases(releases::NewRelease(repo))
+    | Route::Releases(releases::EditRelease { repo, .. })) = route
+    else {
         return None;
     };
     let form = state.writing.releases.get(route).unwrap_or(&BLANK);
@@ -266,7 +269,7 @@ pub fn open(state: &mut State) -> Vec<Cmd> {
         state.info(why);
         return Vec::new();
     }
-    let route = Route::NewRelease(repo);
+    let route = Route::Releases(releases::NewRelease(repo));
     if state.route() == Some(&route) {
         return compose(state);
     }
@@ -277,7 +280,7 @@ pub fn open(state: &mut State) -> Vec<Cmd> {
 
 /// The release on screen (its page's), as loaded.
 pub(crate) fn shown(state: &State) -> Option<(RepoId, String, &Release)> {
-    let Some(Route::Release { repo, tag }) = state.route() else {
+    let Some(Route::Releases(releases::Release { repo, tag })) = state.route() else {
         return None;
     };
     let r = state.picked::<Release>(&DataKey::Release(repo.clone(), tag.clone()))?;
@@ -306,7 +309,7 @@ pub fn open_edit(state: &mut State) -> Vec<Cmd> {
     let Some((repo, tag, _)) = shown(state) else {
         return Vec::new();
     };
-    let mut cmds = state.push(Route::EditRelease { repo, tag });
+    let mut cmds = state.push(Route::Releases(releases::EditRelease { repo, tag }));
     cmds.extend(follow(state));
     cmds
 }
@@ -319,7 +322,7 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
     let Some((route, repo, form)) = here(state) else {
         return Vec::new();
     };
-    if let Route::EditRelease { tag, .. } = &route
+    if let Route::Releases(releases::EditRelease { tag, .. }) = &route
         && !form.started
         && let Some(r) = state.picked::<Release>(&DataKey::Release(repo.clone(), tag.clone()))
         && let Some(id) = r.id
@@ -337,7 +340,7 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
         form.look = Some((tag.clone(), Look::Asking));
         cmds.push(Cmd::Write(Writes::Release(Work::Look(repo.clone(), tag))));
     }
-    let new = matches!(route, Route::NewRelease(_));
+    let new = matches!(route, Route::Releases(releases::NewRelease(_)));
     if new && loaded && !form.started && state.overlay.is_none() && refused(state, &repo).is_none()
     {
         form_mut(state, &route).started = true;
@@ -454,7 +457,8 @@ fn tag_problem(tag: &str) -> Option<&'static str> {
 /// The repository a form's page is of.
 fn form_repo(route: &Route) -> Option<&RepoId> {
     match route {
-        Route::NewRelease(repo) | Route::EditRelease { repo, .. } => Some(repo),
+        Route::Releases(releases::NewRelease(repo))
+        | Route::Releases(releases::EditRelease { repo, .. }) => Some(repo),
         _ => None,
     }
 }
@@ -741,7 +745,7 @@ pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
         false,
     ));
     let title = format!("Delete the release {}?", r.name);
-    let route = Route::Release { repo, tag };
+    let route = Route::Releases(releases::Release { repo, tag });
     let choices = vec![("Delete release".into(), Answer::DeleteRelease)];
     crate::writes::ask(state, route, title, facts, choices);
     Vec::new()
@@ -750,7 +754,7 @@ pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
 /// The release on `route`'s page was asked to go: deletes it.
 #[must_use]
 pub fn delete(state: &mut State, route: &Route) -> Vec<Cmd> {
-    let Route::Release { repo, tag } = route else {
+    let Route::Releases(releases::Release { repo, tag }) = route else {
         return Vec::new();
     };
     let key = DataKey::Release(repo.clone(), tag.clone());
@@ -768,7 +772,7 @@ pub fn delete(state: &mut State, route: &Route) -> Vec<Cmd> {
 /// Deletes the tag of the release deleted from `route`, as asked.
 #[must_use]
 pub fn delete_tag(state: &mut State, route: &Route) -> Vec<Cmd> {
-    let Route::Release { repo, tag } = route else {
+    let Route::Releases(releases::Release { repo, tag }) = route else {
         return Vec::new();
     };
     crate::writes::sending(state);
@@ -834,10 +838,10 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
         Done::Saved(route, result) => saved(state, &route, result),
         Done::Deleted(repo, tag, result) => deleted(state, &repo, &tag, result),
         Done::TagDeleted(repo, tag, result) => {
-            let route = Route::Release {
+            let route = Route::Releases(releases::Release {
                 repo: repo.clone(),
                 tag: tag.clone(),
-            };
+            });
             match result {
                 Ok(()) => {
                     crate::writes::close_sender(state, &route);
@@ -871,7 +875,7 @@ fn saved(state: &mut State, route: &Route, result: Result<Made, String>) -> Vec<
             let (page, what, said) = if made.draft {
                 let said = format!("Saved a draft release of {tag}");
                 (
-                    Route::Releases(repo.clone()),
+                    Route::Releases(releases::Releases(repo.clone())),
                     Expected::Draft(repo, tag),
                     said,
                 )
@@ -893,7 +897,7 @@ fn saved(state: &mut State, route: &Route, result: Result<Made, String>) -> Vec<
                 } else {
                     format!("Published {tag}")
                 };
-                (Route::Release { repo, tag }, what, said)
+                (Route::Releases(releases::Release { repo, tag }), what, said)
             };
             state.info(said);
             if state.route() != Some(route) {
@@ -916,10 +920,10 @@ fn saved(state: &mut State, route: &Route, result: Result<Made, String>) -> Vec<
 /// deleting its tag too is asked, apart.
 #[must_use]
 fn deleted(state: &mut State, repo: &RepoId, tag: &str, result: Result<bool, String>) -> Vec<Cmd> {
-    let route = Route::Release {
+    let route = Route::Releases(releases::Release {
         repo: repo.clone(),
         tag: tag.to_owned(),
-    };
+    });
     let tagged = match result {
         Ok(tagged) => tagged,
         Err(why) => {
@@ -931,7 +935,7 @@ fn deleted(state: &mut State, repo: &RepoId, tag: &str, result: Result<bool, Str
     state.info(format!("Deleted the release of {tag}"));
     let mut cmds = Vec::new();
     if state.route() == Some(&route) {
-        let list = Route::Releases(repo.clone());
+        let list = Route::Releases(releases::Releases(repo.clone()));
         let gone = Expected::ReleaseGone(repo.clone(), tag.to_owned());
         crate::writes::expect(state, list.clone(), gone);
         cmds = state.replace(list, true, None);
@@ -988,7 +992,7 @@ pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
         out.push(row("This page", Action::Create, publish, "publish", why));
         return;
     }
-    if matches!(route, Route::Release { .. }) {
+    if matches!(route, Route::Releases(releases::Release { .. })) {
         let why = unchangeable(state);
         out.push(row(
             "Edit",

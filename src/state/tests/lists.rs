@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::route::issues;
+use crate::route::people;
+use crate::route::runs;
 
 /// A branch's commits page: the code toolbar's link opens it, and it
 /// loads more like any list.
@@ -60,10 +62,10 @@ fn an_extended_list_is_kept_until_asked() {
     let mut state = with_repo();
     let file = "ci.yml".to_owned();
     let key = DataKey::Runs(ghtui(), format!("workflow:{file}"));
-    let _ = state.push(Route::Workflow {
+    let _ = state.push(Route::Runs(runs::Workflow {
         repo: ghtui(),
         file,
-    });
+    }));
     let page = |id: u64, next: Option<&str>| {
         let mut runs = crate::fixtures::workflow_runs().1;
         for (i, run) in runs.items.iter_mut().enumerate() {
@@ -319,9 +321,11 @@ fn profile_repositories_sort_and_filter() {
     use crate::api::browse::RepoSort;
     use crate::ui::pages::ProfileTab;
     let mut state = state();
-    let tab = |sort| Route::User {
-        login: "octocat".into(),
-        tab: ProfileTab::Repositories(sort),
+    let tab = |sort| {
+        Route::People(people::User {
+            login: "octocat".into(),
+            tab: ProfileTab::Repositories(sort),
+        })
     };
     let _ = state.push(tab(RepoSort::Updated));
     for sort in [RepoSort::Name, RepoSort::Stars, RepoSort::Updated] {

@@ -4,7 +4,10 @@
 use super::*;
 use crate::route::code;
 use crate::route::issues;
+use crate::route::people;
 use crate::route::pulls;
+use crate::route::releases;
+use crate::route::runs;
 
 /// A pull request as Home's sections list it.
 pub(crate) fn row(
@@ -203,7 +206,7 @@ pub(crate) fn with_teams() -> State {
     let mut state = state();
     open(
         &mut state,
-        Route::Teams("github".into()),
+        Route::People(people::Teams("github".into())),
         Data::Teams(Box::new(fixtures::teams())),
     );
     state
@@ -212,10 +215,10 @@ pub(crate) fn with_teams() -> State {
 /// A team.
 pub(crate) fn with_team() -> State {
     let mut state = state();
-    let route = Route::Team {
+    let route = Route::People(people::Team {
         org: "github".into(),
         slug: "core".into(),
-    };
+    });
     open(&mut state, route, Data::Team(Box::new(fixtures::team())));
     state
 }
@@ -384,8 +387,8 @@ pub(crate) fn with_tabs(n: usize) -> State {
             oid: fixtures::commit().oid,
             pr: None,
         }),
-        Route::Releases(ghtui()),
-        Route::Stargazers(ghtui()),
+        Route::Releases(releases::Releases(ghtui())),
+        Route::People(people::Stargazers(ghtui())),
     ];
     for route in more.into_iter().cycle().take(n) {
         let _ = state.open_tab(crate::route::Target::Page(route).into());
@@ -435,11 +438,11 @@ pub(crate) fn with_discussion() -> State {
 /// A workflow run.
 pub(crate) fn with_run() -> State {
     let mut state = with_repo();
-    let route = Route::WorkflowRun {
+    let route = Route::Runs(runs::WorkflowRun {
         repo: ghtui(),
         run: 7,
         attempt: None,
-    };
+    });
     open(
         &mut state,
         route,
@@ -451,13 +454,13 @@ pub(crate) fn with_run() -> State {
 /// A job, its failed step's log open; `step` is the step a link pointed at.
 pub(crate) fn with_job(step: Option<(u32, u32)>) -> State {
     let mut state = with_repo();
-    let route = Route::Job {
+    let route = Route::Runs(runs::Job {
         repo: ghtui(),
         run: Some(7),
         job: 2,
         step,
         query: String::new(),
-    };
+    });
     let _ = state.push(route);
     let (job, log) = fixtures::job();
     fetched(
@@ -473,10 +476,10 @@ pub(crate) fn with_job(step: Option<(u32, u32)>) -> State {
 /// A workflow and its runs.
 pub(crate) fn with_workflow() -> State {
     let mut state = with_repo();
-    let route = Route::Workflow {
+    let route = Route::Runs(runs::Workflow {
         repo: ghtui(),
         file: "ci.yml".into(),
-    };
+    });
     let _ = state.push(route);
     let (workflow, runs) = fixtures::workflow_runs();
     let key = DataKey::Workflow(ghtui(), "ci.yml".into());
@@ -489,7 +492,7 @@ pub(crate) fn with_workflow() -> State {
 /// A repository's stargazers.
 pub(crate) fn with_stargazers() -> State {
     let mut state = with_repo();
-    let route = Route::Stargazers(ghtui());
+    let route = Route::People(people::Stargazers(ghtui()));
     open(&mut state, route, Data::Users(Box::new(fixtures::people())));
     state
 }
@@ -497,7 +500,7 @@ pub(crate) fn with_stargazers() -> State {
 /// A repository's forks.
 pub(crate) fn with_forks() -> State {
     let mut state = with_repo();
-    let route = Route::Forks(ghtui());
+    let route = Route::People(people::Forks(ghtui()));
     open(
         &mut state,
         route,
@@ -509,7 +512,7 @@ pub(crate) fn with_forks() -> State {
 /// A repository's releases.
 pub(crate) fn with_releases() -> State {
     let mut state = with_repo();
-    let route = Route::Releases(ghtui());
+    let route = Route::Releases(releases::Releases(ghtui()));
     open(
         &mut state,
         route,
@@ -521,10 +524,10 @@ pub(crate) fn with_releases() -> State {
 /// A release's page.
 pub(crate) fn with_release() -> State {
     let mut state = with_repo();
-    let route = Route::Release {
+    let route = Route::Releases(releases::Release {
         repo: ghtui(),
         tag: "v0.2.0".into(),
-    };
+    });
     open(
         &mut state,
         route,
@@ -586,10 +589,10 @@ pub(crate) fn with_milestone() -> State {
 /// A repository's deployments.
 pub(crate) fn with_deployments() -> State {
     let mut state = with_repo();
-    let route = Route::Deployments {
+    let route = Route::Runs(runs::Deployments {
         repo: ghtui(),
         environment: None,
-    };
+    });
     open(
         &mut state,
         route,
@@ -651,10 +654,10 @@ pub(crate) fn with_issue() -> State {
 
 pub(crate) fn with_profile(tab: ProfileTab) -> State {
     let mut state = state();
-    let route = Route::User {
+    let route = Route::People(people::User {
         login: "octocat".into(),
         tab,
-    };
+    });
     let _ = state.push(route.clone());
     let profile = Data::Profile(Box::new(fixtures::profile()));
     fetched(&mut state, DataKey::Profile("octocat".into()), profile);

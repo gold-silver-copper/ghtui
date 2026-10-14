@@ -4,6 +4,7 @@
 use super::*;
 use crate::api::model::Capped;
 use crate::route::issues;
+use crate::route::people;
 use crate::route::pulls;
 
 /// A conversation longer than what's fetched (its newest comments,
@@ -219,7 +220,7 @@ fn unlisted_stargazers_say_why() {
     (none.items, none.next) = (Vec::new(), None);
     open(
         &mut state,
-        Route::Stargazers(ghtui()),
+        Route::People(people::Stargazers(ghtui())),
         Data::Users(Box::new(none)),
     );
     let page = page_text(&state);

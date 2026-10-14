@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::route::code;
+use crate::route::runs;
 
 /// Actions on a page screen. Those that don't work on pages say where
 /// they do.
@@ -48,14 +49,16 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
             ));
         }
         // So is a line of a job's log.
-        Action::Open if matches!(p.route, Route::Job { .. }) && p.code_line().is_some() => {
+        Action::Open
+            if matches!(p.route, Route::Runs(runs::Job { .. })) && p.code_line().is_some() =>
+        {
             let at = match p.selected_link().and_then(Link::url).map(Dest::from_url) {
                 Some(Dest {
                     target:
-                        Target::Page(Route::Job {
+                        Target::Page(Route::Runs(runs::Job {
                             step: Some((step, line)),
                             ..
-                        }),
+                        })),
                     ..
                 }) => format!("Line {line} of step {step}"),
                 _ => "A line of the log".to_owned(),
@@ -92,7 +95,7 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 Some((n, of)) => state.info(format!("Match {n} of {of}")),
                 None if p.page.marks.is_empty() => {
                     let query = match &p.route {
-                        Route::Job { query, .. } => Some(query.clone()),
+                        Route::Runs(runs::Job { query, .. }) => Some(query.clone()),
                         _ => p.find.clone(),
                     };
                     let search = state.first_key(Action::Search);

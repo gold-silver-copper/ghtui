@@ -2,6 +2,7 @@
 //! Actions tab, an issue.
 
 use super::*;
+use crate::route::runs;
 use std::collections::HashSet;
 
 use crate::api::Polled;
@@ -154,13 +155,13 @@ fn a_first_answer_newer_than_the_issue_is_fetched() {
 #[test]
 fn a_running_job_is_followed_to_its_end() {
     let mut s = with_repo();
-    let _ = s.push(Route::Job {
+    let _ = s.push(Route::Runs(runs::Job {
         repo: ghtui(),
         run: Some(7),
         job: 2,
         step: None,
         query: String::new(),
-    });
+    }));
     let (done, log) = crate::fixtures::job();
     let mut running = done.clone();
     running.outcome = CheckOutcome::Pending;
@@ -227,10 +228,10 @@ fn new_runs_on_the_actions_tab_are_said() {
     let mut s = with_repo();
     s.viewer = Some("octocat".into());
     let query = String::new();
-    let _ = s.push(Route::Actions {
+    let _ = s.push(Route::Runs(runs::Actions {
         repo: ghtui(),
         query: query.clone(),
-    });
+    }));
     let key = DataKey::Runs(ghtui(), query.clone());
     let (_, runs) = crate::fixtures::workflow_runs();
     fetched(&mut s, key.clone(), Data::Runs(Box::new(runs.clone())));

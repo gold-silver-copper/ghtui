@@ -12,6 +12,7 @@ use crate::git::Oid;
 use crate::route::app;
 use crate::route::code;
 use crate::route::issues;
+use crate::route::people;
 use crate::route::pulls;
 use crate::ui::chrome::{Crumb, PageTab};
 use crate::ui::pages::{PrTab, ProfileTab};
@@ -149,6 +150,9 @@ impl State {
         match route {
             Route::App(p) => p.chrome(self, c),
             Route::Code(p) => p.chrome(self, c),
+            Route::People(p) => p.chrome(self, c),
+            Route::Releases(p) => p.chrome(self, c),
+            Route::Runs(p) => p.chrome(self, c),
             Route::Issues(p) => p.chrome(self, c),
             Route::Pulls(p) => p.chrome(self, c),
             Route::Housekeeping(p) => p.chrome(self, c),
@@ -171,15 +175,6 @@ impl State {
                 c.crumb("Advisories", Some(Target::Page(Route::Advisories(None))));
                 c.crumb(ghsa, None);
             }
-            Route::Teams(org) => {
-                c.crumb(org, Some(Target::Page(Route::user(org))));
-                c.crumb("Teams", None);
-            }
-            Route::Team { org, slug } => {
-                c.crumb(org, Some(Target::Page(Route::user(org))));
-                c.crumb("Teams", Some(Target::Page(Route::Teams(org.clone()))));
-                c.crumb(slug, None);
-            }
             Route::Gists(login) => {
                 c.crumb(login, Some(Target::Page(Route::user(login))));
                 c.crumb("Gists", None);
@@ -194,10 +189,6 @@ impl State {
             } => {
                 c.crumb(org, Some(Target::Page(Route::user(org))));
                 c.crumb("Discussions", None);
-            }
-            Route::User { login, tab } => {
-                c.crumb(login, None);
-                self.profile_tabs(login, Some(*tab), None, c);
             }
             Route::Projects(ProjectsOf::Owner(owner)) => {
                 let login = owner.login();
@@ -335,10 +326,10 @@ impl State {
         let profile = self.picked::<Profile>(&DataKey::Profile(login.to_lowercase()));
         let org = profile.map(|p| p.is_org).or(org);
         let user = |tab| {
-            Target::Page(Route::User {
+            Target::Page(Route::People(people::User {
                 login: login.to_owned(),
                 tab,
-            })
+            }))
         };
         let sort = match tab {
             Some(ProfileTab::Repositories(sort)) => sort,
@@ -624,11 +615,6 @@ pub enum Section {
 fn section(route: &Route) -> Section {
     match route {
         Route::Discussions { .. } | Route::Discussion { .. } => Section::Discussions,
-        Route::Actions { .. }
-        | Route::WorkflowRun { .. }
-        | Route::Job { .. }
-        | Route::Workflow { .. }
-        | Route::Dispatch { .. } => Section::Actions,
         Route::Projects(_) => Section::Projects,
         Route::Wiki { .. } | Route::WikiEdit { .. } => Section::Wiki,
         Route::Advisories(_)
@@ -637,6 +623,9 @@ fn section(route: &Route) -> Section {
         | Route::Alert { .. } => Section::Security,
         Route::App(p) => p.section(),
         Route::Code(p) => p.section(),
+        Route::People(p) => p.section(),
+        Route::Releases(p) => p.section(),
+        Route::Runs(p) => p.section(),
         Route::Issues(p) => p.section(),
         Route::Pulls(p) => p.section(),
         Route::Site(p) => p.section(),

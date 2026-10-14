@@ -12,6 +12,7 @@
 //! said in the status bar; what you wrote isn't.
 
 use crate::route::issues;
+use crate::route::runs;
 use std::collections::HashSet;
 
 use crate::api::browse::{
@@ -134,7 +135,7 @@ fn watched(state: &State) -> Option<Watched> {
         return None;
     };
     Some(match &p.route {
-        Route::Job { repo, job, .. } => {
+        Route::Runs(runs::Job { repo, job, .. }) => {
             let j = state.picked::<Job>(&DataKey::Job(repo.clone(), *job))?;
             if !running(j) {
                 return None;
@@ -144,16 +145,16 @@ fn watched(state: &State) -> Option<Watched> {
                 job: *job,
             }
         }
-        Route::WorkflowRun { repo, run, attempt } => Watched::Run {
+        Route::Runs(runs::WorkflowRun { repo, run, attempt }) => Watched::Run {
             repo: repo.clone(),
             run: *run,
             attempt: *attempt,
         },
-        Route::Actions { repo, query } => Watched::Runs {
+        Route::Runs(runs::Actions { repo, query }) => Watched::Runs {
             repo: repo.clone(),
             query: query.clone(),
         },
-        Route::Workflow { repo, file } => Watched::Runs {
+        Route::Runs(runs::Workflow { repo, file }) => Watched::Runs {
             repo: repo.clone(),
             query: format!("workflow:{file}"),
         },
@@ -264,7 +265,7 @@ pub fn schedule(state: &mut State) -> Vec<Cmd> {
         let ended = matches!(
             (&state.page_watch, &here, state.screen()),
             (Some(PageWatch { what: Watched::Job { job, .. }, .. }), None, Screen::Page(p))
-                if matches!(&p.route, Route::Job { job: on, .. } if on == job)
+                if matches!(&p.route, Route::Runs(runs::Job { job: on, .. }) if on == job)
         );
         if !ended {
             state.page_watch = here.map(|what| PageWatch::new(what, state));
