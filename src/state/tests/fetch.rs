@@ -26,6 +26,7 @@ fn cached_data_shows_while_fetching() {
             key: DataKey::Profile("octocat".into()),
             result: Ok(Data::Profile(Box::new(crate::fixtures::profile()))),
             cached_at: Some(0),
+            source: None,
         },
     );
     assert!(page(&state).page().lines[0].text().contains("The Octocat"));
@@ -55,6 +56,7 @@ fn a_refresh_error_shared_by_needs_is_said_once() {
         key: repos.clone(),
         result,
         cached_at: None,
+        source: None,
     };
     let none = SearchResults::Repos(crate::api::browse::Results::default());
     update(&mut state, fetched(Ok(Data::Search(Box::new(none)))));
@@ -155,6 +157,7 @@ fn a_fresh_copy_keeps_the_selected_issue() {
             key: key.clone(),
             result: Ok(list(&[14, 11, 8])),
             cached_at: Some(0),
+            source: None,
         },
     );
     while !selected_text(&state).contains("Issue 11") {
@@ -183,6 +186,7 @@ fn an_edited_comment_stays_selected() {
             key: key.clone(),
             result: Ok(Data::Issue(Some(Box::new(issue.clone())))),
             cached_at: Some(0),
+            source: None,
         },
     );
     let Screen::Page(p) = s.screen_mut() else {

@@ -22,10 +22,8 @@ pub fn star(state: &mut State) -> Vec<Cmd> {
 /// Shows a repository as starred or not (optimistically, before GitHub
 /// confirms).
 pub fn set_starred(state: &mut State, repo: &RepoId, starred: bool) {
-    if let Some(Remote {
-        data: Some(Data::Repo(o)),
-        ..
-    }) = state.data.get_mut(&DataKey::Repo(repo.clone()))
+    if let Some(remote) = state.data.get_mut(&DataKey::Repo(repo.clone()))
+        && let Some(Data::Repo(o)) = &mut remote.data
         && o.starred != starred
     {
         o.starred = starred;
@@ -34,8 +32,8 @@ pub fn set_starred(state: &mut State, repo: &RepoId, starred: bool) {
         } else {
             o.summary.stars.saturating_sub(1)
         };
+        remote.changed();
     }
-    state.data_gen += 1;
 }
 
 /// `>`: a reply quoting the selected comment, under it.

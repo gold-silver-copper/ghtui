@@ -2,6 +2,9 @@
 //! task lists, quotes, tables, highlighted code blocks, links and images.
 //! HTML is reduced to its text (images to their alt text, links kept).
 
+use std::cell::RefCell;
+use std::collections::VecDeque;
+
 use crate::diff::highlight::{Language, highlight};
 use crate::diff::text::Text;
 use crate::theme::Syntax;
@@ -599,6 +602,30 @@ fn attr(tag: &str, name: &str) -> Option<String> {
             .map_or(rest, |(value, _)| value)
             .to_owned(),
     )
+}
+
+/// How many files' highlighted lines are kept.
+const FILES_KEPT: usize = 4;
+
+/// [`highlighted`], for a file's whole text: the last few files' lines are
+/// kept, so a page built again (resized, say) doesn't highlight its file
+/// again, nor a blame its file's.
+pub(crate) fn highlighted_file(code: &str, lang: Option<Language>) -> Vec<Vec<Seg>> {
+    type Kept = VecDeque<(Option<Language>, String, Vec<Vec<Seg>>)>;
+    thread_local! {
+        static KEPT: RefCell<Kept> = const { RefCell::new(VecDeque::new()) };
+    }
+    KEPT.with_borrow_mut(|kept| {
+        if let Some((.., lines)) = kept.iter().find(|(l, c, _)| *l == lang && c == code) {
+            return lines.clone();
+        }
+        let lines = highlighted(code, lang);
+        if kept.len() == FILES_KEPT {
+            kept.pop_front();
+        }
+        kept.push_back((lang, code.to_owned(), lines.clone()));
+        lines
+    })
 }
 
 /// `code`'s lines as highlighted segments.

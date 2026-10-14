@@ -365,7 +365,7 @@ pub fn keep_text(state: &mut State, text: &Text, written: String) {
         Text::Wiki(route) => crate::wiki::form::keep_text(state, route, written),
         Text::Housekeeping(route) => crate::housekeeping::keep_text(state, route, written),
     }
-    state.data_gen += 1;
+    state.shown_gen += 1;
 }
 
 /// ctrl-s in the composer: keeps its text, and saves the form.
@@ -456,7 +456,7 @@ pub(crate) fn sending(state: &mut State) {
         }
         _ => {}
     }
-    state.data_gen += 1;
+    state.shown_gen += 1;
 }
 
 /// Closes the composer or question that sent something to `route`'s

@@ -159,7 +159,7 @@ pub fn compose(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     }
     let text = form.text.clone();
-    state.data_gen += 1;
+    state.shown_gen += 1;
     let cmds = state.compose(ComposeTarget::Write(Text::Wiki(route)), &text);
     if let Some(Overlay::Compose(c)) = &mut state.overlay {
         c.input.move_cursor(ratatui_textarea::CursorMove::Top);

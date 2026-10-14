@@ -2,9 +2,10 @@
 
 use super::*;
 
-/// What a page was built for: the data's generation, its diff's inputs
-/// (a pull request's Review tab shows them), the width and the density.
-pub(super) type Built = (u64, Option<u64>, u16, bool);
+/// What a page was built for: the versions of GitHub's data it reads, the
+/// generation of the rest of what it shows, its diff's inputs (a pull
+/// request's Review tab shows them), the width and the density.
+pub(super) type Built = (u64, u64, Option<u64>, u16, bool);
 
 /// The screen of one page: where it is, what's selected, and the page as
 /// last built.
@@ -17,6 +18,9 @@ pub struct PageScreen {
     pub selected: Option<usize>,
     pub(super) page: Arc<Page>,
     pub(super) built: Option<Built>,
+    /// When a time the page shows relative to now ("3m ago") reads
+    /// differently, and the page is built again.
+    pub(super) expires: u64,
     /// Nothing has been selected or scrolled yet: select the first visible
     /// item once the page has items.
     pub(super) fresh: bool,
@@ -55,6 +59,7 @@ impl PageScreen {
             selected: None,
             page: Arc::new(Page::default()),
             built: None,
+            expires: u64::MAX,
             fresh: list,
             jumped: None,
             anchor,
@@ -184,25 +189,30 @@ impl State {
         usize::from(self.page_area().height).max(1)
     }
 
-    /// Rebuilds the page on screen if its data or the width changed, and
-    /// keeps its scroll and selection valid.
+    /// Rebuilds the page on screen if what it shows changed (its data,
+    /// the width, a time relative to now), and keeps its scroll and
+    /// selection valid.
     pub fn sync_page(&mut self) {
         let width = self.page_width();
         let height = self.page_height();
+        let now = (self.clock)();
         let Screen::Page(p) = self.screen() else {
             return;
         };
         let built = (
-            self.data_gen,
+            self.data_version(&p.route),
+            self.shown_gen,
             self.diff_version(&p.route),
             width,
             self.compact(),
         );
-        let rebuild = (p.built != Some(built)).then(|| p.route.clone());
-        let page = rebuild.map(|route| self.build_page(&route, width, (self.clock)()));
+        let rebuild = (p.built != Some(built) || now >= p.expires).then(|| p.route.clone());
+        let page = rebuild
+            .map(|route| crate::ui::time::until_changed(|| self.build_page(&route, width, now)));
         if let Screen::Page(p) = self.screen_mut() {
-            if let Some(page) = page {
+            if let Some((page, expires)) = page {
                 p.show(page, built);
+                p.expires = expires;
             }
             settle(p, height);
         }

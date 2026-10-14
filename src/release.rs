@@ -328,7 +328,7 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
     {
         let form = Form::of(r, id);
         state.writing.releases.insert(route.clone(), form);
-        state.data_gen += 1;
+        state.shown_gen += 1;
     }
     let mut cmds = Vec::new();
     let loaded = state.overview(&repo).is_some();
@@ -359,7 +359,7 @@ pub fn compose(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     }
     let text = form.text.clone();
-    state.data_gen += 1;
+    state.shown_gen += 1;
     let cmds = state.compose(ComposeTarget::Write(Text::Release(route)), &text);
     if let Some(Overlay::Compose(c)) = &mut state.overlay {
         c.input.move_cursor(ratatui_textarea::CursorMove::Top);
@@ -393,7 +393,7 @@ pub fn follow_link(state: &mut State, link: &WriteLink) -> Vec<Cmd> {
         WriteLink::Prerelease => {
             let form = form_mut(state, &route);
             form.prerelease = !form.prerelease;
-            state.data_gen += 1;
+            state.shown_gen += 1;
             Vec::new()
         }
         WriteLink::Latest if form.prerelease => {
@@ -403,7 +403,7 @@ pub fn follow_link(state: &mut State, link: &WriteLink) -> Vec<Cmd> {
         WriteLink::Latest => {
             let form = form_mut(state, &route);
             form.latest = !form.latest;
-            state.data_gen += 1;
+            state.shown_gen += 1;
             Vec::new()
         }
         WriteLink::Save => submit(state),
@@ -426,7 +426,7 @@ fn generate(state: &mut State) -> Vec<Cmd> {
     }
     let target = form.target.clone().filter(|_| form.new_tag());
     form_mut(state, &route).generating = true;
-    state.data_gen += 1;
+    state.shown_gen += 1;
     state.info("Asking GitHub for release notes…");
     vec![Cmd::Write(Writes::Release(Work::Notes {
         repo,
@@ -555,7 +555,7 @@ pub fn choose_tag(state: &mut State, route: &Route, tag: String) -> Vec<Cmd> {
     form.tag = Some(tag);
     form.error = None;
     let blank = form.text.trim().is_empty();
-    state.data_gen += 1;
+    state.shown_gen += 1;
     let mut cmds = follow(state);
     // Then its title and notes, as on GitHub.
     if blank && state.overlay.is_none() {
@@ -567,7 +567,7 @@ pub fn choose_tag(state: &mut State, route: &Route, tag: String) -> Vec<Cmd> {
 #[must_use]
 pub fn choose_target(state: &mut State, route: &Route, target: String) -> Vec<Cmd> {
     form_mut(state, route).target = Some(target);
-    state.data_gen += 1;
+    state.shown_gen += 1;
     Vec::new()
 }
 

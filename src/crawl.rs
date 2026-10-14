@@ -115,7 +115,6 @@ async fn load(gh: &GitHub, local: &Arc<Local>, state: &mut State, route: &Route)
             Err(err) => eprintln!("  {key:?}: {err}"),
         }
     }
-    state.data_gen += 1;
     true
 }
 

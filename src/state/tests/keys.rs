@@ -141,20 +141,6 @@ fn the_menu_filters_as_you_type() {
     assert!(!cmds.is_empty() || matches!(state.overlay, Some(Overlay::Picker(_))));
 }
 
-/// Messages that don't carry page data (rate limits after every
-/// request, notices, diff progress) don't rebuild the page.
-#[test]
-fn only_page_data_rebuilds_pages() {
-    let mut state = with_repo();
-    let generation = state.data_gen;
-    update(&mut state, Msg::RateLimits(RateLimits::default()));
-    update(&mut state, Msg::Notice(Notice::Info("hi".into())));
-    update(&mut state, Msg::Problem(Problem::Drafts, None));
-    assert_eq!(state.data_gen, generation);
-    update(&mut state, Msg::Viewer(Ok("me".into())));
-    assert_eq!(state.data_gen, generation + 1);
-}
-
 /// A URL is only ever a URL: even one spelled like an old internal
 /// action can't star a repository.
 #[test]

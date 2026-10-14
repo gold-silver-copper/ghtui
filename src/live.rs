@@ -529,7 +529,7 @@ pub fn activity_loaded(state: &mut State, pr: &PrRef) {
         data,
         viewer,
         notices,
-        data_gen,
+        shown_gen,
         ..
     } = state;
     let activity = (data.get(&DataKey::PrActivity(pr.clone())))
@@ -583,7 +583,7 @@ pub fn activity_loaded(state: &mut State, pr: &PrRef) {
     let (new_threads, replies) = note_threads(w, &activity.threads, viewer);
     what.extend(threads_said(new_threads, replies));
     if !what.is_empty() {
-        *data_gen += 1;
+        *shown_gen += 1;
         notices.info(format!("New on {pr}: {}", what.join(", ")));
     }
 }

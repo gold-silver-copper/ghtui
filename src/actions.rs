@@ -278,7 +278,7 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
             let form = state.dispatching.forms.entry(key).or_default();
             form.git_ref = Some(name);
             form.error = None;
-            state.data_gen += 1;
+            state.shown_gen += 1;
             // Its inputs are read from the file on that branch.
             blob_need(state).map_or_else(Vec::new, |need| state.ensure(need, false))
         }
@@ -289,7 +289,7 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
             let form = state.dispatching.forms.entry(key).or_default();
             form.values.insert(name, value);
             form.error = None;
-            state.data_gen += 1;
+            state.shown_gen += 1;
             Vec::new()
         }
     }
@@ -529,12 +529,12 @@ fn run(state: &mut State) -> Vec<Cmd> {
         .find(|(i, (_, v))| i.required && v.is_empty())
     {
         form.error = Some(format!("{} is required", missing.0.name));
-        state.data_gen += 1;
+        state.shown_gen += 1;
         return Vec::new();
     }
     form.sending = true;
     form.error = None;
-    state.data_gen += 1;
+    state.shown_gen += 1;
     vec![Cmd::Api(Api::Actions(Work::Dispatch {
         repo,
         file,
@@ -560,7 +560,7 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
             let key = (repo.clone(), file.clone());
             let form = state.dispatching.forms.entry(key.clone()).or_default();
             form.sending = false;
-            state.data_gen += 1;
+            state.shown_gen += 1;
             let on_form = here(state) == Some(key.clone());
             match result {
                 Err(err) => {

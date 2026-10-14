@@ -81,6 +81,7 @@ fn a_comment_link_follows_its_comment_when_the_issue_refreshes() {
                 key: key.clone(),
                 result: Ok(cached),
                 cached_at: Some(0),
+                source: None,
             },
         );
         moved(&mut s);

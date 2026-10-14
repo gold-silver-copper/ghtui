@@ -163,6 +163,7 @@ fn a_picker_list_that_failed_says_why() {
                 key: key.clone(),
                 result,
                 cached_at,
+                source: None,
             },
         );
         let f = overlay!(state, Picker);
@@ -302,7 +303,12 @@ fn search_box_jumps_searches_and_loads_more() {
     }
     update(
         &mut state,
-        Msg::FetchedMore(key.clone(), "c1".into(), Ok(Data::Search(Box::new(more)))),
+        Msg::FetchedMore(
+            key.clone(),
+            "c1".into(),
+            Ok(Data::Search(Box::new(more))),
+            None,
+        ),
     );
     let Some(Data::Search(results)) = state.get(&key) else {
         panic!()
@@ -336,6 +342,7 @@ fn search_box_jumps_searches_and_loads_more() {
             key.clone(),
             "c2".into(),
             Ok(Data::Search(Box::new(crate::fixtures::issue_results(None)))),
+            None,
         ),
     );
     let Some(Data::Search(results)) = state.get(&key) else {

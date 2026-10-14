@@ -64,7 +64,7 @@ fn a_section_opens_the_rest_of_its_list() {
     let mut state = state();
     crate::fixtures::section(&mut state, 1, mine(30, 31));
     state.home[1].search.as_mut().unwrap().rows = 5;
-    state.data_gen += 1;
+    state.shown_gen += 1;
     state.sync_page();
     let text = page_text(&state);
     assert!(text.contains("Your pull requests  5 of 31"), "{text:?}");

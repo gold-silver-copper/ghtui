@@ -204,7 +204,7 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
                 started: true,
                 ..Form::default()
             };
-            state.data_gen += 1;
+            state.shown_gen += 1;
             Vec::new()
         }
         _ => {
@@ -254,7 +254,7 @@ pub fn compose(state: &mut State, i: usize) -> Vec<Cmd> {
         return Vec::new();
     }
     let text = file.text.clone();
-    state.data_gen += 1;
+    state.shown_gen += 1;
     state.compose(ComposeTarget::Write(Text::GistFile(route, i)), &text)
 }
 
@@ -321,7 +321,7 @@ fn remove(state: &mut State, route: &Route, i: usize) {
     if let Some((was, _)) = file.was {
         form.removed.push(was);
     }
-    state.data_gen += 1;
+    state.shown_gen += 1;
     let name = if file.name.is_empty() {
         "the file".to_owned()
     } else {
@@ -378,13 +378,13 @@ pub fn name_rows(
 #[must_use]
 pub fn set_description(state: &mut State, route: &Route, text: String) -> Vec<Cmd> {
     form_mut(state, route).description = text;
-    state.data_gen += 1;
+    state.shown_gen += 1;
     Vec::new()
 }
 
 #[must_use]
 pub fn set_name(state: &mut State, route: &Route, file: Option<usize>, name: String) -> Vec<Cmd> {
-    state.data_gen += 1;
+    state.shown_gen += 1;
     let form = form_mut(state, route);
     match file {
         Some(i) => {

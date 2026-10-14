@@ -98,6 +98,7 @@ fn a_failed_home_section_says_why_and_the_others_show() {
             key,
             result: Err(err),
             cached_at: None,
+            source: None,
         },
     );
     let page = page_text(&state);

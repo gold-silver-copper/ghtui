@@ -88,6 +88,11 @@ impl Offline {
 
 #[must_use]
 pub fn on_msg(state: &mut State, msg: Msg) -> Vec<Do> {
+    // Pages show whether GitHub can be reached, the queue and what's
+    // kept; not how often it's asked.
+    if !matches!(msg, Msg::Probed(_)) {
+        state.shown_gen += 1;
+    }
     match msg {
         Msg::Reach(Some(since)) => {
             state.offline.since = Some(since);

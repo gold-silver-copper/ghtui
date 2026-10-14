@@ -652,6 +652,7 @@ fn a_rerun_job_is_followed_to_its_new_attempt() {
             key: DataKey::Job(ghtui(), 2),
             result: Ok(Data::Job(Box::new(job))),
             cached_at: None,
+            source: None,
         },
     );
     assert!(

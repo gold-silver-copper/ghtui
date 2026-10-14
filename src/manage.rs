@@ -1441,7 +1441,7 @@ impl Work {
 /// Work's answers.
 #[must_use]
 pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
-    state.data_gen += 1;
+    state.shown_gen += 1;
     match done {
         Done::Issues(repo, found) => {
             state.managing.issues.insert(repo, found);

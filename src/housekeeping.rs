@@ -1003,7 +1003,7 @@ pub fn compose(state: &mut State) -> Vec<Cmd> {
         }
     }
     let text = f.text.clone();
-    state.data_gen += 1;
+    state.shown_gen += 1;
     let target = crate::review::ComposeTarget::Write(crate::writes::Text::Housekeeping(route));
     let cmds = state.compose(target, &text);
     if let Some(crate::state::Overlay::Compose(c)) = &mut state.overlay {
@@ -1191,7 +1191,7 @@ fn check(route: &Route, field: Field, value: &str) -> Option<String> {
 pub fn open_field(state: &mut State, route: &Route, field: Field) -> Vec<Cmd> {
     if field.toggles() {
         form_mut(state, route).toggle(field);
-        state.data_gen += 1;
+        state.shown_gen += 1;
         return Vec::new();
     }
     crate::writes::open_picker(
@@ -1208,7 +1208,7 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
             f.set(field, value);
             f.error = None;
             let blank = f.text.is_empty();
-            state.data_gen += 1;
+            state.shown_gen += 1;
             // A new file, once named, is written, as on GitHub.
             let new_file = matches!(
                 &route,

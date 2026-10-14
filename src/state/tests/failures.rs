@@ -11,6 +11,7 @@ fn failed(state: &mut State, key: DataKey) {
             key,
             result: Err(crate::api::ApiError::Network("timed out".into())),
             cached_at: None,
+            source: None,
         },
     );
 }
@@ -215,6 +216,7 @@ fn every_route_says_why_when_its_needs_fail() {
                     },
                     key,
                     cached_at: None,
+                    source: None,
                 };
                 update(&mut state, msg);
             }

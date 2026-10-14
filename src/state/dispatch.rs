@@ -15,22 +15,19 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
 /// burst of background results, then settles once.
 #[must_use]
 pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
-    // Pages are built from GitHub's data; only these change it.
-    // A page opened from cached data alone brings no data: its forms
+    // What's followed until GitHub shows it is checked when data comes
+    // in. A page opened from cached data alone brings no data: its forms
     // still need filling in.
     let opened = state.route().cloned();
-    let data = matches!(
+    // Who's signed in, and what the writes' answers changed of the
+    // features' own state, show on pages too.
+    let shown = matches!(
         msg,
-        Msg::Viewer(_)
-            | Msg::Fetched { .. }
-            | Msg::FetchedMore(..)
-            | Msg::Source(..)
-            | Msg::Changed(..)
-            | Msg::Create(_)
-            | Msg::Write(_)
+        Msg::Viewer(_) | Msg::Changed(..) | Msg::Create(_) | Msg::Write(_)
     );
-    if data {
-        state.data_gen += 1;
+    let data = shown || matches!(msg, Msg::Fetched { .. } | Msg::FetchedMore(..));
+    if shown {
+        state.shown_gen += 1;
     }
     // A write changes what GitHub shows, wherever it shows it.
     let wrote = match &msg {
@@ -52,6 +49,7 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
             key: DataKey::PrActivity(pr),
             result: Ok(_),
             cached_at: None,
+            ..
         } => Some(pr.clone()),
         _ => None,
     };
@@ -70,6 +68,7 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
             key,
             result: Ok(_),
             cached_at: None,
+            ..
         } => Some(key.clone()),
         _ => None,
     };
@@ -137,12 +136,14 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             key,
             result,
             cached_at,
+            source,
         } => {
             if let Err(err) = &result {
                 tracing::warn!(?key, %err, "fetch failed");
             }
             let is_pr = matches!(result, Ok(Data::Issue(None)));
             let remote = state.data.entry(key.clone()).or_default();
+            remote.source = source.or(remote.source.take());
             match cached_at {
                 None => remote.finish(result),
                 // A first look while it loads: shown over nothing, or over
@@ -152,6 +153,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                     if older && let Ok(data) = result {
                         remote.data = Some(data);
                         remote.cached_at = Some(at);
+                        remote.changed();
                     }
                 }
             }
@@ -183,14 +185,13 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 return state.replace(Route::pr(PrRef { repo, number }), true, anchor);
             }
         }
-        Msg::Source(key, from) => {
-            state.sources.insert(key, from);
-        }
-        Msg::FetchedMore(key, after, result) => {
+        Msg::FetchedMore(key, after, result, source) => {
             let Some(remote) = (state.data.get_mut(&key)).filter(|r| r.more == Some(after)) else {
                 return Vec::new();
             };
             remote.more = None;
+            remote.changed();
+            remote.source = source.or(remote.source.take());
             match result {
                 Ok(more) => {
                     if let Some(data) = &mut remote.data {
@@ -225,10 +226,8 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 return state.ensure_route(&Route::App(app::Home), false);
             }
         }
-        Msg::Timer(Timer::Minute) => {
-            state.data_gen += 1;
-            return vec![Cmd::Timer(Timer::Minute, 60_000)];
-        }
+        // Settling rebuilds the page if a time it shows has moved on.
+        Msg::Timer(Timer::Minute) => return vec![Cmd::Timer(Timer::Minute, 60_000)],
         Msg::SuggestDue(q) => {
             if let Some(Overlay::Search(sb)) = &state.overlay
                 && sb.query() == q
@@ -258,10 +257,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Code(ask, result) => return crate::code_nav::answered(state, &ask, result),
         Msg::Edited(purpose, result) => return on_edited(state, purpose, result),
         Msg::HomeEdited { edit, result, what } => return state.home_edited(&edit, result, what),
-        Msg::Offline(msg) => {
-            state.data_gen += 1;
-            return crate::offline::on_msg(state, msg);
-        }
+        Msg::Offline(msg) => return crate::offline::on_msg(state, msg),
         Msg::Timer(Timer::Probe) => return crate::offline::on_timer(state),
     }
     Vec::new()

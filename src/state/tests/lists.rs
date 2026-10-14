@@ -38,7 +38,12 @@ fn commit_history_loads_more() {
     }
     update(
         &mut state,
-        Msg::FetchedMore(key.clone(), "h1".into(), Ok(Data::History(Box::new(more)))),
+        Msg::FetchedMore(
+            key.clone(),
+            "h1".into(),
+            Ok(Data::History(Box::new(more))),
+            None,
+        ),
     );
     let Some(Data::History(h)) = state.get(&key) else {
         panic!()
@@ -83,7 +88,7 @@ fn an_extended_list_is_kept_until_asked() {
     press(&mut state, "<Enter>");
     update(
         &mut state,
-        Msg::FetchedMore(key.clone(), "2".into(), Ok(page(20, None))),
+        Msg::FetchedMore(key.clone(), "2".into(), Ok(page(20, None)), None),
     );
     let star = Change::Star {
         repo: ghtui(),
@@ -147,11 +152,11 @@ fn a_next_page_from_before_a_refresh_is_not_appended() {
     // The page after the old list's h1, then the one after h2.
     update(
         &mut state,
-        Msg::FetchedMore(key.clone(), "h1".into(), Ok(page('b', None))),
+        Msg::FetchedMore(key.clone(), "h1".into(), Ok(page('b', None)), None),
     );
     update(
         &mut state,
-        Msg::FetchedMore(key.clone(), "h2".into(), Ok(page('d', None))),
+        Msg::FetchedMore(key.clone(), "h2".into(), Ok(page('d', None)), None),
     );
     let Some(Data::History(h)) = state.get(&key) else {
         panic!()
@@ -212,11 +217,12 @@ fn a_next_page_survives_a_failed_refresh() {
             key: key.clone(),
             result,
             cached_at,
+            source: None,
         },
     );
     update(
         &mut state,
-        Msg::FetchedMore(key.clone(), "h1".into(), Ok(page(None))),
+        Msg::FetchedMore(key.clone(), "h1".into(), Ok(page(None)), None),
     );
     let Some(Data::History(h)) = state.get(&key) else {
         panic!()

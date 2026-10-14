@@ -1,7 +1,13 @@
 //! Data from GitHub: what's fetched, when, and what's still running.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use super::*;
 use crate::route::{app, issues, pulls};
+
+/// The last version given out, shared by every [`Remote`] so that one
+/// removed and made again never repeats a version a page was built at.
+static STAMP: AtomicU64 = AtomicU64::new(0);
 
 /// Data that comes from GitHub: what we have (possibly cached), whether a
 /// refresh is in flight, and the last refresh error.
@@ -22,6 +28,11 @@ pub struct Remote<T> {
     pub(super) extended: bool,
     /// Load more was asked for while the list reloaded: asked once it's in.
     pub(super) more_wanted: bool,
+    /// Where git could have answered it, where it came from.
+    pub source: Option<crate::source::From>,
+    /// Changes whenever what a page shows of it may have: a page built
+    /// at the same versions of what it reads is the same page.
+    pub(crate) version: u64,
 }
 
 impl<T> Remote<T> {
@@ -43,6 +54,8 @@ impl<T> Default for Remote<T> {
             stale: false,
             extended: false,
             more_wanted: false,
+            source: None,
+            version: 0,
         }
     }
 }
@@ -61,26 +74,18 @@ impl<T> Remote<T> {
     }
 
     pub fn cached(cached: Option<crate::store::Cached<T>>) -> Self {
-        Self {
+        let mut remote = Self {
             cached_at: cached.as_ref().map(|c| c.fetched_at),
             data: cached.map(|c| c.value),
             ..Self::default()
-        }
+        };
+        remote.changed();
+        remote
     }
 
-    /// Where the fetch is at, without the data.
-    pub fn status(&self) -> Remote<()> {
-        Remote {
-            data: self.data.as_ref().map(|_| ()),
-            loading: self.loading,
-            error: self.error.clone(),
-            cached_at: self.cached_at,
-            asked_at: self.asked_at,
-            more: self.more.clone(),
-            stale: self.stale,
-            extended: self.extended,
-            more_wanted: self.more_wanted,
-        }
+    /// Something a page may show of it changed.
+    pub(crate) fn changed(&mut self) {
+        self.version = STAMP.fetch_add(1, Ordering::Relaxed) + 1;
     }
 
     /// Starts a fetch, unless one is running or (without `force`) the data
@@ -93,11 +98,16 @@ impl<T> Remote<T> {
         }
         self.loading = true;
         self.stale = false;
+        // What failed shows as loading again; what's there stays shown.
+        if self.data.is_none() && self.error.is_some() {
+            self.changed();
+        }
         true
     }
 
     pub(crate) fn finish(&mut self, result: Result<T, ApiError>) {
         self.loading = false;
+        self.changed();
         match result {
             Ok(data) => {
                 self.data = Some(data);
@@ -123,6 +133,7 @@ impl Remote<Data> {
         }
         let data = (self.data.as_ref()).filter(|_| self.more.is_none())?;
         self.more = Some(data.next_cursor()?.to_owned());
+        self.changed();
         self.more.clone()
     }
 }

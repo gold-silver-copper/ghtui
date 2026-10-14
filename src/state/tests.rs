@@ -44,6 +44,7 @@ fn mine_failed(state: &mut State, err: ApiError) {
             key,
             result: Err(err),
             cached_at: None,
+            source: None,
         },
     );
 }
@@ -216,6 +217,7 @@ mod links;
 mod lists;
 mod offline;
 mod pr_diff;
+mod rebuilds;
 mod repo;
 mod search;
 mod watch;

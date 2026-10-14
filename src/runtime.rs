@@ -471,32 +471,28 @@ fn spawn(
                             key,
                             result: Ok(c.value),
                             cached_at: Some(c.fetched_at),
+                            source: None,
                         });
                     }
                 };
                 if cached && key.cache_first() {
                     send_cached(gh.clone(), key.clone()).await;
                 }
-                let (result, from) = data::load::load(&gh, &local, &key, None, Some(&tx)).await;
+                let (result, source) = data::load::load(&gh, &local, &key, None, Some(&tx)).await;
                 if cached && !key.cache_first() && matches!(result, Err(ApiError::Offline(_))) {
                     send_cached(gh.clone(), key.clone()).await;
-                }
-                if let Some(from) = from {
-                    let _ = tx.send(Msg::Source(key.clone(), from));
                 }
                 Msg::Fetched {
                     key,
                     result,
                     cached_at: None,
+                    source,
                 }
             }
             Api::FetchMore { key, after } => {
                 let more = Some(after.clone());
-                let (result, from) = data::load::load(&gh, &local, &key, more, None).await;
-                if let Some(from) = from {
-                    let _ = tx.send(Msg::Source(key.clone(), from));
-                }
-                Msg::FetchedMore(key, after, result)
+                let (result, source) = data::load::load(&gh, &local, &key, more, None).await;
+                Msg::FetchedMore(key, after, result, source)
             }
             Api::Change(change, by) => {
                 let result = gh.change(&change).await;
@@ -716,9 +712,10 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             key: key.clone(),
             result: api(),
             cached_at: None,
+            source: None,
         },
         Cmd::Api(Api::FetchMore { key, after }) => {
-            Msg::FetchedMore(key.clone(), after.clone(), api())
+            Msg::FetchedMore(key.clone(), after.clone(), api(), None)
         }
         Cmd::Api(Api::Change(change, by)) => Msg::Changed(change.clone(), by.clone(), api()),
         Cmd::Api(Api::Suggest(q)) => Msg::Suggested(q.clone(), api()),

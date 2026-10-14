@@ -118,7 +118,7 @@ pub(super) fn follow(state: &mut State, route: &Route, of: &FormOf) -> Vec<Cmd> 
     if look.branch_head.is_none() {
         f.set(Field::Branch, format!("{login}-patch-1"));
     }
-    state.data_gen += 1;
+    state.shown_gen += 1;
     if state.overlay.is_some() {
         return Vec::new();
     }
@@ -143,7 +143,7 @@ pub(super) fn on_looked(
         Err(why) => Look::Failed(why),
     };
     form_mut(state, route).look = Some(look);
-    state.data_gen += 1;
+    state.shown_gen += 1;
     if state.route() == Some(route) {
         return super::follow(state);
     }

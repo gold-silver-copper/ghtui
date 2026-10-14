@@ -577,7 +577,7 @@ fn roadmap(page: &mut Page, at: &Spot<'_>, view: &ProjectView, dates: Dates<'_>,
         // Without a sort of its own, by when each starts, the undated last.
         items.sort_by_key(|it| span(it).map_or(i64::MAX, |(start, _)| start));
     }
-    let today = i64::try_from(cx.now / 86_400).unwrap_or_default();
+    let today = crate::ui::time::today(cx.now);
     let spans: Vec<(i64, i64)> = items.iter().filter_map(|it| span(it)).collect();
     let first = spans
         .iter()

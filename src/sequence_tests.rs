@@ -266,6 +266,7 @@ fn apply(state: &mut State, model: &mut Model, event: &Event) {
                     key,
                     result: Ok(data),
                     cached_at,
+                    source: None,
                 },
             );
         }
@@ -285,7 +286,7 @@ fn apply(state: &mut State, model: &mut Model, event: &Event) {
             let start = end.saturating_sub(u64::from(*overlap));
             let data = page(route, start, *len, FRESH + model.counter, *next);
             model.ends.insert(key.clone(), start + u64::from(*len));
-            update(state, Msg::FetchedMore(key, after, Ok(data)));
+            update(state, Msg::FetchedMore(key, after, Ok(data), None));
         }
         Event::Fail(route) => {
             let key = key_of(&routes[*route]);
@@ -295,6 +296,7 @@ fn apply(state: &mut State, model: &mut Model, event: &Event) {
                     key,
                     result: Err(ApiError::Network("down".into())),
                     cached_at: None,
+                    source: None,
                 },
             );
         }
@@ -416,6 +418,7 @@ fn joined_diff_work_is_the_same_in_every_arrival_order() {
                     key: DataKey::Pr(pr.clone()),
                     result: Ok(Data::Pr(Box::new(detail.clone()))),
                     cached_at: None,
+                    source: None,
                 },
             };
             cmds.extend(update(&mut state, msg));

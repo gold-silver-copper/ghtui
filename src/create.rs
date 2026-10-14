@@ -469,7 +469,7 @@ pub fn compose(state: &mut State) -> Vec<Cmd> {
         form.opened = true;
     }
     // Its box on the page makes way.
-    state.data_gen += 1;
+    state.shown_gen += 1;
     let cmds = state.compose(ComposeTarget::Form(route), &text);
     // The title first, as on GitHub.
     if let Some(Overlay::Compose(c)) = &mut state.overlay {
@@ -484,7 +484,7 @@ pub fn keep_text(state: &mut State, route: &Route, text: String) {
     let form = state.creating.forms.entry(route.clone()).or_default();
     form.text = text;
     form.error = None;
-    state.data_gen += 1;
+    state.shown_gen += 1;
 }
 
 /// `,s`, ctrl-s in the composer, Enter on the form's button: makes the
@@ -559,7 +559,7 @@ fn sending(state: &mut State, on: bool) {
         form.sending = on;
         form.error = None;
     }
-    state.data_gen += 1;
+    state.shown_gen += 1;
     match &mut state.overlay {
         Some(Overlay::Compose(c)) => {
             c.sending = on;
@@ -1064,7 +1064,7 @@ pub fn follow_link(state: &mut State, link: &FormLink) -> Vec<Cmd> {
             if let Some(form) = here_mut(state) {
                 form.template = None;
             }
-            state.data_gen += 1;
+            state.shown_gen += 1;
             Vec::new()
         }
         FormLink::Labels => open_pick(state, Pick::Labels),
@@ -1127,7 +1127,7 @@ fn choose_template(state: &mut State, file: &str) -> Vec<Cmd> {
             .unwrap_or_default();
         form.filled = form.text.clone();
     }
-    state.data_gen += 1;
+    state.shown_gen += 1;
     compose(state)
 }
 
@@ -1309,7 +1309,7 @@ pub fn pick(state: &mut State, picked: Picked) -> Vec<Cmd> {
         Picked::Base(name) => form.base = Some(name),
         Picked::Head(name) => form.head = Some(name),
     }
-    state.data_gen += 1;
+    state.shown_gen += 1;
     follow(state)
 }
 

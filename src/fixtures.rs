@@ -75,6 +75,7 @@ pub(crate) fn fetched(state: &mut State, key: DataKey, data: Data) -> Vec<Cmd> {
             key,
             result,
             cached_at,
+            source: None,
         },
     )
 }
@@ -120,6 +121,7 @@ pub(crate) fn pr_fetched(
             key,
             result,
             cached_at,
+            source: None,
         },
     )
 }

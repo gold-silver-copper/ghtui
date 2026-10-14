@@ -99,7 +99,7 @@ pub(super) fn follow(
         f.set(Field::Due, due);
         f.text = m.description;
     }
-    state.data_gen += 1;
+    state.shown_gen += 1;
     if number.is_none() && state.overlay.is_none() {
         return super::open_field(state, route, Field::Title);
     }

@@ -1,5 +1,7 @@
 //! Relative times from GitHub's ISO 8601 timestamps, without a date library.
 
+use std::cell::Cell;
+
 /// Parses `YYYY-MM-DDTHH:MM:SS`, with optional fractional seconds, then
 /// `Z` or an offset (`+05:30`, `-0700`), to Unix seconds. GraphQL returns
 /// UTC, but REST doesn't always: commit search gives the committer's zone.
@@ -103,18 +105,46 @@ pub fn iso8601(secs: u64) -> String {
     format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}Z")
 }
 
+thread_local! {
+    /// The soonest a time written since [`until_changed`] began reads
+    /// differently (Unix seconds).
+    static CHANGES: Cell<u64> = const { Cell::new(u64::MAX) };
+}
+
+/// Runs `write`, and says the soonest any time it wrote relative to now
+/// ("3m ago", "in 2d", today) reads differently: until then, writing it
+/// again writes the same.
+pub fn until_changed<R>(write: impl FnOnce() -> R) -> (R, u64) {
+    let outer = CHANGES.replace(u64::MAX);
+    let written = write();
+    let soonest = CHANGES.get();
+    CHANGES.set(outer.min(soonest));
+    (written, soonest)
+}
+
+/// What's being written reads differently at `at`.
+fn changes_at(at: u64) {
+    CHANGES.set(CHANGES.get().min(at));
+}
+
 /// "just now", "5m ago", "3h ago", "2d ago", "6w ago", "1y ago".
 pub fn ago(then: u64, now: u64) -> String {
     let secs = now.saturating_sub(then);
-    let (n, unit) = match secs {
-        0..60 => return "just now".to_owned(),
-        60..3600 => (secs / 60, "m"),
-        3600..86_400 => (secs / 3600, "h"),
-        86_400..1_209_600 => (secs / 86_400, "d"),
-        1_209_600..31_536_000 => (secs / 604_800, "w"),
-        _ => (secs / 31_536_000, "y"),
+    // How many of what unit it counts, up to where the next unit starts.
+    let (unit, upto, name) = match secs {
+        0..60 => (60, 60, ""),
+        60..3600 => (60, 3600, "m"),
+        3600..86_400 => (3600, 86_400, "h"),
+        86_400..1_209_600 => (86_400, 1_209_600, "d"),
+        1_209_600..31_536_000 => (604_800, 31_536_000, "w"),
+        _ => (31_536_000, u64::MAX, "y"),
     };
-    format!("{n}{unit} ago")
+    let n = secs / unit;
+    changes_at(then.saturating_add((n + 1).saturating_mul(unit).min(upto)));
+    if name.is_empty() {
+        return "just now".to_owned();
+    }
+    format!("{n}{name} ago")
 }
 
 /// How long until an ISO timestamp: "in 5m", "in 3d"; "now" once past.
@@ -123,13 +153,24 @@ pub fn until_iso(iso: &str, now: u64) -> String {
         return iso.to_owned();
     };
     let secs = then.saturating_sub(now);
-    let (n, unit) = match secs {
+    let (unit, name) = match secs {
         0..60 => return "now".to_owned(),
-        60..3600 => (secs / 60, "m"),
-        3600..86_400 => (secs / 3600, "h"),
-        _ => (secs / 86_400, "d"),
+        60..3600 => (60, "m"),
+        3600..86_400 => (3600, "h"),
+        _ => (86_400, "d"),
     };
-    format!("in {n}{unit}")
+    let n = secs / unit;
+    // Once fewer than `n` units are left.
+    changes_at(then - n * unit + 1);
+    format!("in {n}{name}")
+}
+
+/// Which day it is (days since 1970-01-01), as far as what's written
+/// relative to today knows.
+pub fn today(now: u64) -> i64 {
+    let day = now / 86_400;
+    changes_at((day + 1).saturating_mul(86_400));
+    i64::try_from(day).unwrap_or_default()
 }
 
 /// Relative time for an ISO timestamp, or the raw string if unparseable.
@@ -161,6 +202,55 @@ mod tests {
         ] {
             assert_eq!(parse_iso8601(t).map(iso8601).as_deref(), Some(t));
         }
+    }
+
+    /// A time written relative to now says when it next reads
+    /// differently: the same until then, and different from then.
+    #[test]
+    fn relative_times_say_when_they_change() {
+        const NOW: u64 = 1_800_000_000;
+        let (h, d, y) = (3600, 86_400, 31_536_000);
+        for secs in [
+            0,
+            59,
+            60,
+            61,
+            h - 1,
+            h,
+            d - 1,
+            d,
+            14 * d - 1,
+            14 * d,
+            y - 1,
+            y,
+            3 * y,
+        ] {
+            let then = NOW - secs;
+            let (text, at) = until_changed(|| ago(then, NOW));
+            assert_eq!(
+                (ago(then, at - 1), at > NOW),
+                (text.clone(), true),
+                "{secs}"
+            );
+            assert_ne!(ago(then, at), text, "{secs}");
+            let due = iso8601(NOW + secs);
+            let (text, at) = until_changed(|| until_iso(&due, NOW));
+            if secs < 60 {
+                assert_eq!((text.as_str(), at), ("now", u64::MAX));
+                continue;
+            }
+            assert_eq!(
+                (until_iso(&due, at - 1), at > NOW),
+                (text.clone(), true),
+                "{secs}"
+            );
+            assert_ne!(until_iso(&due, at), text, "{secs}");
+        }
+        let (_, midnight) = until_changed(|| today(NOW));
+        assert_eq!(
+            (today(midnight - 1) + 1, midnight % d),
+            (today(midnight), 0)
+        );
     }
 
     /// Relative times at each boundary, on both sides of it.

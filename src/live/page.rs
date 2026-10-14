@@ -269,7 +269,7 @@ pub fn schedule(state: &mut State) -> Vec<Cmd> {
             state.page_watch = here.map(|what| PageWatch::new(what, state));
             // A followed job's page shows where it's at from now.
             if state.page_watch.as_ref().is_some_and(|w| w.follows) {
-                state.data_gen += 1;
+                state.shown_gen += 1;
                 state.sync_page();
             }
         }
@@ -607,7 +607,7 @@ pub fn loaded(state: &mut State, key: &DataKey) {
         }
     }
     if new > 0 {
-        state.data_gen += 1;
+        state.shown_gen += 1;
         state.info(format!("New on {place}: {new} {}", noun(new, word)));
     }
 }

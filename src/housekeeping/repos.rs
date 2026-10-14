@@ -48,7 +48,7 @@ pub(super) fn follow_fork(state: &mut State, route: &Route, repo: &RepoId) -> Ve
     f.started = true;
     f.set(Field::Owner, viewer);
     f.set(Field::Name, repo.name.clone());
-    state.data_gen += 1;
+    state.shown_gen += 1;
     Vec::new()
 }
 
@@ -65,7 +65,7 @@ pub(super) fn follow_new(state: &mut State, route: &Route) -> Vec<Cmd> {
     let f = form_mut(state, route);
     f.started = true;
     f.set(Field::Owner, viewer);
-    state.data_gen += 1;
+    state.shown_gen += 1;
     if state.overlay.is_none() {
         return super::open_field(state, route, Field::Name);
     }

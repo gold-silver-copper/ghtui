@@ -92,6 +92,7 @@ async fn answer(
                         key: key.clone(),
                         result: Ok(Data::Search(Box::new(r.clone()))),
                         cached_at: Some(crate::store::now()),
+                        source: None,
                     });
                 }
             };
@@ -108,6 +109,7 @@ async fn answer(
                     key: key.clone(),
                     result: Ok(Data::Pr(Box::new(detail.clone()))),
                     cached_at: None,
+                    source: None,
                 });
             }
             Data::Pr(Box::new(gh.with_behind(pr, detail).await))

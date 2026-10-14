@@ -153,7 +153,8 @@ pub fn gist(page: &mut Page, g: &Gist, now: u64) {
                 markdown::render(page, text, None, Frame::Body);
             }
             Some(text) => {
-                let lines = markdown::highlighted(text, crate::diff::Language::from_path(&f.name));
+                let lines =
+                    markdown::highlighted_file(text, crate::diff::Language::from_path(&f.name));
                 let width = lines.len().to_string().len();
                 for (i, mut segs) in lines.into_iter().enumerate() {
                     segs.insert(

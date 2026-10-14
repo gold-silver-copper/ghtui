@@ -118,7 +118,7 @@ pub(super) fn follow(
         }
         None => f.set(Field::Colour, colour),
     }
-    state.data_gen += 1;
+    state.shown_gen += 1;
     // A new label starts with its name.
     if name.is_none() && state.overlay.is_none() {
         return super::open_field(state, route, Field::Name);

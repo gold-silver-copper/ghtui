@@ -152,16 +152,32 @@ impl State {
         self.diffs.get(&of).map(DiffState::version)
     }
 
+    /// Which versions of GitHub's data a page is built from: its needs',
+    /// and what else it reads. One not asked for, or gone, is 0.
+    pub(crate) fn data_version(&self, route: &Route) -> u64 {
+        let version = |remote: Option<&Remote<Data>>| remote.map_or(0, |r| r.version);
+        let needs = (self.needs(route).iter()).fold(17, |h: u64, key| {
+            h.wrapping_mul(31).wrapping_add(version(self.data.get(key)))
+        });
+        // Read in no order: versions are never repeated, so a sum changes
+        // when any of them does, or one goes.
+        let family = route.family();
+        let also = (self.data.iter())
+            .filter(|(key, _)| family.also_reads(key))
+            .fold(0, |sum: u64, (_, r)| sum.wrapping_add(r.version));
+        needs.wrapping_mul(31).wrapping_add(also)
+    }
+
     /// How a page's fetches are going (the ones that have started).
-    pub(crate) fn fetches(&self, route: &Route) -> impl Iterator<Item = Remote<()>> {
-        (self.needs(route).into_iter()).filter_map(|key| self.data.get(&key).map(Remote::status))
+    pub(crate) fn fetches(&self, route: &Route) -> impl Iterator<Item = &Remote<Data>> {
+        (self.needs(route).into_iter()).filter_map(|key| self.data.get(&key))
     }
 
     /// Why the page's needs that show a copy couldn't refresh it, each
     /// reason once (one outage fails them all alike).
     fn stale_errors(&self, route: &Route) -> Option<String> {
         let fetches = self.fetches(route).filter(|r| r.data.is_some());
-        let errors = BTreeSet::from_iter(fetches.filter_map(|r| r.error));
+        let errors = BTreeSet::from_iter(fetches.filter_map(|r| r.error.as_deref()));
         (!errors.is_empty()).then(|| Vec::from_iter(errors).join("; "))
     }
 
@@ -229,7 +245,8 @@ impl State {
             page.blank();
         }
         // Where the page was read: a clone at a commit, or GitHub's API.
-        if let Some(from) = (route.family().shown_source()).and_then(|k| self.sources.get(&k)) {
+        let source = route.family().shown_source();
+        if let Some(from) = source.and_then(|k| self.remote(&k)?.source.as_ref()) {
             let note = vec![Seg::new(from.note(now), Role::Meta)];
             page.wrapped(note, 0, crate::ui::page::Frame::None);
         }

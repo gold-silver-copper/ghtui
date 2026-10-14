@@ -245,6 +245,7 @@ fn packages_say_what_the_token_lacks() {
             key: DataKey::Packages(of),
             result: Err(crate::api::ApiError::Denied(why.into())),
             cached_at: None,
+            source: None,
         },
     );
     let text = page_text(&s);

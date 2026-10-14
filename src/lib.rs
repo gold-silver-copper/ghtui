@@ -237,7 +237,6 @@ async fn run(started: Instant) -> Result<()> {
         .unwrap_or_default();
     cmds.push(state::Cmd::Timer(state::Timer::Minute, 60_000));
     cmds.push(state::Cmd::Api(Api::FetchUnread));
-    state.data_gen += 1;
     state.sync_page();
 
     install_panic_hook();

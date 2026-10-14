@@ -156,7 +156,7 @@ fn toggle(state: &mut State, anchor: &str, open: Option<bool>) {
         unfolded.remove(anchor)
     };
     if changed {
-        state.data_gen += 1;
+        state.shown_gen += 1;
     }
 }
 

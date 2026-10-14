@@ -54,16 +54,22 @@ pub enum Msg {
     /// How many notifications are unread.
     Unread(Result<crate::api::notifications::Unread, ApiError>),
     /// Page data; with `cached_at` (when it was fetched), the cached copy
-    /// shown while fetching.
+    /// shown while fetching. Where git could have answered, `source` says
+    /// where it came from.
     Fetched {
         key: DataKey,
         result: Result<Data, ApiError>,
         cached_at: Option<u64>,
+        source: Option<crate::source::From>,
     },
-    /// The next page of a list, asked for after the cursor.
-    FetchedMore(DataKey, String, Result<Data, ApiError>),
-    /// Where a page's data came from, git or the API; sent before it.
-    Source(DataKey, crate::source::From),
+    /// The next page of a list, asked for after the cursor, and where it
+    /// came from.
+    FetchedMore(
+        DataKey,
+        String,
+        Result<Data, ApiError>,
+        Option<crate::source::From>,
+    ),
     /// GitHub's answer to a change.
     Changed(Change, act::By, Result<(), ApiError>),
     Mouse(MouseEvent),
@@ -457,10 +463,11 @@ pub struct State {
     pub home_timer: bool,
     /// Everything else pages show.
     pub data: HashMap<DataKey, Remote<Data>>,
-    /// Bumped whenever data changes, so pages know to rebuild.
-    pub data_gen: u64,
-    /// Where the data git can answer came from, git or the API.
-    pub sources: HashMap<DataKey, crate::source::From>,
+    /// Bumped whenever what pages show besides GitHub's data changes
+    /// (forms, writes on their way, who's signed in, whether GitHub can
+    /// be reached), so pages know to rebuild; GitHub's data has its own
+    /// versions ([`Remote`]).
+    pub shown_gen: u64,
     pub diffs: HashMap<DiffOf, DiffState>,
     pub viewer: Option<String>,
     /// How many notifications are unread, for the header.
@@ -543,8 +550,7 @@ impl State {
             home_editing: false,
             home_timer: false,
             data: HashMap::new(),
-            data_gen: 0,
-            sources: HashMap::new(),
+            shown_gen: 0,
             diffs: HashMap::new(),
             viewer: None,
             unread: None,

@@ -602,7 +602,7 @@ impl State {
                 self.error(why);
             }
         }
-        self.data_gen += 1;
+        self.shown_gen += 1;
         if self.route() == Some(&Route::App(app::Home)) {
             self.ensure_route(&Route::App(app::Home), false)
         } else {
