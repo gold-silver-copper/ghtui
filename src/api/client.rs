@@ -1209,11 +1209,7 @@ impl GitHub {
     }
 
     pub async fn viewer_login(&self) -> Result<String, ApiError> {
-        #[derive(serde::Deserialize)]
-        struct User {
-            login: String,
-        }
-        let user: User = self.rest_json("/user", "your account").await?;
+        let user: browse::UserLogin = self.rest_json("/user", "your account").await?;
         // Now the cache (and drafts) can be this account's.
         self.store.signed_in(&user.login);
         Ok(user.login)

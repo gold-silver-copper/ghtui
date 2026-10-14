@@ -21,10 +21,6 @@ impl GitHub {
     /// revalidated with ETags like any REST page.
     pub async fn mentionable(&self, repo: &RepoId) -> Result<Mentionable, ApiError> {
         #[derive(Deserialize)]
-        struct User {
-            login: String,
-        }
-        #[derive(Deserialize)]
         struct Issue {
             number: u64,
             title: String,
@@ -36,7 +32,7 @@ impl GitHub {
             self.rest_get(&users, format!("{repo}'s assignable users")),
             self.rest_get(&issues, format!("{repo}'s issues")),
         );
-        let users: Vec<User> = serde_json::from_str(&users?)?;
+        let users: Vec<crate::api::browse::UserLogin> = serde_json::from_str(&users?)?;
         let issues: Vec<Issue> = serde_json::from_str(&issues?)?;
         Ok(Mentionable {
             users: users.into_iter().map(|u| u.login).collect(),

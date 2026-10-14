@@ -808,11 +808,7 @@ impl GitHub {
         let archived = if first {
             self.project_items(project, "", None, true).await?
         } else {
-            Results {
-                total: 0,
-                items: Vec::new(),
-                next: None,
-            }
+            Results::default()
         };
         let found = Project {
             id: wire.id,

@@ -72,17 +72,12 @@ impl CommitComment {
 pub(crate) struct Wire {
     id: u64,
     node_id: String,
-    user: Option<WireUser>,
+    user: Option<crate::api::browse::UserLogin>,
     body: String,
     created_at: String,
     path: Option<String>,
     line: Option<u32>,
     html_url: String,
-}
-
-#[derive(Deserialize)]
-struct WireUser {
-    login: String,
 }
 
 impl Wire {

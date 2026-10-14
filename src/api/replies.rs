@@ -32,13 +32,7 @@ fn refusal(err: ApiError) -> ApiError {
 impl GitHub {
     /// Your saved replies, most recently changed first.
     pub async fn saved_replies(&self) -> Result<Capped<SavedReply>, ApiError> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Found {
-            total_count: u64,
-            nodes: Vec<Option<SavedReply>>,
-        }
-        let found: Found = self
+        let found: crate::api::browse::wire::Counted<SavedReply> = self
             .graphql_json(
                 crate::api::raw::SAVED_REPLIES,
                 serde_json::json!({}),
@@ -47,11 +41,7 @@ impl GitHub {
             )
             .await
             .map_err(refusal)?;
-        let replies = Capped::new(
-            found.nodes.into_iter().flatten().collect(),
-            found.total_count,
-        );
-        Ok(replies)
+        Ok(found.into_capped(Some))
     }
 }
 

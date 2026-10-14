@@ -998,18 +998,13 @@ mod wire {
     #[derive(Deserialize)]
     pub(super) struct InvitationWire {
         id: u64,
-        invitee: Option<Named2>,
+        invitee: Option<crate::api::browse::UserLogin>,
         #[serde(default)]
         permissions: String,
         #[serde(default)]
         created_at: String,
         #[serde(default)]
         expired: bool,
-    }
-
-    #[derive(Deserialize)]
-    struct Named2 {
-        login: String,
     }
 
     pub(super) fn invitation(i: InvitationWire) -> Option<Invitation> {
