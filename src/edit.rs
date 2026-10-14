@@ -563,7 +563,7 @@ pub fn doables(state: &State) -> Vec<Doable> {
 
 // ---- pickers --------------------------------------------------------------------
 
-type Rows = Vec<(PaletteItem, Option<Choice>)>;
+use crate::picker::Rows;
 
 fn row(
     label: impl Into<String>,

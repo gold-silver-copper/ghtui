@@ -14,17 +14,16 @@ use crate::api::browse::Gist;
 use crate::api::gist::{FileChange, GistChange, MadeGist, NewGist};
 use crate::route::{Route, app, gists, people};
 use crate::ui::form::Row;
-use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{Link, Page};
 use crate::ui::pages::{FormRow, Mark, TextBox, WriteFormView};
 
 use crate::data::DataKey;
 use crate::follow::{Expectation, Shown};
 use crate::forms::Answer;
-use crate::forms::{Fields, say};
+use crate::forms::{Fields, filling, say};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
-use crate::picker::{Choice, entry};
+use crate::picker::entry;
 use crate::state::{Cmd, State};
 use crate::work::{self, Cx, Failure, Job};
 
@@ -256,6 +255,7 @@ pub fn file_name(state: &State, route: &Route, i: usize) -> Option<String> {
 pub const FORM: crate::forms::Kind = crate::forms::Kind {
     compose,
     row: on_row,
+    fill,
     submit,
     follow,
     offers,
@@ -301,17 +301,13 @@ fn remove(state: &mut State, route: &Route, i: usize) {
     state.info(format!("Removed {name}: saving takes it out of the gist"));
 }
 
-pub fn description_rows(route: &Route, q: &str) -> Vec<(PaletteItem, Option<Choice>)> {
+pub fn description_rows(route: &Route, q: &str) -> crate::picker::Rows {
     let label = if q.is_empty() {
         "No description".to_owned()
     } else {
         format!("Describe it: “{q}”")
     };
-    vec![entry(
-        label,
-        "↵",
-        Some(Choice::Description(route.clone(), q.to_owned())),
-    )]
+    vec![entry(label, "↵", Some(filling(route, Row::Description, q)))]
 }
 
 /// Why `name` can't name file `i` of the form, if it can't.
@@ -332,7 +328,7 @@ pub fn name_rows(
     route: &Route,
     file: Option<usize>,
     q: &str,
-) -> Vec<(PaletteItem, Option<Choice>)> {
+) -> crate::picker::Rows {
     let form = state.forms.shown::<Form>(route);
     if let Some(why) = name_problem(&form, file, q) {
         return vec![entry(why, "", None)];
@@ -341,35 +337,31 @@ pub fn name_rows(
         Some(_) => format!("Name it {q}"),
         None => format!("Add {q}"),
     };
-    let chosen = Choice::FileName(route.clone(), file, q.to_owned());
-    vec![entry(label, "↵", Some(chosen))]
+    let row = file.map_or(Row::AddFile, Row::Rename);
+    vec![entry(label, "↵", Some(filling(route, row, q)))]
 }
 
-#[must_use]
-pub fn set_description(state: &mut State, route: &Route, text: String) -> Vec<Cmd> {
-    state.forms.edit::<Form>(route).description = text;
-    Vec::new()
-}
-
-#[must_use]
-pub fn set_name(state: &mut State, route: &Route, file: Option<usize>, name: String) -> Vec<Cmd> {
+/// Its description, or a file's name, chosen.
+fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Vec<Cmd> {
     let form = state.forms.edit::<Form>(route);
-    match file {
-        Some(i) => {
-            if let Some(f) = form.files.get_mut(i) {
-                f.name = name;
+    match row {
+        Row::Description => form.description = value,
+        Row::Rename(i) => {
+            if let Some(f) = form.files.get_mut(*i) {
+                f.name = value;
             }
-            Vec::new()
         }
-        None => {
+        Row::AddFile => {
             form.files.push(File {
-                name,
+                name: value,
                 ..File::default()
             });
             let i = form.files.len().saturating_sub(1);
-            compose(state, i)
+            return compose(state, i);
         }
+        _ => {}
     }
+    Vec::new()
 }
 
 /// The files to send: each named (GitHub's way, for a file without a

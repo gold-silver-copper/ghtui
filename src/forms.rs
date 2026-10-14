@@ -34,6 +34,8 @@ pub struct Kind {
     pub compose: fn(&mut State, usize) -> Vec<Cmd>,
     /// Enter on one of its rows.
     pub row: fn(&mut State, &Row) -> Vec<Cmd>,
+    /// What was chosen in a row's picker, set.
+    pub fill: fn(&mut State, &Route, &Row, String) -> Vec<Cmd>,
     /// `,s`, ctrl-s or its button: makes it, saves it, or asks first.
     pub submit: fn(&mut State) -> Vec<Cmd>,
     /// Brings it up to date with what's arrived: filled in from GitHub's
@@ -101,6 +103,21 @@ pub fn row(state: &mut State, row: &Row) -> Vec<Cmd> {
         (_, Some(kind)) => (kind.row)(state, row),
         (_, None) => Vec::new(),
     }
+}
+
+/// The picker's row that sets the form at `route`'s `row` to `value`.
+pub(crate) fn filling(route: &Route, row: Row, value: impl Into<String>) -> crate::picker::Choice {
+    crate::picker::Choice::Step(crate::act::Step::Fill(route.clone(), row, value.into()))
+}
+
+/// Sets the form at `route`'s `row` to what was chosen in its picker.
+#[must_use]
+pub fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Vec<Cmd> {
+    let Some(kind) = route.family().form() else {
+        return Vec::new();
+    };
+    state.forms.sent_mut(route).error = None;
+    (kind.fill)(state, route, row, value)
 }
 
 /// After GitHub's data arrives, or a form's page opens: brings the form

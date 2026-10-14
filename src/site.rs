@@ -485,14 +485,7 @@ impl Pick {
     }
 }
 
-pub fn rows(
-    state: &crate::state::State,
-    pick: &Pick,
-    q: &str,
-) -> Vec<(
-    crate::ui::overlays::PaletteItem,
-    Option<crate::picker::Choice>,
-)> {
+pub fn rows(state: &crate::state::State, pick: &Pick, q: &str) -> crate::picker::Rows {
     match pick {
         Pick::Lists(repo) => lists::rows(state, repo, q),
     }

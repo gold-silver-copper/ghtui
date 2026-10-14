@@ -7,15 +7,17 @@ use crate::route::{Route, runs};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::act::Step;
 use crate::api::browse::{Blob, Refs, Workflow, WorkflowRun};
 use crate::api::model::RepoId;
 use crate::api::workflows::{Input, InputKind, dispatch_inputs};
 use crate::data::DataKey;
+use crate::forms::filling;
 use crate::keymap::Action;
 use crate::nav::Doable;
+use crate::picker::Choice;
 use crate::state::{Cmd, State};
 use crate::ui::form::Row;
-use crate::ui::overlays::PaletteItem;
 use crate::ui::page::Page;
 use crate::ui::pages::{self, DispatchView};
 use crate::work::{self, Cx, Failure, Job};
@@ -104,20 +106,6 @@ impl Pick {
     }
 }
 
-/// What choosing one of this module's picker rows does.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Chosen {
-    Save {
-        repo: RepoId,
-        id: u64,
-        name: String,
-        path: PathBuf,
-        replace: bool,
-    },
-    Ref(String),
-    Input(String, String),
-}
-
 /// Where an artifact `name` is saved for what's typed: in the current
 /// folder by default, in a folder named, or as the file named.
 fn save_path(typed: &str, name: &str) -> PathBuf {
@@ -135,7 +123,7 @@ fn save_path(typed: &str, name: &str) -> PathBuf {
 }
 
 /// The picker's rows for `pick`, with `q` typed.
-pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
+pub fn rows(state: &State, pick: &Pick, q: &str) -> crate::picker::Rows {
     let item = crate::picker::item;
     let note = |text: String| vec![(item(text, ""), None)];
     match pick {
@@ -143,13 +131,15 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
             let path = save_path(q, name);
             let shown = path.display().to_string();
             let chosen = |replace| {
-                Some(Chosen::Save {
+                let save = SaveArtifact {
                     repo: repo.clone(),
                     id: *id,
                     name: name.clone(),
                     path: path.clone(),
                     replace,
-                })
+                };
+                let doing = format!("Saving {name} to {shown}…");
+                Some(Choice::Step(Step::Start(doing, save.into())))
             };
             // Never over a file without asking: this row is the asking.
             if path.exists() {
@@ -159,10 +149,11 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
             }
         }
         Pick::Ref => {
-            let Some((repo, _)) = here(state) else {
+            let Some((repo, file)) = here(state) else {
                 return note("The form isn't on screen".into());
             };
-            let key = DataKey::Refs(repo);
+            let key = DataKey::Refs(repo.clone());
+            let route = form_route((repo, file));
             let refs = match crate::picker::listed::<Refs, _>(state, &key, "the branches") {
                 Ok(refs) => refs,
                 Err(why) => return why,
@@ -176,7 +167,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
                     } else {
                         ""
                     };
-                    (item(b.clone(), hint), Some(Chosen::Ref(b.clone())))
+                    (item(b.clone(), hint), Some(filling(&route, Row::Ref, b)))
                 })
                 .collect();
             if refs.branches.left_out() > 0 {
@@ -185,12 +176,11 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
             rows
         }
         Pick::Input(name) => {
-            let Some(input) =
-                inputs_here(state).and_then(|i| i.into_iter().find(|i| i.name == *name))
-            else {
+            let input = inputs_here(state).and_then(|i| i.into_iter().find(|i| i.name == *name));
+            let (Some(input), Some(route)) = (input, here(state).map(form_route)) else {
                 return note("The form isn't on screen".into());
             };
-            let set = |value: &str| Some(Chosen::Input(name.clone(), value.to_owned()));
+            let set = |value: &str| Some(filling(&route, Row::Input(name.clone()), value));
             match &input.kind {
                 InputKind::Choice(options) => (options.iter())
                     .filter(|o| crate::picker::fuzzy_score(q, o).is_some())
@@ -214,43 +204,20 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
     }
 }
 
-/// Choosing one of this module's picker rows.
-#[must_use]
-pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
-    match chosen {
-        Chosen::Save {
-            repo,
-            id,
-            name,
-            path,
-            replace,
-        } => {
-            state.info(format!("Saving {name} to {}…", path.display()));
-            work::start(SaveArtifact {
-                repo,
-                id,
-                name,
-                path,
-                replace,
-            })
-        }
-        Chosen::Ref(name) => {
-            let Some(route) = here(state).map(form_route) else {
-                return Vec::new();
-            };
-            state.forms.edit::<Form>(&route).git_ref = Some(name);
-            state.forms.sent_mut(&route).error = None;
+/// The branch, or an input, chosen.
+fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Vec<Cmd> {
+    let form = state.forms.edit::<Form>(route);
+    match row {
+        Row::Ref => {
+            form.git_ref = Some(value);
             // Its inputs are read from the file on that branch.
             blob_need(state).map_or_else(Vec::new, |need| state.ensure(need, false))
         }
-        Chosen::Input(name, value) => {
-            let Some(route) = here(state).map(form_route) else {
-                return Vec::new();
-            };
-            state.forms.edit::<Form>(&route).values.insert(name, value);
-            state.forms.sent_mut(&route).error = None;
+        Row::Input(name) => {
+            form.values.insert(name.clone(), value);
             Vec::new()
         }
+        _ => Vec::new(),
     }
 }
 
@@ -258,6 +225,7 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
 pub const FORM: crate::forms::Kind = crate::forms::Kind {
     compose: |_, _| Vec::new(),
     row: on_row,
+    fill,
     submit: run,
     follow: |_| Vec::new(),
     offers: |_, _| {},

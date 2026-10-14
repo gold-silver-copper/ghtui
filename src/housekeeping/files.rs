@@ -13,8 +13,8 @@ use crate::ui::page::{Link, Page};
 use crate::ui::pages::{Mark, TextBox, WriteFormView};
 
 use super::{
-    Chosen, Expected, Field, FileChange, FileWrite, Form, FormOf, Subject, ask, clone_here, expect,
-    form, form_mut, form_row, item, refused,
+    Expected, Field, FileChange, FileWrite, Form, FormOf, ask, clone_here, expect, form, form_mut,
+    form_row, item, refused, setting,
 };
 use crate::data::DataKey;
 use crate::keymap::Action;
@@ -216,7 +216,7 @@ pub(super) fn branch_rows(
     let Some((_, rev, _, _)) = parts(of) else {
         return Vec::new();
     };
-    let set = |b: &str| Some(Chosen::Field(route.clone(), Field::Branch, b.to_owned()));
+    let set = |b: &str| setting(route, Field::Branch, b);
     let mut rows = Vec::new();
     if !q.is_empty() {
         rows.push(match super::refs::name_problem(q) {
@@ -309,7 +309,6 @@ pub(super) fn ask_commit(state: &mut State, route: &Route) -> Vec<Cmd> {
     };
     ask(
         state,
-        None,
         title,
         facts,
         vec![(button.into(), super::Answer::Commit)],
@@ -518,15 +517,15 @@ impl Job for Commit {
             },
         );
         if c.from.is_some() {
+            let propose = super::Answer::Propose(repo, c.branch.clone(), base);
             ask(
                 state,
-                Some(Subject::Propose(repo, c.branch.clone(), base)),
                 format!("Open a pull request for {}?", c.branch),
                 vec![(
                     "Its title and description are written on the next page".into(),
                     false,
                 )],
-                vec![("Open a pull request".into(), super::Answer::Propose)],
+                vec![("Open a pull request".into(), propose)],
             );
         }
         cmds.extend(super::follow(state));

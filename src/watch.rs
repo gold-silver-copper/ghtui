@@ -7,7 +7,6 @@
 use crate::api::model::NodeId;
 use crate::api::watch::{Subscription, SubscriptionState, Watched};
 use crate::route::{Dest, Route, Target, discussions, issues, pulls};
-use crate::ui::overlays::PaletteItem;
 
 use crate::data::DataKey;
 use crate::follow::{Expectation, Shown};
@@ -181,7 +180,7 @@ fn choices(of: &Watched) -> [(SubscriptionState, &'static str, &'static str); 3]
 
 /// The picker's rows: each choice, the current one marked, or why
 /// there are none.
-pub fn rows(state: &State, of: &Watched, q: &str) -> Vec<(PaletteItem, Option<Choice>)> {
+pub fn rows(state: &State, of: &Watched, q: &str) -> crate::picker::Rows {
     let key = DataKey::Subscription(of.clone());
     #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
     let fetched = Remote::fetched(state.remote(&key), "")

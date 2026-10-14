@@ -9,8 +9,8 @@ use crate::ui::page::Page;
 use crate::ui::pages::{Mark, WriteFormView};
 
 use super::{
-    Chosen, Expected, Field, Form, FormOf, Subject, ask, expect, form, form_mut, form_row, item,
-    refused, selected,
+    Expected, Field, Form, FormOf, Subject, ask, expect, form, form_mut, form_row, item, refused,
+    selected, setting,
 };
 use crate::data::DataKey;
 use crate::keymap::Action;
@@ -154,7 +154,7 @@ pub(super) fn colour_rows(
     crate::ui::overlays::PaletteItem,
     Option<crate::picker::Choice>,
 )> {
-    let set = |c: &str| Some(Chosen::Field(route.clone(), Field::Colour, c.to_owned()));
+    let set = |c: &str| setting(route, Field::Colour, c);
     let mut rows = Vec::new();
     if !q.is_empty() {
         rows.push(match colour(q) {
@@ -237,12 +237,12 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
         1 => "It comes off its open issue or pull request (and any closed ones)".to_owned(),
         n => format!("It comes off its {n} open issues and pull requests (and any closed ones)"),
     };
+    let subject = Subject::Label(repo.clone(), l.name.clone());
     ask(
         state,
-        Some(Subject::Label(repo.clone(), l.name.clone())),
         format!("Delete the label {}?", l.name),
         vec![(on, l.open > 0), ("It can't be brought back".into(), true)],
-        vec![("Delete label".into(), super::Answer::Delete)],
+        vec![("Delete label".into(), super::Answer::Delete(subject))],
     );
     Vec::new()
 }

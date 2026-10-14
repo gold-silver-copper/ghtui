@@ -328,6 +328,7 @@ impl Job for Save {
 pub const FORM: crate::forms::Kind = crate::forms::Kind {
     compose: |state, _| compose(state),
     row: |_, _| Vec::new(),
+    fill: |_, _, _, _| Vec::new(),
     submit,
     follow,
     offers,

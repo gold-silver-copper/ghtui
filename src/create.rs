@@ -28,7 +28,6 @@ use crate::nav::{Doable, row};
 use crate::picker::Choice;
 use crate::state::{Cmd, State};
 use crate::ui::form::Row;
-use crate::ui::overlays::PaletteItem;
 use crate::work::{self, Cx, Failure, Job};
 pub use page::build;
 use templates::Chooser;
@@ -263,6 +262,7 @@ fn open(state: &mut State, pr: bool) -> Vec<Cmd> {
 pub const FORM: crate::forms::Kind = crate::forms::Kind {
     compose: |state, _| compose(state),
     row: on_row,
+    fill: |_, _, _, _| Vec::new(),
     submit,
     follow,
     offers,
@@ -824,7 +824,7 @@ fn open_pick(state: &mut State, pick: Pick) -> Vec<Cmd> {
 }
 
 /// The rows of a form's picker matching `q`.
-pub fn picker_rows(state: &State, pick: Pick, q: &str) -> Vec<(PaletteItem, Option<Choice>)> {
+pub fn picker_rows(state: &State, pick: Pick, q: &str) -> crate::picker::Rows {
     let item = crate::picker::item;
     let note = |text: String| vec![(item(text, String::new()), None)];
     let Some((route, form)) = here(state) else {

@@ -15,7 +15,6 @@ use crate::forms::Answer;
 use crate::keymap::Action;
 use crate::picker::{Choice, entry};
 use crate::state::{Cmd, Screen, State};
-use crate::ui::overlays::PaletteItem;
 use crate::ui::page::Link;
 use crate::work::{self, Cx, Failure, Job};
 
@@ -188,7 +187,7 @@ fn save_path(typed: &str, name: &str) -> PathBuf {
 
 /// The saving picker's row: saving where it's typed, or (where a file
 /// is) replacing it, which choosing is the asking.
-pub fn save_rows(of: &Of, q: &str) -> Vec<(PaletteItem, Option<Choice>)> {
+pub fn save_rows(of: &Of, q: &str) -> crate::picker::Rows {
     let path = save_path(q, &of.name);
     let shown = path.display().to_string();
     let chosen = |replace| {
@@ -213,7 +212,7 @@ const LISTED: usize = 50;
 
 /// The upload picker's rows: the file typed, else the files in the
 /// folder typed (or beside what's typed) whose names start as typed.
-pub fn upload_rows(state: &State, of: &Of, q: &str) -> Vec<(PaletteItem, Option<Choice>)> {
+pub fn upload_rows(state: &State, of: &Of, q: &str) -> crate::picker::Rows {
     let typed = q.trim();
     let release = (super::shown(state)).map(|(_, _, r)| r);
     let row = |path: &Path| {

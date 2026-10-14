@@ -10,12 +10,12 @@ use crate::git::local::Clone;
 use crate::picker::fuzzy_score;
 use crate::route::{Route, code};
 
-use super::{
-    Chosen, Expected, Pick, RefWrite, Subject, ask, clone_here, expect, item, refused, selected,
-};
+use super::{Expected, Pick, RefWrite, Subject, ask, clone_here, expect, item, refused, selected};
+use crate::act::Step;
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
+use crate::picker::Choice;
 use crate::state::{Cmd, State};
 use crate::work::{self, Cx, Failure, Job};
 
@@ -87,30 +87,18 @@ pub(super) fn name_problem(name: &str) -> Option<&'static str> {
 }
 
 /// The name picker's one row.
-pub(super) fn name_rows(
-    repo: &RepoId,
-    kind: RefKind,
-    q: &str,
-) -> Vec<(
-    crate::ui::overlays::PaletteItem,
-    Option<crate::picker::Choice>,
-)> {
+pub(super) fn name_rows(repo: &RepoId, kind: RefKind, q: &str) -> crate::picker::Rows {
     let q = q.trim();
     match name_problem(q) {
         Some(why) => vec![item(why, "", None)],
         None => vec![item(
             format!("Create {} {q}", kind.noun()),
             "then where it starts",
-            Some(Chosen::RefName(repo.clone(), kind, q.to_owned())),
+            Some(Choice::Step(Step::Pick(crate::picker::Kind::Housekeeping(
+                Pick::RefFrom(repo.clone(), kind, q.to_owned()),
+            )))),
         )],
     }
-}
-
-/// Named: where it starts.
-#[must_use]
-pub(super) fn named(state: &mut State, repo: RepoId, kind: RefKind, name: String) -> Vec<Cmd> {
-    let pick = crate::picker::Kind::Housekeeping(Pick::RefFrom(repo, kind, name));
-    state.open_picker(pick)
 }
 
 /// Where it starts: a commit typed, then the branches (the one selected,
@@ -121,17 +109,40 @@ pub(super) fn from_rows(
     kind: RefKind,
     name: &str,
     q: &str,
-) -> Vec<(
-    crate::ui::overlays::PaletteItem,
-    Option<crate::picker::Choice>,
-)> {
+) -> crate::picker::Rows {
+    // Made in your clone, it's asked about first.
+    let (Some(clone), Some(route)) = (state.clone_of(repo), state.route()) else {
+        return vec![item("Looking for your clone of the repository…", "", None)];
+    };
     let chosen = |from: &str| {
-        Some(Chosen::RefFrom(
-            repo.clone(),
-            kind,
-            name.to_owned(),
-            from.to_owned(),
-        ))
+        let step = match clone {
+            Some(c) => {
+                let noun = kind.noun();
+                let push =
+                    super::Answer::Push(repo.clone(), kind, name.to_owned(), from.to_owned());
+                Step::Ask(super::question(
+                    route.clone(),
+                    format!("Create the {noun} {name} at {from}?"),
+                    vec![
+                        (in_clone(c), false),
+                        (format!("Your clone gets no {noun} of its own"), false),
+                    ],
+                    vec![("Create and push".into(), push)],
+                ))
+            }
+            None => {
+                let save = Save {
+                    repo: repo.clone(),
+                    kind,
+                    name: name.to_owned(),
+                    write: RefWrite::Create(from.to_owned()),
+                    clone: None,
+                };
+                let doing = format!("Creating the {} {name}…", kind.noun());
+                Step::Start(doing, save.into())
+            }
+        };
+        Some(Choice::Step(step))
     };
     let q = q.trim();
     let branches = state.picked::<Results<BranchInfo>>(&DataKey::Branches(repo.clone()));
@@ -169,47 +180,6 @@ pub(super) fn from_rows(
         }
     }
     rows
-}
-
-/// Where it starts is chosen: in your clone, asks before pushing it;
-/// elsewhere GitHub makes it, as its own dialog's button does.
-#[must_use]
-pub(super) fn from_chosen(
-    state: &mut State,
-    repo: RepoId,
-    kind: RefKind,
-    name: String,
-    from: String,
-) -> Vec<Cmd> {
-    let clone = match clone_here(state, &repo) {
-        Ok(clone) => clone,
-        Err(cmds) => return cmds,
-    };
-    let subject = Subject::Ref {
-        repo: repo.clone(),
-        kind,
-        name: name.clone(),
-        from: Some(from.clone()),
-    };
-    match clone {
-        Some(c) => {
-            ask(
-                state,
-                Some(subject),
-                format!("Create the {} {name} at {from}?", kind.noun()),
-                vec![
-                    (in_clone(&c), false),
-                    (
-                        format!("Your clone gets no {} of its own", kind.noun()),
-                        false,
-                    ),
-                ],
-                vec![("Create and push".into(), super::Answer::Push)],
-            );
-            Vec::new()
-        }
-        None => send(state, repo, kind, name, Some(from)),
-    }
 }
 
 /// What a fact says of git doing it in your clone.
@@ -303,17 +273,13 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec
             }
         }
     }
+    let title = format!("Delete the {} {name}?", kind.noun());
+    let delete = super::Answer::Delete(Subject::Ref(repo.clone(), kind, name));
     ask(
         state,
-        Some(Subject::Ref {
-            repo: repo.clone(),
-            kind,
-            name: name.clone(),
-            from: None,
-        }),
-        format!("Delete the {} {name}?", kind.noun()),
+        title,
         facts,
-        vec![(format!("Delete {}", kind.noun()), super::Answer::Delete)],
+        vec![(format!("Delete {}", kind.noun()), delete)],
     );
     Vec::new()
 }

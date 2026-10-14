@@ -127,6 +127,8 @@ pub enum Step {
     Compose(crate::compose::Target, String),
     /// Say what's being done, and start the job.
     Start(String, work::Work),
+    /// Set a form's row to this ([`crate::forms::fill`]).
+    Fill(Route, crate::ui::form::Row, String),
 }
 
 /// Goes ahead with a planned step, or says why it can't.
@@ -148,6 +150,7 @@ pub fn take(state: &mut State, planned: Result<Step, String>) -> Vec<Cmd> {
             state.info(doing);
             work::start(job)
         }
+        Ok(Step::Fill(route, row, value)) => crate::forms::fill(state, &route, &row, value),
     }
 }
 

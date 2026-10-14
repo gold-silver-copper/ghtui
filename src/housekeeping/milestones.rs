@@ -9,8 +9,8 @@ use crate::ui::page::{Link, Page};
 use crate::ui::pages::{Mark, TextBox, WriteFormView};
 
 use super::{
-    Chosen, Expected, Field, Form, FormOf, MilestoneWrite, Subject, ask, expect, form, form_mut,
-    form_row, item, refused, selected,
+    Expected, Field, Form, FormOf, MilestoneWrite, Subject, ask, expect, form, form_mut, form_row,
+    item, refused, selected, setting,
 };
 use crate::data::DataKey;
 use crate::keymap::Action;
@@ -143,7 +143,7 @@ pub(super) fn due_rows(
     crate::ui::overlays::PaletteItem,
     Option<crate::picker::Choice>,
 )> {
-    let set = |d: &str| Some(Chosen::Field(route.clone(), Field::Due, d.to_owned()));
+    let set = |d: &str| setting(route, Field::Due, d);
     let mut rows = Vec::new();
     if !q.is_empty() {
         rows.push(if valid_date(q) {
@@ -231,12 +231,12 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
         1 => "Its issue or pull request stays, without a milestone".to_owned(),
         n => format!("Its {n} issues and pull requests stay, without a milestone"),
     };
+    let subject = Subject::Milestone(repo.clone(), m.number);
     ask(
         state,
-        Some(Subject::Milestone(repo.clone(), m.number)),
         format!("Delete the milestone {}?", m.title),
         vec![(on, false), ("It can't be brought back".into(), true)],
-        vec![("Delete milestone".into(), super::Answer::Delete)],
+        vec![("Delete milestone".into(), super::Answer::Delete(subject))],
     );
     Vec::new()
 }

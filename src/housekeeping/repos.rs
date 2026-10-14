@@ -11,9 +11,7 @@ use crate::picker::fuzzy_score;
 use crate::ui::page::Page;
 use crate::ui::pages::{Mark, WriteFormView};
 
-use super::{
-    Chosen, Expected, Field, Form, FormOf, Subject, ask, expect, form, form_mut, form_row, item,
-};
+use super::{Expected, Field, Form, FormOf, ask, expect, form, form_mut, form_row, item, setting};
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::state::{Cmd, State};
@@ -146,7 +144,7 @@ pub(super) fn owner_rows(
     let Some(o) = owners(state) else {
         return vec![item("Asking GitHub who you are…", "", None)];
     };
-    let set = |login: &str| Some(Chosen::Field(route.clone(), Field::Owner, login.to_owned()));
+    let set = |login: &str| setting(route, Field::Owner, login);
     let mut rows = Vec::new();
     if fuzzy_score(q, &o.viewer).is_some() {
         rows.push(item(o.viewer.clone(), "your account", set(&o.viewer)));
@@ -201,7 +199,7 @@ pub(super) fn template_rows(
     crate::ui::overlays::PaletteItem,
     Option<crate::picker::Choice>,
 )> {
-    let set = |value: &str| Some(Chosen::Field(route.clone(), field, value.to_owned()));
+    let set = |value: &str| setting(route, field, value);
     let Some(t) = state.picked::<Templates>(&DataKey::Templates) else {
         return vec![item("Loading GitHub's templates…", "", None)];
     };
@@ -330,22 +328,18 @@ impl Job for Make {
             return cmds;
         };
         let dir = PathBuf::from(&repo.name);
+        let fact = format!(
+            "Into ./{} here, with your own git: git clone {}",
+            dir.display(),
+            made.clone_url
+        );
+        let url = made.clone_url.clone();
+        let clone = super::Answer::Clone { url, dir };
         ask(
             state,
-            Some(Subject::Clone {
-                url: made.clone_url.clone(),
-                dir: dir.clone(),
-            }),
             format!("Clone {repo}?"),
-            vec![(
-                format!(
-                    "Into ./{} here, with your own git: git clone {}",
-                    dir.display(),
-                    made.clone_url
-                ),
-                false,
-            )],
-            vec![("Clone it".into(), super::Answer::Clone)],
+            vec![(fact, false)],
+            vec![("Clone it".into(), clone)],
         );
         cmds
     }

@@ -21,9 +21,9 @@ use crate::api::browse::Results;
 use crate::api::housekeeping::{LabelChange, LabelInfo, MilestoneChange, RefKind};
 use crate::api::model::RepoId;
 use crate::git::local::Clone;
+use crate::picker::entry as item;
 pub(crate) use crate::ui::form::Field;
 use crate::ui::form::Row;
-use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{Link, Page};
 
 use crate::browse::{Build, Width};
@@ -336,33 +336,18 @@ impl Form {
 /// What housekeeping keeps between keys.
 #[derive(Debug, Default)]
 pub struct Housekeeping {
-    /// What the question open is about.
-    pub asked: Option<Subject>,
     /// The branch to ask about deleting once GitHub says whether its
     /// rules protect it.
     pub deleting: Option<(RepoId, String)>,
 }
 
-/// What a question, or a change of a list's row, is about.
+/// What a deletion, or a new branch or tag, is about.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Subject {
     Label(RepoId, String),
     Milestone(RepoId, u64),
-    /// A branch or tag; for a new one, where it starts.
-    Ref {
-        repo: RepoId,
-        kind: RefKind,
-        name: String,
-        from: Option<String>,
-    },
-    /// A new repository, to clone into `dir`.
-    Clone {
-        url: String,
-        dir: PathBuf,
-    },
-    /// A new branch a file was committed on, to propose into the branch
-    /// it was made from (none: the default branch).
-    Propose(RepoId, String, Option<String>),
+    /// A branch or tag.
+    Ref(RepoId, RefKind, String),
 }
 
 /// The form on screen: its page and what it's of.
@@ -550,6 +535,7 @@ pub const FORM: crate::forms::Kind = crate::forms::Kind {
         (Row::Field(field), Some(route)) => open_field(state, &route, *field),
         _ => Vec::new(),
     },
+    fill,
     submit,
     follow,
     offers: |state, out| {
@@ -949,15 +935,6 @@ pub enum Pick {
     RefFrom(RepoId, RefKind, String),
 }
 
-/// What choosing a row does.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Chosen {
-    Field(Route, Field, String),
-    RefName(RepoId, RefKind, String),
-    /// A new branch or tag, and the branch, tag or commit it starts at.
-    RefFrom(RepoId, RefKind, String, String),
-}
-
 impl Pick {
     pub fn title(&self) -> &'static str {
         match self {
@@ -984,8 +961,10 @@ impl Pick {
         match self {
             Pick::Field(_, Field::Owner) => Some(DataKey::Owners),
             Pick::Field(_, Field::Gitignore | Field::License) => Some(DataKey::Templates),
+            // Where it starts is asked about in your clone.
+            Pick::RefName(repo, _) => Some(DataKey::Clone(repo.clone())),
             Pick::RefFrom(repo, ..) => Some(DataKey::Branches(repo.clone())),
-            Pick::Field(..) | Pick::RefName(..) => None,
+            Pick::Field(..) => None,
         }
     }
 
@@ -1008,21 +987,13 @@ fn field_lists(field: Field) -> bool {
     )
 }
 
-/// A picker's row.
-fn item(
-    label: impl Into<String>,
-    hint: impl Into<String>,
-    chosen: Option<Chosen>,
-) -> (PaletteItem, Option<crate::picker::Choice>) {
-    crate::picker::entry(label, hint, chosen.map(crate::picker::Choice::Housekeeping))
+/// The picker's row that sets the form at `route`'s `field` to `value`.
+fn setting(route: &Route, field: Field, value: &str) -> Option<crate::picker::Choice> {
+    Some(crate::forms::filling(route, Row::Field(field), value))
 }
 
 /// A picker's rows: what each says, and what choosing it does.
-pub fn rows(
-    state: &State,
-    pick: &Pick,
-    q: &str,
-) -> Vec<(PaletteItem, Option<crate::picker::Choice>)> {
+pub fn rows(state: &State, pick: &Pick, q: &str) -> crate::picker::Rows {
     match pick {
         Pick::Field(route, field) => field_rows(state, route, *field, q),
         Pick::RefName(repo, kind) => refs::name_rows(repo, *kind, q),
@@ -1030,13 +1001,8 @@ pub fn rows(
     }
 }
 
-fn field_rows(
-    state: &State,
-    route: &Route,
-    field: Field,
-    q: &str,
-) -> Vec<(PaletteItem, Option<crate::picker::Choice>)> {
-    let set = |value: &str| Some(Chosen::Field(route.clone(), field, value.to_owned()));
+fn field_rows(state: &State, route: &Route, field: Field, q: &str) -> crate::picker::Rows {
+    let set = |value: &str| setting(route, field, value);
     let q = q.trim();
     match field {
         Field::Colour => labels::colour_rows(route, q),
@@ -1093,109 +1059,104 @@ pub fn open_field(state: &mut State, route: &Route, field: Field) -> Vec<Cmd> {
     state.open_picker(pick)
 }
 
-#[must_use]
-pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
-    match chosen {
-        Chosen::Field(route, field, value) => {
-            let f = form_mut(state, &route);
-            f.set(field, value);
-            let blank = f.text.is_empty();
-            state.forms.sent_mut(&route).error = None;
-            // A new file, once named, is written, as on GitHub.
-            let new_file = matches!(
-                &route,
-                Route::Housekeeping(FormOf::File {
-                    change: FileChange::New,
-                    ..
-                })
-            );
-            if field == Field::Path && new_file && blank && state.route() == Some(&route) {
-                return compose(state);
-            }
-            Vec::new()
-        }
-        Chosen::RefName(repo, kind, name) => refs::named(state, repo, kind, name),
-        Chosen::RefFrom(repo, kind, name, from) => refs::from_chosen(state, repo, kind, name, from),
+/// What was chosen for a form's row.
+fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Vec<Cmd> {
+    let Row::Field(field) = *row else {
+        return Vec::new();
+    };
+    let f = form_mut(state, route);
+    f.set(field, value);
+    let blank = f.text.is_empty();
+    // A new file, once named, is written, as on GitHub.
+    let new_file = matches!(
+        route,
+        Route::Housekeeping(FormOf::File {
+            change: FileChange::New,
+            ..
+        })
+    );
+    if field == Field::Path && new_file && blank && state.route() == Some(route) {
+        return compose(state);
     }
+    Vec::new()
 }
 
 // ---- questions ----------------------------------------------------------------------
 
-/// The answers to housekeeping's questions; what they're about is
-/// [`Housekeeping::asked`] (or the form on screen).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The answers to housekeeping's questions, with what they're about (a
+/// file's commit: the form on screen).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
-    Delete,
-    /// Make a new branch or tag, with git in your clone.
-    Push,
+    Delete(Subject),
+    /// Make a new branch or tag where it starts, with git in your clone.
+    Push(RepoId, RefKind, String, String),
     /// Commit a file's form.
     Commit,
-    /// Clone a new repository.
-    Clone,
-    /// Propose a new branch's commit as a pull request.
-    Propose,
+    /// Clone a new repository into `dir`.
+    Clone {
+        url: String,
+        dir: PathBuf,
+    },
+    /// Propose a new branch a file was committed on as a pull request,
+    /// into the branch it was made from (none: the default branch).
+    Propose(RepoId, String, Option<String>),
 }
 
 impl Answer {
-    pub fn busy(self) -> &'static str {
+    pub fn busy(&self) -> &'static str {
         match self {
-            Answer::Delete => "Deleting…",
-            Answer::Push => "Pushing…",
+            Answer::Delete(_) => "Deleting…",
+            Answer::Push(..) => "Pushing…",
             Answer::Commit => "Committing…",
-            Answer::Clone => "Cloning…",
-            Answer::Propose => "Opening a pull request…",
+            Answer::Clone { .. } => "Cloning…",
+            Answer::Propose(..) => "Opening a pull request…",
         }
     }
 }
 
-/// Asks `title`, about `subject`.
+/// The question `title` about the form or list at `route`.
+fn question(
+    route: Route,
+    title: String,
+    facts: Vec<(String, bool)>,
+    choices: Vec<(String, Answer)>,
+) -> Box<crate::forms::Ask> {
+    let choices = (choices.into_iter())
+        .map(|(label, a)| (label, crate::forms::Answer::Housekeeping(a)))
+        .collect();
+    let about = crate::forms::About::Form(route);
+    Box::new(crate::forms::Ask::new(about, title, facts, choices))
+}
+
+/// Asks `title` about what's on screen.
 fn ask(
     state: &mut State,
-    subject: Option<Subject>,
     title: String,
     facts: Vec<(String, bool)>,
     choices: Vec<(String, Answer)>,
 ) {
-    let Some(route) = state.route().cloned() else {
-        return;
-    };
-    state.housekeeping.asked = subject;
-    let choices = (choices.into_iter())
-        .map(|(label, a)| (label, crate::forms::Answer::Housekeeping(a)))
-        .collect();
-    crate::forms::ask(state, route, title, facts, choices);
+    if let Some(route) = state.route().cloned() {
+        let ask = question(route, title, facts, choices);
+        state.overlay = Some(crate::state::Overlay::Ask(ask));
+    }
 }
 
 /// The question about `route` was answered.
 #[must_use]
 pub fn answer(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
-    let subject = state.housekeeping.asked.clone();
-    match (answer, subject) {
-        (Answer::Commit, _) => files::commit(state, route),
-        (Answer::Delete, Some(Subject::Label(repo, name))) => labels::delete(state, repo, name),
-        (Answer::Delete, Some(Subject::Milestone(repo, number))) => {
-            milestones::delete(state, repo, number)
-        }
-        (
-            Answer::Delete | Answer::Push,
-            Some(Subject::Ref {
-                repo,
-                kind,
-                name,
-                from,
-            }),
-        ) => refs::send(state, repo, kind, name, from),
-        (Answer::Clone, Some(Subject::Clone { url, dir })) => {
+    match answer {
+        Answer::Commit => files::commit(state, route),
+        Answer::Delete(Subject::Label(repo, name)) => labels::delete(state, repo, name),
+        Answer::Delete(Subject::Milestone(repo, number)) => milestones::delete(state, repo, number),
+        Answer::Delete(Subject::Ref(repo, kind, name)) => refs::send(state, repo, kind, name, None),
+        Answer::Push(repo, kind, name, from) => refs::send(state, repo, kind, name, Some(from)),
+        Answer::Clone { url, dir } => {
             crate::forms::sending(state);
             crate::work::start(repos::CloneTo { url, dir })
         }
-        (Answer::Propose, Some(Subject::Propose(repo, branch, base))) => {
+        Answer::Propose(repo, branch, base) => {
             state.overlay = None;
             files::propose(state, repo, branch, base)
-        }
-        _ => {
-            state.overlay = None;
-            Vec::new()
         }
     }
 }

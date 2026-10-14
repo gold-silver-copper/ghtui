@@ -163,8 +163,6 @@ pub enum Choice {
     /// Dismiss a security alert so.
     Alert(crate::api::change::Change),
     Subscribe(crate::watch::Subscribe),
-    Tag(Route, String),
-    Target(Route, String),
     SaveAsset {
         of: crate::release::assets::Of,
         path: std::path::PathBuf,
@@ -174,10 +172,6 @@ pub enum Choice {
         of: crate::release::assets::Of,
         path: std::path::PathBuf,
     },
-    Description(Route, String),
-    FileName(Route, Option<usize>, String),
-    Housekeeping(crate::housekeeping::Chosen),
-    Workflows(crate::workflows::Chosen),
     /// A step of an action's plan ([`crate::act::take`]).
     Step(crate::act::Step),
 }
@@ -372,9 +366,7 @@ impl State {
                 let choice = Choice::Title(titling.clone(), path.clone(), q.to_owned());
                 vec![(item(label, "↵"), Some(choice))]
             }
-            Kind::Workflows(pick) => (crate::workflows::rows(self, pick, q).into_iter())
-                .map(|(row, chosen)| (row, chosen.map(Choice::Workflows)))
-                .collect(),
+            Kind::Workflows(pick) => crate::workflows::rows(self, pick, q),
             Kind::Project(pick) => crate::projects::rows(self, pick, q),
             Kind::Alert(d) => (crate::security::rows(d, q).into_iter())
                 .map(|(row, change)| (row, Some(Choice::Alert(change))))
@@ -747,15 +739,9 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
         Choice::Edit(_) => Vec::new(),
         Choice::Alert(change) => crate::security::choose(state, change),
         Choice::Subscribe(work) => crate::watch::choose(state, work),
-        Choice::Tag(route, tag) => crate::release::choose_tag(state, &route, tag),
-        Choice::Target(route, target) => crate::release::choose_target(state, &route, target),
         chosen @ (Choice::SaveAsset { .. } | Choice::Upload { .. }) => {
             crate::release::assets::choose(state, chosen)
         }
-        Choice::Description(route, text) => crate::gist::set_description(state, &route, text),
-        Choice::FileName(route, file, name) => crate::gist::set_name(state, &route, file, name),
-        Choice::Housekeeping(chosen) => crate::housekeeping::choose(state, chosen),
-        Choice::Workflows(chosen) => crate::workflows::choose(state, chosen),
         Choice::Step(step) => crate::act::take(state, Ok(step)),
     }
 }

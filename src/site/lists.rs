@@ -132,11 +132,7 @@ pub fn open(state: &mut State) -> Vec<Cmd> {
 
 /// The picker's rows: each of your lists that fits what's typed, checked
 /// if the repository's in it; and, for a name no list has, making it.
-pub fn rows(
-    state: &State,
-    repo: &RepoId,
-    q: &str,
-) -> Vec<(crate::ui::overlays::PaletteItem, Option<Choice>)> {
+pub fn rows(state: &State, repo: &RepoId, q: &str) -> crate::picker::Rows {
     let key = DataKey::MyLists(repo.clone());
     #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
     let fetched = Remote::fetched(state.remote(&key), "")

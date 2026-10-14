@@ -21,18 +21,17 @@ use crate::api::release::{Made, NewRelease, Notes, TagLook};
 use crate::create::templates;
 use crate::route::{Route, releases};
 use crate::ui::form::Row;
-use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{Link, Page};
 use crate::ui::pages::{FormRow, Mark, TextBox, WriteFormView};
 
 use crate::data::DataKey;
 use crate::follow::{Expectation, Shown};
 use crate::forms::Answer;
-use crate::forms::{Fields, say};
+use crate::forms::{Fields, filling, say};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
+use crate::picker::entry;
 use crate::picker::fuzzy_score;
-use crate::picker::{Choice, entry};
 use crate::state::{Cmd, State};
 use crate::work::{self, Cx, Failure, Job};
 
@@ -397,6 +396,7 @@ fn compose(state: &mut State) -> Vec<Cmd> {
 pub const FORM: crate::forms::Kind = crate::forms::Kind {
     compose: |state, _| compose(state),
     row: on_row,
+    fill,
     submit,
     follow,
     offers,
@@ -479,7 +479,7 @@ fn form_repo(route: &Route) -> Option<&RepoId> {
 }
 
 /// The tag picker's rows: a new tag typed, then the tags GitHub has.
-pub fn tag_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, Option<Choice>)> {
+pub fn tag_rows(state: &State, route: &Route, q: &str) -> crate::picker::Rows {
     let Some(repo) = form_repo(route) else {
         return Vec::new();
     };
@@ -492,7 +492,7 @@ pub fn tag_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, Opti
             None => entry(
                 format!("Create new tag: {q}"),
                 "on publish",
-                Some(Choice::Tag(route.clone(), q.to_owned())),
+                Some(filling(route, Row::Tag, q)),
             ),
         });
     }
@@ -512,7 +512,7 @@ pub fn tag_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, Opti
         rows.push(entry(
             t.name.clone(),
             hint,
-            Some(Choice::Tag(route.clone(), t.name.clone())),
+            Some(filling(route, Row::Tag, &t.name)),
         ));
     }
     let more = tags.total.saturating_sub(tags.items.len() as u64);
@@ -528,7 +528,7 @@ pub fn tag_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, Opti
 }
 
 /// The target picker's rows: a commit typed, then the branches.
-pub fn target_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, Option<Choice>)> {
+pub fn target_rows(state: &State, route: &Route, q: &str) -> crate::picker::Rows {
     let Some(repo) = form_repo(route) else {
         return Vec::new();
     };
@@ -539,7 +539,7 @@ pub fn target_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, O
         rows.push(entry(
             format!("Use {q}"),
             "a branch or a commit's SHA",
-            Some(Choice::Target(route.clone(), q.to_owned())),
+            Some(filling(route, Row::Target, q)),
         ));
     }
     let Some(branches) = branches else {
@@ -559,30 +559,33 @@ pub fn target_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, O
         rows.push(entry(
             b.name.clone(),
             hint,
-            Some(Choice::Target(route.clone(), b.name.clone())),
+            Some(filling(route, Row::Target, &b.name)),
         ));
     }
     rows
 }
 
 #[must_use]
-pub fn choose_tag(state: &mut State, route: &Route, tag: String) -> Vec<Cmd> {
+/// A tag, or what a new tag is made at, chosen.
+fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Vec<Cmd> {
     let form = state.forms.edit::<Form>(route);
-    form.tag = Some(tag);
-    let blank = form.text.trim().is_empty();
-    state.forms.sent_mut(route).error = None;
-    let mut cmds = follow(state);
-    // Then its title and notes, as on GitHub.
-    if blank && state.overlay.is_none() {
-        cmds.extend(compose(state));
+    match row {
+        Row::Tag => {
+            form.tag = Some(value);
+            let blank = form.text.trim().is_empty();
+            let mut cmds = follow(state);
+            // Then its title and notes, as on GitHub.
+            if blank && state.overlay.is_none() {
+                cmds.extend(compose(state));
+            }
+            cmds
+        }
+        Row::Target => {
+            form.target = Some(value);
+            Vec::new()
+        }
+        _ => Vec::new(),
     }
-    cmds
-}
-
-#[must_use]
-pub fn choose_target(state: &mut State, route: &Route, target: String) -> Vec<Cmd> {
-    state.forms.edit::<Form>(route).target = Some(target);
-    Vec::new()
 }
 
 /// The default branch, for what a new tag is made at by default.
