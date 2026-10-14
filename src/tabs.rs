@@ -6,6 +6,8 @@
 //! fetch, its diff and its review drafts.
 
 use crate::route::code;
+use crate::route::issues;
+use crate::route::pulls;
 use crate::ui::page::Link;
 use crate::ui::text::short_sha;
 
@@ -49,8 +51,8 @@ pub fn url(screen: &Screen) -> String {
 pub fn title(screen: &Screen) -> String {
     match screen {
         Screen::Page(p) => match &p.route {
-            Route::Issue { repo, number } => format!("{}#{number}", repo.name),
-            Route::Pr { pr, .. } => format!("{}#{}", pr.repo.name, pr.number),
+            Route::Issues(issues::Issue { repo, number }) => format!("{}#{number}", repo.name),
+            Route::Pulls(pulls::Pr { pr, .. }) => format!("{}#{}", pr.repo.name, pr.number),
             Route::Code(code::Blob { path, .. }) | Route::Code(code::Tree { path, .. })
                 if !path.is_empty() =>
             {

@@ -2,6 +2,7 @@
 //! unfolded, and a review's rows leading to the changes it reviewed (from
 //! git, as they were at its commit) and to what changed since.
 
+use crate::route::pulls;
 use std::collections::HashSet;
 
 use crate::api::model::PrRef;
@@ -136,10 +137,10 @@ pub fn follow(state: &mut State, link: &ReviewLink) -> Vec<Cmd> {
             toggle(state, anchor, None);
             Vec::new()
         }
-        ReviewLink::Open { pr, id } => state.push(Route::Pr {
+        ReviewLink::Open { pr, id } => state.push(Route::Pulls(pulls::Pr {
             pr: pr.clone(),
             tab: PrTab::Reviewed(*id),
-        }),
+        })),
         ReviewLink::AsReviewed { pr, commit } => as_reviewed(state, pr, commit),
         ReviewLink::Since { pr, commit } => since(state, pr, commit),
     }

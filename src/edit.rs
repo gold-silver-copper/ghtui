@@ -7,6 +7,8 @@
 //! GitHub as a [`Change::Edit`], and the page follows GitHub until it
 //! shows it (see [`crate::act`]).
 
+use crate::route::issues;
+use crate::route::pulls;
 use std::collections::BTreeSet;
 
 use crate::api::change::Change;
@@ -186,8 +188,10 @@ impl Spot {
 fn subject_here(state: &State) -> Option<Subject> {
     match state.screen() {
         Screen::Page(p) => match &p.route {
-            Route::Issue { repo, number } => Some(Subject::Issue(repo.clone(), *number)),
-            Route::Pr { pr, .. } => Some(Subject::Pr(pr.clone())),
+            Route::Issues(issues::Issue { repo, number }) => {
+                Some(Subject::Issue(repo.clone(), *number))
+            }
+            Route::Pulls(pulls::Pr { pr, .. }) => Some(Subject::Pr(pr.clone())),
             _ => None,
         },
         Screen::Diff(d) => d.of.pr().cloned().map(Subject::Pr),

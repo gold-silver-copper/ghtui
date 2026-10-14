@@ -4,6 +4,8 @@
 use super::*;
 use crate::route::app;
 use crate::route::code;
+use crate::route::issues;
+use crate::route::pulls;
 
 /// Something you can do here.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -265,7 +267,12 @@ impl State {
             let mut open = here(Action::Open, "Open the selected row", "open");
             match p.selected_link() {
                 // A new issue's or pull request's text box.
-                Some(Link::Comment) if matches!(route, Route::NewIssue(_) | Route::NewPr(_)) => {
+                Some(Link::Comment)
+                    if matches!(
+                        route,
+                        Route::Issues(issues::NewIssue(_)) | Route::Pulls(pulls::NewPr(_))
+                    ) =>
+                {
                     open.label = "Write the title and description".into();
                 }
                 Some(Link::Comment) if crate::writes::is_form(route) => {
@@ -423,7 +430,9 @@ impl State {
         }
         if matches!(
             route,
-            Route::Issue { .. } | Route::Pr { .. } | Route::Code(code::Commit { .. })
+            Route::Issues(issues::Issue { .. })
+                | Route::Pulls(pulls::Pr { .. })
+                | Route::Code(code::Commit { .. })
         ) {
             out.push(here(Action::Comment, "Write a comment", "comment"));
             let mut quote = here(Action::QuoteReply, "Reply quoting the selected comment", "");
@@ -447,7 +456,7 @@ impl State {
                 "fold",
             ));
         }
-        if let Route::Pr { tab, .. } = route {
+        if let Route::Pulls(pulls::Pr { tab, .. }) = route {
             if *tab == PrTab::Conversation {
                 out.push(here(Action::Tab2, "Commits", ""));
             }

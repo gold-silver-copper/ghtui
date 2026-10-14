@@ -11,6 +11,7 @@
 //! What another author wrote since you started looking is marked New and
 //! said in the status bar; what you wrote isn't.
 
+use crate::route::issues;
 use std::collections::HashSet;
 
 use crate::api::browse::{
@@ -157,7 +158,7 @@ fn watched(state: &State) -> Option<Watched> {
             query: format!("workflow:{file}"),
         },
         // Not one that's a pull request (it redirects).
-        Route::Issue { repo, number } => {
+        Route::Issues(issues::Issue { repo, number }) => {
             let key = DataKey::Issue(repo.clone(), *number);
             state.picked::<Option<Box<IssueDetail>>>(&key)?.as_ref()?;
             Watched::Issue {
@@ -639,7 +640,7 @@ fn job_loaded(state: &mut State, key: &DataKey) {
 pub fn fresh<'a>(state: &'a State, route: &Route) -> Option<&'a HashSet<u64>> {
     let w = state.page_watch.as_ref()?;
     let here = match (&w.what, route) {
-        (Watched::Issue { repo, number }, Route::Issue { repo: r, number: n }) => {
+        (Watched::Issue { repo, number }, Route::Issues(issues::Issue { repo: r, number: n })) => {
             repo == r && number == n
         }
         (Watched::Discussion { of, number }, Route::Discussion { of: o, number: n }) => {

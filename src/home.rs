@@ -9,6 +9,8 @@
 //! they're one fetch.
 
 use crate::route::app;
+use crate::route::issues;
+use crate::route::pulls;
 use std::path::{Path, PathBuf};
 
 use crate::api::browse::SearchKind;
@@ -474,8 +476,8 @@ fn plan(state: &State, action: Action) -> Result<(&Path, Plan<'_>), String> {
             }
             let name = match state.route() {
                 Some(Route::Search { query, .. }) => query.clone(),
-                Some(Route::Issues { repo, .. }) => format!("Issues in {repo}"),
-                Some(Route::Pulls { repo, .. }) => format!("Pull requests in {repo}"),
+                Some(Route::Issues(issues::Issues { repo, .. })) => format!("Issues in {repo}"),
+                Some(Route::Pulls(pulls::Pulls { repo, .. })) => format!("Pull requests in {repo}"),
                 Some(route) => route.title(),
                 None => String::new(),
             };

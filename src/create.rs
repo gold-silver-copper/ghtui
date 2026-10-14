@@ -13,6 +13,8 @@ mod page;
 pub mod templates;
 pub(crate) mod yaml;
 
+use crate::route::issues;
+use crate::route::pulls;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -280,7 +282,7 @@ impl Ask {
 /// The repository a form's page is for.
 fn form_repo(route: &Route) -> Option<&RepoId> {
     match route {
-        Route::NewIssue(repo) | Route::NewPr(repo) => Some(repo),
+        Route::Issues(issues::NewIssue(repo)) | Route::Pulls(pulls::NewPr(repo)) => Some(repo),
         _ => None,
     }
 }
@@ -366,9 +368,9 @@ fn open(state: &mut State, pr: bool) -> Vec<Cmd> {
         return Vec::new();
     }
     let route = if pr {
-        Route::NewPr(repo.clone())
+        Route::Pulls(pulls::NewPr(repo.clone()))
     } else {
-        Route::NewIssue(repo.clone())
+        Route::Issues(issues::NewIssue(repo.clone()))
     };
     if state.route() == Some(&route) {
         return compose(state);
@@ -397,7 +399,7 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
     let Some(repo) = form_repo(&route).cloned() else {
         return cmds;
     };
-    let pr = matches!(route, Route::NewPr(_));
+    let pr = matches!(route, Route::Pulls(pulls::NewPr(_)));
     if pr && !state.creating.clones.contains_key(&repo) {
         state.creating.clones.insert(repo.clone(), Look::Asking);
         cmds.push(Cmd::Create(Work::Clone(repo.clone())));
@@ -460,7 +462,7 @@ pub fn compose(state: &mut State) -> Vec<Cmd> {
         state.info("It's being created");
         return Vec::new();
     }
-    if matches!(route, Route::NewIssue(_)) && form.template.is_none() {
+    if matches!(route, Route::Issues(issues::NewIssue(_))) && form.template.is_none() {
         state.info("Choose a template first");
         return Vec::new();
     }
@@ -513,11 +515,11 @@ pub fn submit(state: &mut State) -> Vec<Cmd> {
         say(state, "Still loading what it can have".into());
         return Vec::new();
     };
-    if let Some(why) = refused(state, &repo, matches!(route, Route::NewPr(_))) {
+    if let Some(why) = refused(state, &repo, matches!(route, Route::Pulls(pulls::NewPr(_)))) {
         say(state, why);
         return Vec::new();
     }
-    if matches!(route, Route::NewIssue(_)) && form.template.is_none() {
+    if matches!(route, Route::Issues(issues::NewIssue(_))) && form.template.is_none() {
         say(state, "Choose a template first".into());
         return Vec::new();
     }
@@ -529,7 +531,7 @@ pub fn submit(state: &mut State) -> Vec<Cmd> {
         );
         return Vec::new();
     }
-    if let Route::NewPr(_) = route {
+    if let Route::Pulls(pulls::NewPr(_)) = route {
         return ask_create(state, &route);
     }
     let triage = |ids: &[NodeId]| {
@@ -680,7 +682,9 @@ fn ask_create(state: &mut State, route: &Route) -> Vec<Cmd> {
 /// Asks before pushing the form's head branch from this clone.
 #[must_use]
 fn ask_push(state: &mut State) -> Vec<Cmd> {
-    let Some((route, form)) = here(state).filter(|(r, _)| matches!(r, Route::NewPr(_))) else {
+    let Some((route, form)) =
+        here(state).filter(|(r, _)| matches!(r, Route::Pulls(pulls::NewPr(_))))
+    else {
         state.info("Pushing works on a new pull request's branch (,p)");
         return Vec::new();
     };
@@ -834,7 +838,7 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
             head,
             result,
         } => {
-            let route = Route::NewPr(repo.clone());
+            let route = Route::Pulls(pulls::NewPr(repo.clone()));
             let template = form_data(&state.data, &repo).and_then(|d| d.pr_template.clone());
             let Some(form) = state.creating.forms.get_mut(&route) else {
                 return Vec::new();
@@ -861,7 +865,7 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
             Vec::new()
         }
         Done::Pushed(repo, branch, result) => {
-            let route = Route::NewPr(repo);
+            let route = Route::Pulls(pulls::NewPr(repo));
             match result {
                 Ok(()) => {
                     if matches!(&state.overlay, Some(Overlay::Ask(a)) if a.route == route) {
@@ -939,8 +943,10 @@ fn created(state: &mut State, route: &Route, result: Result<u64, ApiError>) -> V
                 state.overlay = None;
             }
             let (page, what) = match route {
-                Route::NewPr(_) => (Route::pr(PrRef { repo, number }), "pull request"),
-                _ => (Route::Issue { repo, number }, "issue"),
+                Route::Pulls(pulls::NewPr(_)) => {
+                    (Route::pr(PrRef { repo, number }), "pull request")
+                }
+                _ => (Route::Issues(issues::Issue { repo, number }), "issue"),
             };
             state.info(format!("Opened {what} #{number}"));
             if state.route() == Some(route) {
@@ -951,7 +957,7 @@ fn created(state: &mut State, route: &Route, result: Result<u64, ApiError>) -> V
         Err(err) => {
             tracing::warn!(%err, "creating failed");
             let what = match route {
-                Route::NewPr(_) => "the pull request",
+                Route::Pulls(pulls::NewPr(_)) => "the pull request",
                 _ => "the issue",
             };
             let reason = match &err {
@@ -1323,7 +1329,7 @@ pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
         return;
     };
     if let Some((route, form)) = here(state) {
-        let pr = matches!(route, Route::NewPr(_));
+        let pr = matches!(route, Route::Pulls(pulls::NewPr(_)));
         let mut write = row(
             "This page",
             Action::Comment,

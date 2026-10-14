@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::route::code;
+use crate::route::issues;
+use crate::route::pulls;
 
 #[must_use]
 pub fn star(state: &mut State) -> Vec<Cmd> {
@@ -64,7 +66,7 @@ pub(super) fn quote_reply(state: &mut State) -> Vec<Cmd> {
 #[must_use]
 pub(super) fn comment_with(state: &mut State, text: &str, quoting: Option<String>) -> Vec<Cmd> {
     let target = match state.route() {
-        Some(Route::Issue { repo, number }) => {
+        Some(Route::Issues(issues::Issue { repo, number })) => {
             let key = DataKey::Issue(repo.clone(), *number);
             match state.get(&key) {
                 Some(Data::Issue(Some(issue))) => {
@@ -73,9 +75,13 @@ pub(super) fn comment_with(state: &mut State, text: &str, quoting: Option<String
                 _ => None,
             }
         }
-        Some(Route::Pr { pr, .. }) => state.activity(pr).map(|a| (a.id.clone(), pr.to_string())),
+        Some(Route::Pulls(pulls::Pr { pr, .. })) => {
+            state.activity(pr).map(|a| (a.id.clone(), pr.to_string()))
+        }
         // A new issue's or pull request's title and description.
-        Some(Route::NewIssue(_) | Route::NewPr(_)) => return crate::create::compose(state),
+        Some(Route::Issues(issues::NewIssue(_)) | Route::Pulls(pulls::NewPr(_))) => {
+            return crate::create::compose(state);
+        }
         Some(Route::Discussion { .. }) => return crate::discuss::act(state, Action::Comment),
         Some(route) if crate::writes::is_form(route) => return crate::writes::compose(state),
         // A commit's comments.

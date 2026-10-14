@@ -9,6 +9,7 @@ use crate::chrome::{Chrome, compare_tabs, repo_crumbs};
 use crate::data::{Data, DataKey};
 use crate::diff_screen::DiffOf;
 use crate::git::Oid;
+use crate::route::pulls;
 use crate::state::State;
 use crate::ui::pages::{self, url as links};
 use crate::ui::text::short_sha;
@@ -311,7 +312,7 @@ impl Family for Page {
         }))
     }
 
-    fn needs(&self, _: &State) -> Vec<DataKey> {
+    fn needs(&self) -> Vec<DataKey> {
         use DataKey as K;
         let own = match self {
             Repo(repo) => vec![
@@ -574,7 +575,7 @@ pub(super) fn parse_repo(repo: &RepoId, rest: &[&str], url: &Url<'_>) -> Option<
             let spec = rest.join("/");
             // Without revisions it's the form for opening a pull request.
             if spec.is_empty() {
-                return Some(Target::Page(Route::NewPr(repo)));
+                return Some(Target::Page(Route::Pulls(pulls::NewPr(repo))));
             }
             // Its files, from one commit to the other (`a..b`; with three
             // dots it's from their merge base, which the comparison page

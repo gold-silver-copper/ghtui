@@ -1,6 +1,7 @@
 //! Reviewing: comment targets, drafts, suggestions, and turning GitHub
 //! threads and local drafts into annotations.
 
+use crate::route::pulls;
 use std::collections::{HashMap, HashSet};
 
 use crate::api::model::{NewThread, ReviewEvent, ReviewThread, Side as ApiSide};
@@ -158,7 +159,7 @@ impl Compose {
             ComposeTarget::NewDiscussion(s) => s.title(),
             ComposeTarget::Setting(f) => f.title(),
             ComposeTarget::Commit { oid, .. } => format!("Comment on commit {}", short_sha(oid)),
-            ComposeTarget::Form(crate::route::Route::NewPr(_)) => {
+            ComposeTarget::Form(crate::route::Route::Pulls(pulls::NewPr(_))) => {
                 "New pull request: its title on the first line, then its description".to_owned()
             }
             ComposeTarget::Form(_) => {

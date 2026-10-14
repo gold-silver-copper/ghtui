@@ -7,6 +7,8 @@
 
 pub mod app;
 pub mod code;
+pub mod issues;
+pub mod pulls;
 
 use crate::api::browse::{DiscussionsOf, RepoSort, SearchKind};
 use crate::api::model::{PrRef, RepoId};
@@ -30,24 +32,10 @@ pub enum Route {
     App(app::Page),
     /// A repository's code, its history, branches and tags.
     Code(code::Page),
-    Issues {
-        repo: RepoId,
-        query: String,
-    },
-    Pulls {
-        repo: RepoId,
-        query: String,
-    },
-    /// An issue (or, until GitHub says otherwise, a pull request: those
-    /// redirect).
-    Issue {
-        repo: RepoId,
-        number: u64,
-    },
-    Pr {
-        pr: PrRef,
-        tab: PrTab,
-    },
+    /// Its issues, labels and milestones.
+    Issues(issues::Page),
+    /// Its pull requests.
+    Pulls(pulls::Page),
     /// Workflow runs, filtered as GitHub's Actions tab filters them
     /// (`branch:main is:failure`).
     Actions {
@@ -145,15 +133,6 @@ pub enum Route {
         repo: RepoId,
         environment: Option<String>,
     },
-    /// Open or closed milestones.
-    Milestones {
-        repo: RepoId,
-        closed: bool,
-    },
-    Milestone {
-        repo: RepoId,
-        number: u64,
-    },
     User {
         login: String,
         tab: ProfileTab,
@@ -166,10 +145,6 @@ pub enum Route {
     Notifications {
         query: String,
     },
-    /// A new issue: its templates, then its form.
-    NewIssue(RepoId),
-    /// A new pull request's form.
-    NewPr(RepoId),
     /// An organization's or someone's projects, or a repository's.
     Projects(ProjectsOf),
     /// A project at one of its views (its first, if none is named).
@@ -206,9 +181,6 @@ pub enum Route {
     /// Insights, Explore and topics, starred lists, packages
     /// ([`crate::site`]).
     Site(crate::site::Page),
-    // ---- housekeeping ([`crate::housekeeping`]) ----
-    /// A repository's labels.
-    Labels(RepoId),
     /// One of housekeeping's forms: a label, a milestone, a fork, a new
     /// repository, a file.
     Housekeeping(crate::housekeeping::FormOf),
@@ -253,7 +225,7 @@ pub trait Family {
     /// The page above this one, like GitHub's breadcrumbs.
     fn up(&self, state: &State) -> Option<Route>;
     /// What the page needs fetched: everything [`Family::build`] reads.
-    fn needs(&self, state: &State) -> Vec<DataKey>;
+    fn needs(&self) -> Vec<DataKey>;
     /// What the page reads besides its needs, already fetched for it by
     /// something else.
     fn also_reads(&self, _key: &DataKey) -> bool {
@@ -304,13 +276,27 @@ impl Route {
     /// something else.
     pub fn also_reads(&self, key: &DataKey) -> bool {
         match self {
-            // The lines its threads are on, read from the clone.
-            Route::Pr { pr, .. } => matches!(key, DataKey::Lines(repo, ..) if *repo == pr.repo),
             Route::App(p) => p.also_reads(key),
             Route::Code(p) => p.also_reads(key),
+            Route::Issues(p) => p.also_reads(key),
+            Route::Pulls(p) => p.also_reads(key),
             Route::Site(p) => p.also_reads(key),
             Route::Housekeeping(p) => p.also_reads(key),
             _ => false,
+        }
+    }
+
+    /// What the page needs fetched (Home's are the state's:
+    /// [`State::needs`]).
+    pub fn needs(&self) -> Vec<DataKey> {
+        match self {
+            Route::App(p) => p.needs(),
+            Route::Code(p) => p.needs(),
+            Route::Issues(p) => p.needs(),
+            Route::Pulls(p) => p.needs(),
+            Route::Site(p) => p.needs(),
+            Route::Housekeeping(p) => p.needs(),
+            _ => crate::browse::needs(self),
         }
     }
 
@@ -319,6 +305,8 @@ impl Route {
         match self {
             Route::App(p) => p.starts_on_row(),
             Route::Code(p) => p.starts_on_row(),
+            Route::Issues(p) => p.starts_on_row(),
+            Route::Pulls(p) => p.starts_on_row(),
             Route::Site(p) => p.starts_on_row(),
             Route::Housekeeping(p) => p.starts_on_row(),
             _ => true,
@@ -327,10 +315,10 @@ impl Route {
 
     /// A pull request's conversation.
     pub fn pr(pr: PrRef) -> Route {
-        Route::Pr {
+        Route::Pulls(pulls::Pr {
             pr,
             tab: PrTab::Conversation,
-        }
+        })
     }
 
     /// A file, from the top.
@@ -379,16 +367,8 @@ impl Route {
         match self {
             Route::App(p) => p.url(),
             Route::Code(p) => p.url(),
-            Route::Issues { repo, query } => list_url(&links::issues(repo), query),
-            Route::Pulls { repo, query } => list_url(&links::pulls(repo), query),
-            Route::Issue { repo, number } => links::issue(repo, *number),
-            Route::Pr { pr, tab } => match tab {
-                // GitHub shows a review in the conversation.
-                PrTab::Conversation | PrTab::Review => links::pull(pr),
-                PrTab::Reviewed(id) => format!("{}#pullrequestreview-{id}", links::pull(pr)),
-                PrTab::Commits => links::pull_tab(pr, "commits"),
-                PrTab::Checks => links::pull_tab(pr, "checks"),
-            },
+            Route::Issues(p) => p.url(),
+            Route::Pulls(p) => p.url(),
             Route::Actions { repo, query } if query.is_empty() => {
                 format!("{}/actions", links::repo(repo))
             }
@@ -487,16 +467,6 @@ impl Route {
                 ),
                 None => format!("{}/deployments", links::repo(repo)),
             },
-            Route::Milestones { repo, closed } => format!(
-                "{}/milestones{}",
-                links::repo(repo),
-                if *closed { "?state=closed" } else { "" }
-            ),
-            Route::Milestone { repo, number } => {
-                format!("{}/milestone/{number}", links::repo(repo))
-            }
-            Route::NewIssue(repo) => format!("{}/issues/new", links::repo(repo)),
-            Route::NewPr(repo) => format!("{}/compare", links::repo(repo)),
             Route::NewRelease(repo) => format!("{}/releases/new", links::repo(repo)),
             Route::EditRelease { repo, tag } => format!(
                 "{}/releases/edit/{}",
@@ -548,7 +518,6 @@ impl Route {
                 view,
                 item,
             } => format!("{}?pane=issue&itemId={item}", view_url(project, *view)),
-            Route::Labels(repo) => format!("{}/labels", links::repo(repo)),
             Route::Housekeeping(of) => of.url(),
         }
     }
@@ -558,10 +527,8 @@ impl Route {
         match self {
             Route::App(p) => p.title(),
             Route::Code(p) => p.title(),
-            Route::Issues { repo, .. } => format!("{repo} · Issues"),
-            Route::Pulls { repo, .. } => format!("{repo} · Pull requests"),
-            Route::Issue { repo, number } => format!("{repo}#{number}"),
-            Route::Pr { pr, .. } => pr.to_string(),
+            Route::Issues(p) => p.title(),
+            Route::Pulls(p) => p.title(),
             Route::Actions { repo, .. } => format!("{repo} · Actions"),
             Route::WorkflowRun { repo, run, .. } => format!("{repo} · Run {run}"),
             Route::Job { repo, job, .. } => format!("{repo} · Job {job}"),
@@ -595,10 +562,6 @@ impl Route {
             Route::Gist { id, .. } => format!("Gist {}", id.get(..7).unwrap_or(id)),
             Route::Gists(login) => format!("@{login} · Gists"),
             Route::Deployments { repo, .. } => format!("{repo} · Deployments"),
-            Route::Milestones { repo, .. } => format!("{repo} · Milestones"),
-            Route::Milestone { repo, number } => format!("{repo} · Milestone {number}"),
-            Route::NewIssue(repo) => format!("{repo} · New issue"),
-            Route::NewPr(repo) => format!("{repo} · New pull request"),
             Route::NewRelease(repo) => format!("{repo} · New release"),
             Route::EditRelease { repo, tag } => format!("{repo} · Editing {tag}"),
             Route::NewGist => "New gist".to_owned(),
@@ -622,7 +585,6 @@ impl Route {
                 project.owner.login(),
                 project.number
             ),
-            Route::Labels(repo) => format!("{repo} · Labels"),
             Route::Housekeeping(of) => of.title(),
         }
     }
@@ -630,10 +592,7 @@ impl Route {
     /// The repository the page belongs to.
     pub fn repo(&self) -> Option<&RepoId> {
         match self {
-            Route::Issues { repo, .. }
-            | Route::Pulls { repo, .. }
-            | Route::Issue { repo, .. }
-            | Route::Actions { repo, .. }
+            Route::Actions { repo, .. }
             | Route::WorkflowRun { repo, .. }
             | Route::Job { repo, .. }
             | Route::Workflow { repo, .. }
@@ -659,18 +618,14 @@ impl Route {
             | Route::Alert { repo, .. }
             | Route::Settings { repo, .. }
             | Route::Deployments { repo, .. }
-            | Route::Milestones { repo, .. }
-            | Route::Milestone { repo, .. }
-            | Route::NewIssue(repo)
-            | Route::NewPr(repo)
             | Route::NewRelease(repo)
             | Route::EditRelease { repo, .. }
             | Route::WikiEdit { repo, .. }
             | Route::Dispatch { repo, .. }
-            | Route::Projects(ProjectsOf::Repo(repo))
-            | Route::Labels(repo) => Some(repo),
-            Route::Pr { pr, .. } => Some(&pr.repo),
+            | Route::Projects(ProjectsOf::Repo(repo)) => Some(repo),
             Route::Code(p) => p.repo(),
+            Route::Issues(p) => p.repo(),
+            Route::Pulls(p) => p.repo(),
             Route::Site(page) => page.repo(),
             Route::Housekeeping(of) => of.repo(),
             Route::Projects(ProjectsOf::Owner(_))
@@ -703,9 +658,9 @@ impl Route {
     /// notifications.
     pub fn list_query(&self) -> Option<&str> {
         match self {
-            Route::Issues { query, .. }
-            | Route::Pulls { query, .. }
-            | Route::Actions { query, .. }
+            Route::Issues(p) => p.query(),
+            Route::Pulls(p) => p.query(),
+            Route::Actions { query, .. }
             | Route::Alerts { query, .. }
             | Route::Search { query, .. }
             | Route::Notifications { query } => Some(query),
@@ -716,14 +671,8 @@ impl Route {
     /// The same list with another filter.
     pub fn with_query(&self, query: String) -> Option<Route> {
         Some(match self {
-            Route::Issues { repo, .. } => Route::Issues {
-                repo: repo.clone(),
-                query,
-            },
-            Route::Pulls { repo, .. } => Route::Pulls {
-                repo: repo.clone(),
-                query,
-            },
+            Route::Issues(p) => return p.with_query(query),
+            Route::Pulls(p) => return p.with_query(query),
             Route::Search { kind, .. } => Route::Search { kind: *kind, query },
             Route::Actions { repo, .. } => Route::Actions {
                 repo: repo.clone(),
@@ -741,50 +690,16 @@ impl Route {
 
     /// The search behind a list page.
     pub fn search(&self) -> Option<(SearchKind, String)> {
-        match self {
-            Route::Issues { repo, query } => {
-                Some((SearchKind::Issues, list_query(repo, "issue", query)))
-            }
-            Route::Pulls { repo, query } => {
-                Some((SearchKind::Issues, list_query(repo, "pr", query)))
-            }
-            Route::Search { kind, query } => Some((*kind, query.clone())),
+        let key = match self {
+            Route::Issues(p @ issues::Issues { .. }) => p.paged(),
+            Route::Pulls(p @ pulls::Pulls { .. }) => p.paged(),
+            Route::Search { kind, query } => return Some((*kind, query.clone())),
+            _ => None,
+        };
+        match key? {
+            DataKey::Search(kind, query) => Some((kind, query)),
             _ => None,
         }
-    }
-
-    /// The search an issue or pull request list's open and closed counts
-    /// come from, when its filter is more than a state and a sort (else
-    /// they're the repository's own).
-    pub fn state_counts(&self) -> Option<String> {
-        let (repo, is, query) = match self {
-            Route::Issues { repo, query } => (repo, "issue", query),
-            Route::Pulls { repo, query } => (repo, "pr", query),
-            _ => return None,
-        };
-        let state = ["is:open", "is:closed", "state:open", "state:closed"];
-        let filter: Vec<&str> = (query.split_whitespace())
-            .filter(|w| !state.contains(w) && !w.starts_with("sort:"))
-            .collect();
-        (!filter.is_empty()).then(|| format!("repo:{repo} is:{is} {}", filter.join(" ")))
-    }
-}
-
-/// The search for a repository's issue or pull request list. Newest first,
-/// as on GitHub, unless the filter sorts.
-fn list_query(repo: &RepoId, is: &str, query: &str) -> String {
-    let mut q = format!("repo:{repo} is:{is} {}", query.trim());
-    if !query.contains("sort:") {
-        q.push_str(" sort:created-desc");
-    }
-    q
-}
-
-fn list_url(base: &str, query: &str) -> String {
-    if query == OPEN {
-        base.to_owned()
-    } else {
-        format!("{base}?q={}", links::encode(query))
     }
 }
 
@@ -844,7 +759,13 @@ const TOP: &[fn(&Url<'_>) -> Option<Target>] = &[app::parse, crate::housekeeping
 
 /// What they make of the path after `/<owner>/<repo>`, asked in this
 /// order: housekeeping's forms (`milestones/new`) before the milestones.
-const REPO: &[RepoParse] = &[crate::housekeeping::parse_repo, code::parse_repo, repo_page];
+const REPO: &[RepoParse] = &[
+    crate::housekeeping::parse_repo,
+    code::parse_repo,
+    issues::parse_repo,
+    pulls::parse_repo,
+    repo_page,
+];
 
 /// What a URL opens in ghtui, or `None` for the browser.
 fn parse(parsed: &url::Url) -> Option<Target> {
@@ -1037,31 +958,6 @@ fn repo_page(repo: &RepoId, rest: &[&str], url: &Url<'_>) -> Option<Target> {
     let param = |name: &str| url.param(name);
     let fragment = url.fragment();
     let route = match rest {
-        [list @ ("issues" | "pulls")] => {
-            let query = param("q").map_or_else(|| OPEN.to_owned(), |q| strip_is(&q));
-            if *list == "issues" {
-                Route::Issues { repo, query }
-            } else {
-                Route::Pulls { repo, query }
-            }
-        }
-        ["labels"] => Route::Labels(repo),
-        // A label's issues. Its name goes into a search, which control
-        // characters don't survive.
-        ["labels", label] if label.contains(char::is_control) => return None,
-        ["labels", label] => {
-            // As a search reads it: runs of spaces are one.
-            let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
-            let label = if label.contains(' ') {
-                format!("\"{label}\"")
-            } else {
-                label
-            };
-            Route::Issues {
-                repo,
-                query: format!("{OPEN} label:{label}"),
-            }
-        }
         ["actions"] => Route::Actions {
             repo,
             query: param("query")
@@ -1096,15 +992,6 @@ fn repo_page(repo: &RepoId, rest: &[&str], url: &Url<'_>) -> Option<Target> {
         // A wiki's own pages but its list (history, comparisons).
         ["wiki", special, ..] if special.starts_with('_') && *special != "_pages" => return None,
         ["releases", ..] => Route::Releases(repo),
-        // A milestone by its title is in the list.
-        ["milestones", ..] => Route::Milestones {
-            repo,
-            closed: param("state").as_deref() == Some("closed"),
-        },
-        ["milestone", n] => Route::Milestone {
-            repo,
-            number: n.parse().ok()?,
-        },
         // The security overview's part ghtui can show: advisories.
         ["security"] | ["security", "advisories"] => Route::Advisories(Some(repo)),
         ["security", "advisories", ghsa] if valid_ghsa(ghsa) => Route::Advisory {
@@ -1193,47 +1080,6 @@ fn repo_page(repo: &RepoId, rest: &[&str], url: &Url<'_>) -> Option<Target> {
             Route::Workflow {
                 repo,
                 file: (*file).to_owned(),
-            }
-        }
-        ["pull", n] if n.ends_with(".diff") => {
-            let number = n.trim_end_matches(".diff").parse().ok()?;
-            return Some(Target::Files(DiffOf::Pr(PrRef { repo, number })));
-        }
-        // The form, after the template chooser or straight to it.
-        ["issues", "new"] | ["issues", "new", "choose"] => Route::NewIssue(repo),
-        ["issues", n] => Route::Issue {
-            repo,
-            number: n.parse().ok()?,
-        },
-        ["pull", n, rest @ ..] => {
-            let pr = PrRef {
-                repo,
-                number: n.parse().ok()?,
-            };
-            // Review comments are threads in the diff.
-            let review_comment = fragment.is_some_and(|f| {
-                f.strip_prefix("discussion_r")
-                    .or_else(|| f.strip_prefix('r'))
-                    .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
-            });
-            match rest {
-                [] if review_comment => return Some(Target::Files(DiffOf::Pr(pr))),
-                [] => Route::pr(pr),
-                ["commits" | "changes", sha] if valid_rev(sha) => Route::Code(code::Commit {
-                    repo: pr.repo,
-                    oid: (*sha).to_owned(),
-                    pr: Some(pr.number),
-                }),
-                ["files" | "changes", ..] => return Some(Target::Files(DiffOf::Pr(pr))),
-                ["commits", ..] => Route::Pr {
-                    pr,
-                    tab: PrTab::Commits,
-                },
-                ["checks", ..] => Route::Pr {
-                    pr,
-                    tab: PrTab::Checks,
-                },
-                _ => return None,
             }
         }
         _ => return None,
@@ -1441,19 +1287,6 @@ fn decode(segment: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// GitHub's list URLs repeat `is:issue`/`is:pr`; the route adds them back.
-fn strip_is(query: &str) -> String {
-    let words: Vec<&str> = query
-        .split_whitespace()
-        .filter(|w| !matches!(*w, "is:issue" | "is:pr"))
-        .collect();
-    if words.is_empty() {
-        OPEN.to_owned()
-    } else {
-        words.join(" ")
-    }
-}
-
 /// What the command palette makes of its input. A web link ghtui
 /// doesn't show (another GitHub's, say) is the browser's.
 pub fn parse_input(input: &str, context: Option<&RepoId>) -> Option<Dest> {
@@ -1476,7 +1309,7 @@ pub fn parse_input(input: &str, context: Option<&RepoId>) -> Option<Dest> {
     }
     let issue = |repo: RepoId, n: &str| {
         let number = n.trim_start_matches('#').parse().ok()?;
-        Some(Target::Page(Route::Issue { repo, number }).into())
+        Some(Target::Page(Route::Issues(issues::Issue { repo, number })).into())
     };
     if let Some((repo, n)) = input.split_once('#')
         && !repo.is_empty()
@@ -1697,10 +1530,10 @@ pub(crate) mod tests {
         // Not a commit under a PR: the PR's commits.
         assert!(matches!(
             Dest::from_url("https://github.com/o/r/pull/1/commits/a%20b").target,
-            Target::Page(Route::Pr {
+            Target::Page(Route::Pulls(pulls::Pr {
                 tab: PrTab::Commits,
                 ..
-            })
+            }))
         ));
         // A full SHA's files open the diff; a short one, its page.
         assert!(matches!(
@@ -1771,32 +1604,32 @@ pub(crate) mod tests {
         }
         assert_eq!(
             page("https://github.com/o/r/issues?q=is%3Aissue+is%3Aclosed"),
-            Route::Issues {
+            Route::Issues(issues::Issues {
                 repo: repo.clone(),
                 query: "is:closed".into()
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/o/r/pulls"),
-            Route::Pulls {
+            Route::Pulls(pulls::Pulls {
                 repo: repo.clone(),
                 query: OPEN.into()
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/o/r/issues/5"),
-            Route::Issue {
+            Route::Issues(issues::Issue {
                 repo: repo.clone(),
                 number: 5
-            }
+            })
         );
         let pr = PrRef { repo, number: 7 };
         assert_eq!(
             page("https://github.com/o/r/pull/7/commits"),
-            Route::Pr {
+            Route::Pulls(pulls::Pr {
                 pr: pr.clone(),
                 tab: PrTab::Commits
-            }
+            })
         );
         assert_eq!(
             Dest::from_url("https://github.com/o/r/pull/7/files").target,
@@ -1866,10 +1699,10 @@ pub(crate) mod tests {
         ));
         assert_eq!(
             page("https://github.com/o/r/pull/7/checks"),
-            Route::Pr {
+            Route::Pulls(pulls::Pr {
                 pr: pr.clone(),
                 tab: PrTab::Checks
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/o/r/commit/0123abc"),
@@ -1897,17 +1730,17 @@ pub(crate) mod tests {
         );
         assert_eq!(
             page("https://github.com/o/r/labels/good%20first%20issue"),
-            Route::Issues {
+            Route::Issues(issues::Issues {
                 repo: RepoId::new("o", "r"),
                 query: "is:open label:\"good first issue\"".into()
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/o/r/labels/bug"),
-            Route::Issues {
+            Route::Issues(issues::Issues {
                 repo: RepoId::new("o", "r"),
                 query: "is:open label:bug".into()
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/octocat?tab=repositories&sort=stargazers"),
@@ -1947,10 +1780,10 @@ pub(crate) mod tests {
         );
         assert_eq!(
             page("https://github.com/o/r/milestone/3"),
-            Route::Milestone {
+            Route::Issues(issues::Milestone {
                 repo: pr.repo.clone(),
                 number: 3
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/o/r/compare/v1...fork:feature/x"),
@@ -2089,7 +1922,9 @@ pub(crate) mod tests {
         // A family's page by its own name.
         let family = word(&named);
         match named.strip_prefix(&format!("{family}(")) {
-            Some(page) if ["App", "Code", "Site"].contains(&family.as_str()) => word(page),
+            Some(page) if ["App", "Code", "Issues", "Pulls", "Site"].contains(&family.as_str()) => {
+                word(page)
+            }
             _ => family,
         }
     }
@@ -2158,20 +1993,20 @@ pub(crate) mod tests {
                 path: "src/lib.rs".into(),
                 lines: Some((3, 9)),
             }),
-            Route::Issues {
+            Route::Issues(issues::Issues {
                 repo: repo.clone(),
                 query: "is:closed label:bug".into(),
-            },
-            Route::Pulls {
+            }),
+            Route::Pulls(pulls::Pulls {
                 repo: repo.clone(),
                 query: OPEN.into(),
-            },
+            }),
             Route::Code(code::Commit {
                 repo: repo.clone(),
                 oid: "abc1234".into(),
                 pr: None,
             }),
-            Route::Issue { repo, number: 3 },
+            Route::Issues(issues::Issue { repo, number: 3 }),
             Route::user("octocat"),
             Route::Search {
                 kind: SearchKind::Users,
@@ -2488,18 +2323,18 @@ pub(crate) mod tests {
         );
         assert_eq!(
             target("#12", Some(&repo)),
-            Some(Target::Page(Route::Issue {
+            Some(Target::Page(Route::Issues(issues::Issue {
                 repo: repo.clone(),
                 number: 12
-            }))
+            })))
         );
         assert_eq!(target("12", None), None);
         assert_eq!(
             target("a/b#3", None),
-            Some(Target::Page(Route::Issue {
+            Some(Target::Page(Route::Issues(issues::Issue {
                 repo: RepoId::new("a", "b"),
                 number: 3
-            }))
+            })))
         );
         assert_eq!(
             target("a/b/pull/5/files", None),
@@ -2518,10 +2353,10 @@ pub(crate) mod tests {
 
     #[test]
     fn list_queries_scope_to_the_repo() {
-        let route = Route::Pulls {
+        let route = Route::Pulls(pulls::Pulls {
             repo: RepoId::new("o", "r"),
             query: "is:open author:me".into(),
-        };
+        });
         assert_eq!(
             route.search(),
             Some((
@@ -2553,8 +2388,6 @@ pub(crate) mod tests {
                 repo().prop_map(Route::Watchers),
                 repo().prop_map(Route::Forks),
                 repo().prop_map(Route::Releases),
-                repo().prop_map(Route::NewIssue),
-                repo().prop_map(Route::NewPr),
                 repo().prop_map(Route::NewRelease),
                 Just(Route::NewGist),
                 (login(), "[0-9a-f]{20}")
@@ -2651,22 +2484,12 @@ pub(crate) mod tests {
                 (repo(), prop::option::of("[A-Za-z0-9 _-]{1,12}"))
                     .prop_filter("not the log", |(_, e)| e.as_deref() != Some("activity_log"))
                     .prop_map(|(repo, environment)| Route::Deployments { repo, environment }),
-                (repo(), any::<bool>())
-                    .prop_map(|(repo, closed)| Route::Milestones { repo, closed }),
-                (repo(), 1..u64::MAX).prop_map(|(repo, number)| Route::Milestone { repo, number }),
                 (repo(), "[A-Za-z0-9._-]{1,12}")
                     .prop_filter("not . or ..", |(_, t)| t != "." && t != "..")
                     .prop_map(|(repo, tag)| Route::Release { repo, tag }),
                 (repo(), "[A-Za-z0-9._-]{1,12}")
                     .prop_filter("not . or ..", |(_, t)| t != "." && t != "..")
                     .prop_map(|(repo, tag)| Route::EditRelease { repo, tag }),
-                (repo(), query()).prop_map(|(repo, query)| Route::Issues { repo, query }),
-                (repo(), query()).prop_map(|(repo, query)| Route::Pulls { repo, query }),
-                (repo(), 1..u64::MAX).prop_map(|(repo, number)| Route::Issue { repo, number }),
-                (repo(), 1..u64::MAX).prop_map(|(repo, number)| Route::Pr {
-                    pr: PrRef { repo, number },
-                    tab: PrTab::Commits,
-                }),
                 login()
                     .prop_filter("not a reserved path", |l| !RESERVED.contains(&l.as_str()))
                     .prop_flat_map(|login| {
@@ -2730,6 +2553,8 @@ pub(crate) mod tests {
                     query,
                 }),
                 code::arb(),
+                issues::arb(),
+                pulls::arb(),
             ]
         }
 

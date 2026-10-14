@@ -15,6 +15,8 @@ use crate::api::model::{
 };
 use crate::api::notifications::Inbox;
 use crate::api::project::ProjectRef;
+use crate::route::issues;
+use crate::route::pulls;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::data::{DataKey, Picked};
@@ -215,8 +217,8 @@ impl Subject {
     /// The subject of a page about one thing.
     fn of(route: &Route) -> Option<Self> {
         Some(match route {
-            Route::Pr { pr, .. } => Subject::Pr(pr.clone()),
-            Route::Issue { repo, number } => Subject::Issue(repo.clone(), *number),
+            Route::Pulls(pulls::Pr { pr, .. }) => Subject::Pr(pr.clone()),
+            Route::Issues(issues::Issue { repo, number }) => Subject::Issue(repo.clone(), *number),
             Route::WorkflowRun { repo, run, attempt } => Subject::Run(repo.clone(), *run, *attempt),
             Route::Job { repo, run, job, .. } => Subject::Job(repo.clone(), *run, *job),
             Route::Alert { repo, kind, number } => Subject::Alert(crate::api::security::AlertRef {
@@ -233,10 +235,10 @@ impl Subject {
     fn route(&self) -> Route {
         match self {
             Subject::Pr(pr) => Route::pr(pr.clone()),
-            Subject::Issue(repo, number) => Route::Issue {
+            Subject::Issue(repo, number) => Route::Issues(issues::Issue {
                 repo: repo.clone(),
                 number: *number,
-            },
+            }),
             Subject::Run(repo, run, attempt) => Route::WorkflowRun {
                 repo: repo.clone(),
                 run: *run,

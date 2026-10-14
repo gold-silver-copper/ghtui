@@ -13,6 +13,8 @@ use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::{Kind, fuzzy_score};
 use crate::route::Route;
+use crate::route::issues;
+use crate::route::pulls;
 use crate::state::{Cmd, State};
 use crate::ui::overlays::PaletteItem;
 
@@ -22,11 +24,11 @@ use super::{At, Chosen, On, Pick};
 /// loaded.
 pub fn here(state: &State) -> Option<(Subject, DataKey)> {
     match state.route()? {
-        Route::Issue { repo, number } => Some((
+        Route::Issues(issues::Issue { repo, number }) => Some((
             Subject::Issue(repo.clone(), *number),
             DataKey::InProjects(repo.clone(), *number),
         )),
-        Route::Pr { pr, .. } => Some((
+        Route::Pulls(pulls::Pr { pr, .. }) => Some((
             Subject::Pr(pr.clone()),
             DataKey::InProjects(pr.repo.clone(), pr.number),
         )),

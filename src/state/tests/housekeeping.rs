@@ -4,6 +4,8 @@
 //! GitHub until it shows it.
 
 use crate::route::code;
+use crate::route::issues;
+use crate::route::pulls;
 use std::path::PathBuf;
 
 use crate::api::housekeeping::{
@@ -80,7 +82,7 @@ fn with_labels() -> State {
     let labels = crate::housekeeping::fixtures::labels();
     open(
         &mut s,
-        Route::Labels(ghtui()),
+        Route::Issues(issues::Labels(ghtui())),
         Data::Labels(Box::new(labels)),
     );
     s
@@ -130,7 +132,7 @@ fn a_label_is_made_and_the_page_follows() {
     done(&mut s, HDone::Label(work, Ok(())));
     assert_eq!(
         s.route(),
-        Some(&Route::Labels(ghtui())),
+        Some(&Route::Issues(issues::Labels(ghtui()))),
         "back on the labels"
     );
     says(&s, "Created the label triage");
@@ -163,7 +165,7 @@ fn a_label_is_edited_and_deleted() {
     assert_eq!(change.color, "7057ff");
     assert_eq!(change.description, "Good for newcomers");
     done(&mut s, HDone::Label(sent(&cmds), Ok(())));
-    assert_eq!(s.route(), Some(&Route::Labels(ghtui())));
+    assert_eq!(s.route(), Some(&Route::Issues(issues::Labels(ghtui()))));
 
     select(&mut s, "bug");
     press(&mut s, ",D");
@@ -239,10 +241,10 @@ fn milestones_are_closed_edited_and_deleted() {
     done(&mut s, HDone::Milestone(sent(&cmds), Ok(Some(3))));
     assert_eq!(
         s.route(),
-        Some(&Route::Milestones {
+        Some(&Route::Issues(issues::Milestones {
             repo: ghtui(),
             closed: false
-        })
+        }))
     );
 
     select(&mut s, "Links");
@@ -525,8 +527,8 @@ fn a_file_is_edited_and_committed_on_a_new_branch() {
     assert_eq!(s.route(), Some(&page));
     assert_eq!(asked(&s).title, "Open a pull request for octocat-patch-1?");
     press(&mut s, "<Enter>");
-    assert_eq!(s.route(), Some(&Route::NewPr(ghtui())));
-    let pr = &s.creating.forms[&Route::NewPr(ghtui())];
+    assert_eq!(s.route(), Some(&Route::Pulls(pulls::NewPr(ghtui()))));
+    let pr = &s.creating.forms[&Route::Pulls(pulls::NewPr(ghtui()))];
     assert_eq!(pr.head.as_deref(), Some("octocat-patch-1"));
 }
 
@@ -621,7 +623,7 @@ fn without_write_access_each_says_why() {
         &s,
         "Changing its files takes write access to gold-silver-copper/ghtui: fork it (,F)",
     );
-    let route = Route::Labels(ghtui());
+    let route = Route::Issues(issues::Labels(ghtui()));
     let _ = s.push(route);
     press(&mut s, ",o");
     says(&s, "Changing labels takes write access");

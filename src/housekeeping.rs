@@ -13,6 +13,7 @@
 //! GitHub until it shows the change, as [`crate::writes`] does.
 
 use crate::route::code;
+use crate::route::issues;
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
@@ -153,11 +154,11 @@ impl Family for FormOf {
     /// What the form is of.
     fn up(&self, _: &State) -> Option<Route> {
         Some(match self {
-            FormOf::Label { repo, .. } => Route::Labels(repo.clone()),
-            FormOf::Milestone { repo, .. } => Route::Milestones {
+            FormOf::Label { repo, .. } => Route::Issues(issues::Labels(repo.clone())),
+            FormOf::Milestone { repo, .. } => Route::Issues(issues::Milestones {
                 repo: repo.clone(),
                 closed: false,
-            },
+            }),
             FormOf::Fork(repo) => Route::Code(code::Repo(repo.clone())),
             FormOf::NewRepo => return None,
             FormOf::File {
@@ -176,7 +177,7 @@ impl Family for FormOf {
         })
     }
 
-    fn needs(&self, _: &State) -> Vec<DataKey> {
+    fn needs(&self) -> Vec<DataKey> {
         let header = self.repo().map(|repo| DataKey::Repo(repo.clone()));
         let own = match self {
             FormOf::Label { repo, .. } => vec![DataKey::Labels(repo.clone())],
@@ -471,7 +472,9 @@ pub fn claims(state: &State, action: Action) -> bool {
     };
     let lists = matches!(
         route,
-        Route::Labels(_) | Route::Milestones { .. } | Route::Milestone { .. }
+        Route::Issues(issues::Labels(_))
+            | Route::Issues(issues::Milestones { .. })
+            | Route::Issues(issues::Milestone { .. })
     );
     match action {
         Action::EditComment => lists || matches!(route, Route::Code(code::Blob { .. })),
@@ -484,7 +487,10 @@ pub fn claims(state: &State, action: Action) -> bool {
                         | Route::Code(code::Tags(_))
                 )
         }
-        Action::Close => matches!(route, Route::Milestones { .. } | Route::Milestone { .. }),
+        Action::Close => matches!(
+            route,
+            Route::Issues(issues::Milestones { .. }) | Route::Issues(issues::Milestone { .. })
+        ),
         Action::Create => matches!(route, Route::Housekeeping(_)),
         _ => false,
     }
@@ -498,19 +504,33 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
         (Action::NewHere, Some(route)) => new_here(state, route),
         (Action::Fork, _) => repos::open_fork(state),
         (Action::NewRepo, _) => open(state, FormOf::NewRepo),
-        (Action::EditComment, Some(Route::Labels(repo))) => labels::edit(state, &repo),
-        (Action::DeleteComment, Some(Route::Labels(repo))) => labels::ask_delete(state, &repo),
+        (Action::EditComment, Some(Route::Issues(issues::Labels(repo)))) => {
+            labels::edit(state, &repo)
+        }
+        (Action::DeleteComment, Some(Route::Issues(issues::Labels(repo)))) => {
+            labels::ask_delete(state, &repo)
+        }
         (
             Action::EditComment,
-            Some(Route::Milestones { repo, .. } | Route::Milestone { repo, .. }),
+            Some(
+                Route::Issues(issues::Milestones { repo, .. })
+                | Route::Issues(issues::Milestone { repo, .. }),
+            ),
         ) => milestones::edit(state, &repo),
         (
             Action::DeleteComment,
-            Some(Route::Milestones { repo, .. } | Route::Milestone { repo, .. }),
+            Some(
+                Route::Issues(issues::Milestones { repo, .. })
+                | Route::Issues(issues::Milestone { repo, .. }),
+            ),
         ) => milestones::ask_delete(state, &repo),
-        (Action::Close, Some(Route::Milestones { repo, .. } | Route::Milestone { repo, .. })) => {
-            milestones::toggle(state, &repo)
-        }
+        (
+            Action::Close,
+            Some(
+                Route::Issues(issues::Milestones { repo, .. })
+                | Route::Issues(issues::Milestone { repo, .. }),
+            ),
+        ) => milestones::toggle(state, &repo),
         (Action::DeleteComment, Some(Route::Code(code::Branches(repo)))) => {
             refs::ask_delete(state, &repo, RefKind::Branch)
         }
@@ -542,10 +562,9 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
 #[must_use]
 fn new_here(state: &mut State, route: Route) -> Vec<Cmd> {
     match route {
-        Route::Labels(repo) => labels::open(state, &repo, None),
-        Route::Milestones { repo, .. } | Route::Milestone { repo, .. } => {
-            milestones::open(state, &repo, None)
-        }
+        Route::Issues(issues::Labels(repo)) => labels::open(state, &repo, None),
+        Route::Issues(issues::Milestones { repo, .. })
+        | Route::Issues(issues::Milestone { repo, .. }) => milestones::open(state, &repo, None),
         Route::Code(code::Branches(repo)) => refs::start(state, &repo, RefKind::Branch),
         Route::Code(code::Tags(repo)) => refs::start(state, &repo, RefKind::Tag),
         Route::Code(code::Tree { repo, rev, path }) => {
@@ -640,7 +659,7 @@ fn page_doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
     let repo = route.repo();
     let can = |what: &str| repo.and_then(|r| refused(state, r, what));
     match route {
-        Route::Labels(_) => {
+        Route::Issues(issues::Labels(_)) => {
             let why = can("Changing labels");
             out.push(row("New", Action::NewHere, "New label", "new", why.clone()));
             let picked = labels::picked(state).map(|l| l.name.clone());
@@ -662,7 +681,9 @@ fn page_doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
                 row_why,
             ));
         }
-        Route::Milestones { .. } | Route::Milestone { .. } => milestones::doables(state, out),
+        Route::Issues(issues::Milestones { .. }) | Route::Issues(issues::Milestone { .. }) => {
+            milestones::doables(state, out);
+        }
         Route::Code(code::Branches(_)) | Route::Code(code::Tags(_)) => {
             refs::doables(state, route, out);
         }
@@ -927,29 +948,21 @@ fn expect(state: &mut State, route: Route, what: Expected) {
 
 // ---- data -----------------------------------------------------------------------------------
 
-/// What the labels page needs fetched.
-pub fn needs(repo: &RepoId) -> Vec<DataKey> {
-    vec![DataKey::Repo(repo.clone()), DataKey::Labels(repo.clone())]
-}
-
 /// Builds the labels page.
-pub fn build(state: &State, page: &mut Page, repo: &RepoId, now: u64) {
-    let retry = state.first_key(Action::Refresh);
-    let key = DataKey::Labels(repo.clone());
-    let list = crate::state::Remote::fetched(state.remote(&key), &retry)
-        .pick(<Results<LabelInfo> as crate::data::Picked>::pick);
+pub fn build(b: Build<'_>, page: &mut Page, repo: &RepoId) {
+    let list = b.get::<Results<LabelInfo>>(&DataKey::Labels(repo.clone()));
     let keys = crate::ui::pages::LabelKeys {
-        new: state.first_key(Action::NewHere),
-        edit: state.first_key(Action::EditComment),
-        delete: state.first_key(Action::DeleteComment),
+        new: b.state.first_key(Action::NewHere),
+        edit: b.state.first_key(Action::EditComment),
+        delete: b.state.first_key(Action::DeleteComment),
     };
-    crate::ui::pages::labels_page(page, repo, list, &keys, now);
+    crate::ui::pages::labels_page(page, repo, list, &keys, b.cx.now);
 }
 
 /// Whether a form's data (but its repository's header) is in; else the
 /// page says it's loading, or why it couldn't.
 fn loaded(b: Build<'_>, page: &mut Page, of: &FormOf) -> bool {
-    for key in of.needs(b.state) {
+    for key in of.needs() {
         let what = match &key {
             DataKey::Labels(_) => "the labels",
             DataKey::Owners => "your account",

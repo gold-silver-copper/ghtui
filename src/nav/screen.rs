@@ -49,16 +49,7 @@ impl PageScreen {
         // lines linked; reading pages (issues, pull requests, files) start
         // with nothing selected.
         let list = route.starts_on_row()
-            && !matches!(
-                route,
-                Route::Issue { .. }
-                    | Route::Release { .. }
-                    | Route::Discussion { .. }
-                    | Route::Pr {
-                        tab: PrTab::Conversation,
-                        ..
-                    }
-            );
+            && !matches!(route, Route::Release { .. } | Route::Discussion { .. });
         Self {
             route,
             scroll: 0,

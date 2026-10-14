@@ -4,6 +4,7 @@
 use crate::api::browse::{MilestoneDetail, MilestoneInfo, MilestoneList};
 use crate::api::housekeeping::MilestoneChange;
 use crate::api::model::RepoId;
+use crate::route::issues;
 use crate::ui::page::{Link, Page};
 use crate::ui::pages::{Mark, TextBox, WriteFormView};
 
@@ -29,10 +30,10 @@ fn milestone_url(repo: &RepoId, number: u64) -> String {
 /// list.
 fn picked(state: &State) -> Option<MilestoneInfo> {
     match state.route()? {
-        Route::Milestone { repo, number } => state
+        Route::Issues(issues::Milestone { repo, number }) => state
             .picked::<MilestoneDetail>(&DataKey::Milestone(repo.clone(), *number))
             .map(|d| d.info.clone()),
-        Route::Milestones { repo, closed } => {
+        Route::Issues(issues::Milestones { repo, closed }) => {
             let list =
                 state.picked::<MilestoneList>(&DataKey::Milestones(repo.clone(), *closed))?;
             selected(state, &list.results.items, |m| {
@@ -317,31 +318,42 @@ pub(super) fn on_done(
     };
     // A deleted milestone's page is gone: its list instead.
     if write == MilestoneWrite::Delete
-        && let Some(Route::Milestone { repo: r, number: n }) = state.route().cloned()
+        && let Some(Route::Issues(issues::Milestone { repo: r, number: n })) =
+            state.route().cloned()
         && r == repo
         && n == number
     {
-        let list = Route::Milestones {
+        let list = Route::Issues(issues::Milestones {
             repo: repo.clone(),
             closed: false,
-        };
+        });
         cmds.extend(state.replace(list, true, None));
     }
     // An edit keeps it open or closed as it was: its title is what's
     // waited for, on the list it's on.
     let closed = match (&write, closed) {
         (MilestoneWrite::Save(_), _) => match state.route() {
-            Some(Route::Milestones { closed, .. }) => Some(*closed),
-            Some(Route::Milestone { repo: r, number: n }) if *r == repo && *n == number => state
-                .picked::<MilestoneDetail>(&DataKey::Milestone(repo.clone(), number))
-                .map(|d| d.info.closed),
+            Some(Route::Issues(issues::Milestones { closed, .. })) => Some(*closed),
+            Some(Route::Issues(issues::Milestone { repo: r, number: n }))
+                if *r == repo && *n == number =>
+            {
+                state
+                    .picked::<MilestoneDetail>(&DataKey::Milestone(repo.clone(), number))
+                    .map(|d| d.info.closed)
+            }
             _ => Some(false),
         },
         (_, closed) => closed,
     };
     let list = match state.route() {
-        Some(Route::Milestones { repo: r, closed }) if *r == repo => Some(Some(*closed)),
-        Some(Route::Milestone { repo: r, number: n }) if *r == repo && *n == number => Some(None),
+        Some(Route::Issues(issues::Milestones { repo: r, closed })) if *r == repo => {
+            Some(Some(*closed))
+        }
+        Some(Route::Issues(issues::Milestone { repo: r, number: n }))
+            if *r == repo && *n == number =>
+        {
+            Some(None)
+        }
         _ => None,
     };
     if let (Some(list), Some(page)) = (list, state.route().cloned()) {

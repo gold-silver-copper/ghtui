@@ -5,6 +5,7 @@ use crate::api::manage::{
 };
 use crate::api::model::Capped;
 use crate::api::timeline::{Linked, LinkedState};
+use crate::route::issues;
 
 use super::*;
 use crate::fixtures::{self};
@@ -469,10 +470,10 @@ fn an_issue_is_pinned_and_transferred() {
     done(&mut s, Done::Transferred(at(14), Ok(moved)));
     assert_eq!(
         s.route(),
-        Some(&Route::Issue {
+        Some(&Route::Issues(issues::Issue {
             repo: to,
             number: 1
-        })
+        }))
     );
 
     let s = issue_with(|d| d.can_write = false);

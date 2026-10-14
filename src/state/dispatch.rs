@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::route::app;
+use crate::route::issues;
 
 /// Handles a message and settles the screen.
 #[cfg(test)]
@@ -171,10 +172,10 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             if is_pr
                 && let DataKey::Issue(repo, number) = key
                 && state.route()
-                    == Some(&Route::Issue {
+                    == Some(&Route::Issues(issues::Issue {
                         repo: repo.clone(),
                         number,
-                    })
+                    }))
             {
                 let anchor = match state.screen() {
                     Screen::Page(p) => p.anchor.clone(),

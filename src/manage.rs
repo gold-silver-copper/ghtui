@@ -10,6 +10,8 @@
 //! (a revert, a transfer, a discussion) is [`Work`], whose answer opens
 //! what it made.
 
+use crate::route::issues;
+use crate::route::pulls;
 use std::collections::HashMap;
 
 use crate::api::GitHub;
@@ -63,8 +65,10 @@ fn here(state: &State) -> Option<Subject> {
     match state.screen() {
         Screen::Diff(d) => d.of.pr().cloned().map(Subject::Pr),
         Screen::Page(p) => match &p.route {
-            Route::Issue { repo, number } => Some(Subject::Issue(repo.clone(), *number)),
-            Route::Pr { pr, .. } => Some(Subject::Pr(pr.clone())),
+            Route::Issues(issues::Issue { repo, number }) => {
+                Some(Subject::Issue(repo.clone(), *number))
+            }
+            Route::Pulls(pulls::Pr { pr, .. }) => Some(Subject::Pr(pr.clone())),
             Route::Discussion { of, number } => Some(Subject::Discussion(of.clone(), *number)),
             _ => None,
         },
@@ -1467,14 +1471,14 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
             Ok(to) => {
                 close_confirm(state);
                 state.info(format!("Moved {from} to {to}"));
-                let here = Route::Issue {
+                let here = Route::Issues(issues::Issue {
                     repo: from.repo,
                     number: from.number,
-                };
-                let there = Route::Issue {
+                });
+                let there = Route::Issues(issues::Issue {
                     repo: to.repo,
                     number: to.number,
-                };
+                });
                 if state.route() == Some(&here) {
                     state.replace(there, true, None)
                 } else {

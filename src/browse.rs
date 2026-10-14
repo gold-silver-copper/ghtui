@@ -7,15 +7,14 @@ use std::collections::HashSet;
 use std::collections::BTreeSet;
 
 use crate::api::browse::{
-    CommitInfo, DiscussionsOf, Gist, IssueDetail, PrActivity, Release, RepoOverview, SearchResults,
-    StateCounts, UserList, WikiPage,
+    CommitInfo, DiscussionsOf, Gist, PrActivity, Release, RepoOverview, UserList, WikiPage,
 };
 use crate::api::model::{PrDetail, PrRef, RepoId};
 use crate::api::project::{Project, ProjectsOf};
 use crate::api::security::AlertRef;
 use crate::ui::Fetched;
 use crate::ui::page::{Page, PageLine, Role, Seg};
-use crate::ui::pages::{self, Keys, PrTab, ProfileList, ProfileTab};
+use crate::ui::pages::{self, Keys, ProfileList, ProfileTab};
 
 use crate::data::{Data, DataKey, Picked};
 use crate::diff_screen::{DiffOf, DiffState};
@@ -60,8 +59,6 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         Route::Deployments { repo, environment } => {
             Some(DataKey::Deployments(repo.clone(), environment.clone()))
         }
-        Route::Milestones { repo, closed } => Some(DataKey::Milestones(repo.clone(), *closed)),
-        Route::Milestone { repo, number } => Some(DataKey::Milestone(repo.clone(), *number)),
         Route::Advisories(repo) => Some(DataKey::Advisories(repo.clone())),
         Route::Notifications { query } => Some(DataKey::Notifications(query.clone())),
         Route::Projects(of) => Some(DataKey::Projects(of.clone())),
@@ -73,9 +70,10 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         }
         Route::App(p) => p.paged(),
         Route::Code(p) => p.paged(),
+        Route::Issues(p) => p.paged(),
+        Route::Pulls(p) => p.paged(),
         Route::Site(p) => p.paged(),
         Route::Housekeeping(p) => p.paged(),
-        Route::Labels(repo) => Some(DataKey::Labels(repo.clone())),
         _ => route
             .search()
             .map(|(kind, query)| DataKey::Search(kind, query)),
@@ -83,13 +81,10 @@ pub fn paged(route: &Route) -> Option<DataKey> {
 }
 
 /// The pull request whose review a page shows at a glance: its Review
-/// tab's. Its diff's threads and drafts load with it.
+/// tab's.
 pub(crate) fn glanced(route: &Route) -> Option<&PrRef> {
     match route {
-        Route::Pr {
-            pr,
-            tab: PrTab::Review,
-        } => Some(pr),
+        Route::Pulls(p) => p.glanced(),
         _ => None,
     }
 }
@@ -103,16 +98,11 @@ pub(crate) fn needs(route: &Route) -> Vec<DataKey> {
     match route {
         Route::App(_)
         | Route::Code(_)
+        | Route::Issues(_)
+        | Route::Pulls(_)
         | Route::NewGist
         | Route::Site(_)
         | Route::Housekeeping(_) => Vec::new(),
-        Route::Issues { repo, .. } | Route::Pulls { repo, .. } => {
-            let counts = route.state_counts().map(K::StateCounts);
-            std::iter::once(header(repo))
-                .chain(list)
-                .chain(counts)
-                .collect()
-        }
         Route::Search { .. } => list.into_iter().collect(),
         Route::Wiki { repo, page } => vec![header(repo), K::Wiki(repo.clone(), page.clone())],
         Route::Advisories(repo) | Route::Advisory { repo, .. } => {
@@ -132,16 +122,6 @@ pub(crate) fn needs(route: &Route) -> Vec<DataKey> {
         Route::Gist { id, .. } | Route::EditGist { id, .. } => {
             vec![K::Gist(id.clone())]
         }
-        Route::Issue { repo, number } => {
-            vec![
-                header(repo),
-                K::InProjects(repo.clone(), *number),
-                K::Issue(repo.clone(), *number),
-            ]
-        }
-        Route::NewIssue(repo) | Route::NewPr(repo) => {
-            vec![header(repo), K::NewForm(repo.clone())]
-        }
         Route::NewRelease(repo) => vec![
             header(repo),
             K::Tags(repo.clone()),
@@ -156,32 +136,6 @@ pub(crate) fn needs(route: &Route) -> Vec<DataKey> {
         Route::WikiEdit { repo, page } => {
             vec![header(repo), crate::wiki::form::key(repo, page.as_ref())]
         }
-        Route::Pr {
-            pr,
-            tab: PrTab::Checks,
-        } => vec![
-            DataKey::Pr(pr.clone()),
-            K::PrActivity(pr.clone()),
-            K::PrChecks(pr.clone()),
-        ],
-        // The Review tab and a review list every review.
-        Route::Pr {
-            pr,
-            tab: PrTab::Review | PrTab::Reviewed(_),
-        } => vec![
-            DataKey::Pr(pr.clone()),
-            K::PrActivity(pr.clone()),
-            K::Reviews(pr.clone()),
-        ],
-        Route::Pr {
-            pr,
-            tab: PrTab::Conversation,
-        } => vec![
-            DataKey::Pr(pr.clone()),
-            K::InProjects(pr.repo.clone(), pr.number),
-            K::PrActivity(pr.clone()),
-        ],
-        Route::Pr { pr, .. } => vec![DataKey::Pr(pr.clone()), K::PrActivity(pr.clone())],
         Route::Discussions { of, .. } | Route::Discussion { of, .. } => {
             let header = match of {
                 DiscussionsOf::Repo(repo) => Some(header(repo)),
@@ -215,8 +169,6 @@ pub(crate) fn needs(route: &Route) -> Vec<DataKey> {
         | Route::Forks(repo)
         | Route::Releases(repo)
         | Route::Deployments { repo, .. }
-        | Route::Milestones { repo, .. }
-        | Route::Milestone { repo, .. }
         | Route::Alerts { repo, .. }
         | Route::Projects(ProjectsOf::Repo(repo)) => {
             std::iter::once(header(repo)).chain(paged(route)).collect()
@@ -240,7 +192,6 @@ pub(crate) fn needs(route: &Route) -> Vec<DataKey> {
                 .chain(paged(route))
                 .collect()
         }
-        Route::Labels(repo) => crate::housekeeping::needs(repo),
     }
 }
 
@@ -267,33 +218,19 @@ pub enum Width {
 /// How wide `route`'s page gets.
 fn width_of(route: &Route) -> Width {
     match route {
-        Route::Issue { .. }
-        | Route::Pr {
-            tab: PrTab::Conversation,
-            ..
-        } => Width::ReadingAside,
         Route::Wiki { .. }
         | Route::Discussion { .. }
         | Route::Release { .. }
         | Route::Advisory { .. }
         | Route::Alert { .. }
-        | Route::NewIssue(_)
-        | Route::NewPr(_)
         | Route::NewRelease(_)
         | Route::EditRelease { .. }
         | Route::NewGist
         | Route::EditGist { .. }
         | Route::WikiEdit { .. }
         | Route::Dispatch { .. }
-        | Route::ProjectItem { .. }
-        | Route::Pr {
-            tab: PrTab::Review | PrTab::Reviewed(_),
-            ..
-        } => Width::Reading,
-        Route::Pr {
-            tab: PrTab::Checks, ..
-        }
-        | Route::Actions { .. }
+        | Route::ProjectItem { .. } => Width::Reading,
+        Route::Actions { .. }
         | Route::WorkflowRun { .. }
         | Route::Job { .. }
         | Route::Workflow { .. }
@@ -301,6 +238,8 @@ fn width_of(route: &Route) -> Width {
         | Route::Deployments { .. } => Width::Full,
         Route::App(p) => p.width(),
         Route::Code(p) => p.width(),
+        Route::Issues(p) => p.width(),
+        Route::Pulls(p) => p.width(),
         Route::Site(p) => p.width(),
         Route::Housekeeping(p) => p.width(),
         _ => Width::Lists,
@@ -528,107 +467,11 @@ impl State {
         match route {
             Route::App(p) => p.build(b, &mut page),
             Route::Code(p) => p.build(b, &mut page),
-            Route::Issues { repo, query } | Route::Pulls { repo, query } => {
-                let is_pr = matches!(route, Route::Pulls { .. });
-                // A filtered list counts what the filter finds, as GitHub's
-                // does; until it's counted, no counts show.
-                #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
-                let counts = match route.state_counts() {
-                    Some(q) => (f.get::<StateCounts>(&DataKey::StateCounts(q)))
-                        .ready_unchecked()
-                        .map(|c| (c.open, c.closed)),
-                    None => (f.get::<RepoOverview>(&DataKey::Repo(repo.clone())))
-                        .ready_unchecked()
-                        .map(|o| {
-                            if is_pr {
-                                (o.open_prs, o.closed_prs)
-                            } else {
-                                (o.open_issues, o.closed_issues)
-                            }
-                        }),
-                };
-                let results = f.paged(route).pick(|r| match r {
-                    SearchResults::Issues(r) => Some(r),
-                    _ => None,
-                });
-                // Pinned issues, above the list, as on GitHub.
-                #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
-                let overview = f
-                    .get::<RepoOverview>(&DataKey::Repo(repo.clone()))
-                    .ready_unchecked();
-                if let Some(o) = overview.filter(|_| !is_pr) {
-                    pages::pinned_issues(&mut page, repo, &o.pinned_issues, icons);
-                }
-                // Labels and milestones, beside the list as on GitHub.
-                pages::labels_and_milestones(&mut page, repo);
-                pages::issue_list(&mut page, query, counts, is_pr, results, cx);
-            }
+            Route::Issues(p) => p.build(b, &mut page),
+            Route::Pulls(p) => p.build(b, &mut page),
             Route::Search { kind, query } => {
                 let results = f.paged(route);
                 pages::search(&mut page, *kind, query, results, icons, keys, now);
-            }
-            Route::Issue { repo, number } => {
-                let issue =
-                    f.get::<Option<Box<IssueDetail>>>(&DataKey::Issue(repo.clone(), *number));
-                let none = HashSet::new();
-                let fresh = crate::live::page::fresh(self, route).unwrap_or(&none);
-                match issue.show(&mut page, &format!("{repo}#{number}")) {
-                    Some(Some(issue)) => {
-                        let lines = pages::LinesAt::new();
-                        let mut marks = crate::talk::marks(self, None, &lines);
-                        marks.comments = fresh;
-                        let projects = f.get(&DataKey::InProjects(repo.clone(), *number));
-                        pages::issue(&mut page, issue, projects, marks, cx);
-                    }
-                    // Redirecting to the pull request.
-                    Some(None) => page.line(vec![Seg::new("Loading…", Role::Meta)]),
-                    None => {}
-                }
-            }
-            Route::Pr { pr, tab } => {
-                let activity = f.get(&DataKey::PrActivity(pr.clone()));
-                let reviews = || f.get(&DataKey::Reviews(pr.clone()));
-                let lines = crate::talk::lines_at(self, pr);
-                let marks = crate::talk::marks(self, Some(pr), &lines);
-                let detail = f.get::<PrDetail>(&DataKey::Pr(pr.clone()));
-                if let Some(d) = detail.show(&mut page, &pr.to_string()) {
-                    match tab {
-                        PrTab::Conversation => {
-                            let projects = DataKey::InProjects(pr.repo.clone(), pr.number);
-                            let projects = f.get(&projects);
-                            pages::pr_conversation(&mut page, pr, d, activity, projects, marks, cx);
-                        }
-                        PrTab::Commits => pages::pr_commits(&mut page, pr, d, activity, now),
-                        PrTab::Checks => {
-                            let checks = f.get(&DataKey::PrChecks(pr.clone()));
-                            pages::pr_checks(&mut page, pr, d, checks, now);
-                        }
-                        PrTab::Review => {
-                            let diff = self.diffs.get(&DiffOf::Pr(pr.clone()));
-                            let inputs = diff.map(DiffState::inputs);
-                            let glance = pages::Glance {
-                                threads: Remote::fetched(inputs.map(|i| &i.threads), &retry),
-                                drafts: inputs
-                                    .filter(|i| i.review_loaded)
-                                    .map(|i| i.review.pending.as_slice()),
-                                fresh: marks.threads,
-                                reviews: reviews(),
-                                new_reviews: marks.reviews,
-                            };
-                            pages::pr_review(&mut page, pr, d, activity, glance, cx);
-                        }
-                        PrTab::Reviewed(id) => {
-                            let reviews = reviews();
-                            pages::pr_reviewed(&mut page, pr, d, *id, activity, reviews, marks, cx);
-                        }
-                    }
-                }
-            }
-            Route::NewIssue(repo) | Route::NewPr(repo) => {
-                let key = DataKey::NewForm(repo.clone());
-                if let Some(d) = f.get(&key).show(&mut page, &title) {
-                    crate::create::build(self, &mut page, route, d);
-                }
             }
             Route::NewRelease(repo) => {
                 let header = f.get::<RepoOverview>(&DataKey::Repo(repo.clone()));
@@ -674,14 +517,6 @@ impl State {
             }
             Route::Forks(_) => pages::repos(&mut page, "Forks", f.paged(route), now),
             Route::Releases(repo) => pages::releases(&mut page, repo, f.paged(route), now),
-            Route::Milestones { repo, closed } => {
-                pages::milestones(&mut page, repo, f.paged(route), *closed, now);
-            }
-            Route::Milestone { repo, .. } => {
-                if let Some(m) = f.paged(route).show(&mut page, &title) {
-                    pages::milestone(&mut page, repo, m, icons, now);
-                }
-            }
             Route::Wiki { repo, page: name } => {
                 let key = DataKey::Wiki(repo.clone(), name.clone());
                 if let Some(w) = f.get(&key).show(&mut page, &title) {
@@ -826,7 +661,6 @@ impl State {
             }
             Route::Site(p) => p.build(b, &mut page),
             Route::Housekeeping(p) => p.build(b, &mut page),
-            Route::Labels(repo) => crate::housekeeping::build(self, &mut page, repo, now),
         }
         // The sidebar starts beside the page, below the banner.
         if let Some(a) = page.aside.as_mut().filter(|a| !a.lines.is_empty()) {

@@ -17,6 +17,8 @@ use crate::api::project::{
     ProjectRef, grouped,
 };
 use crate::review::ComposeTarget;
+use crate::route::issues;
+use crate::route::pulls;
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::Link;
 use crate::ui::pages::item_link;
@@ -696,8 +698,12 @@ fn adding(
     }
     let mut rows = Vec::new();
     let named = crate::route::parse_input(q, None).and_then(|dest| match dest.target {
-        crate::route::Target::Page(Route::Issue { repo, number }) => Some((repo, number)),
-        crate::route::Target::Page(Route::Pr { pr, .. }) => Some((pr.repo, pr.number)),
+        crate::route::Target::Page(Route::Issues(issues::Issue { repo, number })) => {
+            Some((repo, number))
+        }
+        crate::route::Target::Page(Route::Pulls(pulls::Pr { pr, .. })) => {
+            Some((pr.repo, pr.number))
+        }
         _ => None,
     });
     if let Some((repo, number)) = named {

@@ -1,6 +1,7 @@
 //! Loading a diff: a pull request's, from its base, and again.
 
 use super::*;
+use crate::route::pulls;
 
 /// `ghtui <pr>/files` with the PR in the disk cache: the cached copy is
 /// from an earlier session, so the PR is fetched again (it may have
@@ -302,10 +303,10 @@ fn files_tab_opens_the_diff_once_the_pr_loads() {
     press(&mut state, "2gt");
     assert_eq!(
         route(&state),
-        Route::Pr {
+        Route::Pulls(pulls::Pr {
             pr,
             tab: PrTab::Commits
-        }
+        })
     );
     assert_eq!(state.screens.len(), 2, "back on the PR page, not a new one");
 }

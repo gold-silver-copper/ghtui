@@ -10,6 +10,8 @@
 //! updated since it was kept, and the lists.
 
 use crate::route::code;
+use crate::route::issues;
+use crate::route::pulls;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -241,20 +243,20 @@ async fn refresh(
     }
     let tabs = [
         Route::Code(code::Repo(repo.clone())),
-        Route::Issues {
+        Route::Issues(issues::Issues {
             repo: repo.clone(),
             query: crate::route::OPEN.into(),
-        },
-        Route::Pulls {
+        }),
+        Route::Pulls(pulls::Pulls {
             repo: repo.clone(),
             query: crate::route::OPEN.into(),
-        },
+        }),
         Route::Discussions {
             of: DiscussionsOf::Repo(repo.clone()),
             category: None,
         },
     ];
-    let pages = tabs.iter().flat_map(crate::browse::needs);
+    let pages = tabs.iter().flat_map(Route::needs);
     tracing::info!(%repo, "keeping offline: its tabs");
     if let Err(err) = fetch_all(gh, local.git(), pages.collect()).await {
         kept.problem = Some(err.to_string());
@@ -280,10 +282,7 @@ async fn refresh(
             .into_iter()
             .filter(|(key, updated, _)| kept.seen.get(key) != Some(updated))
             .collect();
-        let needs: Vec<DataKey> = changed
-            .iter()
-            .flat_map(|(_, _, r)| crate::browse::needs(r))
-            .collect();
+        let needs: Vec<DataKey> = changed.iter().flat_map(|(_, _, r)| r.needs()).collect();
         if let Err(err) = fetch_all(gh, local.git(), needs).await {
             kept.problem = Some(err.to_string());
             return kept;
@@ -340,20 +339,20 @@ async fn recent(
                         let (key, route) = match i.kind {
                             IssueKind::Pr { .. } => (
                                 format!("p{}", i.number),
-                                Route::Pr {
+                                Route::Pulls(pulls::Pr {
                                     pr: PrRef {
                                         repo: repo.clone(),
                                         number: i.number,
                                     },
                                     tab: PrTab::Conversation,
-                                },
+                                }),
                             ),
                             IssueKind::Issue(_) => (
                                 format!("i{}", i.number),
-                                Route::Issue {
+                                Route::Issues(issues::Issue {
                                     repo: repo.clone(),
                                     number: i.number,
-                                },
+                                }),
                             ),
                         };
                         (key, i.updated_at, route)
@@ -459,10 +458,10 @@ mod tests {
     #[test]
     fn what_is_kept_is_what_the_cache_keeps() {
         let repo = RepoId::new("o", "r");
-        let issue = crate::browse::needs(&Route::Issue {
+        let issue = Route::needs(&Route::Issues(issues::Issue {
             repo: repo.clone(),
             number: 1,
-        });
+        }));
         let kept: Vec<&DataKey> = issue.iter().filter(|n| worth_keeping(n)).collect();
         assert_eq!(
             kept,

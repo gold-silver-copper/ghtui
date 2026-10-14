@@ -1,6 +1,8 @@
 //! Typing into ghtui's boxes: a paste arrives whole, as text rather than
 //! keys, and the comment box completes `@` mentions and `#` references.
 
+use crate::route::issues;
+use crate::route::pulls;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui_textarea::TextArea;
 
@@ -129,13 +131,13 @@ fn participants(state: &State) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let pr = match (state.screen(), state.route()) {
         (Screen::Diff(screen), _) => screen.of.pr().cloned(),
-        (_, Some(Route::Pr { pr, .. })) => Some(pr.clone()),
+        (_, Some(Route::Pulls(pulls::Pr { pr, .. }))) => Some(pr.clone()),
         _ => None,
     };
     if let Some(pr) = &pr {
         out.extend(pr_participants(state, pr));
     }
-    if let Some(Route::Issue { repo, number }) = state.route() {
+    if let Some(Route::Issues(issues::Issue { repo, number })) = state.route() {
         let issue =
             state.picked::<Option<Box<IssueDetail>>>(&DataKey::Issue(repo.clone(), *number));
         if let Some(Some(issue)) = issue {

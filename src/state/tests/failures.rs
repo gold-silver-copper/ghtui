@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::route::code;
+use crate::route::pulls;
 
 /// Delivers a failed fetch of `key`.
 fn failed(state: &mut State, key: DataKey) {
@@ -59,10 +60,10 @@ fn a_failed_blame_says_why_instead_of_loading() {
 fn failed_pr_checks_say_why_instead_of_loading() {
     let mut state = with_pr();
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
-    let _ = state.push(Route::Pr {
+    let _ = state.push(Route::Pulls(pulls::Pr {
         pr: pr.clone(),
         tab: PrTab::Checks,
-    });
+    }));
     crate::fixtures::pr_fetched(&mut state, &pr, Ok(pr_detail()));
     let activity = Data::PrActivity(Box::new(fixtures::activity()));
     fetched(&mut state, DataKey::PrActivity(pr.clone()), activity);
@@ -241,10 +242,10 @@ fn decoration(route: &Route, need: &DataKey) -> bool {
             (_, K::LastCommits(..))
                 | (Route::Code(code::CommitChecks { .. }), K::Commit(..))
                 | (
-                    Route::Pr {
+                    Route::Pulls(pulls::Pr {
                         tab: PrTab::Checks,
                         ..
-                    },
+                    }),
                     K::PrActivity(_)
                 )
         )

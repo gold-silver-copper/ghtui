@@ -1,6 +1,7 @@
 //! A new issue's or pull request's page, from its form.
 
 use super::*;
+use crate::route::pulls;
 use crate::ui::page::{Link, Page};
 use crate::ui::pages::{self, Field, FormView, Mark, Starter};
 
@@ -11,7 +12,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
     };
     let blank = Form::default();
     let form = state.creating.forms.get(route).unwrap_or(&blank);
-    let pr = matches!(route, Route::NewPr(_));
+    let pr = matches!(route, Route::Pulls(pulls::NewPr(_)));
     let composing = matches!(
         &state.overlay,
         Some(Overlay::Compose(c)) if c.target == ComposeTarget::Form(route.clone())

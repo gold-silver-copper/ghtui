@@ -6,6 +6,7 @@ use crate::act::{By, Subject};
 use crate::api::edit::{Edit, Written};
 use crate::api::model::ReviewState;
 use crate::api::timeline::{Item, What};
+use crate::route::pulls;
 
 use super::*;
 use crate::fixtures::{self};
@@ -129,10 +130,10 @@ fn the_review_tab_lists_reviews_and_one_opens_its_page() {
     press(&mut s, "<Enter>");
     assert_eq!(
         s.route(),
-        Some(&Route::Pr {
+        Some(&Route::Pulls(pulls::Pr {
             pr: pr(),
             tab: PrTab::Reviewed(2_000_002)
-        })
+        }))
     );
     let page = text(&s);
     assert!(page.contains("src/theme.rs:42"), "{page}");

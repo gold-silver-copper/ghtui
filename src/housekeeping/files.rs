@@ -11,6 +11,7 @@ use crate::api::housekeeping::{FileCommit, FileLook, RefKind};
 use crate::api::model::RepoId;
 use crate::create::Look;
 use crate::route::code;
+use crate::route::pulls;
 use crate::ui::page::{Link, Page};
 use crate::ui::pages::{Mark, TextBox, WriteFormView};
 
@@ -574,7 +575,7 @@ pub(super) fn propose(
     branch: String,
     base: Option<String>,
 ) -> Vec<Cmd> {
-    let route = Route::NewPr(repo);
+    let route = Route::Pulls(pulls::NewPr(repo));
     let form = state.creating.forms.entry(route.clone()).or_default();
     form.head = Some(branch);
     // Into the branch it was made from; the default branch is the form's

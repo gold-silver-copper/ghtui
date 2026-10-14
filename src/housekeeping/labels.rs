@@ -4,6 +4,7 @@
 use crate::api::browse::Results;
 use crate::api::housekeeping::{LabelChange, LabelInfo};
 use crate::api::model::RepoId;
+use crate::route::issues;
 use crate::ui::page::Page;
 use crate::ui::pages::{Mark, WriteFormView};
 
@@ -44,7 +45,7 @@ pub(super) fn list<'a>(state: &'a State, repo: &RepoId) -> Option<&'a Results<La
 
 /// The label selected on the labels page.
 pub(super) fn picked(state: &State) -> Option<&LabelInfo> {
-    let Some(Route::Labels(repo)) = state.route() else {
+    let Some(Route::Issues(issues::Labels(repo))) = state.route() else {
         return None;
     };
     let list = list(state, repo)?;
@@ -271,7 +272,7 @@ pub(super) fn on_done(state: &mut State, work: Work, result: Result<(), String>)
         repo: repo.clone(),
         name: was.clone().filter(|_| change.is_some()),
     });
-    let page = Route::Labels(repo.clone());
+    let page = Route::Issues(issues::Labels(repo.clone()));
     if let Err(why) = result {
         failed(state, &form, why);
         return Vec::new();

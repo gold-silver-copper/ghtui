@@ -1,12 +1,13 @@
 use super::*;
 use crate::route::code;
+use crate::route::issues;
 
 /// Two routes to tell tabs apart by.
 fn issue(n: u64) -> Route {
-    Route::Issue {
+    Route::Issues(issues::Issue {
         repo: ghtui(),
         number: n,
-    }
+    })
 }
 
 #[test]

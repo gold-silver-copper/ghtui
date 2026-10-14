@@ -1,6 +1,7 @@
 //! Lists and their next pages.
 
 use super::*;
+use crate::route::issues;
 
 /// A branch's commits page: the code toolbar's link opens it, and it
 /// loads more like any list.
@@ -289,10 +290,10 @@ fn org_people_say_how_many_are_left_out() {
 fn a_list_cut_short_keeps_its_count() {
     let mut state = with_repo();
     let (repo, number) = (ghtui(), 3);
-    let _ = state.push(Route::Milestone {
+    let _ = state.push(Route::Issues(issues::Milestone {
         repo: repo.clone(),
         number,
-    });
+    }));
     let mut milestone = crate::fixtures::milestone();
     milestone.items.total = 1500;
     milestone.items.next = None;

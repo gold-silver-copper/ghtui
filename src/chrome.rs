@@ -11,6 +11,8 @@ use crate::api::project::{self, Project, ProjectOwner, ProjectRef, ProjectsOf};
 use crate::git::Oid;
 use crate::route::app;
 use crate::route::code;
+use crate::route::issues;
+use crate::route::pulls;
 use crate::ui::chrome::{Crumb, PageTab};
 use crate::ui::pages::{PrTab, ProfileTab};
 use ratatui::layout::Rect;
@@ -147,19 +149,10 @@ impl State {
         match route {
             Route::App(p) => p.chrome(self, c),
             Route::Code(p) => p.chrome(self, c),
+            Route::Issues(p) => p.chrome(self, c),
+            Route::Pulls(p) => p.chrome(self, c),
             Route::Housekeeping(p) => p.chrome(self, c),
             Route::Notifications { .. } => c.crumb("Notifications", None),
-            Route::Pr { pr, tab } => {
-                repo_crumbs(&pr.repo, c);
-                self.pr_tabs(pr, c);
-                c.active = Some(match tab {
-                    PrTab::Conversation => 0,
-                    PrTab::Commits => 1,
-                    PrTab::Checks => 2,
-                    PrTab::Review | PrTab::Reviewed(_) => 4,
-                });
-                c.title = Some(pr.clone());
-            }
             Route::Gist { owner, id } => {
                 // Its owner, from the gist when the URL doesn't say.
                 let gist = match self.get(&DataKey::Gist(id.clone())) {
@@ -480,18 +473,18 @@ impl State {
         if o.is_none_or(|o| o.has_issues) {
             c.tabs.push((
                 new_tab("◉", "Issues", o.map(|o| o.open_issues)),
-                Target::Page(Route::Issues {
+                Target::Page(Route::Issues(issues::Issues {
                     repo: repo.clone(),
                     query: OPEN.into(),
-                }),
+                })),
             ));
         }
         c.tabs.push((
             new_tab("⇄", "Pull requests", o.map(|o| o.open_prs)),
-            Target::Page(Route::Pulls {
+            Target::Page(Route::Pulls(pulls::Pulls {
                 repo: repo.clone(),
                 query: OPEN.into(),
-            }),
+            })),
         ));
         if o.is_some_and(|o| o.has_discussions) {
             c.tabs.push((
@@ -542,7 +535,7 @@ impl State {
         }
     }
 
-    fn pr_tabs(&self, pr: &PrRef, c: &mut Chrome) {
+    pub(crate) fn pr_tabs(&self, pr: &PrRef, c: &mut Chrome) {
         let activity = self.activity(pr);
         let detail = self.pr(pr);
         c.tabs.push((
@@ -551,17 +544,17 @@ impl State {
         ));
         c.tabs.push((
             new_tab("◷", "Commits", activity.map(|a| a.commits.total())),
-            Target::Page(Route::Pr {
+            Target::Page(Route::Pulls(pulls::Pr {
                 pr: pr.clone(),
                 tab: PrTab::Commits,
-            }),
+            })),
         ));
         c.tabs.push((
             new_tab("✓", "Checks", None),
-            Target::Page(Route::Pr {
+            Target::Page(Route::Pulls(pulls::Pr {
                 pr: pr.clone(),
                 tab: PrTab::Checks,
-            }),
+            })),
         ));
         c.tabs.push((
             new_tab("±", "Files changed", detail.map(|d| d.changed_files)),
@@ -569,10 +562,10 @@ impl State {
         ));
         c.tabs.push((
             new_tab("◎", "Review", None),
-            Target::Page(Route::Pr {
+            Target::Page(Route::Pulls(pulls::Pr {
                 pr: pr.clone(),
                 tab: PrTab::Review,
-            }),
+            })),
         ));
     }
 
@@ -630,13 +623,6 @@ pub enum Section {
 
 fn section(route: &Route) -> Section {
     match route {
-        Route::Issues { .. }
-        | Route::Issue { .. }
-        | Route::Milestones { .. }
-        | Route::Milestone { .. }
-        | Route::Labels(_)
-        | Route::NewIssue(_) => Section::Issues,
-        Route::Pulls { .. } | Route::Pr { .. } | Route::NewPr(_) => Section::Pulls,
         Route::Discussions { .. } | Route::Discussion { .. } => Section::Discussions,
         Route::Actions { .. }
         | Route::WorkflowRun { .. }
@@ -651,6 +637,8 @@ fn section(route: &Route) -> Section {
         | Route::Alert { .. } => Section::Security,
         Route::App(p) => p.section(),
         Route::Code(p) => p.section(),
+        Route::Issues(p) => p.section(),
+        Route::Pulls(p) => p.section(),
         Route::Site(p) => p.section(),
         Route::Housekeeping(p) => p.section(),
         Route::Settings { .. } => Section::Settings,

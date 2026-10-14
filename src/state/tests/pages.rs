@@ -3,6 +3,8 @@
 
 use super::*;
 use crate::api::model::Capped;
+use crate::route::issues;
+use crate::route::pulls;
 
 /// A conversation longer than what's fetched (its newest comments,
 /// reviews and commits) says how much is left out, and its tabs count it
@@ -14,10 +16,10 @@ fn long_conversations_say_what_is_left_out() {
     issue.timeline = Capped::new(issue.timeline.items, shown + 116);
     issue.comment_count = 120;
     let mut state = with_issue();
-    let route = Route::Issue {
+    let route = Route::Issues(issues::Issue {
         repo: ghtui(),
         number: 14,
-    };
+    });
     open(&mut state, route, Data::Issue(Some(Box::new(issue))));
     assert!(page_text(&state).contains("… 116 earlier comments and events on GitHub"));
     assert!(page_text(&state).contains("120 comments"));
@@ -199,8 +201,10 @@ fn a_search_selects_the_row_it_finds() {
     let mut s = with_pr();
     press(&mut s, "/Fixes #12<Enter><Enter>");
     assert!(
-        matches!(s.route(), Some(Route::Issue { number: 12, .. }))
-            || matches!(s.route(), Some(Route::Pr { pr, .. }) if pr.number == 12),
+        matches!(
+            s.route(),
+            Some(Route::Issues(issues::Issue { number: 12, .. }))
+        ) || matches!(s.route(), Some(Route::Pulls(pulls::Pr { pr, .. })) if pr.number == 12),
         "{:?}",
         s.route()
     );

@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::route::code;
+use crate::route::issues;
+use crate::route::pulls;
 
 #[test]
 fn browser_and_copy_use_the_selection_or_the_page() {
@@ -157,7 +159,7 @@ fn the_mouse_follows_links_switches_tabs_and_scrolls() {
     let tabs: Vec<_> = state.chrome().tabs.into_iter().map(|(t, _)| t).collect();
     let rects = crate::ui::chrome::tab_layout(lay.tabs.unwrap(), &tabs, state.chrome().active);
     let _ = click(&mut state, rects[2].x + 1, rects[2].y);
-    assert!(matches!(route(&state), Route::Pulls { .. }));
+    assert!(matches!(route(&state), Route::Pulls(pulls::Pulls { .. })));
     // The header's search field.
     let field = crate::ui::chrome::header_layout(lay.header, &[], &[]).search;
     let chrome = state.chrome();
@@ -298,9 +300,11 @@ fn pages_link_to_milestones_branches_and_tags() {
             })
             .collect()
     };
-    let milestone = |repo: &str| Route::Milestone {
-        repo: crate::api::model::RepoId::parse(repo).unwrap(),
-        number: 3,
+    let milestone = |repo: &str| {
+        Route::Issues(issues::Milestone {
+            repo: crate::api::model::RepoId::parse(repo).unwrap(),
+            number: 3,
+        })
     };
     let issue = super::sized(with_issue(), 160, 40);
     assert!(routes(&issue).contains(&milestone("gold-silver-copper/ghtui")));
@@ -308,7 +312,7 @@ fn pages_link_to_milestones_branches_and_tags() {
     let Screen::Page(p) = pr.screen() else {
         panic!("not a page");
     };
-    let Route::Pr { pr: pr_ref, .. } = &p.route else {
+    let Route::Pulls(pulls::Pr { pr: pr_ref, .. }) = &p.route else {
         panic!("not a pull request");
     };
     assert!(routes(&pr).contains(&milestone(&pr_ref.repo.to_string())));

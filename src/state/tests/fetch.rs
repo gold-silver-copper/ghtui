@@ -1,6 +1,7 @@
 //! Fetching, refreshing and writing.
 
 use super::*;
+use crate::route::issues;
 
 #[test]
 fn duplicate_fetches_are_suppressed() {
@@ -170,10 +171,10 @@ fn a_fresh_copy_keeps_the_selected_issue() {
 fn an_edited_comment_stays_selected() {
     let mut s = with_repo();
     s.size = (100, 12);
-    let _ = s.push(Route::Issue {
+    let _ = s.push(Route::Issues(issues::Issue {
         repo: ghtui(),
         number: 14,
-    });
+    }));
     let key = DataKey::Issue(ghtui(), 14);
     let mut issue = crate::fixtures::issue();
     update(

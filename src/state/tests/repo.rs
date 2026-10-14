@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::route::code;
+use crate::route::issues;
+use crate::route::pulls;
 
 /// An empty repository says what it's about, in its sidebar on a
 /// wide screen and above its note on a narrow one.
@@ -33,10 +35,10 @@ fn a_repositorys_pages_are_under_their_tabs() {
     };
     let pages = [
         (
-            Route::Milestone {
+            Route::Issues(issues::Milestone {
                 repo: ghtui(),
                 number: 3,
-            },
+            }),
             "Issues",
         ),
         (
@@ -149,7 +151,7 @@ fn repo_tabs_filters_state_sort_and_star() {
 
     press(&mut state, "gt");
     assert!(
-        matches!(route(&state), Route::Pulls { .. }),
+        matches!(route(&state), Route::Pulls(pulls::Pulls { .. })),
         "→: the next tab"
     );
     press(&mut state, "1gt");

@@ -1,6 +1,7 @@
 use super::*;
 use crate::api::model::{ViewedFiles, ViewedState};
 use crate::diff_screen::DiffScreen;
+use crate::route::pulls;
 use crate::ui::diff_doc::{Doc, Pos, Row, Viewed};
 
 /// A diff screen on o/r#7 built from the fixture diff, before
@@ -91,10 +92,10 @@ fn the_review_tab_lists_drafts_and_threads_and_opens_them() {
     let mut s = state();
     let pr = PrRef::parse("o/r#7").unwrap();
     let of = DiffOf::Pr(pr.clone());
-    let _ = s.push(Route::Pr {
+    let _ = s.push(Route::Pulls(pulls::Pr {
         pr: pr.clone(),
         tab: PrTab::Review,
-    });
+    }));
     let cmds = crate::fixtures::pr_fetched(&mut s, &pr, Ok(crate::fixtures::pr_detail()));
     assert!(cmds.contains(&Cmd::LoadReview(pr.clone())), "{cmds:?}");
     assert!(cmds.contains(&Cmd::Api(Api::FetchThreads(pr.clone()))));

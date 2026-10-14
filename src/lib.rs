@@ -59,6 +59,8 @@ mod watch;
 pub mod wiki;
 mod writes;
 
+use crate::route::issues;
+use crate::route::pulls;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -215,7 +217,9 @@ async fn run(started: Instant) -> Result<()> {
     state.restore_tabs(&tabs);
     let mut cmds = match target {
         Some(at) => {
-            if let Target::Page(Route::Pr { pr, .. }) | Target::Files(DiffOf::Pr(pr)) = &at.target {
+            if let Target::Page(Route::Pulls(pulls::Pr { pr, .. }))
+            | Target::Files(DiffOf::Pr(pr)) = &at.target
+            {
                 let key = DataKey::Pr(pr.clone());
                 let cached = data::load::cached(&gh, &key);
                 state.data.insert(key, Remote::cached(cached));
@@ -324,7 +328,7 @@ async fn resolve_target(target: &str) -> Result<PrRef> {
 async fn resolve_pr(target: &str) -> Result<Dest> {
     let dest = Dest::from_url(target);
     match dest.target {
-        Target::Page(Route::Pr { .. }) | Target::Files(DiffOf::Pr(_)) => Ok(dest),
+        Target::Page(Route::Pulls(pulls::Pr { .. })) | Target::Files(DiffOf::Pr(_)) => Ok(dest),
         _ => Ok(Target::Page(Route::pr(resolve_target(target).await?)).into()),
     }
 }
@@ -334,10 +338,10 @@ async fn resolve_open(target: &str) -> Result<Dest> {
     let number = target.trim_start_matches('#');
     if !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()) {
         let pr = resolve_target(number).await?;
-        return Ok(Target::Page(Route::Issue {
+        return Ok(Target::Page(Route::Issues(issues::Issue {
             repo: pr.repo,
             number: pr.number,
-        })
+        }))
         .into());
     }
     let shown = route::parse_input(target, None)

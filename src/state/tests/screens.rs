@@ -3,6 +3,8 @@
 
 use super::*;
 use crate::route::code;
+use crate::route::issues;
+use crate::route::pulls;
 
 /// A pull request as Home's sections list it.
 pub(crate) fn row(
@@ -254,10 +256,10 @@ pub(crate) fn with_wiki() -> State {
 /// The repository's open issues.
 pub(crate) fn with_issues() -> State {
     let mut state = with_repo();
-    let route = Route::Issues {
+    let route = Route::Issues(issues::Issues {
         repo: ghtui(),
         query: OPEN.into(),
-    };
+    });
     let results = fixtures::issue_results(Some("c1"));
     open(&mut state, route, Data::Search(Box::new(results)));
     state
@@ -296,10 +298,10 @@ pub(crate) fn with_commit() -> State {
 pub(crate) fn with_pr_checks() -> State {
     let mut state = with_pr();
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
-    let _ = state.push(Route::Pr {
+    let _ = state.push(Route::Pulls(pulls::Pr {
         pr: pr.clone(),
         tab: PrTab::Checks,
-    });
+    }));
     // The switch refreshes the pull request; it comes back unchanged.
     crate::fixtures::pr_fetched(&mut state, &pr, Ok(pr_detail()));
     let activity = Data::PrActivity(Box::new(fixtures::activity()));
@@ -370,10 +372,10 @@ pub(crate) fn sized(mut state: State, w: u16, h: u16) -> State {
 pub(crate) fn with_tabs(n: usize) -> State {
     let mut state = with_repo();
     let more = [
-        Route::Issue {
+        Route::Issues(issues::Issue {
             repo: ghtui(),
             number: 14,
-        },
+        }),
         Route::pr(PrRef::parse("gold-silver-copper/ghtui#12").unwrap()),
         Route::user("octocat"),
         Route::blob(ghtui(), "main".into(), "crates/app/src/main.rs".into()),
@@ -555,10 +557,10 @@ pub(crate) fn with_branches() -> State {
 /// A repository's milestones.
 pub(crate) fn with_milestones() -> State {
     let mut state = with_repo();
-    let route = Route::Milestones {
+    let route = Route::Issues(issues::Milestones {
         repo: ghtui(),
         closed: false,
-    };
+    });
     open(
         &mut state,
         route,
@@ -570,10 +572,10 @@ pub(crate) fn with_milestones() -> State {
 /// A milestone.
 pub(crate) fn with_milestone() -> State {
     let mut state = with_repo();
-    let route = Route::Milestone {
+    let route = Route::Issues(issues::Milestone {
         repo: ghtui(),
         number: 3,
-    };
+    });
     open(
         &mut state,
         route,
@@ -633,10 +635,10 @@ pub(crate) fn with_issue() -> State {
         DataKey::Repo(ghtui()),
         Data::Repo(Box::new(fixtures::overview())),
     );
-    let route = Route::Issue {
+    let route = Route::Issues(issues::Issue {
         repo: ghtui(),
         number: 14,
-    };
+    });
     let issue = Data::Issue(Some(Box::new(fixtures::issue())));
     open(&mut state, route, issue);
     fetched(

@@ -3,6 +3,7 @@
 use super::*;
 use crate::route::app;
 use crate::route::code;
+use crate::route::issues;
 
 #[test]
 fn palette_goes_places_and_runs_actions() {
@@ -32,10 +33,10 @@ fn palette_goes_places_and_runs_actions() {
     press(&mut state, ":12<Enter>");
     assert_eq!(
         route(&state),
-        Route::Issue {
+        Route::Issues(issues::Issue {
             repo: RepoId::new("a", "b"),
             number: 12
-        }
+        })
     );
 
     press(&mut state, ":@octocat<Enter>");
@@ -110,10 +111,10 @@ fn palette_links_keep_their_anchor() {
     );
     assert_eq!(
         route(&s),
-        Route::Issue {
+        Route::Issues(issues::Issue {
             repo: RepoId::new("o", "r"),
             number: 1
-        }
+        })
     );
     assert_eq!(page(&s).anchor.as_deref(), Some("issuecomment-5"));
 }

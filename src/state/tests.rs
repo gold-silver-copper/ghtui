@@ -8,6 +8,7 @@ use crate::api::rate_limit::{Bucket, RateLimits};
 use crate::fixtures;
 use crate::fixtures::{answer, diff_msg, fetched, pr_detail, press, says, thread, warns};
 use crate::picker::{Choice, fuzzy_score};
+use crate::route::issues;
 use crate::route::{Dest, Family, OPEN};
 use crate::theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
 use crate::ui::annotations::{AnnotationKey, Place};
@@ -96,12 +97,12 @@ fn fetches(cmds: Vec<Cmd>) -> Vec<Cmd> {
 
 fn issues(query: &str) -> Route {
     let (repo, query) = (ghtui(), query.to_owned());
-    Route::Issues { repo, query }
+    Route::Issues(issues::Issues { repo, query })
 }
 
 fn issue(number: u64) -> Route {
     let repo = ghtui();
-    Route::Issue { repo, number }
+    Route::Issues(issues::Issue { repo, number })
 }
 
 fn blob(rev: &str, path: &str) -> Route {

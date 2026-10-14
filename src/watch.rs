@@ -7,6 +7,8 @@
 use crate::api::GitHub;
 use crate::api::model::NodeId;
 use crate::api::watch::{Subscription, SubscriptionState, Watched};
+use crate::route::issues;
+use crate::route::pulls;
 use crate::ui::overlays::PaletteItem;
 
 use crate::data::DataKey;
@@ -48,8 +50,8 @@ impl Work {
 /// What a page (or the row selected on a list) is about, to subscribe to.
 fn of_route(route: &Route) -> Option<Watched> {
     Some(match route {
-        Route::Issue { repo, number } => Watched::Thread(repo.clone(), *number),
-        Route::Pr { pr, .. } => Watched::Thread(pr.repo.clone(), pr.number),
+        Route::Issues(issues::Issue { repo, number }) => Watched::Thread(repo.clone(), *number),
+        Route::Pulls(pulls::Pr { pr, .. }) => Watched::Thread(pr.repo.clone(), pr.number),
         Route::Discussion {
             of: crate::api::browse::DiscussionsOf::Repo(repo),
             number,
@@ -73,7 +75,9 @@ pub fn subject(state: &State) -> Option<Watched> {
             let row = p.selected_link().and_then(crate::ui::page::Link::url);
             let row = row.and_then(|url| match Dest::from_url(url).target {
                 Target::Page(
-                    route @ (Route::Issue { .. } | Route::Pr { .. } | Route::Discussion { .. }),
+                    route @ (Route::Issues(issues::Issue { .. })
+                    | Route::Pulls(pulls::Pr { .. })
+                    | Route::Discussion { .. }),
                 ) => of_route(&route),
                 // A row that opens a pull request's files is about it too.
                 Target::Files(crate::diff_screen::DiffOf::Pr(pr)) => {

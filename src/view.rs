@@ -1,5 +1,6 @@
 //! The view: a pure function of [`State`] (plus the current time).
 
+use crate::route::pulls;
 use crate::theme::Bg;
 use crate::ui::bars::{Banner, StatusBar};
 use crate::ui::chrome::{Header, KeyPanel, SearchField, SearchPanel, TabBar, TitleBar};
@@ -238,9 +239,9 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 save: match &compose.target {
                     crate::review::ComposeTarget::Reply { .. } => "post reply",
                     crate::review::ComposeTarget::Conversation { .. } => "post comment",
-                    crate::review::ComposeTarget::Form(crate::route::Route::NewPr(_)) => {
-                        "create pull request…"
-                    }
+                    crate::review::ComposeTarget::Form(crate::route::Route::Pulls(
+                        pulls::NewPr(_),
+                    )) => "create pull request…",
                     crate::review::ComposeTarget::Form(_) => "create issue",
                     crate::review::ComposeTarget::Write(t) => t.save(),
                     crate::review::ComposeTarget::Edit(_) => "save",

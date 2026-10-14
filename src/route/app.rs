@@ -38,12 +38,9 @@ impl Family for Page {
         }
     }
 
-    /// Home's are its sections'.
-    fn needs(&self, state: &State) -> Vec<DataKey> {
-        match self {
-            Home => state.home_needs(),
-            Offline => Vec::new(),
-        }
+    /// Home's are its sections', the state's ([`State::needs`]).
+    fn needs(&self) -> Vec<DataKey> {
+        Vec::new()
     }
 
     fn width(&self) -> Width {

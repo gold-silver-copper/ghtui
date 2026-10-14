@@ -1,6 +1,8 @@
 //! New issues and pull requests, and checking one out: what each asks
 //! first, what it sends, and the page following GitHub after.
 
+use crate::route::issues;
+use crate::route::pulls;
 use std::path::PathBuf;
 
 use crate::api::create::{NewIssue, NewPr};
@@ -50,7 +52,7 @@ fn bug_report() -> State {
 #[test]
 fn a_new_issue_starts_from_its_template_and_opens_once_made() {
     let (mut s, cmds) = form(",i");
-    assert_eq!(s.route(), Some(&Route::NewIssue(ghtui())));
+    assert_eq!(s.route(), Some(&Route::Issues(issues::NewIssue(ghtui()))));
     let form = DataKey::NewForm(ghtui());
     assert!(crate::fixtures::asks(&cmds, &form), "{cmds:?}");
     let text = page_text(&s);
@@ -64,7 +66,7 @@ fn a_new_issue_starts_from_its_template_and_opens_once_made() {
     c.input.move_cursor(CursorMove::End);
     c.input.insert_str("it crashes");
     let sent = press(&mut s, "<C-s>");
-    let route = Route::NewIssue(ghtui());
+    let route = Route::Issues(issues::NewIssue(ghtui()));
     let new = NewIssue {
         repo: NodeId::new("R_ghtui"),
         title: "[Bug]: it crashes".into(),
@@ -78,10 +80,10 @@ fn a_new_issue_starts_from_its_template_and_opens_once_made() {
     assert!(composer(&mut s).sending);
 
     let cmds = update(&mut s, Msg::Create(Done::Created(route.clone(), Ok(42))));
-    let issue = Route::Issue {
+    let issue = Route::Issues(issues::Issue {
         repo: ghtui(),
         number: 42,
-    };
+    });
     assert_eq!(s.route(), Some(&issue));
     assert!(s.overlay.is_none());
     says(&s, "Opened issue #42");
@@ -95,7 +97,7 @@ fn a_new_issue_starts_from_its_template_and_opens_once_made() {
 fn a_refused_issue_says_why_in_the_composer() {
     let mut s = bug_report();
     press(&mut s, "<C-s>");
-    let route = Route::NewIssue(ghtui());
+    let route = Route::Issues(issues::NewIssue(ghtui()));
     let refused = ApiError::GraphQl(vec!["Title can't be blank".into()]);
     update(&mut s, Msg::Create(Done::Created(route, Err(refused))));
     let c = composer(&mut s);
@@ -104,7 +106,7 @@ fn a_refused_issue_says_why_in_the_composer() {
         c.error.as_deref(),
         Some("GitHub didn't create the issue: Title can't be blank")
     );
-    assert_eq!(s.route(), Some(&Route::NewIssue(ghtui())));
+    assert_eq!(s.route(), Some(&Route::Issues(issues::NewIssue(ghtui()))));
 }
 
 /// Labels are picked and unpicked in a picker that stays open; esc in the
@@ -124,7 +126,7 @@ fn labels_are_picked_and_text_is_kept() {
         "still picking"
     );
     press(&mut s, "<Esc>");
-    let form = &s.creating.forms[&Route::NewIssue(ghtui())];
+    let form = &s.creating.forms[&Route::Issues(issues::NewIssue(ghtui()))];
     assert_eq!(form.labels, [NodeId::new("LA_docs")]);
 }
 
@@ -199,7 +201,7 @@ fn a_pull_request_from_the_clones_branch_is_pushed_then_made() {
     };
     assert_eq!(cmds, [Cmd::Create(compare.clone())]);
     head(&mut s, None);
-    let route = Route::NewPr(ghtui());
+    let route = Route::Pulls(pulls::NewPr(ghtui()));
     let text = "Fix the parser\n\nIt dropped the last line.\n\n## Checklist\n\n- [ ] Tests";
     assert_eq!(s.creating.forms[&route].text, text);
 

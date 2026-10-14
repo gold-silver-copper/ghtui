@@ -191,6 +191,8 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
     Some(match route {
         Route::App(p) => return p.up(state),
         Route::Code(p) => return p.up(state),
+        Route::Issues(p) => return p.up(state),
+        Route::Pulls(p) => return p.up(state),
         Route::Settings {
             repo,
             page: crate::api::settings::SettingsPage::Hook(_),
@@ -198,19 +200,16 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             repo: repo.clone(),
             page: crate::api::settings::SettingsPage::Hooks,
         },
-        Route::Issues { repo, .. }
-        | Route::Settings { repo, .. }
+        Route::Settings { repo, .. }
         | Route::Discussions {
             of: DiscussionsOf::Repo(repo),
             ..
         }
-        | Route::Pulls { repo, .. }
         | Route::Stargazers(repo)
         | Route::Watchers(repo)
         | Route::Forks(repo)
         | Route::Releases(repo)
         | Route::Deployments { repo, .. }
-        | Route::Milestones { repo, .. }
         | Route::Wiki { repo, page: None }
         | Route::Projects(ProjectsOf::Repo(repo))
         | Route::Actions { repo, .. } => Route::Code(code::Repo(repo.clone())),
@@ -231,18 +230,6 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             repo: repo.clone(),
             file: file.clone(),
         },
-        Route::NewIssue(repo) | Route::Labels(repo) => Route::Issues {
-            repo: repo.clone(),
-            query: crate::route::OPEN.to_owned(),
-        },
-        Route::NewPr(repo) => Route::Pulls {
-            repo: repo.clone(),
-            query: crate::route::OPEN.to_owned(),
-        },
-        Route::Milestone { repo, .. } => Route::Milestones {
-            repo: repo.clone(),
-            closed: false,
-        },
         Route::Housekeeping(p) => return p.up(state),
         Route::WorkflowRun { repo, .. }
         | Route::Workflow { repo, .. }
@@ -257,14 +244,6 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             repo: repo.clone(),
             run: *run,
             attempt: None,
-        },
-        Route::Issue { repo, .. } => Route::Issues {
-            repo: repo.clone(),
-            query: crate::route::OPEN.into(),
-        },
-        Route::Pr { pr, .. } => Route::Pulls {
-            repo: pr.repo.clone(),
-            query: crate::route::OPEN.into(),
         },
         Route::User { .. } | Route::Search { .. } | Route::Notifications { .. } => {
             Route::App(app::Home)

@@ -11,6 +11,7 @@
 //! was there" when it shows nothing the page doesn't: one newer than what
 //! the page loaded is a change.
 
+use crate::route::pulls;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -240,10 +241,10 @@ pub fn watched(state: &State) -> Option<&PrRef> {
     match state.screen() {
         Screen::Diff(screen) => screen.of.pr(),
         Screen::Page(p) => match &p.route {
-            Route::Pr {
+            Route::Pulls(pulls::Pr {
                 pr,
                 tab: PrTab::Conversation | PrTab::Review | PrTab::Reviewed(_),
-            } => Some(pr),
+            }) => Some(pr),
             _ => None,
         },
     }
@@ -335,10 +336,10 @@ pub fn on_polled(
     };
     let lists_reviews = matches!(
         page,
-        Some(Route::Pr {
+        Some(Route::Pulls(pulls::Pr {
             tab: PrTab::Review | PrTab::Reviewed(_),
             ..
-        })
+        }))
     );
     let talk: Vec<DataKey> = (page.is_some())
         .then(|| DataKey::PrActivity(pr.clone()))

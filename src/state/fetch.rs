@@ -1,7 +1,9 @@
 //! Data from GitHub: what's fetched, when, and what's still running.
 
 use super::*;
-use crate::route::{Family, app};
+use crate::route::app;
+use crate::route::issues;
+use crate::route::pulls;
 
 /// Data that comes from GitHub: what we have (possibly cached), whether a
 /// refresh is in flight, and the last refresh error.
@@ -131,11 +133,8 @@ impl State {
     /// What a page needs fetched: Home's are its sections'.
     pub fn needs(&self, route: &Route) -> Vec<DataKey> {
         match route {
-            Route::App(p) => p.needs(self),
-            Route::Code(p) => p.needs(self),
-            Route::Site(p) => p.needs(self),
-            Route::Housekeeping(p) => p.needs(self),
-            _ => browse::needs(route),
+            Route::App(app::Home) => self.home_needs(),
+            _ => route.needs(),
         }
     }
 
@@ -187,7 +186,10 @@ impl State {
                 }
                 // An issue or pull request list's open and closed counts
                 // are the header's, so refreshing the list refreshes them.
-                if force && let Route::Issues { repo, .. } | Route::Pulls { repo, .. } = &route {
+                if force
+                    && let Route::Issues(issues::Issues { repo, .. })
+                    | Route::Pulls(pulls::Pulls { repo, .. }) = &route
+                {
                     let header = DataKey::Repo(repo.clone());
                     cmds.extend(self.ensure(header, true));
                 }

@@ -201,7 +201,7 @@ impl Family for Page {
         })
     }
 
-    fn needs(&self, _: &State) -> Vec<DataKey> {
+    fn needs(&self) -> Vec<DataKey> {
         let data = |key| key;
         let header = |repo: &RepoId| DataKey::Repo(repo.clone());
         let paged = self.paged();
