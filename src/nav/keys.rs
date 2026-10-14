@@ -78,10 +78,9 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
                         state.first_key(Action::Down),
                         state.first_key(Action::Hints),
                     );
-                    state.info(format!(
+                    state.just_say(format!(
                         "Nothing selected: {down} selects a row, {hints} picks any link"
-                    ));
-                    Vec::new()
+                    ))
                 }
             };
         }
@@ -282,32 +281,21 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
             };
             return match (to, at) {
                 (Some(url), _) => state.go(Dest::from_url(&url)),
-                (None, Some(_)) => {
-                    state.info(if action == Action::NextCommit {
-                        "This is the newest commit"
-                    } else {
-                        "No earlier commit here"
-                    });
-                    Vec::new()
-                }
+                (None, Some(_)) => state.just_say(if action == Action::NextCommit {
+                    "This is the newest commit"
+                } else {
+                    "No earlier commit here"
+                }),
                 (None, None) => state.just_say("The pull request's commits haven't loaded yet"),
             };
         }
-        _ if crate::projects::ACTIONS.contains(&action) => {
-            return crate::projects::act(state, action);
-        }
         Action::Star => return star(state),
+        Action::Delete | Action::UndoDelete => return crate::home::act(state, action),
         Action::Comment => return comment_with(state, "", None),
         Action::QuoteReply => return quote_reply(state),
         Action::Branch => return state.open_finder(true),
         Action::ToggleState => return cycle_state(state),
         Action::Sort => return cycle_sort(state),
-        Action::SaveSection
-        | Action::RenameSection
-        | Action::MoveSectionUp
-        | Action::MoveSectionDown
-        | Action::Delete
-        | Action::UndoDelete => return crate::home::act(state, action),
         // A long review in a conversation.
         Action::FoldClose | Action::FoldOpen | Action::FoldToggle => {
             match crate::talk::fold_key(state, action) {

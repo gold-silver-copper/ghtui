@@ -1207,10 +1207,9 @@ pub fn after(state: &mut State, change: &Change) -> Vec<Cmd> {
         return Vec::new();
     };
     if let Some(None) = state.clone_of(repo) {
-        state.info(format!(
+        return state.just_say(format!(
             "Made {name}; ghtui isn't running in a clone of {repo} to check it out"
         ));
-        return Vec::new();
     }
     let pick = Pick::Checkout {
         repo: repo.clone(),

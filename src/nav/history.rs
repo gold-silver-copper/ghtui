@@ -77,8 +77,7 @@ impl State {
             self.forward.push(screen);
             return self.load_visible(false);
         }
-        self.info("This is the first page");
-        Vec::new()
+        self.just_say("This is the first page")
     }
 
     #[must_use]
@@ -146,10 +145,9 @@ impl State {
                     self.first_key(Action::QuoteReply),
                     self.first_key(Action::Comment),
                 );
-                self.info(format!(
+                self.just_say(format!(
                     "{quote} replies quoting this comment · {comment} comments"
-                ));
-                Vec::new()
+                ))
             }
         }
     }
@@ -268,13 +266,10 @@ pub fn step_tab(state: &mut State, forward: bool) -> Vec<Cmd> {
     };
     match next {
         Some(i) => switch_tab(state, i + 1),
-        None => {
-            state.info(if forward {
-                "This is the last tab"
-            } else {
-                "This is the first tab"
-            });
-            Vec::new()
-        }
+        None => state.just_say(if forward {
+            "This is the last tab"
+        } else {
+            "This is the first tab"
+        }),
     }
 }

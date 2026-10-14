@@ -2,7 +2,7 @@
 //! the status bar.
 
 use super::*;
-use crate::route::{app, code, issues, pulls, runs, search};
+use crate::route::{code, issues, pulls, runs, search};
 
 /// Something you can do here.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -356,29 +356,6 @@ impl State {
                 let show = format!("Show {}", next_list_state(route, query));
                 out.push(here(Action::ToggleState, &show, "open/closed"));
                 out.push(here(Action::Sort, "Change the sort", "sort"));
-            }
-            let mut save = here(Action::SaveSection, "Save this list to Home", "");
-            save.unavailable = crate::home::unavailable(self, Action::SaveSection);
-            out.push(save);
-        }
-        if *route == Route::App(app::Home) {
-            let title = match self.section_here() {
-                Some((_, s)) => format!("“{}”", s.title),
-                None => "the section".to_owned(),
-            };
-            for (action, label) in [
-                (Action::RenameSection, format!("Rename {title}")),
-                (Action::MoveSectionUp, format!("Move {title} up")),
-                (Action::MoveSectionDown, format!("Move {title} down")),
-                (Action::Delete, format!("Remove {title} from Home")),
-                (
-                    Action::UndoDelete,
-                    "Bring back the section removed".to_owned(),
-                ),
-            ] {
-                let mut row = row("Home", action, &label, "", None);
-                row.unavailable = crate::home::unavailable(self, action);
-                out.push(row);
             }
         }
         if let Some(repo) = route.repo() {

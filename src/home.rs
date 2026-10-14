@@ -17,6 +17,7 @@ use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
 
 use crate::data::DataKey;
 use crate::keymap::Action;
+use crate::nav::Doable;
 use crate::picker::{self, Titling};
 use crate::state::{Cmd, Overlay, Screen, State};
 
@@ -441,6 +442,56 @@ pub const ACTIONS: [Action; 6] = [
     Action::UndoDelete,
 ];
 
+/// What Home adds: saving a list to it, and changing its sections.
+/// Deleting one (and bringing it back) is what Delete does on a page
+/// when nothing else there takes it ([`crate::nav::page_action`]).
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &[
+        Action::SaveSection,
+        Action::RenameSection,
+        Action::MoveSectionUp,
+        Action::MoveSectionDown,
+    ],
+    act,
+    offers,
+    ..crate::features::Feature::NONE
+};
+
+/// The menu's rows: saving the list on screen to Home, and on Home, its
+/// sections'.
+fn offers(state: &State, out: &mut Vec<Doable>) {
+    let Some(route) = state.route() else {
+        return;
+    };
+    let mut add = |section, action, label: String| {
+        let why = unavailable(state, action);
+        out.push(crate::nav::row(section, action, label, "", why));
+    };
+    if route.search().is_some() {
+        add(
+            "This page",
+            Action::SaveSection,
+            "Save this list to Home".into(),
+        );
+    }
+    if *route == Route::App(app::Home) {
+        let title = match state.section_here() {
+            Some((_, s)) => format!("“{}”", s.title),
+            None => "the section".to_owned(),
+        };
+        add("Home", Action::RenameSection, format!("Rename {title}"));
+        add("Home", Action::MoveSectionUp, format!("Move {title} up"));
+        add(
+            "Home",
+            Action::MoveSectionDown,
+            format!("Move {title} down"),
+        );
+        add("Home", Action::Delete, format!("Remove {title} from Home"));
+        let undo = "Bring back the section removed";
+        add("Home", Action::UndoDelete, undo.into());
+    }
+}
+
 /// What one of Home's actions does here, everything it needs checked.
 enum Plan<'a> {
     /// Asks for a section's title, starting as this.
@@ -620,10 +671,9 @@ impl State {
                     .config_path
                     .as_deref()
                     .map_or_else(|| "config.toml".to_owned(), |p| p.display().to_string());
-                self.info(format!(
+                self.just_say(format!(
                     "This section can't be shown: {why}. Fix it in {path}"
-                ));
-                Vec::new()
+                ))
             }
             None => Vec::new(),
         }

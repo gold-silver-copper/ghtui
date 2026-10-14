@@ -30,31 +30,33 @@ use crate::picker::entry;
 use crate::picker::{Kind, fuzzy_score};
 use crate::state::{Cmd, Screen, State};
 
-/// The actions on a project's pages.
-pub const ACTIONS: [Action; 8] = [
+/// A project's own actions.
+const ACTIONS: &[Action] = &[
     Action::PrevColumn,
     Action::NextColumn,
     Action::MoveItem,
     Action::SetField,
     Action::AddItem,
     Action::ArchiveItem,
-    Action::EditComment,
-    Action::EditTitle,
 ];
 
-/// Whether `action` is the project's on screen to do: its own, and
-/// editing (a draft's text); on an issue or pull request, setting its
-/// fields in its projects.
-/// What projects add: their own actions on a project's pages.
+/// What projects add: their own actions, and editing a draft on a
+/// project's pages.
 pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: ACTIONS,
     takes,
     act,
     offers: doables,
     ..crate::features::Feature::NONE
 };
 
+/// Whether `action` is the project's on screen to do: its own, and
+/// editing (a draft's text); on an issue or pull request, setting its
+/// fields in its projects.
 fn takes(state: &State, action: Action) -> bool {
-    (ACTIONS.contains(&action) && here(state).is_some())
+    let on_page =
+        ACTIONS.contains(&action) || matches!(action, Action::EditComment | Action::EditTitle);
+    (on_page && here(state).is_some())
         || (action == Action::SetField && sidebar::here(state).is_some())
 }
 
@@ -407,7 +409,7 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
     }
 }
 
-/// Runs one of [`ACTIONS`] on a project's page.
+/// Runs one of [`ACTIONS`], or an edit, on a project's page.
 #[must_use]
 pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
     let Some(h) = here(state) else {

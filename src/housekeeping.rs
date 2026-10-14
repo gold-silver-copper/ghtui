@@ -536,10 +536,9 @@ fn new_here(state: &mut State, route: Route) -> Vec<Cmd> {
             files::open(state, repo, branch, String::new(), FileChange::New)
         }
         _ => {
-            state.info(
+            state.just_say(
                 "New works on a repository's labels, milestones, branches, tags and files (a folder for a new file)",
-            );
-            Vec::new()
+            )
         }
     }
 }

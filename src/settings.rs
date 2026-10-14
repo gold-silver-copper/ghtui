@@ -550,10 +550,9 @@ pub fn follow_link(state: &mut State, link: &SettingLink) -> Vec<Cmd> {
         }
         SettingLink::DeleteRepo => {
             let open = state.first_key(Action::OpenInBrowser);
-            state.info(format!(
+            state.just_say(format!(
                 "ghtui never deletes a repository: that's done on github.com ({open} opens this page there)"
-            ));
-            Vec::new()
+            ))
         }
     }
 }

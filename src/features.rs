@@ -43,6 +43,7 @@ impl Feature {
 
 /// Every feature, in the order the menu offers their rows.
 pub const FEATURES: &[Feature] = &[
+    crate::home::FEATURE,
     crate::forms::FEATURE,
     crate::projects::FEATURE,
     crate::discuss::FEATURE,
