@@ -100,11 +100,11 @@ fn a_release_is_edited_and_its_page_follows() {
         key.clone(),
         Data::Release(Box::new(fixtures::release(true))),
     );
-    assert!(s.writing.expect.is_some());
+    assert!(s.following.is_some());
     let mut edited = fixtures::release(true);
     edited.name = "ghtui 0.2.0, fixed".into();
     fetched(&mut s, key, Data::Release(Box::new(edited)));
-    assert_eq!(s.writing.expect, None, "GitHub shows it");
+    assert!(s.following.is_none(), "GitHub shows it");
 }
 
 /// `,D` on a release asks first; once it's deleted, the releases follow
@@ -144,7 +144,7 @@ fn a_release_is_deleted_then_its_tag_asked_about() {
         DataKey::Releases(ghtui()),
         Data::Releases(Box::new(fixtures::releases())),
     );
-    assert!(s.writing.expect.is_some());
+    assert!(s.following.is_some());
     let mut gone = fixtures::releases();
     gone.items.retain(|r| r.tag != "v0.2.0");
     fetched(
@@ -152,7 +152,7 @@ fn a_release_is_deleted_then_its_tag_asked_about() {
         DataKey::Releases(ghtui()),
         Data::Releases(Box::new(gone)),
     );
-    assert_eq!(s.writing.expect, None);
+    assert!(s.following.is_none());
 }
 
 /// Enter on an asset asks where to save it: by its name in the current
@@ -211,14 +211,14 @@ fn assets_are_uploaded_and_deleted() {
     assert_eq!(sent, upload);
     fixtures::done(&mut s, sent, Ok(()));
     says(&s, "Uploaded Cargo.toml");
-    assert!(s.writing.expect.is_some(), "it follows the upload");
+    assert!(s.following.is_some(), "it follows the upload");
     let mut with = fixtures::release(true);
     let mut toml = with.assets.items[0].clone();
     toml.name = "Cargo.toml".into();
     with.assets.items.push(toml);
     let key = DataKey::Release(ghtui(), "v0.2.0".into());
     fetched(&mut s, key.clone(), Data::Release(Box::new(with)));
-    assert_eq!(s.writing.expect, None);
+    assert!(s.following.is_none());
 
     let name = "ghtui-aarch64-macos.tar.gz";
     select_link(&mut s, &Link::Write(WriteLink::Asset(name.into())));
@@ -237,5 +237,5 @@ fn assets_are_uploaded_and_deleted() {
     let mut without = fixtures::release(true);
     without.assets.items.retain(|a| a.name != name);
     fetched(&mut s, key, Data::Release(Box::new(without)));
-    assert_eq!(s.writing.expect, None);
+    assert!(s.following.is_none());
 }

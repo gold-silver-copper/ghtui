@@ -26,10 +26,11 @@ use crate::ui::page::{Link, Page, WriteLink};
 use crate::browse::{Build, Width};
 use crate::chrome::Section;
 use crate::data::DataKey;
+use crate::follow::{Expectation, Shown, expect};
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::state::{Cmd, Screen, State};
-use crate::writes::{Expected as Expects, row};
+use crate::writes::row;
 
 pub mod files;
 pub mod git;
@@ -809,8 +810,8 @@ pub enum Expected {
     },
 }
 
-impl Expected {
-    pub fn waiting(&self) -> &'static str {
+impl Expectation for Expected {
+    fn waiting(&self) -> &'static str {
         match self {
             Expected::Label { .. } => "Waiting for GitHub to show the label",
             Expected::Milestone { .. } => "Waiting for GitHub to show the milestone",
@@ -821,14 +822,14 @@ impl Expected {
         }
     }
 
-    pub fn shown(&self, state: &State) -> bool {
+    fn shown(&self, state: &State, _: &Route) -> Shown {
         use crate::api::browse::{
             Blob, BranchInfo, MilestoneDetail, MilestoneList, TagInfo, TreeEntry,
         };
-        match self {
+        let shown = match self {
             Expected::Label { repo, gone, shown } => {
                 let Some(list) = labels::list(state, repo) else {
-                    return false;
+                    return Shown::No;
                 };
                 let gone = gone
                     .as_ref()
@@ -876,7 +877,7 @@ impl Expected {
                         let Some(l) =
                             state.picked::<Results<BranchInfo>>(&DataKey::Branches(repo.clone()))
                         else {
-                            return false;
+                            return Shown::No;
                         };
                         let names: Vec<&str> = l.items.iter().map(|b| b.name.as_str()).collect();
                         (names, l.next.is_some())
@@ -885,7 +886,7 @@ impl Expected {
                         let Some(l) =
                             state.picked::<Results<TagInfo>>(&DataKey::Tags(repo.clone()))
                         else {
-                            return false;
+                            return Shown::No;
                         };
                         let names: Vec<&str> = l.items.iter().map(|t| t.name.as_str()).collect();
                         (names, false)
@@ -918,13 +919,9 @@ impl Expected {
                     .picked::<[TreeEntry]>(&key)
                     .is_some_and(|entries| entries.iter().all(|e| e.name != name))
             }
-        }
+        };
+        shown.into()
     }
-}
-
-/// Waits, on `route`, for GitHub to show `what`.
-fn expect(state: &mut State, route: Route, what: Expected) {
-    crate::writes::expect(state, route, Expects::Housekeeping(what));
 }
 
 // ---- data -----------------------------------------------------------------------------------

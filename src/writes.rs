@@ -3,14 +3,12 @@
 //! ([`crate::wiki::form`]), and what you're subscribed to
 //! ([`crate::watch`]). This module is what they share: their keys and
 //! menu rows, the composer's text on their forms, their pickers and
-//! questions, and following GitHub until the page shows what changed, as
-//! [`crate::act`] does for its changes.
+//! questions.
 
 use crate::route::{Route, gists, releases, wiki};
 use std::collections::HashMap;
 
-use crate::api::model::RepoId;
-use crate::api::watch::{SubscriptionState, Watched};
+use crate::api::watch::Watched;
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{Link, WriteLink};
 
@@ -29,8 +27,7 @@ pub const ACTIONS: [Action; 6] = [
     Action::Lists,
 ];
 
-/// The forms being written, and the change GitHub accepted that the page
-/// on screen doesn't show yet.
+/// The forms being written.
 #[derive(Debug, Default)]
 pub struct Writing {
     /// New and edited releases, by their form's page: leaving the form
@@ -43,7 +40,6 @@ pub struct Writing {
     /// Labels, milestones, branches and tags, forks, new repositories
     /// and files.
     pub housekeeping: crate::housekeeping::Housekeeping,
-    pub expect: Option<Expect>,
 }
 
 // ---- where they work -------------------------------------------------------------
@@ -616,204 +612,9 @@ pub(crate) fn ask(
     })));
 }
 
-// ---- following GitHub ----------------------------------------------------------------
-
-/// How many times a page is fetched again for a change before giving up:
-/// a few minutes, at the live refresh's pace, as [`crate::act`] does.
-const POLLS: u32 = 40;
-
-/// A change GitHub accepted that the page it went to doesn't show yet.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Expect {
-    pub route: Route,
-    pub what: Expected,
-    polls: u32,
-}
-
-/// What the page shows once GitHub has the change.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Expected {
-    /// A published release's page.
-    Release(RepoId, String),
-    /// A release's page, as it was edited.
-    Edited {
-        repo: RepoId,
-        tag: String,
-        name: String,
-        notes: String,
-        prerelease: bool,
-    },
-    /// A release no longer among the releases.
-    ReleaseGone(RepoId, String),
-    /// A release's page with its asset `name` (or without it).
-    Asset {
-        repo: RepoId,
-        tag: String,
-        name: String,
-        there: bool,
-    },
-    /// A draft among the releases.
-    Draft(RepoId, String),
-    /// A gist with this description and these files' names and text.
-    Gist {
-        id: String,
-        description: String,
-        files: Vec<(String, String)>,
-    },
-    /// A gist no longer among its owner's.
-    GistGone(String, String),
-    Subscription(Watched, SubscriptionState),
-    /// A wiki page with this text, as its page's data is keyed.
-    Wiki(DataKey, String),
-    /// Starred lists' and packages' ([`crate::site`]).
-    Site(crate::site::Expected),
-    Housekeeping(crate::housekeeping::Expected),
-}
-
-impl Expected {
-    /// What's fetched again to see it.
-    fn needs(&self, state: &State, route: &Route) -> Vec<DataKey> {
-        match self {
-            Expected::Subscription(w, _) => vec![DataKey::Subscription(w.clone())],
-            Expected::Site(e) => e.needs(),
-            _ => state.needs(route),
-        }
-    }
-
-    /// What the status bar says meanwhile.
-    fn waiting(&self) -> &'static str {
-        match self {
-            Expected::Release(..) | Expected::Draft(..) | Expected::Edited { .. } => {
-                "Waiting for GitHub to show the release"
-            }
-            Expected::ReleaseGone(..) => "Waiting for GitHub to show the release gone",
-            Expected::Asset { there: true, .. } => "Waiting for GitHub to show the asset",
-            Expected::Asset { .. } => "Waiting for GitHub to show the asset gone",
-            Expected::Gist { .. } => "Waiting for GitHub to show the gist",
-            Expected::GistGone(..) => "Waiting for GitHub to show the gist gone",
-            Expected::Subscription(..) => "Waiting for GitHub to show the subscription",
-            Expected::Wiki(..) => "Waiting for GitHub to show the page",
-            Expected::Site(e) => e.waiting(),
-            Expected::Housekeeping(e) => e.waiting(),
-        }
-    }
-
-    fn shown(&self, state: &State) -> bool {
-        use crate::api::browse::{Gist, GistSummary, Release, Results, WikiPage};
-        match self {
-            Expected::Release(repo, tag) => {
-                (state.picked::<Release>(&DataKey::Release(repo.clone(), tag.clone()))).is_some()
-            }
-            Expected::Edited {
-                repo,
-                tag,
-                name,
-                notes,
-                prerelease,
-            } => (state.picked::<Release>(&DataKey::Release(repo.clone(), tag.clone())))
-                .is_some_and(|r| {
-                    r.name == *name
-                        && r.prerelease == *prerelease
-                        && r.notes.as_deref().unwrap_or_default().trim() == notes.trim()
-                }),
-            Expected::ReleaseGone(repo, tag) => (state
-                .picked::<Results<Release>>(&DataKey::Releases(repo.clone())))
-            .is_some_and(|r| r.items.iter().all(|r| r.tag != *tag)),
-            Expected::Asset {
-                repo,
-                tag,
-                name,
-                there,
-            } => crate::release::assets::shows(state, repo, tag, name, *there),
-            Expected::Draft(repo, tag) => (state
-                .picked::<Results<Release>>(&DataKey::Releases(repo.clone())))
-            .is_some_and(|r| r.items.iter().any(|r| r.tag == *tag && r.draft)),
-            Expected::Gist {
-                id,
-                description,
-                files,
-            } => state
-                .picked::<Gist>(&DataKey::Gist(id.clone()))
-                .is_some_and(|g| {
-                    let shown: Vec<(&str, Option<&str>)> = (g.files.iter())
-                        .map(|f| (f.name.as_str(), f.text.as_deref().filter(|_| !f.truncated)))
-                        .collect();
-                    g.description == *description
-                        && shown.len() == files.len()
-                        && files.iter().all(|(name, text)| {
-                            shown
-                                .iter()
-                                .any(|(n, t)| n == name && t.is_none_or(|t| t == text))
-                        })
-                }),
-            Expected::GistGone(owner, id) => state
-                .picked::<Results<GistSummary>>(&DataKey::Gists(owner.to_lowercase()))
-                .is_some_and(|r| r.items.iter().all(|g| g.id != *id)),
-            Expected::Subscription(w, want) => state
-                .picked::<crate::api::watch::Subscription>(&DataKey::Subscription(w.clone()))
-                .is_some_and(|s| s.state == Some(*want)),
-            Expected::Wiki(key, text) => state
-                .picked::<WikiPage>(key)
-                .is_some_and(|w| w.text.as_deref().map(str::trim_end) == Some(text.trim_end())),
-            Expected::Site(e) => e.shown(state),
-            Expected::Housekeeping(e) => e.shown(state),
-        }
-    }
-}
-
-/// Waits, on `route`, for GitHub to show `what`.
-pub(crate) fn expect(state: &mut State, route: Route, what: Expected) {
-    state.writing.expect = Some(Expect {
-        route,
-        what,
-        polls: 0,
-    });
-}
-
-/// The change the page on screen waits to see, if any.
-fn expect_here(state: &State) -> Option<&Expect> {
-    (state.writing.expect.as_ref()).filter(|e| state.route() == Some(&e.route))
-}
-
-/// Whether the page on screen waits to see a change.
-pub fn awaiting(state: &State) -> bool {
-    expect_here(state).is_some()
-}
-
-/// What the status bar says while GitHub hasn't shown a change.
-pub fn waiting(state: &State) -> Option<String> {
-    expect_here(state).map(|e| e.what.waiting().to_owned())
-}
-
-/// What the live refresh fetches again for the change the page waits to
-/// see. Past [`POLLS`], it stops waiting.
-pub fn poll(state: &mut State) -> Vec<DataKey> {
-    let Some(needs) = expect_here(state).map(|e| e.what.needs(state, &e.route)) else {
-        return Vec::new();
-    };
-    if let Some(e) = &mut state.writing.expect {
-        e.polls += 1;
-        if e.polls > POLLS {
-            state.writing.expect = None;
-            let key = state.first_key(Action::Refresh);
-            state.info(format!(
-                "GitHub doesn't show the change yet: {key} fetches the page again"
-            ));
-            return Vec::new();
-        }
-    }
-    needs
-}
-
-/// After GitHub's data arrives: stops waiting for a change the page now
-/// shows, and brings the form on screen up to date.
+/// After GitHub's data arrives: brings the form on screen up to date.
 #[must_use]
 pub fn follow(state: &mut State) -> Vec<Cmd> {
-    if let Some(e) = expect_here(state)
-        && e.what.shown(state)
-    {
-        state.writing.expect = None;
-    }
     let mut cmds = crate::release::follow(state);
     cmds.extend(crate::gist::follow(state));
     cmds.extend(crate::wiki::form::follow(state));

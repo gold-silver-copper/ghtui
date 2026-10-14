@@ -5,7 +5,7 @@
 //! palette all ask it, so they can't disagree, and it asks GitHub's own
 //! word on what you may do. Every change goes to GitHub as a [`Change`]
 //! ([`Changing`]) and its answer is handled by [`on_changed`]; the page
-//! then follows GitHub ([`follow`]) until it shows the change.
+//! then follows GitHub until it shows the change ([`Shows`]).
 
 use crate::api::ApiError;
 use crate::api::browse::{CheckOutcome, IssueState, Job, PrState, WorkflowRun};
@@ -19,6 +19,7 @@ use crate::route::{Route, discussions, issues, projects, pulls, runs, search, se
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::data::{DataKey, Picked};
+use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
 use crate::nav;
 use crate::state::{Api, Cmd, Overlay, Screen, State};
@@ -84,17 +85,14 @@ pub enum By {
     Edit(Subject),
 }
 
-/// A change GitHub accepted that the page it was made on doesn't show
-/// yet: GitHub can take a while (a cancel, a minute or more). While that
-/// page is on screen, what it's about is fetched again until it shows it.
+/// What a page shows once GitHub has a change made on it: GitHub can
+/// take a while (a cancel, a minute or more), so what it's about is
+/// fetched again until it shows it ([`crate::follow`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Awaiting {
+pub struct Shows {
     pub change: Change,
-    /// The page it was made on.
-    pub route: Route,
     /// What it changed: the page's own subject, or a row's on a list.
     pub about: Subject,
-    polls: u32,
 }
 
 /// An action asked for on something not loaded yet (a list's row): it
@@ -105,10 +103,6 @@ pub struct Pending {
     pub subject: Subject,
     pub route: Option<Route>,
 }
-
-/// How many times a page is fetched again for a change before giving up:
-/// a few minutes, at the live refresh's pace.
-const POLLS: u32 = 40;
 
 /// What an action does here.
 #[derive(Debug)]
@@ -880,12 +874,10 @@ fn on_changed(state: &mut State, change: &Change, by: By, result: Result<(), Fai
             cmds.extend(crate::settings::after(state, change));
             match by {
                 By::Confirm(about) | By::Act(about) | By::Edit(about) => {
-                    state.awaiting = state.route().map(|route| Awaiting {
-                        change: change.clone(),
-                        route: route.clone(),
-                        about,
-                        polls: 0,
-                    });
+                    if let Some(route) = state.route().cloned() {
+                        let change = change.clone();
+                        crate::follow::expect(state, route, Shows { change, about });
+                    }
                 }
                 // It shows in its thread.
                 By::Reply(pr) => return vec![Cmd::Api(Api::FetchThreads(pr))],
@@ -925,57 +917,66 @@ fn on_changed(state: &mut State, change: &Change, by: By, result: Result<(), Fai
 }
 
 /// The change the page on screen waits to see, if any.
-pub fn awaiting_here(state: &State) -> Option<&Awaiting> {
-    (state.awaiting.as_ref()).filter(|w| state.route() == Some(&w.route))
+pub fn awaiting_here(state: &State) -> Option<&Shows> {
+    crate::follow::here(state)
 }
 
-/// What the status bar says while GitHub hasn't shown a change.
-pub fn waiting(state: &State) -> Option<String> {
-    let what = match &awaiting_here(state)?.change {
-        Change::CancelRun { .. } => "Cancel requested: waiting for GitHub to stop the run",
-        Change::Rerun { .. } | Change::RerunJob { .. } => "Waiting for GitHub to start the re-run",
-        Change::Merge { .. } => "Waiting for GitHub to show the merge",
-        Change::EnableAutoMerge { .. } => "Waiting for GitHub to show auto-merge",
-        Change::Enqueue { .. } => "Waiting for GitHub to show it in the merge queue",
-        Change::UpdateBranch { .. } => "Waiting for GitHub to update the branch",
-        _ => "Waiting for GitHub to show the change",
-    };
-    Some(what.to_owned())
-}
+impl Expectation for Shows {
+    /// What the page is about, and its edits or project fields where the
+    /// change shows there.
+    fn needs(&self, _: &State, _: &Route) -> Vec<DataKey> {
+        let edit =
+            matches!(self.change, Change::Edit(_)) || crate::manage::polls_activity(&self.change);
+        let more = edit.then(|| crate::edit::polls(&self.about)).flatten();
+        let fields = crate::projects::sidebar::polls(&self.change, &self.about);
+        std::iter::once(self.about.need())
+            .chain(more.or(fields))
+            .collect()
+    }
 
-/// What the live refresh fetches again for the change the page waits to
-/// see: what the page is about. Past [`POLLS`], it stops waiting.
-pub fn poll(state: &mut State) -> Vec<DataKey> {
-    let Some((need, edit)) = awaiting_here(state).map(|w| {
-        let edit = matches!(w.change, Change::Edit(_)) || crate::manage::polls_activity(&w.change);
-        let more = edit.then(|| crate::edit::polls(&w.about)).flatten();
-        let fields = crate::projects::sidebar::polls(&w.change, &w.about);
-        (w.about.need(), more.or(fields))
-    }) else {
-        return Vec::new();
-    };
-    if let Some(w) = &mut state.awaiting {
-        w.polls += 1;
-        if w.polls > POLLS {
-            state.awaiting = None;
-            let key = state.first_key(Action::Refresh);
-            state.info(format!(
-                "GitHub doesn't show the change yet: {key} fetches the page again"
-            ));
-            return Vec::new();
+    fn waiting(&self) -> &'static str {
+        match &self.change {
+            Change::CancelRun { .. } => "Cancel requested: waiting for GitHub to stop the run",
+            Change::Rerun { .. } | Change::RerunJob { .. } => {
+                "Waiting for GitHub to start the re-run"
+            }
+            Change::Merge { .. } => "Waiting for GitHub to show the merge",
+            Change::EnableAutoMerge { .. } => "Waiting for GitHub to show auto-merge",
+            Change::Enqueue { .. } => "Waiting for GitHub to show it in the merge queue",
+            Change::UpdateBranch { .. } => "Waiting for GitHub to update the branch",
+            _ => "Waiting for GitHub to show the change",
         }
     }
-    std::iter::once(need).chain(edit).collect()
+
+    /// On another page (a re-run) only when it was made on its own page,
+    /// not a list's row.
+    fn shown(&self, state: &State, route: &Route) -> Shown {
+        match shown(state, &self.change, &self.about) {
+            Shown::There(..) if Subject::of(route).as_ref() != Some(&self.about) => Shown::Yes,
+            shown => shown,
+        }
+    }
+
+    /// The rest of the page (a pull request's commits, or the list the
+    /// row was on) follows too.
+    fn then(&self, state: &mut State, route: &Route) -> Vec<Cmd> {
+        let mut cmds = state.ensure_route(route, true);
+        // GitHub may count the unread later than it marks them.
+        if notifies(&self.change) {
+            cmds.push(Cmd::Api(Api::FetchUnread));
+        }
+        cmds
+    }
 }
 
-/// Whether the page shows a change GitHub accepted.
-enum Shown {
-    No,
-    Yes,
-    /// On another page: the run's latest attempt, the job re-run.
-    There(Subject),
+/// `change` shown on `about`'s page, to follow there.
+fn there(change: &Change, about: Subject) -> Shown {
+    let change = change.clone();
+    Shown::There(about.route(), Box::new(Shows { change, about }))
 }
 
+/// Whether the page shows a change GitHub accepted: on another page, the
+/// run's latest attempt, the job re-run.
 fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
     let yes = |b: bool| if b { Shown::Yes } else { Shown::No };
     let pr = |pr: &PrRef| state.pr(pr);
@@ -1022,7 +1023,7 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
             yes(open == matches!(change, Change::ReopenIssue { .. }))
         }
         (Change::Rerun { .. }, Subject::Run(repo, run, Some(_))) => {
-            Shown::There(Subject::Run(repo.clone(), *run, None))
+            there(change, Subject::Run(repo.clone(), *run, None))
         }
         (Change::Rerun { .. } | Change::CancelRun { .. }, Subject::Run(repo, run, attempt)) => {
             let key = DataKey::Run(repo.clone(), *run, *attempt);
@@ -1043,7 +1044,7 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
             let running = j.run.outcome == CheckOutcome::Pending;
             match (change, j.run.rerun) {
                 (Change::CancelRun { .. }, _) => yes(!running),
-                (_, Some(rerun)) => Shown::There(Subject::Job(repo.clone(), *run, rerun)),
+                (_, Some(rerun)) => there(change, Subject::Job(repo.clone(), *run, rerun)),
                 // Following it here, or its re-run left this job out.
                 (Change::Rerun { failed_only, .. }, None) => yes((latest
                     && running
@@ -1081,37 +1082,12 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
     }
 }
 
-/// After GitHub's data arrives: stops waiting for a change the page now
-/// shows (going to the re-run, if that's where it is), and plans an open
-/// confirmation again, so it says what's true now, or closes, saying why,
-/// if the change no longer applies.
+/// After GitHub's data arrives: runs an action that waited for what it's
+/// about, and plans an open confirmation again, so it says what's true
+/// now, or closes, saying why, if the change no longer applies.
 #[must_use]
 pub fn follow(state: &mut State) -> Vec<Cmd> {
     let mut cmds = Vec::new();
-    if let Some(w) = awaiting_here(state).cloned() {
-        match shown(state, &w.change, &w.about) {
-            Shown::No => {}
-            Shown::There(about) if Subject::of(&w.route).as_ref() == Some(&w.about) => {
-                let route = about.route();
-                state.awaiting = Some(Awaiting {
-                    route: route.clone(),
-                    about,
-                    ..w
-                });
-                cmds.extend(state.replace(route, false, None));
-            }
-            // The rest of the page (a pull request's commits, or the list
-            // the row was on) follows too.
-            Shown::Yes | Shown::There(_) => {
-                state.awaiting = None;
-                cmds.extend(state.ensure_route(&w.route, true));
-                // GitHub may count the unread later than it marks them.
-                if notifies(&w.change) {
-                    cmds.push(Cmd::Api(Api::FetchUnread));
-                }
-            }
-        }
-    }
     // An action asked for before what it's about loaded.
     if let Some(p) = state.pending.clone() {
         if state.route() != p.route.as_ref() {

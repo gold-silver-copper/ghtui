@@ -79,10 +79,12 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
         crate::actions::checks_loaded(state, &pr);
     }
     if data {
+        cmds.extend(crate::follow::follow(state));
         cmds.extend(act::follow(state));
         cmds.extend(crate::create::follow(state));
         cmds.extend(crate::writes::follow(state));
     } else if state.route() != opened.as_ref() {
+        cmds.extend(crate::follow::follow(state));
         cmds.extend(crate::writes::follow(state));
     }
     cmds
@@ -97,7 +99,7 @@ pub fn timers(state: &mut State) -> Vec<Cmd> {
         state.spinning = true;
         cmds.push(Cmd::Timer(Timer::Spin, 90));
     }
-    let awaiting = act::awaiting_here(state).is_some() || crate::writes::awaiting(state);
+    let awaiting = crate::follow::waiting(state).is_some();
     if !state.live && (!state.running_here().is_empty() || awaiting) {
         state.live = true;
         cmds.push(Cmd::Timer(Timer::Live, LIVE_MS));
@@ -205,8 +207,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.live = false;
             let mut cmds = Vec::new();
             let mut needs = state.running_here();
-            needs.extend(act::poll(state));
-            needs.extend(crate::writes::poll(state));
+            needs.extend(crate::follow::poll(state));
             for need in needs {
                 cmds.extend(state.ensure(need, true));
             }

@@ -1,12 +1,13 @@
 //! Putting a repository in your starred lists or taking it out (`,B`,
 //! GitHub's star button's list menu), making a list on the way, and
 //! deleting one of your lists (`,D` on its page). Each goes to GitHub in
-//! the background ([`crate::writes`]), and the page follows GitHub until
+//! the background ([`crate::work`]), and the page follows GitHub until
 //! it shows the change.
 
 use crate::api::lists::{ListPage, MyLists, StarList};
 use crate::api::model::{Capped, NodeId, RepoId};
 use crate::data::Picked;
+use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::fuzzy_score;
@@ -66,8 +67,8 @@ pub enum Expected {
     Gone { login: String, slug: String },
 }
 
-impl Expected {
-    pub fn needs(&self) -> Vec<DataKey> {
+impl Expectation for Expected {
+    fn needs(&self, _: &State, _: &Route) -> Vec<DataKey> {
         match self {
             Expected::Membership { repo, .. } => {
                 vec![DataKey::MyLists(repo.clone())]
@@ -78,14 +79,14 @@ impl Expected {
         }
     }
 
-    pub fn waiting(&self) -> &'static str {
+    fn waiting(&self) -> &'static str {
         match self {
             Expected::Membership { .. } => "Waiting for GitHub to show the list",
             Expected::Gone { .. } => "Waiting for GitHub to show the list gone",
         }
     }
 
-    pub fn shown(&self, state: &State) -> bool {
+    fn shown(&self, state: &State, _: &Route) -> Shown {
         match self {
             Expected::Membership { repo, list, add } => state
                 .picked::<MyLists>(&DataKey::MyLists(repo.clone()))
@@ -99,6 +100,7 @@ impl Expected {
                 .picked::<Capped<StarList>>(&DataKey::StarLists(login.to_lowercase()))
                 .is_some_and(|lists| lists.iter().all(|l| l.slug != *slug)),
         }
+        .into()
     }
 }
 
@@ -241,11 +243,7 @@ impl Job for SetLists {
                         list: work.list.clone(),
                         add: work.add,
                     };
-                    crate::writes::expect(
-                        state,
-                        route,
-                        crate::writes::Expected::Site(super::Expected::Lists(what)),
-                    );
+                    crate::follow::expect(state, route, what);
                 }
                 let mut cmds = state.ensure(DataKey::MyLists(work.repo), true);
                 cmds.extend(state.load_visible(false));
@@ -372,11 +370,11 @@ impl Job for DeleteList {
                     login: d.login.clone(),
                     tab: crate::ui::pages::ProfileTab::Stars,
                 });
-                let gone = super::Expected::Lists(Expected::Gone {
+                let gone = Expected::Gone {
                     login: d.login,
                     slug: d.slug,
-                });
-                crate::writes::expect(state, stars.clone(), crate::writes::Expected::Site(gone));
+                };
+                crate::follow::expect(state, stars.clone(), gone);
                 state.replace(stars, true, None)
             }
             Err(why) => {

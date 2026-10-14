@@ -147,7 +147,7 @@ fn a_rule_is_edited_as_a_form_and_named_before_saving() {
     assert_eq!(by, &By::Confirm(about(SettingsPage::Branches)));
     let to = (**to).clone();
     answer(&mut s, &cmds, Ok(()));
-    assert!(s.awaiting.is_some(), "it waits for GitHub to show it");
+    assert!(s.following.is_some(), "it waits for GitHub to show it");
     let mut shown = crate::settings::fixtures::rule();
     shown.form = to;
     let Settings::Branches(mut b) = page(SettingsPage::Branches) else {
@@ -155,7 +155,7 @@ fn a_rule_is_edited_as_a_form_and_named_before_saving() {
     };
     b.rules = vec![shown].into();
     deliver(&mut s, SettingsPage::Branches, Settings::Branches(b));
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
     assert!(page_text(&s).contains("2 approvals"));
 }
 
@@ -355,7 +355,7 @@ fn archiving_asks_twice() {
     };
     g.archived = true;
     deliver(&mut s, SettingsPage::General, Settings::General(g));
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
     assert!(page_text(&s).contains("Unarchive this repository"));
     press(&mut s, ",D");
     says(&s, "ghtui never deletes one");

@@ -98,7 +98,7 @@ fn merging_asks_first_and_ends_up_as_github_has_it() {
     says(&s, "hasn't shown the last change");
     let merged = mergeable(|d| d.state = PrState::Merged);
     crate::fixtures::pr_fetched(&mut s, &pr(), Ok(merged));
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 }
 
 /// On Home, an action works on the selected row: the pull request
@@ -128,11 +128,9 @@ fn acting_on_a_homes_row_is_about_that_row() {
     assert_eq!(confirm(&s).about, Subject::Pr(pr()));
     let sent = press(&mut s, "<Enter>");
     answer(&mut s, &sent, Ok(()));
-    let w = s.awaiting.clone().unwrap();
-    assert_eq!(
-        (w.route, w.about),
-        (Route::App(app::Home), crate::act::Subject::Pr(pr()))
-    );
+    assert_eq!(s.route(), Some(&Route::App(app::Home)));
+    let w = crate::act::awaiting_here(&s).unwrap();
+    assert_eq!(w.about, crate::act::Subject::Pr(pr()));
     // Home asked again at once; GitHub's search may not show it yet.
     for i in 0..2 {
         let none = crate::fixtures::found_prs(Vec::new(), 0);
@@ -140,7 +138,7 @@ fn acting_on_a_homes_row_is_about_that_row() {
     }
     let merged = mergeable(|d| d.state = PrState::Merged);
     let cmds = crate::fixtures::pr_fetched(&mut s, &pr(), Ok(merged));
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
     let home = s.home[1].search.clone().unwrap().key();
     assert!(crate::fixtures::asks(&cmds, &home), "{cmds:?}");
     // An issue row offers closing, not merging.
@@ -330,9 +328,9 @@ fn a_star_leaves_the_wait_for_another_change_alone() {
     answer(&mut s, &rerun, Ok(()));
     // The page follows the run, not the list.
     let run = vec![DataKey::Run(ghtui(), 7, None)];
-    assert_eq!(crate::act::poll(&mut s), run);
+    assert_eq!(crate::follow::poll(&mut s), run);
     answer(&mut s, &star, Ok(()));
-    assert_eq!(crate::act::poll(&mut s), run);
+    assert_eq!(crate::follow::poll(&mut s), run);
 }
 
 /// Approving from the pull request's page reads your saved drafts
@@ -464,7 +462,7 @@ fn notifications_are_marked_read_and_done() {
         key.clone(),
         Data::Notifications(Box::new(inbox.clone())),
     );
-    assert!(s.awaiting.is_some());
+    assert!(s.following.is_some());
     if let Some(n) = inbox.list.items.first_mut() {
         n.unread = false;
     }
@@ -473,7 +471,7 @@ fn notifications_are_marked_read_and_done() {
         key.clone(),
         Data::Notifications(Box::new(inbox.clone())),
     );
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
     press(&mut s, ",n");
     says(&s, "It's read already");
 
@@ -489,10 +487,10 @@ fn notifications_are_marked_read_and_done() {
     assert_eq!(sent, vec![fixtures::change(done, By::Act(thread("103")))]);
     answer(&mut s, &sent, Ok(()));
     says(&s, "Marked done");
-    assert!(s.awaiting.is_some());
+    assert!(s.following.is_some());
     inbox.list.items.retain(|n| n.id != "103");
     fetched(&mut s, key, Data::Notifications(Box::new(inbox)));
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 
     // Elsewhere, there's no notification to mark.
     let mut s = with_repo();
@@ -531,10 +529,10 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
     let mut inbox = crate::fixtures::notifications();
     let shown = |i: &crate::api::notifications::Inbox| Data::Notifications(Box::new(i.clone()));
     fetched(&mut s, key.clone(), shown(&inbox));
-    assert!(s.awaiting.is_some());
+    assert!(s.following.is_some());
     inbox.list.items.iter_mut().for_each(|n| n.unread = false);
     let cmds = fetched(&mut s, key.clone(), shown(&inbox));
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
     assert!(cmds.contains(&Cmd::Api(Api::FetchUnread)), "{cmds:?}");
     press(&mut s, ",N");
     says(&s, "Nothing shown is unread");
@@ -559,7 +557,7 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
     says(&s, "Marked 4 notifications done");
     (inbox.list.items, inbox.list.next) = (Vec::new(), None);
     fetched(&mut s, key, shown(&inbox));
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 
     // REST can't mark read by a reason: what's shown is marked thread
     // by thread.
@@ -610,7 +608,7 @@ fn a_finished_job_in_a_running_run_cancels_the_run() {
     assert!(s.busy().is_some_and(|b| b.starts_with("Cancel requested")));
     job.run.outcome = CheckOutcome::Cancelled;
     fetched(&mut s, DataKey::Job(ghtui(), 2), Data::Job(Box::new(job)));
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 }
 
 /// Re-running a job, the page moves to the job GitHub re-runs it as,

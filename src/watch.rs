@@ -10,12 +10,13 @@ use crate::route::{Dest, Route, Target, discussions, issues, pulls};
 use crate::ui::overlays::PaletteItem;
 
 use crate::data::DataKey;
+use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::fuzzy_score;
 use crate::state::{Cmd, Remote, Screen, State};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::{Chosen, Expected, Pick, item, row};
+use crate::writes::{Chosen, Pick, item, row};
 
 /// Setting a subscription.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,8 +39,8 @@ impl Job for Subscribe {
             Ok(()) => {
                 state.info(said(&self.of, self.state));
                 if let Some(route) = state.route().cloned() {
-                    let what = Expected::Subscription(self.of.clone(), self.state);
-                    crate::writes::expect(state, route, what);
+                    let what = Subscribed(self.of.clone(), self.state);
+                    crate::follow::expect(state, route, what);
                 }
                 let key = DataKey::Subscription(self.of);
                 let mut cmds = state.ensure(key, true);
@@ -64,6 +65,26 @@ impl Job for Subscribe {
                 Vec::new()
             }
         }
+    }
+}
+
+/// A subscription, once GitHub shows it set.
+#[derive(Debug)]
+struct Subscribed(Watched, SubscriptionState);
+
+impl Expectation for Subscribed {
+    fn needs(&self, _: &State, _: &Route) -> Vec<DataKey> {
+        vec![DataKey::Subscription(self.0.clone())]
+    }
+
+    fn waiting(&self) -> &'static str {
+        "Waiting for GitHub to show the subscription"
+    }
+
+    fn shown(&self, state: &State, _: &Route) -> Shown {
+        let key = DataKey::Subscription(self.0.clone());
+        let s = state.picked::<Subscription>(&key);
+        s.is_some_and(|s| s.state == Some(self.1)).into()
     }
 }
 

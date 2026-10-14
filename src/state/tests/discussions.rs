@@ -60,7 +60,7 @@ fn c_answers_or_replies_in_the_thread() {
     assert_eq!(sent(&cmds), (&comment, &By::Edit(about())));
     answer(&mut s, &cmds, Ok(()));
     says(&s, "Comment posted");
-    assert!(s.awaiting.is_some(), "until GitHub shows it");
+    assert!(s.following.is_some(), "until GitHub shows it");
     deliver(&mut s, |d| {
         let mut mine = d.comments.items.last().cloned().unwrap();
         mine.comment = Comment {
@@ -70,7 +70,7 @@ fn c_answers_or_replies_in_the_thread() {
         };
         d.comments.items.push(mine);
     });
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 
     // On a reply, the reply goes in its comment's thread.
     for (author, text) in [("hubot", "Fetch"), ("octocat", "That works")] {
@@ -106,7 +106,7 @@ fn the_answer_is_marked_and_unmarked() {
         let monalisa = d.comments.items.last().cloned().unwrap();
         d.answer = Some(Box::new(monalisa));
     });
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 
     let mut s = with_discussion();
     select(&mut s, "hubot", "Fetch");
@@ -143,7 +143,7 @@ fn comments_are_reacted_to_edited_and_deleted() {
     });
     assert_eq!(sent(&cmds), (&react, &By::Edit(about())));
     answer(&mut s, &cmds, Ok(()));
-    assert!(s.awaiting.is_some());
+    assert!(s.following.is_some());
     deliver(&mut s, |d| {
         if let Some(e) = d
             .comments
@@ -158,7 +158,7 @@ fn comments_are_reacted_to_edited_and_deleted() {
             });
         }
     });
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 
     press(&mut s, ",e");
     says(&s, "GitHub doesn't let you edit monalisa's comment");

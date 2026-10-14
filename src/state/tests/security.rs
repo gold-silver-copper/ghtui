@@ -123,10 +123,10 @@ fn an_alert_is_dismissed_with_a_reason_and_followed() {
     let key = DataKey::Alert(a);
     let open = fixtures::alert(AlertKind::CodeScanning, 2);
     fetched(&mut s, key.clone(), Data::Alert(Box::new(open)));
-    assert!(s.awaiting.is_some());
+    assert!(s.following.is_some());
     let dismissed = fixtures::dismissed(AlertKind::CodeScanning, 2);
     fetched(&mut s, key, Data::Alert(Box::new(dismissed)));
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
     assert!(page_text(&s).contains("Dismissed"));
 }
 

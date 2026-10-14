@@ -428,39 +428,6 @@ pub(crate) fn arb() -> impl proptest::strategy::Strategy<Value = Route> {
     page.prop_map(Route::Site)
 }
 
-// ---- following GitHub ---------------------------------------------------------------
-
-/// What the page shows once GitHub has a change.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Expected {
-    Lists(lists::Expected),
-    /// A package without this version.
-    VersionGone(PackageRef, u64),
-}
-
-impl Expected {
-    pub fn needs(&self) -> Vec<DataKey> {
-        match self {
-            Expected::Lists(e) => e.needs(),
-            Expected::VersionGone(at, _) => packages::needs(at),
-        }
-    }
-
-    pub fn waiting(&self) -> &'static str {
-        match self {
-            Expected::Lists(e) => e.waiting(),
-            Expected::VersionGone(..) => "Waiting for GitHub to show the version gone",
-        }
-    }
-
-    pub fn shown(&self, state: &crate::state::State) -> bool {
-        match self {
-            Expected::Lists(e) => e.shown(state),
-            Expected::VersionGone(at, id) => packages::gone(state, at, *id),
-        }
-    }
-}
-
 /// Answers to these pages' questions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Answer {

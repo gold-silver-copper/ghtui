@@ -466,7 +466,7 @@ pub struct State {
     /// [`Timer::Live`] is scheduled.
     pub live: bool,
     /// A change GitHub accepted that its page doesn't show yet.
-    pub awaiting: Option<act::Awaiting>,
+    pub following: Option<crate::follow::Following>,
     /// An action waiting for what it's about to load.
     pub pending: Option<act::Pending>,
     /// The pull request under review on screen, watched for changes.
@@ -535,7 +535,7 @@ impl State {
             spinner: 0,
             spinning: false,
             live: false,
-            awaiting: None,
+            following: None,
             pending: None,
             watch: None,
             page_watch: None,

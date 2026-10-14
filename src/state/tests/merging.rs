@@ -131,13 +131,13 @@ fn merging_while_checks_run_offers_merge_when_ready() {
         checks_running(d);
         d.may.enable_auto_merge = true;
     });
-    assert!(s.awaiting.is_some());
+    assert!(s.following.is_some());
     github_shows(&mut s, |d| {
         checks_running(d);
         d.auto_merge = alice_squashes();
         d.may.disable_auto_merge = true;
     });
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 
     assert_eq!(merge_row(&s), ("Disable auto-merge".to_owned(), None));
     press(&mut s, ",m");
@@ -148,7 +148,7 @@ fn merging_while_checks_run_offers_merge_when_ready() {
     let sent = press(&mut s, "<Enter>");
     answer(&mut s, &sent, Ok(()));
     github_shows(&mut s, checks_running);
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 
     // Mergeable now, with checks that aren't required still running:
     // waiting for them comes first, merging now after.
@@ -179,7 +179,7 @@ fn a_merge_queue_takes_it_in_and_lets_it_go() {
     let sent = press(&mut s, "<Enter>");
     answer(&mut s, &sent, Ok(()));
     says(&s, "Added to the merge queue");
-    assert!(s.awaiting.is_some());
+    assert!(s.following.is_some());
     let queued = |d: &mut PrDetail| {
         d.merge_queue = true;
         d.queued = Some(Queued {
@@ -188,7 +188,7 @@ fn a_merge_queue_takes_it_in_and_lets_it_go() {
         });
     };
     github_shows(&mut s, queued);
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 
     assert_eq!(
         merge_row(&s),
@@ -202,9 +202,9 @@ fn a_merge_queue_takes_it_in_and_lets_it_go() {
     let sent = press(&mut s, "<Enter>");
     answer(&mut s, &sent, Ok(()));
     github_shows(&mut s, queued);
-    assert!(s.awaiting.is_some());
+    assert!(s.following.is_some());
     github_shows(&mut s, queue);
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 
     // Taking it out takes write access, and the menu says so.
     let s = pr_with(|d| {

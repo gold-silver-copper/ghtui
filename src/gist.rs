@@ -16,12 +16,13 @@ use crate::ui::page::{Link, Page, WriteLink};
 use crate::ui::pages::{FormRow, Mark, TextBox, WriteFormView};
 
 use crate::data::DataKey;
+use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::review::ComposeTarget;
 use crate::state::{Cmd, Overlay, State};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::{Answer, Chosen, Expected, Pick, Text, item, row};
+use crate::writes::{Answer, Chosen, Pick, Text, item, row};
 
 /// A gist being made or changed.
 #[derive(Debug, Clone, Default)]
@@ -546,6 +547,56 @@ pub fn delete(state: &mut State, route: &Route) -> Vec<Cmd> {
     })
 }
 
+/// What a gist, or its owner's gists, show once GitHub has a change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Expected {
+    /// A gist with this description and these files' names and text.
+    Gist {
+        id: String,
+        description: String,
+        files: Vec<(String, String)>,
+    },
+    /// A gist no longer among its owner's.
+    GistGone(String, String),
+}
+
+impl Expectation for Expected {
+    fn waiting(&self) -> &'static str {
+        match self {
+            Expected::Gist { .. } => "Waiting for GitHub to show the gist",
+            Expected::GistGone(..) => "Waiting for GitHub to show the gist gone",
+        }
+    }
+
+    fn shown(&self, state: &State, _: &Route) -> Shown {
+        use crate::api::browse::{GistSummary, Results};
+        match self {
+            Expected::Gist {
+                id,
+                description,
+                files,
+            } => state
+                .picked::<Gist>(&DataKey::Gist(id.clone()))
+                .is_some_and(|g| {
+                    let shown: Vec<(&str, Option<&str>)> = (g.files.iter())
+                        .map(|f| (f.name.as_str(), f.text.as_deref().filter(|_| !f.truncated)))
+                        .collect();
+                    g.description == *description
+                        && shown.len() == files.len()
+                        && files.iter().all(|(name, text)| {
+                            shown
+                                .iter()
+                                .any(|(n, t)| n == name && t.is_none_or(|t| t == text))
+                        })
+                }),
+            Expected::GistGone(owner, id) => state
+                .picked::<Results<GistSummary>>(&DataKey::Gists(owner.to_lowercase()))
+                .is_some_and(|r| r.items.iter().all(|g| g.id != *id)),
+        }
+        .into()
+    }
+}
+
 /// What a gist shows once GitHub has it as sent.
 fn expected(id: String, description: String, files: Vec<(String, String)>) -> Expected {
     Expected::Gist {
@@ -581,7 +632,7 @@ impl Job for Create {
             owner,
             id: made.id.clone(),
         });
-        crate::writes::expect(
+        crate::follow::expect(
             state,
             page.clone(),
             expected(made.id, form.description, files),
@@ -617,7 +668,7 @@ impl Job for Update {
             id: id.clone(),
         });
         let files = named(&form).unwrap_or_default();
-        crate::writes::expect(
+        crate::follow::expect(
             state,
             page.clone(),
             expected(change.id, change.description, files),
@@ -647,7 +698,7 @@ impl Job for Delete {
             return Vec::new();
         }
         let page = Route::Gists(gists::Gists(owner.clone()));
-        crate::writes::expect(state, page.clone(), Expected::GistGone(owner, id));
+        crate::follow::expect(state, page.clone(), Expected::GistGone(owner, id));
         state.replace(page, true, None)
     }
 }

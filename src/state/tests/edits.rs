@@ -103,13 +103,13 @@ fn a_comment_is_edited_in_place_and_followed() {
     says(&s, "Saved");
     // GitHub hasn't shown it: the page waits, and says so.
     deliver(&mut s, |_| {});
-    assert!(s.awaiting.is_some());
+    assert!(s.following.is_some());
     press(&mut s, ",e");
     says(&s, "hasn't shown the last change");
     deliver(&mut s, |d| {
         d.first_comment().unwrap().body = "Agreed. 120 columns, centered?!".into();
     });
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 }
 
 /// Editing and deleting are offered only where GitHub lets you, and say
@@ -179,7 +179,7 @@ fn deleting_a_comment_asks_first() {
     assert!(s.overlay.is_none());
     says(&s, "Deleted");
     deliver(&mut s, |_| {});
-    assert!(s.awaiting.is_some());
+    assert!(s.following.is_some());
     // Meanwhile, another edit waits too, and says so.
     on_hubot(&mut s);
     assert!(press(&mut s, ",D").is_empty());
@@ -190,7 +190,7 @@ fn deleting_a_comment_asks_first() {
             .items
             .retain(|i| !matches!(i, crate::api::timeline::Item::Comment(_)));
     });
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 }
 
 /// Reactions show under each comment and the description as GitHub
@@ -249,7 +249,7 @@ fn reacting_toggles_yours() {
     assert!(s.overlay.is_none());
     answer(&mut s, &cmds, Ok(()));
     deliver(&mut s, |d| d.editable.reactions = vec![hooray(1, false)]);
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 
     on_hubot(&mut s);
     press(&mut s, ",+");
@@ -305,17 +305,17 @@ fn labels_are_checked_then_applied() {
     says(&s, "Changing the labels");
     answer(&mut s, &cmds, Ok(()));
     deliver(&mut s, |_| {});
-    assert!(s.awaiting.is_some());
+    assert!(s.following.is_some());
     let label = |name: &str| crate::api::model::Label {
         name: name.into(),
         color: "0075ca".into(),
     };
     deliver(&mut s, |d| d.labels = vec![label("bug")].into());
-    assert!(s.awaiting.is_some(), "documentation isn't there yet");
+    assert!(s.following.is_some(), "documentation isn't there yet");
     deliver(&mut s, |d| {
         d.labels = vec![label("bug"), label("documentation")].into();
     });
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 
     // Unchanged, nothing is sent.
     press(&mut s, ",l");
@@ -365,7 +365,7 @@ fn reviewers_include_teams() {
         DataKey::PrActivity(pr()),
         Data::PrActivity(Box::new(activity)),
     );
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 }
 
 /// One milestone, or none; and a title in a one-line box.
@@ -387,7 +387,7 @@ fn milestone_and_title() {
             m.title = "1.0".into();
         }
     });
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 
     press(&mut s, ",T");
     let cmds = press(&mut s, "!<Enter>");

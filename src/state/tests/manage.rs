@@ -128,13 +128,13 @@ fn a_conversation_is_locked_with_a_reason_and_unlocked_after_asking() {
     });
     assert_eq!(sent(&cmds), (&lock, &By::Act(issue())));
     answer(&mut s, &cmds, Ok(()));
-    assert!(s.awaiting.is_some(), "it waits for GitHub to show it");
+    assert!(s.following.is_some(), "it waits for GitHub to show it");
     deliver(&mut s, |d| {
         d.locked = Some(crate::api::manage::Locked {
             reason: Some(LockReason::TooHeated),
         });
     });
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
     assert!(screen_text(&s).contains("Locked as too heated"));
 
     press(&mut s, ",L");
@@ -177,7 +177,7 @@ fn a_merged_pull_requests_branch_is_deleted_and_restored() {
         d.state = PrState::Merged;
         d.head_gone = true;
     });
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
     assert!(screen_text(&s).contains("branch deleted"));
     let cmds = press(&mut s, ",b");
     let restore = Change::Manage(Manage::RestoreBranch {
@@ -206,7 +206,7 @@ fn a_pull_request_converts_back_to_a_draft_after_asking() {
     assert_eq!(sent(&cmds), (&draft, &By::Confirm(Subject::Pr(pr()))));
     answer(&mut s, &cmds, Ok(()));
     deliver_pr(&mut s, |d| d.state = PrState::Draft);
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 }
 
 /// A new base is chosen from the branches, then asked about.
@@ -282,7 +282,7 @@ fn an_issue_closes_as_a_duplicate_of_one_chosen() {
     assert_eq!(sent(&cmds), (&close, &By::Act(issue())));
     answer(&mut s, &cmds, Ok(()));
     deliver(&mut s, |d| d.state = IssueState::NotPlanned);
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 }
 
 /// A hidden comment is folded, saying why; `za` shows it, and `,H`
@@ -308,7 +308,7 @@ fn a_comment_is_hidden_with_a_reason_and_shows_folded() {
             c.hiding.reason = Some("off-topic".into());
         }
     });
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
     let shown = screen_text(&s);
     assert!(shown.contains("Hidden as off-topic"), "{shown}");
     assert!(!shown.contains("120 columns, centered?"), "{shown}");
@@ -345,7 +345,7 @@ fn sub_issues_and_what_blocks_an_issue_change_in_their_pickers() {
     deliver(&mut s, |d| {
         d.sub_issues = vec![linked(3, "Second"), linked(2, "First")].into();
     });
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
     let cmds = press(&mut s, "#5<Enter>");
     let add = Change::Manage(Manage::SubIssue {
         parent: NodeId::new("I_14"),
@@ -357,7 +357,7 @@ fn sub_issues_and_what_blocks_an_issue_change_in_their_pickers() {
     deliver(&mut s, |d| {
         d.sub_issues = vec![linked(3, "Second"), linked(2, "First"), linked(5, "Third")].into();
     });
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
     s.overlay = None;
     press(&mut s, ",S");
     let cmds = press(&mut s, "<Enter>");
@@ -379,7 +379,7 @@ fn sub_issues_and_what_blocks_an_issue_change_in_their_pickers() {
     assert_eq!(sent(&cmds).0, &blocked);
     answer(&mut s, &cmds, Ok(()));
     deliver(&mut s, |d| d.blocked_by = vec![linked(4, "Blocker")].into());
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
     assert!(screen_text(&s).contains("Blocked by"));
 }
 
@@ -412,7 +412,7 @@ fn a_branch_for_an_issue_is_made_then_checked_out() {
     deliver(&mut s, |d| {
         d.branches = vec!["14-pages-wrap-at-the-terminal-width".to_owned()].into();
     });
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 }
 
 /// Pinning needs write access; transferring picks a repository of the
@@ -428,7 +428,7 @@ fn an_issue_is_pinned_and_transferred() {
     assert_eq!(sent(&cmds).0, &pin);
     answer(&mut s, &cmds, Ok(()));
     deliver(&mut s, |d| d.pinned = true);
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
     assert!(screen_text(&s).contains("Pinned"));
 
     let cmds = from_menu(&mut s, "transfer");
@@ -502,7 +502,7 @@ fn a_discussion_closes_with_a_reason() {
         DataKey::Discussion(of, 14603),
         Data::Discussion(Box::new(d)),
     );
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
     assert!(screen_text(&s).contains("Closed as resolved"));
 }
 

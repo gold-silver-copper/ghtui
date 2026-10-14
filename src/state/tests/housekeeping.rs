@@ -115,7 +115,7 @@ fn a_label_is_made_and_the_page_follows() {
     });
     let data = Data::Labels(Box::new(labels));
     fetched(&mut s, labels_key(), data);
-    assert_eq!(s.writing.expect, None, "GitHub lists it");
+    assert!(s.following.is_none(), "GitHub lists it");
 }
 
 /// `,e` edits the selected label in its form; `,D` deletes it after
@@ -176,7 +176,7 @@ fn milestones_are_closed_edited_and_deleted() {
     list.results.items.retain(|m| m.number != 5);
     let key = DataKey::Milestones(ghtui(), false);
     fetched(&mut s, key, Data::Milestones(Box::new(list)));
-    assert_eq!(s.writing.expect, None, "gone from the open ones");
+    assert!(s.following.is_none(), "gone from the open ones");
 
     select(&mut s, "Links");
     press(&mut s, ",e");
@@ -318,7 +318,7 @@ fn in_a_clone_git_pushes_after_asking() {
         DataKey::Branches(repo),
         Data::Branches(Box::new(branches)),
     );
-    assert_eq!(s.writing.expect, None);
+    assert!(s.following.is_none());
 }
 
 /// `,F` forks into your account, the default branch only unless asked;

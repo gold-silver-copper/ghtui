@@ -7,7 +7,8 @@
 //! text box, with the title on the first line. A new issue starts from the
 //! repository's templates when it has some; a new pull request from its
 //! commits, as GitHub fills one in. What runs in the background (git in
-//! your clone, GitHub's answers) is a [`Work`], answered with a [`Done`].
+//! your clone, GitHub's answers) is a job ([`Push`], [`Submit`],
+//! [`Checkout`]).
 
 mod page;
 pub mod templates;

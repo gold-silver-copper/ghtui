@@ -13,12 +13,13 @@ use crate::ui::page::{Link, Page, WriteLink};
 use crate::ui::pages::{Mark, TextBox, WriteFormView};
 
 use crate::data::DataKey;
+use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::review::ComposeTarget;
 use crate::state::{Cmd, Overlay, State};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::{Expected, Text, row};
+use crate::writes::{Text, row};
 
 /// Commits and pushes a wiki page; its form's page asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -249,6 +250,21 @@ pub fn submit(state: &mut State) -> Vec<Cmd> {
     work::start(Save { route, save })
 }
 
+/// A wiki page with this text, as its page's data is keyed.
+#[derive(Debug)]
+struct Saved(DataKey, String);
+
+impl Expectation for Saved {
+    fn waiting(&self) -> &'static str {
+        "Waiting for GitHub to show the page"
+    }
+
+    fn shown(&self, state: &State, _: &Route) -> Shown {
+        let text = |w: &WikiPage| w.text.as_deref().map(str::trim_end) == Some(self.1.trim_end());
+        state.picked::<WikiPage>(&self.0).is_some_and(text).into()
+    }
+}
+
 impl Job for Save {
     type Out = String;
 
@@ -302,8 +318,8 @@ impl Job for Save {
                 let Route::Wiki(wiki::Wiki { page: name, .. }) = &page else {
                     return Vec::new();
                 };
-                let shows = Expected::Wiki(DataKey::Wiki(repo.clone(), name.clone()), text);
-                crate::writes::expect(state, page.clone(), shows);
+                let shows = Saved(DataKey::Wiki(repo.clone(), name.clone()), text);
+                crate::follow::expect(state, page.clone(), shows);
                 if below.is_some() {
                     let mut cmds = state.back();
                     state.forward.clear();

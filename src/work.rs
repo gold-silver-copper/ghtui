@@ -2,7 +2,7 @@
 //! git in your clone. Each is a [`Job`]: what's done, run away from the
 //! screen, and what its answer does to the state. [`Work`] is every job,
 //! sent as [`Cmd::Work`]; [`Done`] is a job with what came of it,
-//! answered as [`Msg::Done`].
+//! answered as [`Msg::Done`](crate::state::Msg::Done).
 
 use std::future::Future;
 

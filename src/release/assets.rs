@@ -16,7 +16,7 @@ use crate::state::{Cmd, Screen, State};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{Link, WriteLink};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::{Answer, Chosen, Expected, Pick, item};
+use crate::writes::{Answer, Chosen, Pick, item};
 
 /// An asset of a release, by REST's ID for the release and the asset's
 /// name (unique on a release).
@@ -360,13 +360,13 @@ fn follow(state: &mut State, of: Of, there: bool) -> Vec<Cmd> {
     if state.route() != Some(&route) {
         return Vec::new();
     }
-    let what = Expected::Asset {
+    let what = super::Expected::Asset {
         repo: of.repo,
         tag: of.tag,
         name: of.name,
         there,
     };
-    crate::writes::expect(state, route.clone(), what);
+    crate::follow::expect(state, route.clone(), what);
     state.ensure_route(&route, true)
 }
 

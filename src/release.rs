@@ -23,13 +23,14 @@ use crate::ui::page::{Link, Page, WriteLink};
 use crate::ui::pages::{FormRow, Mark, TextBox, WriteFormView};
 
 use crate::data::DataKey;
+use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::fuzzy_score;
 use crate::review::ComposeTarget;
 use crate::state::{Cmd, Overlay, State};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::{Answer, Chosen, Expected, Pick, Text, item, row};
+use crate::writes::{Answer, Chosen, Pick, Text, item, row};
 
 /// A release, as written so far: a new one, or one being edited.
 #[derive(Debug, Clone)]
@@ -163,6 +164,80 @@ pub struct Delete {
 pub struct DeleteTag {
     pub repo: RepoId,
     pub tag: String,
+}
+
+/// What a release's page, or the releases, show once GitHub has a change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Expected {
+    /// A published release's page.
+    Release(RepoId, String),
+    /// A release's page, as it was edited.
+    Edited {
+        repo: RepoId,
+        tag: String,
+        name: String,
+        notes: String,
+        prerelease: bool,
+    },
+    /// A release no longer among the releases.
+    ReleaseGone(RepoId, String),
+    /// A release's page with its asset `name` (or without it).
+    Asset {
+        repo: RepoId,
+        tag: String,
+        name: String,
+        there: bool,
+    },
+    /// A draft among the releases.
+    Draft(RepoId, String),
+}
+
+impl Expectation for Expected {
+    fn waiting(&self) -> &'static str {
+        match self {
+            Expected::Release(..) | Expected::Draft(..) | Expected::Edited { .. } => {
+                "Waiting for GitHub to show the release"
+            }
+            Expected::ReleaseGone(..) => "Waiting for GitHub to show the release gone",
+            Expected::Asset { there: true, .. } => "Waiting for GitHub to show the asset",
+            Expected::Asset { .. } => "Waiting for GitHub to show the asset gone",
+        }
+    }
+
+    fn shown(&self, state: &State, _: &Route) -> Shown {
+        let release = |repo: &RepoId, tag: &String| {
+            state.picked::<Release>(&DataKey::Release(repo.clone(), tag.clone()))
+        };
+        let releases =
+            |repo: &RepoId| state.picked::<Results<Release>>(&DataKey::Releases(repo.clone()));
+        match self {
+            Expected::Release(repo, tag) => release(repo, tag).is_some(),
+            Expected::Edited {
+                repo,
+                tag,
+                name,
+                notes,
+                prerelease,
+            } => release(repo, tag).is_some_and(|r| {
+                r.name == *name
+                    && r.prerelease == *prerelease
+                    && r.notes.as_deref().unwrap_or_default().trim() == notes.trim()
+            }),
+            Expected::ReleaseGone(repo, tag) => {
+                releases(repo).is_some_and(|r| r.items.iter().all(|r| r.tag != *tag))
+            }
+            Expected::Asset {
+                repo,
+                tag,
+                name,
+                there,
+            } => assets::shows(state, repo, tag, name, *there),
+            Expected::Draft(repo, tag) => {
+                releases(repo).is_some_and(|r| r.items.iter().any(|r| r.tag == *tag && r.draft))
+            }
+        }
+        .into()
+    }
 }
 
 /// The release form on screen: its page, its repository, and the form
@@ -840,7 +915,7 @@ impl Job for Save {
                 if state.route() != Some(route) {
                     return Vec::new();
                 }
-                crate::writes::expect(state, page.clone(), what);
+                crate::follow::expect(state, page.clone(), what);
                 state.replace(page, true, None)
             }
             Err(why) => {
@@ -885,7 +960,7 @@ impl Job for Delete {
         if state.route() == Some(&route) {
             let list = Route::Releases(releases::Releases(repo.clone()));
             let gone = Expected::ReleaseGone(repo.clone(), tag.to_owned());
-            crate::writes::expect(state, list.clone(), gone);
+            crate::follow::expect(state, list.clone(), gone);
             cmds = state.replace(list, true, None);
         }
         if !tagged {

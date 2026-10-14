@@ -254,7 +254,7 @@ fn moving_a_card_sets_its_column_and_the_board_follows() {
     let key = DataKey::Project(roadmap(), None);
     let mut p: Project = fixtures::project();
     fetched(&mut s, key.clone(), Data::Project(Box::new(p.clone())));
-    assert!(s.awaiting.is_some());
+    assert!(s.following.is_some());
     press(&mut s, ",c");
     says(&s, "GitHub hasn't shown the last change yet");
     if let Some(it) = p.items.items.first_mut() {
@@ -262,7 +262,7 @@ fn moving_a_card_sets_its_column_and_the_board_follows() {
         it.values.push((NodeId::new("F_status"), done));
     }
     fetched(&mut s, key, Data::Project(Box::new(p)));
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
     let text = page_text(&s);
     let (done_at, issue_at) = (text.find(" Done "), text.find("Projects aren't there yet"));
     assert!(done_at < issue_at, "{text}");
@@ -344,7 +344,7 @@ fn items_are_added_by_reference_or_as_drafts() {
     assert_eq!(change_sent(&sent), &add);
     answer(&mut s, &sent, Ok(()));
     says(&s, "Added to the project");
-    assert!(s.awaiting.is_some());
+    assert!(s.following.is_some());
     let key = DataKey::Project(roadmap(), None);
     let mut p = fixtures::project();
     let mut added = p.items.items[0].clone();
@@ -353,7 +353,7 @@ fn items_are_added_by_reference_or_as_drafts() {
     }
     p.items.items.push(added);
     fetched(&mut s, key, Data::Project(Box::new(p)));
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 
     // A draft: its title typed, its text written in the composer.
     press(&mut s, ",i");
@@ -394,7 +394,7 @@ fn items_are_archived_and_restored() {
     gone.archived = true;
     p.archived.items.push(gone);
     fetched(&mut s, key, Data::Project(Box::new(p)));
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
 
     // Restoring asks nothing.
     press(&mut s, "G");
@@ -472,15 +472,15 @@ fn an_issues_field_is_set_from_its_sidebar() {
     assert_eq!(sent, vec![fixtures::change(change, By::Act(about))]);
     answer(&mut s, &sent, Ok(()));
     let key = DataKey::InProjects(super::ghtui(), 14);
-    let polled = crate::act::poll(&mut s);
+    let polled = crate::follow::poll(&mut s);
     assert!(polled.contains(&key), "{polled:?}");
     let mut projects = fixtures::in_projects();
     let unchanged = Data::InProjects(Box::new(projects.clone()));
     fetched(&mut s, key.clone(), unchanged);
-    assert!(s.awaiting.is_some());
+    assert!(s.following.is_some());
     projects.items[0].values[0].1 = done;
     fetched(&mut s, key, Data::InProjects(Box::new(projects)));
-    assert!(s.awaiting.is_none());
+    assert!(s.following.is_none());
     let said = "Roadmap (Done · Estimate: 3)";
     assert!(page_text(&s).contains(said), "{}", page_text(&s));
 }

@@ -104,7 +104,7 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
     assert!(s.busy().is_some_and(|b| b.contains("Waiting for GitHub")));
     let release = Data::Release(Box::new(fixtures::release(true)));
     fetched(&mut s, DataKey::Release(repo, "v9.0".into()), release);
-    assert_eq!(s.writing.expect, None, "GitHub shows it");
+    assert!(s.following.is_none(), "GitHub shows it");
 }
 
 /// A tag that has a release already can't have another: the form says
@@ -168,7 +168,7 @@ fn a_thread_is_unsubscribed_and_followed() {
         DataKey::Subscription(of),
         Data::Subscription(Box::new(shown)),
     );
-    assert_eq!(s.writing.expect, None);
+    assert!(s.following.is_none());
 }
 
 /// `,e` on your gist opens it as a form; saving sends only the file that
@@ -211,7 +211,7 @@ fn your_gist_is_edited_and_its_page_follows() {
     });
     assert_eq!(s.route(), Some(&page), "back on the gist");
     assert_eq!(s.screens.len(), 2, "the form isn't left behind");
-    assert!(s.writing.expect.is_some());
+    assert!(s.following.is_some());
 }
 
 /// Someone else's gist isn't yours to change: `,e` and `,D` say so.
@@ -318,5 +318,5 @@ fn a_wiki_page_is_edited_never_over_a_newer_one() {
     });
     assert_eq!(s.route(), Some(&home), "back on the page");
     says(&s, "Saved Home");
-    assert!(s.writing.expect.is_some(), "until GitHub shows the text");
+    assert!(s.following.is_some(), "until GitHub shows the text");
 }

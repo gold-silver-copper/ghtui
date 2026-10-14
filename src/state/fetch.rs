@@ -245,8 +245,8 @@ impl State {
 
     /// What's loading on the visible screen, for the status bar.
     pub fn busy(&self) -> Option<String> {
-        if let Some(waiting) = act::waiting(self).or_else(|| crate::writes::waiting(self)) {
-            return Some(waiting);
+        if let Some(waiting) = crate::follow::waiting(self) {
+            return Some(waiting.to_owned());
         }
         match self.screen() {
             Screen::Page(p) if self.fetches(&p.route).any(|r| r.more.is_some()) => {

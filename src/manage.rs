@@ -7,7 +7,8 @@
 //! menu both ask, from GitHub's word on what you may do. A change goes to
 //! GitHub as a [`Change::Manage`] and the page follows it as
 //! [`crate::act`] follows its own ([`shows`]); what makes something new
-//! (a revert, a transfer, a discussion) is [`Work`], whose answer opens
+//! (a revert, a transfer, a discussion) is a job ([`Revert`], [`Transfer`],
+//! [`Start`]), whose answer opens
 //! what it made.
 
 use crate::route::{Route, discussions, issues, pulls};

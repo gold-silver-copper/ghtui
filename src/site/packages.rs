@@ -5,6 +5,7 @@
 //! what GitHub said, and which scope is missing.
 
 use crate::api::packages::{PackageDetail, PackageRef};
+use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::route::{Dest, Route, Target};
@@ -135,8 +136,7 @@ impl Job for DeleteVersion {
                     at: d.at.clone(),
                     version: None,
                 });
-                let gone = super::Expected::VersionGone(d.at, d.id);
-                crate::writes::expect(state, page.clone(), crate::writes::Expected::Site(gone));
+                crate::follow::expect(state, page.clone(), VersionGone(d.at, d.id));
                 if route == page {
                     state.ensure_route(&page, true)
                 } else {
@@ -151,14 +151,23 @@ impl Job for DeleteVersion {
     }
 }
 
-/// Whether the package as loaded no longer has version `id`.
-pub fn gone(state: &State, at: &PackageRef, id: u64) -> bool {
-    detail(state, at).is_some_and(|d| d.versions.items.iter().all(|v| v.id != id))
-}
+/// A package without this version.
+#[derive(Debug)]
+struct VersionGone(PackageRef, u64);
 
-/// What's fetched again to see it.
-pub fn needs(at: &PackageRef) -> Vec<DataKey> {
-    vec![DataKey::Package(at.clone())]
+impl Expectation for VersionGone {
+    fn needs(&self, _: &State, _: &Route) -> Vec<DataKey> {
+        vec![DataKey::Package(self.0.clone())]
+    }
+
+    fn waiting(&self) -> &'static str {
+        "Waiting for GitHub to show the version gone"
+    }
+
+    fn shown(&self, state: &State, _: &Route) -> Shown {
+        let gone = |d: &PackageDetail| d.versions.items.iter().all(|v| v.id != self.1);
+        detail(state, &self.0).is_some_and(gone).into()
+    }
 }
 
 /// The menu's rows on a package's page.

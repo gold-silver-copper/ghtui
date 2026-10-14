@@ -181,13 +181,13 @@ fn a_repository_is_put_in_a_list_and_followed() {
     let cmds = crate::fixtures::done(&mut s, work, Ok(()));
     says(&s, "Added gold-silver-copper/ghtui to “To read”");
     assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
-    assert!(s.writing.expect.is_some());
+    assert!(s.following.is_some());
     let mut mine = fixtures::my_lists();
     for l in &mut mine.lists.iter_mut() {
         l.has = Some(true);
     }
     fetched(&mut s, key, Data::MyLists(Box::new(mine)));
-    assert_eq!(s.writing.expect, None);
+    assert!(s.following.is_none());
 
     // A new name makes the list, and puts the repository in it too.
     press(&mut s, ",B");
@@ -216,12 +216,12 @@ fn a_packages_version_is_deleted_after_asking() {
     assert_eq!(sent, [crate::fixtures::start(delete.clone())]);
     crate::fixtures::done(&mut s, delete, Ok(()));
     says(&s, "Deleted version sha256:3a7b55e1 of ghtui");
-    assert!(s.writing.expect.is_some());
+    assert!(s.following.is_some());
     let mut detail = fixtures::package_detail();
     detail.versions.items.retain(|v| v.id != 101);
     let key = DataKey::Package(fixtures::package_ref());
     fetched(&mut s, key, Data::Package(Box::new(detail)));
-    assert_eq!(s.writing.expect, None);
+    assert!(s.following.is_none());
 }
 
 /// Without a token's read:packages scope, the page says which, and the
