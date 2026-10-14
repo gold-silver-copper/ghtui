@@ -240,6 +240,13 @@ pub trait Picked {
     fn pick(data: &Data) -> Option<&Self>;
 }
 
+/// Any kind, as it is.
+impl Picked for Data {
+    fn pick(data: &Data) -> Option<&Self> {
+        Some(data)
+    }
+}
+
 /// The [`Data`] enum, and how each kind is [`Picked`] from it.
 macro_rules! data {
     ($($(#[$meta:meta])* $variant:ident($($field:ty),+) $(=> $picked:ty)?,)*) => {

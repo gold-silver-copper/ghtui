@@ -631,28 +631,6 @@ pub fn branch_name(number: u64, title: &str) -> String {
 
 type Rows = Vec<(PaletteItem, Option<Step>)>;
 
-/// A list fetched for a picker: its rows, or a row saying why there are
-/// none yet.
-fn fetched<'a, T: crate::data::Picked>(
-    state: &'a State,
-    key: &DataKey,
-    what: &str,
-) -> Result<&'a T, Rows> {
-    match state.answer(key) {
-        None => Err(vec![crate::picker::entry(
-            format!("Loading {what}…"),
-            "",
-            None,
-        )]),
-        Some(Err(why)) => Err(vec![crate::picker::entry(
-            format!("Couldn't load {what}: {why}"),
-            "",
-            None,
-        )]),
-        Some(Ok(found)) => Ok(found),
-    }
-}
-
 /// A picker's rows: what each says, and what choosing it does.
 pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
     match pick {
@@ -828,7 +806,8 @@ fn base_rows(state: &State, pr: &PrRef, id: &NodeId, from: &str, head: &str, q: 
 fn transfer_rows(state: &State, issue: &IssueAt, id: &NodeId, q: &str) -> Rows {
     let owner = &issue.repo.owner;
     let key = DataKey::MoveTargets(owner.clone());
-    let targets = match fetched::<Capped<Target>>(state, &key, "the repositories") {
+    let targets = match crate::picker::listed::<Capped<Target>, _>(state, &key, "the repositories")
+    {
         Ok(t) => t,
         Err(rows) => return rows,
     };
@@ -890,7 +869,7 @@ fn issue_rows(
         rows.push(row(t.clone(), ""));
     }
     let key = DataKey::OpenIssues(issue.repo.clone());
-    match fetched::<Capped<(u64, String)>>(state, &key, "its open issues") {
+    match crate::picker::listed::<Capped<(u64, String)>, _>(state, &key, "its open issues") {
         Ok(open) => {
             let listed = (open.iter())
                 .map(|(n, title)| {
@@ -992,7 +971,7 @@ fn relation_rows(state: &State, at: &IssueAt, id: &NodeId, q: &str, sub: bool) -
 
 fn category_rows(state: &State, repo: &RepoId, q: &str) -> Rows {
     let key = DataKey::Categories(repo.clone());
-    let found = match fetched::<Categories>(state, &key, "its categories") {
+    let found = match crate::picker::listed::<Categories, _>(state, &key, "its categories") {
         Ok(c) => c,
         Err(rows) => return rows,
     };

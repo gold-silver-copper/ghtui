@@ -14,7 +14,7 @@ use crate::ui::text::short_sha;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui_textarea::TextArea;
 
-use crate::data::{Data, DataKey};
+use crate::data::{Data, DataKey, Picked};
 use crate::keymap::Action;
 use crate::nav::new_input;
 use crate::review::apply_commit_choice;
@@ -191,6 +191,20 @@ pub(crate) fn item(label: impl Into<String>, hint: impl Into<String>) -> Palette
         label: label.into(),
         hint: hint.into(),
     }
+}
+
+/// What `key` holds, or the row saying it's loading or why it failed
+/// (opening the picker again tries again).
+pub(crate) fn listed<'a, T: Picked + ?Sized, C>(
+    state: &'a State,
+    key: &DataKey,
+    what: &str,
+) -> Result<&'a T, Vec<(PaletteItem, Option<C>)>> {
+    #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
+    let listed = Remote::fetched(state.remote(key), "")
+        .pick(T::pick)
+        .text(what);
+    listed.map_err(|why| vec![(item(why, ""), None)])
 }
 
 /// A picker's row: what it says, and what choosing it does.
@@ -477,17 +491,9 @@ impl State {
         out
     }
 
-    /// What `key` holds, or the row saying it's loading or why it failed
-    /// (opening the picker again tries again).
-    fn listed(&self, key: &DataKey, what: &str) -> Result<&Data, Rows> {
-        #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
-        let listed = Remote::fetched(self.remote(key), "").text(what);
-        listed.map_err(|why| vec![(item(why, ""), None)])
-    }
-
     fn file_rows(&self, q: &str, repo: &RepoId, rev: &str) -> Rows {
         let (files, truncated) =
-            match self.listed(&DataKey::Files(repo.clone(), rev.into()), "files") {
+            match listed::<Data, _>(self, &DataKey::Files(repo.clone(), rev.into()), "files") {
                 Ok(Data::Files(files, truncated)) => (files, truncated),
                 other => return other.err().unwrap_or_default(),
             };
@@ -511,8 +517,12 @@ impl State {
     }
 
     fn branch_rows(&self, q: &str, repo: &RepoId, rev: &str, path: &str, file: bool) -> Rows {
-        let refs = match self.listed(&DataKey::Refs(repo.clone()), "branches") {
-            Ok(Data::Refs(refs)) => refs,
+        let refs = match listed::<crate::api::browse::Refs, _>(
+            self,
+            &DataKey::Refs(repo.clone()),
+            "branches",
+        ) {
+            Ok(refs) => refs,
             other => return other.err().unwrap_or_default(),
         };
         let default = self

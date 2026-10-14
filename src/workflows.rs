@@ -163,12 +163,9 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
                 return note("The form isn't on screen".into());
             };
             let key = DataKey::Refs(repo);
-            let Some(refs) = state.picked::<Refs>(&key) else {
-                let failed = state.remote(&key).and_then(|r| r.error.clone());
-                return note(failed.map_or_else(
-                    || "Loading branches…".to_owned(),
-                    |e| format!("Couldn't load the branches: {e}"),
-                ));
+            let refs = match crate::picker::listed::<Refs, _>(state, &key, "the branches") {
+                Ok(refs) => refs,
+                Err(why) => return why,
             };
             let chosen = form_ref(state);
             let mut rows: Vec<_> = (refs.branches.iter())

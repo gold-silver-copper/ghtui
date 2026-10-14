@@ -836,13 +836,12 @@ pub fn picker_rows(state: &State, pick: Pick, q: &str) -> Vec<(PaletteItem, Opti
     let fits = |s: &str| crate::picker::fuzzy_score(q, s).is_some();
     if matches!(pick, Pick::Base | Pick::Head) {
         let key = DataKey::Refs(repo.clone());
-        let Some(Data::Refs(refs)) = state.get(&key) else {
-            let failed = state.remote(&key).and_then(|r| r.error.clone());
-            return note(failed.map_or_else(
-                || "Loading branches…".to_owned(),
-                |e| format!("Couldn't load the branches: {e}"),
-            ));
-        };
+        let refs =
+            match crate::picker::listed::<crate::api::browse::Refs, _>(state, &key, "the branches")
+            {
+                Ok(refs) => refs,
+                Err(why) => return why,
+            };
         let chosen = if pick == Pick::Base {
             &form.base
         } else {
