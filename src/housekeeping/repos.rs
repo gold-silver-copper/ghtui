@@ -12,8 +12,7 @@ use crate::ui::page::Page;
 use crate::ui::pages::{Mark, WriteFormView};
 
 use super::{
-    Chosen, Expected, Field, Form, FormOf, Subject, ask, expect, failed, form, form_mut, form_row,
-    item,
+    Chosen, Expected, Field, Form, FormOf, Subject, ask, expect, form, form_mut, form_row, item,
 };
 use crate::data::DataKey;
 use crate::keymap::Action;
@@ -69,7 +68,6 @@ pub(super) fn follow_fork(state: &mut State, route: &Route, repo: &RepoId) -> Ve
     f.started = true;
     f.set(Field::Owner, viewer);
     f.set(Field::Name, repo.name.clone());
-    state.shown_gen += 1;
     Vec::new()
 }
 
@@ -86,7 +84,6 @@ pub(super) fn follow_new(state: &mut State, route: &Route) -> Vec<Cmd> {
     let f = form_mut(state, route);
     f.started = true;
     f.set(Field::Owner, viewer);
-    state.shown_gen += 1;
     if state.overlay.is_none() {
         return super::open_field(state, route, Field::Name);
     }
@@ -232,18 +229,17 @@ pub(super) fn template_rows(
 #[must_use]
 pub(super) fn fork(state: &mut State, route: &Route, repo: &RepoId) -> Vec<Cmd> {
     let f = form(state, route);
-    if let Some(why) = fork_problem(state, repo, f) {
-        crate::writes::say(state, why);
+    if let Some(why) = fork_problem(state, repo, &f) {
+        crate::forms::say(state, why);
         return Vec::new();
     }
     let new = NewFork {
         repo: repo.clone(),
-        org: org(state, f),
+        org: org(state, &f),
         name: f.get(Field::Name).trim().to_owned(),
         default_branch_only: !f.on(Field::AllBranches),
     };
-    form_mut(state, route).sending = true;
-    crate::writes::sending(state);
+    crate::forms::form_sending(state, route);
     state.info(format!("Forking {repo}…"));
     work::start(Fork {
         route: route.clone(),
@@ -255,13 +251,13 @@ pub(super) fn fork(state: &mut State, route: &Route, repo: &RepoId) -> Vec<Cmd> 
 #[must_use]
 pub(super) fn create(state: &mut State, route: &Route) -> Vec<Cmd> {
     let f = form(state, route);
-    if let Some(why) = repo_problem(f) {
-        crate::writes::say(state, why);
+    if let Some(why) = repo_problem(&f) {
+        crate::forms::say(state, why);
         return Vec::new();
     }
     let template = |field| Some(f.get(field).to_owned()).filter(|v| !v.is_empty());
     let new = NewRepo {
-        org: org(state, f),
+        org: org(state, &f),
         name: f.get(Field::Name).trim().to_owned(),
         description: f.get(Field::Description).trim().to_owned(),
         private: f.on(Field::Private),
@@ -269,8 +265,7 @@ pub(super) fn create(state: &mut State, route: &Route) -> Vec<Cmd> {
         gitignore: template(Field::Gitignore),
         license: template(Field::License),
     };
-    form_mut(state, route).sending = true;
-    crate::writes::sending(state);
+    crate::forms::form_sending(state, route);
     state.info(format!("Creating {}…", new.name));
     work::start(Make {
         route: route.clone(),
@@ -282,8 +277,8 @@ pub(super) fn create(state: &mut State, route: &Route) -> Vec<Cmd> {
 /// GitHub until it's there.
 #[must_use]
 fn opened(state: &mut State, route: &Route, made: &MadeRepo) -> Option<Vec<Cmd>> {
-    state.writing.housekeeping.forms.remove(route);
-    crate::writes::close_sender(state, route);
+    state.forms.take::<Form>(route);
+    crate::forms::close_sender(state, route);
     let repo = made.repo()?;
     if state.route() != Some(route) {
         return Some(Vec::new());
@@ -312,7 +307,7 @@ impl Job for Fork {
                 opened(state, route, &made).unwrap_or_default()
             }
             Err(why) => {
-                failed(state, route, &why);
+                crate::forms::failed(state, route, why.to_string());
                 Vec::new()
             }
         }
@@ -331,7 +326,7 @@ impl Job for Make {
         let made = match result {
             Ok(made) => made,
             Err(why) => {
-                failed(state, route, &why);
+                crate::forms::failed(state, route, why.to_string());
                 return Vec::new();
             }
         };
@@ -381,7 +376,7 @@ impl Job for CloneTo {
                 state.overlay = None;
                 state.info(format!("Cloned into ./{}", dir.display()));
             }
-            Err(why) => crate::writes::say(state, why.to_string()),
+            Err(why) => crate::forms::say(state, why.to_string()),
         }
         Vec::new()
     }
@@ -394,9 +389,9 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
         FormOf::Fork(repo) => (
             format!("Create a new fork of {repo}"),
             vec![
-                form_row(f, Field::Owner, "Asking GitHub who you are…"),
-                form_row(f, Field::Name, "Repository name"),
-                form_row(f, Field::AllBranches, ""),
+                form_row(&f, Field::Owner, "Asking GitHub who you are…"),
+                form_row(&f, Field::Name, "Repository name"),
+                form_row(&f, Field::AllBranches, ""),
             ],
             vec![(
                 "A fork is a copy of the repository, under the owner you choose".to_owned(),
@@ -406,13 +401,13 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
         _ => (
             "Create a new repository".to_owned(),
             vec![
-                form_row(f, Field::Owner, "Asking GitHub who you are…"),
-                form_row(f, Field::Name, "Repository name"),
-                form_row(f, Field::Description, "Description (optional)"),
-                form_row(f, Field::Private, ""),
-                form_row(f, Field::Readme, ""),
-                form_row(f, Field::Gitignore, "None"),
-                licence_row(state, f),
+                form_row(&f, Field::Owner, "Asking GitHub who you are…"),
+                form_row(&f, Field::Name, "Repository name"),
+                form_row(&f, Field::Description, "Description (optional)"),
+                form_row(&f, Field::Private, ""),
+                form_row(&f, Field::Readme, ""),
+                form_row(&f, Field::Gitignore, "None"),
+                licence_row(state, &f),
             ],
             Vec::new(),
         ),
@@ -431,10 +426,10 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
         boxes: Vec::new(),
         after: Vec::new(),
         write: "",
-        button: super::button(of, f),
+        button: super::button(of, &f),
         save_key: &save_key,
         why_not: super::problem(state, route, of),
-        error: f.error.as_deref(),
+        error: state.forms.sent(route).error.as_deref(),
     };
     crate::ui::pages::write_form(page, &view);
 }

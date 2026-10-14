@@ -427,10 +427,10 @@ pub struct State {
     pub home_timer: bool,
     /// Everything else pages show.
     pub data: HashMap<DataKey, Remote<Data>>,
-    /// Bumped whenever what pages show besides GitHub's data changes
-    /// (forms, writes on their way, who's signed in, whether GitHub can
+    /// Bumped whenever what pages show besides GitHub's data and forms
+    /// changes (writes on their way, who's signed in, whether GitHub can
     /// be reached), so pages know to rebuild; GitHub's data has its own
-    /// versions ([`Remote`]).
+    /// versions ([`Remote`]), and forms theirs ([`crate::forms::Forms`]).
     pub shown_gen: u64,
     pub diffs: HashMap<DiffOf, DiffState>,
     pub viewer: Option<String>,
@@ -478,16 +478,12 @@ pub struct State {
     pub focused: bool,
     /// Who and what each repository's comments can mention, once asked.
     pub mentionable: HashMap<crate::api::model::RepoId, crate::api::mention::Mentionable>,
-    /// New issues and pull requests being written, and your clones.
-    pub creating: crate::create::Creating,
-    /// Releases, gists and wiki pages being written, and the change one
-    /// waits to see.
-    pub writing: crate::writes::Writing,
-    /// What the pickers that manage an issue or pull request list.
-    /// A settings form sent and not yet taken.
-    pub settings: crate::settings::Kept,
-    /// Workflows being run by hand: their forms.
-    pub dispatching: crate::actions::Dispatching,
+    /// The forms being written, by their page: leaving one keeps it.
+    pub forms: crate::forms::Forms,
+    /// A pull request to check out once it's loaded.
+    pub checkout: Option<crate::api::model::PrRef>,
+    /// What housekeeping's question is about, and a branch to delete.
+    pub housekeeping: crate::housekeeping::Housekeeping,
     /// Conversations: long reviews unfolded, and the like.
     pub talk: crate::talk::Talk,
     /// Whether GitHub can be reached, the writes waiting for it, and the
@@ -541,10 +537,9 @@ impl State {
             page_watch: None,
             focused: true,
             mentionable: HashMap::new(),
-            creating: crate::create::Creating::default(),
-            writing: crate::writes::Writing::default(),
-            settings: crate::settings::Kept::default(),
-            dispatching: crate::actions::Dispatching::default(),
+            forms: crate::forms::Forms::default(),
+            checkout: None,
+            housekeeping: crate::housekeeping::Housekeeping::default(),
             talk: crate::talk::Talk::default(),
             offline: crate::offline::Offline::default(),
             quit: false,

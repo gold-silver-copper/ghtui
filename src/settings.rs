@@ -35,13 +35,6 @@ pub const ACTIONS: [Action; 5] = [
     Action::Redeliver,
 ];
 
-/// A form sent and not yet taken by GitHub: if GitHub refuses it, the
-/// composer opens again with its text.
-#[derive(Debug, Default)]
-pub struct Kept {
-    pub form: Option<(Form, String)>,
-}
-
 // ---- where you are ------------------------------------------------------------------
 
 /// The settings page on screen.
@@ -96,16 +89,13 @@ fn asking(
     facts: Vec<(String, bool)>,
     choice: (&str, SettingsChange),
 ) -> Box<Confirm> {
-    Box::new(Confirm {
+    Box::new(Confirm::new(
         action,
-        about: Subject::Settings(at.0.clone(), at.1),
+        Subject::Settings(at.0.clone(), at.1),
         title,
         facts,
-        choices: vec![(choice.0.to_owned(), Change::Settings(choice.1))],
-        selected: 0,
-        sending: false,
-        error: None,
-    })
+        vec![(choice.0.to_owned(), Change::Settings(choice.1))],
+    ))
 }
 
 fn elsewhere(action: Action) -> String {
@@ -1073,57 +1063,27 @@ fn confirm(form: &Form, text: &str) -> Result<Confirm, String> {
             )
         }
     };
-    Ok(Confirm {
+    Ok(Confirm::new(
         action,
-        about: Subject::Settings(repo, form.page()),
+        Subject::Settings(repo, form.page()),
         title,
         facts,
-        choices: vec![(choice.to_owned(), Change::Settings(change))],
-        selected: 0,
-        sending: false,
-        error: None,
-    })
+        vec![(choice.to_owned(), Change::Settings(change))],
+    ))
 }
 
 /// ctrl-s in the composer: asks about what the form changes.
 #[must_use]
 pub fn submit(state: &mut State, form: &Form, text: &str) -> Vec<Cmd> {
     match confirm(form, text) {
-        Err(why) => {
-            if let Some(Overlay::Compose(c)) = &mut state.overlay {
-                c.error = Some(why);
-            }
-        }
-        Ok(confirm) => {
-            state.settings.form = Some((form.clone(), text.to_owned()));
+        Err(why) => crate::forms::say(state, why),
+        Ok(mut confirm) => {
+            let target = crate::review::ComposeTarget::Setting(form.clone());
+            confirm.back = Some((target, text.to_owned()));
             state.overlay = Some(Overlay::Confirm(Box::new(confirm)));
         }
     }
     Vec::new()
-}
-
-/// GitHub refused a change: one sent from a form opens the form again,
-/// with its text and GitHub's words. Whether it did.
-pub fn refused(state: &mut State, change: &Change, why: &str) -> bool {
-    let Change::Settings(c) = change else {
-        return false;
-    };
-    let from_form = matches!(
-        c,
-        SettingsChange::CreateRule { .. }
-            | SettingsChange::UpdateRule { .. }
-            | SettingsChange::CreateHook { .. }
-            | SettingsChange::UpdateHook { .. }
-            | SettingsChange::AddKey { .. }
-    );
-    let Some((form, text)) = state.settings.form.take().filter(|_| from_form) else {
-        return false;
-    };
-    let _ = state.compose(crate::review::ComposeTarget::Setting(form), &text);
-    if let Some(Overlay::Compose(c)) = &mut state.overlay {
-        c.error = Some(why.to_owned());
-    }
-    true
 }
 
 /// After GitHub took a change: a webhook deleted from its own page goes
@@ -1133,7 +1093,6 @@ pub fn after(state: &mut State, change: &Change) -> Vec<Cmd> {
     let Change::Settings(c) = change else {
         return Vec::new();
     };
-    state.settings.form = None;
     let SettingsChange::DeleteHook { repo, id, .. } = c else {
         return Vec::new();
     };

@@ -79,7 +79,7 @@ fn a_new_issue_starts_from_its_template_and_opens_once_made() {
         new: Submission::Issue(new),
     };
     assert_eq!(sent, [fixtures::start(submit.clone())]);
-    assert!(composer(&mut s).sending);
+    assert!(composer(&mut s).sent.sending);
 
     let cmds = fixtures::done(&mut s, submit, Ok(42));
     let issue = Route::Issues(issues::Issue {
@@ -91,7 +91,10 @@ fn a_new_issue_starts_from_its_template_and_opens_once_made() {
     says(&s, "Opened issue #42");
     let issue = DataKey::Issue(ghtui(), 42);
     assert!(crate::fixtures::asks(&cmds, &issue), "{cmds:?}");
-    assert!(!s.creating.forms.contains_key(&route), "the form is done");
+    assert!(
+        s.forms.get::<crate::create::Form>(&route).is_none(),
+        "the form is done"
+    );
 }
 
 /// GitHub's refusal stays in the composer, with the text, to try again.
@@ -102,9 +105,9 @@ fn a_refused_issue_says_why_in_the_composer() {
     let refused = ApiError::GraphQl(vec!["Title can't be blank".into()]);
     fixtures::done(&mut s, submit, Err(refused.into()));
     let c = composer(&mut s);
-    assert!(!c.sending);
+    assert!(!c.sent.sending);
     assert_eq!(
-        c.error.as_deref(),
+        c.sent.error.as_deref(),
         Some("GitHub didn't create the issue: Title can't be blank")
     );
     assert_eq!(s.route(), Some(&Route::Issues(issues::NewIssue(ghtui()))));
@@ -127,7 +130,10 @@ fn labels_are_picked_and_text_is_kept() {
         "still picking"
     );
     press(&mut s, "<Esc>");
-    let form = &s.creating.forms[&Route::Issues(issues::NewIssue(ghtui()))];
+    let form = (s
+        .forms
+        .get::<crate::create::Form>(&Route::Issues(issues::NewIssue(ghtui()))))
+    .unwrap();
     assert_eq!(form.labels, [NodeId::new("LA_docs")]);
 }
 
@@ -199,10 +205,13 @@ fn a_pull_request_from_the_clones_branch_is_pushed_then_made() {
     head(&mut s, None);
     let route = Route::Pulls(pulls::NewPr(ghtui()));
     let text = "Fix the parser\n\nIt dropped the last line.\n\n## Checklist\n\n- [ ] Tests";
-    assert_eq!(s.creating.forms[&route].text, text);
+    assert_eq!(
+        s.forms.get::<crate::create::Form>(&route).unwrap().text,
+        text
+    );
 
     assert!(press(&mut s, ",s").is_empty());
-    says(&s, "fix-parser isn't on GitHub: ,P pushes it to origin");
+    fixtures::warns(&s, "fix-parser isn't on GitHub: ,P pushes it to origin");
     assert!(press(&mut s, ",P").is_empty());
     assert_eq!(asked(&s).title, "Push fix-parser to origin?");
     let push = press(&mut s, "<Enter>");

@@ -180,16 +180,7 @@ enum Plan {
 }
 
 fn ask(action: Action, about: Subject, title: String, facts: Vec<(String, bool)>) -> Confirm {
-    Confirm {
-        action,
-        about,
-        title,
-        facts,
-        choices: Vec::new(),
-        selected: 0,
-        sending: false,
-        error: None,
-    }
+    Confirm::new(action, about, title, facts, Vec::new())
 }
 
 /// Where `action` works, for when it doesn't here.
@@ -1225,8 +1216,8 @@ pub fn confirmed(state: &mut State, change: &Change, about: &Subject) -> Option<
         _ => return None,
     };
     if let Some(Overlay::Confirm(c)) = &mut state.overlay {
-        c.sending = true;
-        c.error = None;
+        c.sent.sending = true;
+        c.sent.error = None;
     }
     Some(work::start(work))
 }
@@ -1283,15 +1274,15 @@ pub fn start(state: &mut State, s: &Starting, text: &str) -> Vec<Cmd> {
         return Vec::new();
     };
     if title.is_empty() {
-        c.error = Some("Write its title on the first line".into());
+        c.sent.error = Some("Write its title on the first line".into());
         return Vec::new();
     }
     if body.trim().is_empty() {
-        c.error = Some("Write its text below the title".into());
+        c.sent.error = Some("Write its text below the title".into());
         return Vec::new();
     }
-    c.sending = true;
-    c.error = None;
+    c.sent.sending = true;
+    c.sent.error = None;
     work::start(Start {
         repo: s.repo.clone(),
         repo_id: s.repo_id.clone(),
@@ -1399,8 +1390,8 @@ impl Job for Start {
                 let text = format!("GitHub didn't start the discussion: {why}");
                 match &mut state.overlay {
                     Some(Overlay::Compose(c)) => {
-                        c.sending = false;
-                        c.error = Some(text);
+                        c.sent.sending = false;
+                        c.sent.error = Some(text);
                     }
                     _ => state.error(text),
                 }
@@ -1430,9 +1421,9 @@ fn close_confirm(state: &mut State) {
 /// still open.
 fn refused(state: &mut State, text: String) -> Vec<Cmd> {
     match &mut state.overlay {
-        Some(Overlay::Confirm(c)) if c.sending => {
-            c.sending = false;
-            c.error = Some(text);
+        Some(Overlay::Confirm(c)) if c.sent.sending => {
+            c.sent.sending = false;
+            c.sent.error = Some(text);
         }
         _ => state.error(text),
     }

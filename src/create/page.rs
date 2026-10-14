@@ -10,8 +10,8 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
     let Some(repo) = form_repo(route) else {
         return;
     };
-    let blank = Form::default();
-    let form = state.creating.forms.get(route).unwrap_or(&blank);
+    let form = state.forms.shown::<Form>(route);
+    let form = form.as_ref();
     let pr = matches!(route, Route::Pulls(pulls::NewPr(_)));
     let composing = matches!(
         &state.overlay,
@@ -164,7 +164,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
             "Create issue"
         },
         why_not: why_not.as_deref(),
-        error: form.error.as_deref(),
+        error: state.forms.sent(route).error.as_deref(),
         commits,
     };
     pages::new_form(page, &view);

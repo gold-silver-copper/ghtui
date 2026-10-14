@@ -226,7 +226,9 @@ fn submit_with_rejection_then_fix_and_resubmit() {
             ..SubmitOutcome::default()
         }),
     );
-    assert!(matches!(&s.overlay, Some(Overlay::Submit(d)) if d.error.is_some() && !d.sending));
+    assert!(
+        matches!(&s.overlay, Some(Overlay::Submit(d)) if d.sent.error.is_some() && !d.sent.sending)
+    );
     assert_eq!(
         s.diffs[&DiffOf::Pr(pr.clone())].inputs().review.pending[0]
             .error
@@ -276,7 +278,7 @@ fn request_changes_needs_a_summary() {
     press(&mut s, ",s");
     press(&mut s, "<Tab><Tab>");
     assert!(press(&mut s, "<C-s>").is_empty());
-    assert!(matches!(&s.overlay, Some(Overlay::Submit(d)) if d.error.is_some()));
+    assert!(matches!(&s.overlay, Some(Overlay::Submit(d)) if d.sent.error.is_some()));
 }
 
 #[test]
@@ -297,7 +299,7 @@ fn replies_post_right_away() {
     );
     answer(&mut s, &cmds, Err(ApiError::Network("down".into())));
     assert!(
-        matches!(&s.overlay, Some(Overlay::Compose(c)) if c.error.is_some() && c.text() == "Fixed")
+        matches!(&s.overlay, Some(Overlay::Compose(c)) if c.sent.error.is_some() && c.text() == "Fixed")
     );
     let cmds = press(&mut s, "<C-s>");
     let cmds = answer(&mut s, &cmds, Ok(()));

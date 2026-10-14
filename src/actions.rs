@@ -19,21 +19,15 @@ use crate::ui::page::{DispatchLink, Link, Page};
 use crate::ui::pages::{self, DispatchView};
 use crate::work::{self, Cx, Failure, Job};
 
-/// The forms that run a workflow by hand, by repository and workflow file.
-#[derive(Debug, Default)]
-pub struct Dispatching {
-    forms: HashMap<(RepoId, String), Form>,
-}
-
-/// What's chosen on a form.
+/// What's chosen on the form that runs a workflow by hand.
 #[derive(Debug, Default, Clone)]
 struct Form {
     /// The branch; the default branch until one is chosen.
     git_ref: Option<String>,
     values: HashMap<String, String>,
-    sending: bool,
-    error: Option<String>,
 }
+
+impl crate::forms::Fields for Form {}
 
 /// Saving a run's artifact to `path` (over a file there, with
 /// `replace`).
@@ -246,24 +240,20 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
             })
         }
         Chosen::Ref(name) => {
-            let Some(key) = here(state) else {
+            let Some(route) = here(state).map(form_route) else {
                 return Vec::new();
             };
-            let form = state.dispatching.forms.entry(key).or_default();
-            form.git_ref = Some(name);
-            form.error = None;
-            state.shown_gen += 1;
+            state.forms.edit::<Form>(&route).git_ref = Some(name);
+            state.forms.sent_mut(&route).error = None;
             // Its inputs are read from the file on that branch.
             blob_need(state).map_or_else(Vec::new, |need| state.ensure(need, false))
         }
         Chosen::Input(name, value) => {
-            let Some(key) = here(state) else {
+            let Some(route) = here(state).map(form_route) else {
                 return Vec::new();
             };
-            let form = state.dispatching.forms.entry(key).or_default();
-            form.values.insert(name, value);
-            form.error = None;
-            state.shown_gen += 1;
+            state.forms.edit::<Form>(&route).values.insert(name, value);
+            state.forms.sent_mut(&route).error = None;
             Vec::new()
         }
     }
@@ -349,6 +339,11 @@ fn here(state: &State) -> Option<(RepoId, String)> {
     }
 }
 
+/// The form's page, for the workflow `file` in `repo`.
+fn form_route((repo, file): (RepoId, String)) -> Route {
+    Route::Runs(runs::Dispatch { repo, file })
+}
+
 /// The workflow's path in its repository.
 fn workflow_path(file: &str) -> String {
     format!(".github/workflows/{file}")
@@ -357,7 +352,7 @@ fn workflow_path(file: &str) -> String {
 /// The branch the form on screen runs on: chosen, or the default.
 fn form_ref(state: &State) -> Option<String> {
     let (repo, file) = here(state)?;
-    let chosen = state.dispatching.forms.get(&(repo.clone(), file));
+    let chosen = state.forms.get::<Form>(&form_route((repo.clone(), file)));
     chosen
         .and_then(|f| f.git_ref.clone())
         .or_else(|| state.overview(&repo)?.default_branch.clone())
@@ -366,7 +361,9 @@ fn form_ref(state: &State) -> Option<String> {
 /// The workflow file on the form's branch.
 fn blob_need(state: &State) -> Option<DataKey> {
     let (repo, file) = here(state)?;
-    let chosen = state.dispatching.forms.get(&(repo.clone(), file.clone()));
+    let chosen = state
+        .forms
+        .get::<Form>(&form_route((repo.clone(), file.clone())));
     let git_ref = chosen
         .and_then(|f| f.git_ref.clone())
         .unwrap_or_else(|| "HEAD".into());
@@ -409,12 +406,9 @@ pub fn build(state: &State, page: &mut Page, repo: &RepoId, file: &str) {
     let path = workflow_path(file);
     let workflow = state.picked::<Workflow>(&DataKey::Workflow(repo.clone(), file.to_owned()));
     let name = workflow.map_or(file, |w| w.name.as_str());
-    let blank = Form::default();
-    let form = (state
-        .dispatching
-        .forms
-        .get(&(repo.clone(), file.to_owned())))
-    .unwrap_or(&blank);
+    let route = form_route((repo.clone(), file.to_owned()));
+    let form = state.forms.shown::<Form>(&route);
+    let sent = state.forms.sent(&route);
     let git_ref = form_ref(state).unwrap_or_else(|| "the default branch".into());
     let inputs = inputs_of(state);
     let run_key = state.first_key(Action::RunWorkflow);
@@ -424,8 +418,8 @@ pub fn build(state: &State, page: &mut Page, repo: &RepoId, file: &str) {
         git_ref: &git_ref,
         inputs: inputs.as_deref().map_err(String::clone),
         values: &form.values,
-        sending: form.sending,
-        error: form.error.as_deref(),
+        sending: sent.sending,
+        error: sent.error.as_deref(),
         run_key: &run_key,
     };
     pages::dispatch_form(page, &view);
@@ -464,11 +458,9 @@ fn run(state: &mut State) -> Vec<Cmd> {
     let Some((repo, file)) = here(state) else {
         return Vec::new();
     };
-    let why = refused(state, &repo, &file).or_else(|| {
-        let form = state.dispatching.forms.get(&(repo.clone(), file.clone()));
-        form.filter(|f| f.sending)
-            .map(|_| "It's being started".to_owned())
-    });
+    let route = form_route((repo.clone(), file.clone()));
+    let why = refused(state, &repo, &file)
+        .or_else(|| (state.forms.sent(&route).sending).then(|| "It's being started".to_owned()));
     let inputs = inputs_of(state);
     let (why, inputs) = match (why, inputs) {
         (Some(why), _) | (None, Err(why)) => (Some(why), Vec::new()),
@@ -482,11 +474,7 @@ fn run(state: &mut State) -> Vec<Cmd> {
         state.info(why);
         return Vec::new();
     }
-    let form = state
-        .dispatching
-        .forms
-        .entry((repo.clone(), file.clone()))
-        .or_default();
+    let form = state.forms.shown::<Form>(&route);
     let values: Vec<(String, String)> = (inputs.iter())
         .map(|i| {
             let value = form
@@ -502,13 +490,11 @@ fn run(state: &mut State) -> Vec<Cmd> {
         .zip(&values)
         .find(|(i, (_, v))| i.required && v.is_empty())
     {
-        form.error = Some(format!("{} is required", missing.0.name));
-        state.shown_gen += 1;
+        let why = format!("{} is required", missing.0.name);
+        state.forms.sent_mut(&route).fail(why);
         return Vec::new();
     }
-    form.sending = true;
-    form.error = None;
-    state.shown_gen += 1;
+    state.forms.sent_mut(&route).start();
     work::start(Dispatch {
         repo,
         file,
@@ -529,23 +515,17 @@ impl Job for Dispatch {
     /// A new run is followed from the form; elsewhere it's said.
     fn done(self, state: &mut State, result: Result<Option<u64>, Failure>) -> Vec<Cmd> {
         let Dispatch { repo, file, .. } = self;
-        let key = (repo.clone(), file.clone());
-        let form = state.dispatching.forms.entry(key.clone()).or_default();
-        form.sending = false;
-        state.shown_gen += 1;
-        let on_form = here(state) == Some(key.clone());
+        let route = form_route((repo.clone(), file.clone()));
+        let on_form = state.route() == Some(&route);
         match result {
             Err(err) => {
                 let text = format!("Couldn't run {file}: {err}");
-                match state.dispatching.forms.get_mut(&key) {
-                    Some(form) if on_form => form.error = Some(text),
-                    _ => state.error(text),
-                }
+                crate::forms::failed(state, &route, text);
                 Vec::new()
             }
             // It's a new run: the form starts over next time.
             Ok(run) => {
-                state.dispatching.forms.remove(&key);
+                state.forms.take::<Form>(&route);
                 if !on_form {
                     state.info(format!("Started {file}"));
                     return Vec::new();

@@ -139,7 +139,7 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Option<Vec<Cmd>> {
             {
                 c.input.insert_str(&text);
                 c.saved = None;
-                c.error = None;
+                c.sent.error = None;
             }
         }
         _ => {}

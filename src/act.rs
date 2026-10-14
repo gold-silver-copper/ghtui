@@ -56,14 +56,38 @@ pub struct Confirm {
     pub facts: Vec<(String, bool)>,
     pub choices: Vec<(String, Change)>,
     pub selected: usize,
-    pub sending: bool,
-    pub error: Option<String>,
+    pub sent: crate::forms::Sent,
+    /// The composer it was asked from, with its text: if GitHub refuses,
+    /// it opens again.
+    pub back: Option<(crate::review::ComposeTarget, String)>,
 }
 
 impl Confirm {
+    pub fn new(
+        action: Action,
+        about: Subject,
+        title: String,
+        facts: Vec<(String, bool)>,
+        choices: Vec<(String, Change)>,
+    ) -> Self {
+        Self {
+            action,
+            about,
+            title,
+            facts,
+            choices,
+            selected: 0,
+            sent: crate::forms::Sent::default(),
+            back: None,
+        }
+    }
+
     /// What's happening while GitHub answers.
     pub fn busy(&self) -> Option<String> {
-        let (_, change) = self.choices.get(self.selected).filter(|_| self.sending)?;
+        let (_, change) = self
+            .choices
+            .get(self.selected)
+            .filter(|_| self.sent.sending)?;
         Some(format!("{}…", doing(change)))
     }
 }
@@ -146,16 +170,7 @@ fn act_on(state: &mut State, subject: Subject, action: Action) -> Vec<Cmd> {
             Vec::new()
         }
         Ok(Plan::Ask(title, facts, choices)) => {
-            let confirm = Confirm {
-                action,
-                about: subject,
-                title,
-                facts,
-                choices,
-                selected: 0,
-                sending: false,
-                error: None,
-            };
+            let confirm = Confirm::new(action, subject, title, facts, choices);
             state.overlay = Some(Overlay::Confirm(Box::new(confirm)));
             Vec::new()
         }
@@ -792,7 +807,7 @@ pub fn on_confirm_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     let n = confirm.choices.len().max(1);
     match key.code {
         KeyCode::Esc => state.overlay = None,
-        _ if confirm.sending => {}
+        _ if confirm.sent.sending => {}
         KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
             confirm.selected = (confirm.selected + 1) % n;
         }
@@ -808,8 +823,7 @@ pub fn on_confirm_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
                     return cmds;
                 }
                 if let Some(Overlay::Confirm(confirm)) = &mut state.overlay {
-                    confirm.sending = true;
-                    confirm.error = None;
+                    confirm.sent.start();
                 }
                 return vec![send(change, By::Confirm(about))];
             }
@@ -851,12 +865,12 @@ fn on_changed(state: &mut State, change: &Change, by: By, result: Result<(), Fai
     // The dialog or the composer that sent it, if it's still waiting.
     let sender = match (&by, &state.overlay) {
         (By::Confirm(_), Some(Overlay::Confirm(c))) => {
-            c.sending
+            c.sent.sending
                 && c.choices
                     .get(c.selected)
                     .is_some_and(|(_, sent)| sent == change)
         }
-        (By::Compose | By::Reply(_) | By::Edit(_), Some(Overlay::Compose(c))) => c.sending,
+        (By::Compose | By::Reply(_) | By::Edit(_), Some(Overlay::Compose(c))) => c.sent.sending,
         _ => false,
     };
     match result {
@@ -896,22 +910,20 @@ fn on_changed(state: &mut State, change: &Change, by: By, result: Result<(), Fai
                 nav::set_starred(state, repo, !starred);
             }
             let text = failure(change, &err);
-            // A form's text comes back to edit.
-            if sender && crate::settings::refused(state, change, &text) {
-                return Vec::new();
+            // What was written comes back to edit.
+            let mut cmds = Vec::new();
+            if sender
+                && let Some(Overlay::Confirm(confirm)) = &mut state.overlay
+                && let Some((target, written)) = confirm.back.take()
+            {
+                cmds = state.compose(target, &written);
             }
-            match &mut state.overlay {
-                Some(Overlay::Confirm(confirm)) if sender => {
-                    confirm.sending = false;
-                    confirm.error = Some(text);
-                }
-                Some(Overlay::Compose(compose)) if sender => {
-                    compose.sending = false;
-                    compose.error = Some(text);
-                }
-                _ => state.error(text),
+            if sender {
+                crate::forms::say(state, text);
+            } else {
+                state.error(text);
             }
-            Vec::new()
+            cmds
         }
     }
 }
@@ -1101,7 +1113,7 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
         return cmds;
     };
     // Another module's confirmation (deleting a comment) is its own.
-    if confirm.sending || !ACTIONS.contains(&confirm.action) {
+    if confirm.sent.sending || !ACTIONS.contains(&confirm.action) {
         return cmds;
     }
     let planned = plan_for(state, &confirm.about, confirm.action);

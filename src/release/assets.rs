@@ -104,14 +104,14 @@ impl Job for Delete {
     fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
         let of = self.0;
         if let Err(why) = result {
-            crate::writes::say(state, format!("GitHub didn't delete {}: {why}", of.name));
+            crate::forms::say(state, format!("GitHub didn't delete {}: {why}", of.name));
             return Vec::new();
         }
         let route = Route::Releases(releases::Release {
             repo: of.repo.clone(),
             tag: of.tag.clone(),
         });
-        crate::writes::close_sender(state, &route);
+        crate::forms::close_sender(state, &route);
         state.info(format!("Deleted {}", of.name));
         follow(state, of, false)
     }
@@ -346,7 +346,7 @@ pub fn delete(state: &mut State, name: &str) -> Vec<Cmd> {
     let Some(of) = of(state, name) else {
         return Vec::new();
     };
-    crate::writes::sending(state);
+    crate::forms::sending(state);
     work::start(Delete(of))
 }
 

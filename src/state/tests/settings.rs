@@ -178,7 +178,8 @@ fn a_new_rule_refused_comes_back_to_edit() {
     };
     assert!(c.text().contains("release/*"));
     assert!(
-        c.error
+        c.sent
+            .error
             .as_deref()
             .is_some_and(|e| e.contains("already protected"))
     );

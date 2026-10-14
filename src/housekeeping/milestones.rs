@@ -9,8 +9,8 @@ use crate::ui::page::{Link, Page};
 use crate::ui::pages::{Mark, TextBox, WriteFormView};
 
 use super::{
-    Chosen, Expected, Field, Form, FormOf, MilestoneWrite, Subject, ask, expect, failed, form,
-    form_mut, form_row, item, refused, selected,
+    Chosen, Expected, Field, Form, FormOf, MilestoneWrite, Subject, ask, expect, form, form_mut,
+    form_row, item, refused, selected,
 };
 use crate::data::DataKey;
 use crate::keymap::Action;
@@ -108,7 +108,6 @@ pub(super) fn follow(
         f.set(Field::Due, due);
         f.text = m.description;
     }
-    state.shown_gen += 1;
     if number.is_none() && state.overlay.is_none() {
         return super::open_field(state, route, Field::Title);
     }
@@ -185,18 +184,17 @@ pub(super) fn submit(
     number: Option<u64>,
 ) -> Vec<Cmd> {
     if let Some(why) = refused(state, repo, WHAT) {
-        crate::writes::say(state, why);
+        crate::forms::say(state, why);
         return Vec::new();
     }
-    let change = match change(form(state, route)) {
+    let change = match change(&form(state, route)) {
         Ok(c) => c,
         Err(why) => {
-            crate::writes::say(state, why);
+            crate::forms::say(state, why);
             return Vec::new();
         }
     };
-    form_mut(state, route).sending = true;
-    crate::writes::sending(state);
+    crate::forms::form_sending(state, route);
     state.info(format!("Saving the milestone {}…", change.title));
     work::start(Save {
         repo: repo.clone(),
@@ -254,7 +252,7 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
 
 #[must_use]
 pub(super) fn delete(state: &mut State, repo: RepoId, number: u64) -> Vec<Cmd> {
-    crate::writes::sending(state);
+    crate::forms::sending(state);
     work::start(Save {
         repo,
         number: Some(number),
@@ -306,16 +304,16 @@ impl Job for Save {
                 if matches!(write, MilestoneWrite::Close(_)) {
                     state.error(why.to_string());
                 } else {
-                    failed(state, &form, &why);
+                    crate::forms::failed(state, &form, why.to_string());
                 }
                 return Vec::new();
             }
         };
         let asked = state.route().cloned();
         if let Some(route) = &asked {
-            crate::writes::close_sender(state, route);
+            crate::forms::close_sender(state, route);
         }
-        state.writing.housekeeping.forms.remove(&form);
+        state.forms.take::<Form>(&form);
         let mut cmds = Vec::new();
         if state.route() == Some(&form) {
             cmds.extend(state.back());
@@ -459,8 +457,8 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route) {
         heading,
         base: Some(crate::ui::markdown::LinkBase::new(repo, "HEAD", "")),
         rows: vec![
-            form_row(f, Field::Title, "Title"),
-            form_row(f, Field::Due, "No due date"),
+            form_row(&f, Field::Title, "Title"),
+            form_row(&f, Field::Due, "No due date"),
         ],
         status,
         boxes: vec![TextBox {
@@ -475,10 +473,10 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route) {
         }],
         after: Vec::new(),
         write: &write,
-        button: super::button(of, f),
+        button: super::button(of, &f),
         save_key: &save_key,
         why_not: super::problem(state, route, of),
-        error: f.error.as_deref(),
+        error: state.forms.sent(route).error.as_deref(),
     };
     crate::ui::pages::write_form(page, &view);
 }

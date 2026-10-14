@@ -29,6 +29,7 @@ mod edit;
 #[cfg(test)]
 mod fixtures;
 mod follow;
+mod forms;
 mod gist;
 mod home;
 mod housekeeping;

@@ -345,16 +345,13 @@ fn plan(state: &State, h: &Here<'_>, action: Action) -> Result<Plan, String> {
             }
             facts.push(("Deleting it can't be undone".to_owned(), true));
             let delete = Change::Discussion(Discuss::Delete { id: e.id.clone() });
-            Ok(Plan::Delete(Box::new(Confirm {
+            Ok(Plan::Delete(Box::new(Confirm::new(
                 action,
-                about: Subject::Discussion(h.of.clone(), h.number),
-                title: format!("Delete {name}?"),
+                Subject::Discussion(h.of.clone(), h.number),
+                format!("Delete {name}?"),
                 facts,
-                choices: vec![("Delete".into(), delete)],
-                selected: 0,
-                sending: false,
-                error: None,
-            })))
+                vec![("Delete".into(), delete)],
+            ))))
         }
         _ => Err(action.not_here()),
     }

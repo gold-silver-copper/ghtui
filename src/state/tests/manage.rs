@@ -242,7 +242,7 @@ fn a_revert_opens_the_pull_request_github_makes() {
         id: NodeId::new("PR_12"),
     };
     assert_eq!(fixtures::sent::<Revert>(&cmds), revert);
-    assert!(confirm(&s).sending);
+    assert!(confirm(&s).sent.sending);
     fixtures::done(&mut s, revert, Ok(20));
     assert!(s.overlay.is_none());
     assert_eq!(

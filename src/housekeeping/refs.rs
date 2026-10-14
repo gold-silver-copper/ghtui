@@ -254,7 +254,7 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec
                 } else {
                     format!("Asking GitHub whether {name} is protected…")
                 });
-                state.writing.housekeeping.deleting = Some((repo.clone(), name));
+                state.housekeeping.deleting = Some((repo.clone(), name));
                 return cmds;
             }
             Some(Err(why)) => {
@@ -329,14 +329,14 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec
 /// deletion is asked about, if it's still the one selected.
 #[must_use]
 pub(super) fn follow(state: &mut State) -> Vec<Cmd> {
-    let Some((repo, name)) = state.writing.housekeeping.deleting.clone() else {
+    let Some((repo, name)) = state.housekeeping.deleting.clone() else {
         return Vec::new();
     };
     let key = DataKey::BranchRules(repo.clone(), name.clone());
     if state.answer::<BranchRules>(&key).is_none() {
         return Vec::new();
     }
-    state.writing.housekeeping.deleting = None;
+    state.housekeeping.deleting = None;
     let still = state.route() == Some(&Route::Code(code::Branches(repo.clone())))
         && picked(state, RefKind::Branch).is_some_and(|(n, _)| n == name)
         && state.overlay.is_none();
@@ -361,7 +361,7 @@ pub(super) fn send(
         Some(from) => RefWrite::Create(from),
         None => RefWrite::Delete,
     };
-    crate::writes::sending(state);
+    crate::forms::sending(state);
     let doing = match (&write, &clone) {
         (RefWrite::Create(_), Some(_)) => "Pushing",
         (RefWrite::Create(_), None) => "Creating",
@@ -424,14 +424,14 @@ impl Job for Save {
             ..
         } = work;
         if let Err(why) = result {
-            crate::writes::say(state, why.to_string());
+            crate::forms::say(state, why.to_string());
             return Vec::new();
         }
         let page = match kind {
             RefKind::Branch => Route::Code(code::Branches(repo.clone())),
             RefKind::Tag => Route::Code(code::Tags(repo.clone())),
         };
-        crate::writes::close_sender(state, &page);
+        crate::forms::close_sender(state, &page);
         let there = matches!(write, RefWrite::Create(_));
         // A branch made again with its name is asked about again.
         (state.data).remove(&DataKey::BranchRules(repo.clone(), name.clone()));

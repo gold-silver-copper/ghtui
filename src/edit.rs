@@ -420,16 +420,13 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
                 of: spot.of,
                 id: spot.editable.id.clone(),
             });
-            Ok(Plan::Delete(Box::new(Confirm {
+            Ok(Plan::Delete(Box::new(Confirm::new(
                 action,
-                about: spot.about,
+                spot.about,
                 title,
                 facts,
-                choices: vec![("Delete".into(), delete)],
-                selected: 0,
-                sending: false,
-                error: None,
-            })))
+                vec![("Delete".into(), delete)],
+            ))))
         }
         Action::React => {
             let spot = spot(state, &about, true)?;

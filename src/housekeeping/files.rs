@@ -14,7 +14,7 @@ use crate::ui::pages::{Mark, TextBox, WriteFormView};
 
 use super::{
     Chosen, Expected, Field, FileChange, FileWrite, Form, FormOf, Subject, ask, clone_here, expect,
-    failed, form, form_mut, form_row, item, refused,
+    form, form_mut, form_row, item, refused,
 };
 use crate::data::DataKey;
 use crate::keymap::Action;
@@ -113,7 +113,6 @@ pub(super) fn follow(state: &mut State, route: &Route, of: &FormOf) -> Vec<Cmd> 
     if look.branch_head.is_none() {
         f.set(Field::Branch, format!("{login}-patch-1"));
     }
-    state.shown_gen += 1;
     if state.overlay.is_some() {
         return Vec::new();
     }
@@ -170,7 +169,7 @@ pub(super) fn problem(state: &State, route: &Route, of: &FormOf) -> Option<Strin
         }
         _ => {}
     }
-    if let Some(why) = path_problem(path(f)) {
+    if let Some(why) = path_problem(path(&f)) {
         return Some(why);
     }
     let branch = f.get(Field::Branch).trim();
@@ -259,7 +258,7 @@ pub(super) fn ask_commit(state: &mut State, route: &Route) -> Vec<Cmd> {
     };
     let repo = repo.clone();
     if let Some(why) = problem(state, route, of) {
-        crate::writes::say(state, why);
+        crate::forms::say(state, why);
         return Vec::new();
     }
     let clone = match clone_here(state, &repo) {
@@ -267,9 +266,9 @@ pub(super) fn ask_commit(state: &mut State, route: &Route) -> Vec<Cmd> {
         Err(cmds) => return cmds,
     };
     let f = form(state, route);
-    let now = path(f).to_owned();
+    let now = path(&f).to_owned();
     let branch = f.get(Field::Branch).trim().to_owned();
-    let mut facts = vec![(format!("“{}”", message(f, of)), false)];
+    let mut facts = vec![(format!("“{}”", message(&f, of)), false)];
     facts.push((
         match change {
             FileChange::New => format!("Creates {now}"),
@@ -331,14 +330,14 @@ pub(super) fn commit(state: &mut State, route: &Route) -> Vec<Cmd> {
         return Vec::new();
     };
     if let Some(why) = problem(state, route, of) {
-        crate::writes::say(state, why);
+        crate::forms::say(state, why);
         return Vec::new();
     }
     let f = form(state, route);
     let Some(Ok(look)) = looked(state, of) else {
         return Vec::new();
     };
-    let now = path(f).to_owned();
+    let now = path(&f).to_owned();
     let new_branch = f.get(Field::Branch).trim().to_owned();
     let seen_file = look.file.as_ref().map(|file| file.oid.clone());
     let (seen, additions, deletions) = match change {
@@ -380,14 +379,13 @@ pub(super) fn commit(state: &mut State, route: &Route) -> Vec<Cmd> {
             seen,
             additions,
             deletions,
-            message: message(f, of),
+            message: message(&f, of),
             login: state.viewer.clone(),
         },
         head,
         clone,
     };
-    form_mut(state, route).sending = true;
-    crate::writes::sending(state);
+    crate::forms::form_sending(state, route);
     work::start(Commit {
         route: route.clone(),
         write: Box::new(write),
@@ -484,11 +482,11 @@ impl Job for Commit {
         };
         let repo = repo.clone();
         if let Err(why) = result {
-            failed(state, route, &why);
+            crate::forms::failed(state, route, why.to_string());
             return Vec::new();
         }
-        state.writing.housekeeping.forms.remove(route);
-        crate::writes::close_sender(state, route);
+        state.forms.take::<Form>(route);
+        crate::forms::close_sender(state, route);
         let FileWrite {
             commit: c, base, ..
         } = *write;
@@ -549,7 +547,7 @@ pub(super) fn propose(
     base: Option<String>,
 ) -> Vec<Cmd> {
     let route = Route::Pulls(pulls::NewPr(repo));
-    let form = state.creating.forms.entry(route.clone()).or_default();
+    let form = state.forms.edit::<crate::create::Form>(&route);
     form.head = Some(branch);
     // Into the branch it was made from; the default branch is the form's
     // own start.
@@ -640,7 +638,7 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
         Some(crate::state::Overlay::Compose(c))
             if c.target == crate::review::ComposeTarget::Write(crate::writes::Text::Housekeeping(route.clone()))
     );
-    let now = path(f).to_owned();
+    let now = path(&f).to_owned();
     let hint = "ctrl-e for $EDITOR";
     let body = if composing { "" } else { f.text.as_str() };
     let boxes = match change {
@@ -659,16 +657,16 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
     let write = state.first_key(Action::Comment);
     let save_key = state.first_key(Action::Create);
     // A deleted file's path is what it is.
-    let mut path_row = form_row(f, Field::Path, "Name your file…");
+    let mut path_row = form_row(&f, Field::Path, "Name your file…");
     if change == FileChange::Delete {
         path_row.link = None;
     }
-    let mut message_row = form_row(f, Field::Message, "");
+    let mut message_row = form_row(&f, Field::Message, "");
     if f.get(Field::Message).trim().is_empty() {
-        message_row.value = message(f, of);
+        message_row.value = message(&f, of);
         message_row.unset = true;
     }
-    let mut branch_row = form_row(f, Field::Branch, "");
+    let mut branch_row = form_row(&f, Field::Branch, "");
     if f.get(Field::Branch).trim().is_empty() {
         branch_row.value = format!("{rev} (directly)");
         branch_row.unset = false;
@@ -686,10 +684,10 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
         boxes,
         after: Vec::new(),
         write: &write,
-        button: super::button(of, f),
+        button: super::button(of, &f),
         save_key: &save_key,
         why_not: problem(state, route, of),
-        error: f.error.as_deref(),
+        error: state.forms.sent(route).error.as_deref(),
     };
     crate::ui::pages::write_form(page, &view);
 }

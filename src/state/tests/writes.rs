@@ -123,7 +123,7 @@ fn a_tag_with_a_release_is_refused() {
     let sent = press(&mut s, "<C-s>");
     assert_eq!(sent, []);
     assert_eq!(
-        composer(&mut s).error.as_deref(),
+        composer(&mut s).sent.error.as_deref(),
         Some("v0.2.0 has a release already")
     );
 }
@@ -307,8 +307,8 @@ fn a_wiki_page_is_edited_never_over_a_newer_one() {
     let changed = "Home changed on GitHub since you opened it";
     fixtures::done(&mut s, save.clone(), Err(fixtures::failure(changed)));
     let c = composer(&mut s);
-    assert!(!c.sending);
-    assert_eq!(c.error.as_deref(), Some(changed));
+    assert!(!c.sent.sending);
+    assert_eq!(c.sent.error.as_deref(), Some(changed));
     assert_eq!(c.text(), "Welcome, all.");
 
     fixtures::done(&mut s, save, Ok("Home".into()));

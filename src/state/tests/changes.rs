@@ -74,16 +74,16 @@ fn merging_asks_first_and_ends_up_as_github_has_it() {
         sent,
         vec![fixtures::change(merge, By::Confirm(Subject::Pr(pr())))]
     );
-    assert!(confirm(&s).sending);
+    assert!(confirm(&s).sent.sending);
     // Keys wait while it's sent.
     assert!(press(&mut s, "<Enter>").is_empty());
 
     let refused = ApiError::GraphQl(vec!["Must have push access to repository".into()]);
     answer(&mut s, &sent, Err(refused));
-    let error = confirm(&s).error.clone().unwrap_or_default();
+    let error = confirm(&s).sent.error.clone().unwrap_or_default();
     assert!(error.contains("Must have push access"), "{error}");
     assert!(error.contains("Contents: write"), "{error}");
-    assert!(!confirm(&s).sending);
+    assert!(!confirm(&s).sent.sending);
 
     press(&mut s, "<Enter>");
     let cmds = answer(&mut s, &sent, Ok(()));
@@ -303,7 +303,7 @@ fn a_draft_is_marked_ready_at_once_and_hears_back_alone() {
     press(&mut s, ",x");
     let refused = ApiError::GraphQl(vec!["Not now".into()]);
     answer(&mut s, &sent, Err(refused));
-    assert_eq!(confirm(&s).error, None);
+    assert_eq!(confirm(&s).sent.error, None);
     warns(&s, "Not now");
     press(&mut s, "<Esc>WcLGTM");
     answer(&mut s, &sent, Ok(()));

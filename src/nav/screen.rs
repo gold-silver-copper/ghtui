@@ -3,9 +3,10 @@
 use super::*;
 
 /// What a page was built for: the versions of GitHub's data it reads, the
-/// generation of the rest of what it shows, its diff's inputs (a pull
-/// request's Review tab shows them), the width and the density.
-pub(super) type Built = (u64, u64, Option<u64>, u16, bool);
+/// generation of the rest of what it shows, its form's version, its
+/// diff's inputs (a pull request's Review tab shows them), the width and
+/// the density.
+pub(super) type Built = (u64, u64, u64, Option<u64>, u16, bool);
 
 /// The screen of one page: where it is, what's selected, and the page as
 /// last built.
@@ -202,6 +203,7 @@ impl State {
         let built = (
             self.data_version(&p.route),
             self.shown_gen,
+            self.forms.version(&p.route),
             self.diff_version(&p.route),
             width,
             self.compact(),

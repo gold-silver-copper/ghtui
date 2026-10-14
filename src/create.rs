@@ -15,6 +15,7 @@ pub mod templates;
 pub(crate) mod yaml;
 
 use crate::route::{Route, issues, pulls};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -25,6 +26,7 @@ use crate::git::local::{self, Branch, CommitMessage};
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::data::{Data, DataKey};
+use crate::forms::{Fields, Sent, say};
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::Choice;
@@ -35,15 +37,6 @@ use crate::ui::page::FormLink;
 use crate::work::{self, Cx, Failure, Job};
 pub use page::build;
 use templates::Chooser;
-
-/// What's being made.
-#[derive(Debug, Default)]
-pub struct Creating {
-    /// The forms being written, by their page: leaving one keeps it.
-    pub forms: HashMap<Route, Form>,
-    /// A pull request to check out once it's loaded.
-    pub checkout: Option<PrRef>,
-}
 
 /// A new issue or pull request, as written so far.
 #[derive(Debug, Clone, Default)]
@@ -67,9 +60,9 @@ pub struct Form {
     pub head: Option<String>,
     /// The base and head its text was last filled in for.
     pub filled_for: Option<(String, String)>,
-    pub sending: bool,
-    pub error: Option<String>,
 }
+
+impl Fields for Form {}
 
 impl Form {
     /// Where its head stands against its base, as it's read.
@@ -234,14 +227,32 @@ pub struct Ask {
     pub facts: Vec<(String, bool)>,
     pub choices: Vec<(String, Answer)>,
     pub selected: usize,
-    pub sending: bool,
-    pub error: Option<String>,
+    pub sent: Sent,
 }
 
 impl Ask {
+    pub fn new(
+        route: Route,
+        title: String,
+        facts: Vec<(String, bool)>,
+        choices: Vec<(String, Answer)>,
+    ) -> Self {
+        Self {
+            route,
+            title,
+            facts,
+            choices,
+            selected: 0,
+            sent: Sent::default(),
+        }
+    }
+
     /// What's happening while git or GitHub answers.
     pub fn busy(&self) -> Option<&'static str> {
-        let (_, answer) = self.choices.get(self.selected).filter(|_| self.sending)?;
+        let (_, answer) = self
+            .choices
+            .get(self.selected)
+            .filter(|_| self.sent.sending)?;
         Some(match answer {
             Answer::Push => "Pushing…",
             Answer::Create { .. } => "Creating the pull request…",
@@ -259,18 +270,16 @@ fn form_repo(route: &Route) -> Option<&RepoId> {
 }
 
 /// The form on screen (blank until it's started), and its page.
-fn here(state: &State) -> Option<(Route, &Form)> {
-    static BLANK: std::sync::LazyLock<Form> = std::sync::LazyLock::new(Form::default);
+fn here(state: &State) -> Option<(Route, Cow<'_, Form>)> {
     let route = state.route().filter(|r| form_repo(r).is_some())?;
-    let form = state.creating.forms.get(route).unwrap_or(&BLANK);
-    Some((route.clone(), form))
+    Some((route.clone(), state.forms.shown(route)))
 }
 
 /// The form on screen, started if it wasn't (its page was opened by a
 /// link, before anything arrived for it).
 fn here_mut(state: &mut State) -> Option<&mut Form> {
     let route = state.route().filter(|r| form_repo(r).is_some())?.clone();
-    Some(state.creating.forms.entry(route).or_default())
+    Some(state.forms.edit(&route))
 }
 
 /// What a new issue or pull request in `repo` can have, once loaded.
@@ -281,16 +290,6 @@ fn form_data<'a>(
     match data.get(&DataKey::NewForm(repo.clone()))?.data.as_ref()? {
         Data::NewForm(form) => Some(form),
         _ => None,
-    }
-}
-
-/// Says `text` where it'll be seen: in the composer or the question when
-/// one's open, else in the status bar.
-fn say(state: &mut State, text: String) {
-    match &mut state.overlay {
-        Some(Overlay::Compose(c)) => c.error = Some(text),
-        Some(Overlay::Ask(a)) => a.error = Some(text),
-        _ => state.info(text),
     }
 }
 
@@ -350,7 +349,7 @@ fn open(state: &mut State, pr: bool) -> Vec<Cmd> {
     let mut cmds = Vec::new();
     if pr {
         cmds.extend(state.ensure(DataKey::Clone(repo.clone()), true));
-        let form = state.creating.forms.get(&route);
+        let form = state.forms.get::<Form>(&route);
         if let Some(key) = form.and_then(|f| f.head_key(&repo)) {
             cmds.extend(state.ensure(key, true));
         }
@@ -376,27 +375,23 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
         cmds.extend(follow_pr(state, &route, &repo));
         return cmds;
     }
-    let State {
-        creating,
-        data,
-        overlay,
-        ..
-    } = &mut *state;
-    let form = creating.forms.entry(route).or_default();
-    let Some(d) = form_data(data, &repo) else {
+    let Some(d) = form_data(&state.data, &repo) else {
         return cmds;
     };
-    let chooser = form
-        .chooser
-        .get_or_insert_with(|| templates::chooser(&d.issue_templates));
-    // Without templates to choose from, it's a blank issue.
-    if form.template.is_none() && !chooser.offers() {
-        form.template = Some(String::new());
+    if (state.forms.get::<Form>(&route)).is_none_or(|f| f.chooser.is_none()) {
+        let chooser = templates::chooser(&d.issue_templates);
+        let form = state.forms.edit::<Form>(&route);
+        // Without templates to choose from, it's a blank issue.
+        if form.template.is_none() && !chooser.offers() {
+            form.template = Some(String::new());
+        }
+        form.chooser = Some(chooser);
     }
     // Ready to write: the composer opens, once.
+    let form = state.forms.shown::<Form>(&route);
     if form.template.is_some()
         && !form.opened
-        && overlay.is_none()
+        && state.overlay.is_none()
         && refused(state, &repo, false).is_none()
     {
         cmds.extend(compose(state));
@@ -410,7 +405,7 @@ pub fn compose(state: &mut State) -> Vec<Cmd> {
     let Some((route, form)) = here(state) else {
         return Vec::new();
     };
-    if form.sending {
+    if state.forms.sent(&route).sending {
         state.info("It's being created");
         return Vec::new();
     }
@@ -419,11 +414,8 @@ pub fn compose(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     }
     let text = form.text.clone();
-    if let Some(form) = here_mut(state) {
-        form.opened = true;
-    }
     // Its box on the page makes way.
-    state.shown_gen += 1;
+    state.forms.edit::<Form>(&route).opened = true;
     let cmds = state.compose(ComposeTarget::Form(route), &text);
     // The title first, as on GitHub.
     if let Some(Overlay::Compose(c)) = &mut state.overlay {
@@ -435,10 +427,8 @@ pub fn compose(state: &mut State) -> Vec<Cmd> {
 
 /// The composer's text, kept with its form (esc, or before making it).
 pub fn keep_text(state: &mut State, route: &Route, text: String) {
-    let form = state.creating.forms.entry(route.clone()).or_default();
-    form.text = text;
-    form.error = None;
-    state.shown_gen += 1;
+    state.forms.edit::<Form>(route).text = text;
+    state.forms.sent_mut(route).error = None;
 }
 
 /// `,s`, ctrl-s in the composer, Enter on the form's button: makes the
@@ -458,7 +448,7 @@ pub fn submit(state: &mut State) -> Vec<Cmd> {
     let Some(repo) = form_repo(&route).cloned() else {
         return Vec::new();
     };
-    if form.sending {
+    if state.forms.sent(&route).sending {
         say(state, "It's being created".into());
         return Vec::new();
     }
@@ -501,33 +491,12 @@ pub fn submit(state: &mut State) -> Vec<Cmd> {
         assignees: triage(&form.assignees),
         milestone: form.milestone.clone().filter(|_| d.can_triage),
     };
-    sending(state, true);
+    crate::forms::form_sending(state, &route);
     state.info("Creating the issue…");
     work::start(Submit {
         route,
         new: Submission::Issue(new),
     })
-}
-
-/// Marks the form, and the composer or question that sent it, as waiting
-/// for GitHub (or not).
-fn sending(state: &mut State, on: bool) {
-    if let Some(form) = here_mut(state) {
-        form.sending = on;
-        form.error = None;
-    }
-    state.shown_gen += 1;
-    match &mut state.overlay {
-        Some(Overlay::Compose(c)) => {
-            c.sending = on;
-            c.error = None;
-        }
-        Some(Overlay::Ask(a)) => {
-            a.sending = on;
-            a.error = None;
-        }
-        _ => {}
-    }
 }
 
 /// A new pull request's form: its base the default branch and its head
@@ -543,32 +512,33 @@ fn follow_pr(state: &mut State, route: &Route, repo: &RepoId) -> Vec<Cmd> {
         .clone_of(repo)
         .flatten()
         .and_then(|c| c.branch.clone());
-    let form = state.creating.forms.entry(route.clone()).or_default();
-    if form.base.is_none() {
-        form.base = default;
-    }
+    let form = state.forms.shown::<Form>(route);
+    let base = form.base.clone().or(default);
     // Inside a clone, its branch is the one to propose.
-    if form.head.is_none() && checked_out.is_some() && checked_out != form.base {
-        form.head = checked_out;
+    let head = (form.head.clone()).or_else(|| checked_out.filter(|b| Some(b) != base.as_ref()));
+    let filled = form.filled_for.clone();
+    if (&form.base, &form.head) != (&base, &head) {
+        let form = state.forms.edit::<Form>(route);
+        (form.base, form.head) = (base.clone(), head.clone());
     }
-    let Some(key) = form.head_key(repo) else {
+    let (Some(base), Some(head)) = (base, head) else {
         return Vec::new();
     };
-    let (Some(base), Some(head)) = (form.base.clone(), form.head.clone()) else {
+    let Some(key) = state.forms.shown::<Form>(route).head_key(repo) else {
         return Vec::new();
     };
-    let filled = form.filled_for.as_ref() == Some(&(base.clone(), head.clone()));
     let cmds = state.ensure(key.clone(), false);
-    if !filled && let Some(Ok(hs)) = state.answer::<HeadState>(&key) {
+    if filled != Some((base.clone(), head.clone()))
+        && let Some(Ok(hs)) = state.answer::<HeadState>(&key)
+    {
         let text = templates::pr_text(&head, &hs.commits, template.as_deref());
-        let form = state.creating.forms.entry(route.clone()).or_default();
+        let form = state.forms.edit::<Form>(route);
         // Filled in as GitHub would, unless you've written.
         if form.untouched() {
             form.filled.clone_from(&text);
             form.text = text;
         }
         form.filled_for = Some((base, head));
-        state.shown_gen += 1;
     }
     cmds
 }
@@ -625,7 +595,7 @@ fn head_problem(state: &State, repo: &RepoId, form: &Form) -> Result<HeadState, 
 /// Asks whether to open the pull request as a draft.
 #[must_use]
 fn ask_create(state: &mut State, route: &Route) -> Vec<Cmd> {
-    let Some(form) = state.creating.forms.get(route) else {
+    let Some(form) = state.forms.get::<Form>(route) else {
         return Vec::new();
     };
     let Some(repo) = form_repo(route) else {
@@ -654,24 +624,18 @@ fn ask_create(state: &mut State, route: &Route) -> Vec<Cmd> {
         ),
         (format!("{commits}: “{title}”"), false),
     ];
-    let ask = Ask {
-        route: route.clone(),
-        title: format!("Open a pull request in {repo}?"),
-        facts,
-        choices: vec![
-            (
-                "Create pull request".into(),
-                Answer::Create { draft: false },
-            ),
-            (
-                "Create draft pull request".into(),
-                Answer::Create { draft: true },
-            ),
-        ],
-        selected: 0,
-        sending: false,
-        error: None,
-    };
+    let choices = vec![
+        (
+            "Create pull request".into(),
+            Answer::Create { draft: false },
+        ),
+        (
+            "Create draft pull request".into(),
+            Answer::Create { draft: true },
+        ),
+    ];
+    let title = format!("Open a pull request in {repo}?");
+    let ask = Ask::new(route.clone(), title, facts, choices);
     state.overlay = Some(Overlay::Ask(Box::new(ask)));
     Vec::new()
 }
@@ -734,15 +698,8 @@ fn ask_push(state: &mut State) -> Vec<Cmd> {
         _ if b.on_github.is_none() => facts.push((format!("GitHub has no {} yet", b.name), false)),
         _ => {}
     }
-    let ask = Ask {
-        route,
-        title: format!("Push {} to {}?", b.name, b.remote),
-        facts,
-        choices: vec![("Push".into(), Answer::Push)],
-        selected: 0,
-        sending: false,
-        error: None,
-    };
+    let title = format!("Push {} to {}?", b.name, b.remote);
+    let ask = Ask::new(route, title, facts, vec![("Push".into(), Answer::Push)]);
     state.overlay = Some(Overlay::Ask(Box::new(ask)));
     Vec::new()
 }
@@ -756,7 +713,7 @@ pub fn on_ask_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     let n = ask.choices.len().max(1);
     match key.code {
         KeyCode::Esc => state.overlay = None,
-        _ if ask.sending => {}
+        _ if ask.sent.sending => {}
         KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => ask.selected = (ask.selected + 1) % n,
         KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
             ask.selected = (ask.selected + n - 1) % n;
@@ -778,7 +735,7 @@ fn answer_ask(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
     if let Answer::Write(answer) = answer {
         return crate::writes::answer(state, route, answer);
     }
-    let Some(form) = state.creating.forms.get(route) else {
+    let Some(form) = state.forms.get::<Form>(route) else {
         return Vec::new();
     };
     let Some(repo) = form_repo(route).cloned() else {
@@ -812,7 +769,7 @@ fn answer_ask(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
             Submit { route, new }.into()
         }
     };
-    sending(state, true);
+    crate::forms::form_sending(state, route);
     work::start(work)
 }
 
@@ -833,31 +790,21 @@ impl Job for Push {
         let route = Route::Pulls(pulls::NewPr(repo.clone()));
         match result {
             Ok(()) => {
-                if matches!(&state.overlay, Some(Overlay::Ask(a)) if a.route == route) {
-                    state.overlay = None;
-                }
+                crate::forms::close_sender(state, &route);
                 state.info(format!("Pushed {branch}"));
                 // Compared again, now GitHub has it.
-                let Some(form) = state.creating.forms.get_mut(&route) else {
+                if state.forms.get::<Form>(&route).is_none() {
                     return Vec::new();
-                };
-                form.sending = false;
+                }
+                *state.forms.sent_mut(&route) = Sent::default();
+                let form = state.forms.edit::<Form>(&route);
                 form.filled_for = None;
                 let key = form.head_key(&repo);
                 key.map_or_else(Vec::new, |key| state.ensure(key, true))
             }
             Err(err) => {
-                if let Some(form) = state.creating.forms.get_mut(&route) {
-                    form.sending = false;
-                }
                 let text = format!("Couldn't push {branch}: {err}");
-                match &mut state.overlay {
-                    Some(Overlay::Ask(a)) if a.route == route => {
-                        a.sending = false;
-                        a.error = Some(text);
-                    }
-                    _ => state.error(text),
-                }
+                crate::forms::failed(state, &route, text);
                 Vec::new()
             }
         }
@@ -879,20 +826,12 @@ impl Job for Submit {
     /// not.
     fn done(self, state: &mut State, result: Result<u64, Failure>) -> Vec<Cmd> {
         let route = &self.route;
-        let ours = |o: &Option<Overlay>| match o {
-            Some(Overlay::Compose(c)) => c.target == ComposeTarget::Form(route.clone()),
-            Some(Overlay::Ask(a)) => a.route == *route,
-            _ => false,
-        };
         let Some(repo) = form_repo(route).cloned() else {
             return Vec::new();
         };
         match result {
             Ok(number) => {
-                state.creating.forms.remove(route);
-                if ours(&state.overlay) {
-                    state.overlay = None;
-                }
+                crate::forms::done::<Form>(state, route);
                 let (page, what) = match route {
                     Route::Pulls(pulls::NewPr(_)) => {
                         (Route::pr(PrRef { repo, number }), "pull request")
@@ -912,21 +851,7 @@ impl Job for Submit {
                     _ => "the issue",
                 };
                 let text = format!("GitHub didn't create {what}: {err}");
-                if let Some(form) = state.creating.forms.get_mut(route) {
-                    form.sending = false;
-                    form.error = Some(text.clone());
-                }
-                match &mut state.overlay {
-                    Some(Overlay::Compose(c)) if c.target == ComposeTarget::Form(route.clone()) => {
-                        c.sending = false;
-                        c.error = Some(text);
-                    }
-                    Some(Overlay::Ask(a)) if a.route == *route => {
-                        a.sending = false;
-                        a.error = Some(text);
-                    }
-                    _ => state.error(text),
-                }
+                crate::forms::failed(state, route, text);
                 Vec::new()
             }
         }
@@ -951,7 +876,7 @@ fn checkout(state: &mut State) -> Vec<Cmd> {
         Some(d) => start_checkout(state, pr.clone(), &d.clone()),
         None => {
             state.info(format!("Loading {pr}…"));
-            state.creating.checkout = Some(pr.clone());
+            state.checkout = Some(pr.clone());
             state.ensure(DataKey::Pr(pr), false)
         }
     }
@@ -960,7 +885,7 @@ fn checkout(state: &mut State) -> Vec<Cmd> {
 /// A pull request that was waiting to load before it's checked out.
 #[must_use]
 fn waiting_checkout(state: &mut State) -> Vec<Cmd> {
-    let Some(pr) = state.creating.checkout.clone() else {
+    let Some(pr) = state.checkout.clone() else {
         return Vec::new();
     };
     let Some(remote) = state.pr_remote(&pr) else {
@@ -969,12 +894,12 @@ fn waiting_checkout(state: &mut State) -> Vec<Cmd> {
     match (state.pr(&pr), &remote.error) {
         (Some(d), _) => {
             let d = d.clone();
-            state.creating.checkout = None;
+            state.checkout = None;
             start_checkout(state, pr, &d)
         }
         (None, Some(err)) if !remote.loading => {
             let text = format!("Couldn't load {pr}: {err}");
-            state.creating.checkout = None;
+            state.checkout = None;
             state.error(text);
             Vec::new()
         }
@@ -1018,7 +943,6 @@ pub fn follow_link(state: &mut State, link: &FormLink) -> Vec<Cmd> {
             if let Some(form) = here_mut(state) {
                 form.template = None;
             }
-            state.shown_gen += 1;
             Vec::new()
         }
         FormLink::Labels => open_pick(state, Pick::Labels),
@@ -1057,10 +981,10 @@ fn choose_template(state: &mut State, file: &str) -> Vec<Cmd> {
     let Some(repo) = form_repo(&route).cloned() else {
         return Vec::new();
     };
-    let State { creating, data, .. } = &mut *state;
-    let (Some(form), Some(d)) = (creating.forms.get_mut(&route), form_data(data, &repo)) else {
+    let Some(d) = form_data(&state.data, &repo) else {
         return Vec::new();
     };
+    let form = state.forms.edit::<Form>(&route);
     let template = (form.chooser.as_ref())
         .and_then(|c| c.templates.iter().find(|t| t.file == file))
         .cloned();
@@ -1081,7 +1005,6 @@ fn choose_template(state: &mut State, file: &str) -> Vec<Cmd> {
             .unwrap_or_default();
         form.filled = form.text.clone();
     }
-    state.shown_gen += 1;
     compose(state)
 }
 
@@ -1263,7 +1186,6 @@ pub fn pick(state: &mut State, picked: Picked) -> Vec<Cmd> {
         Picked::Base(name) => form.base = Some(name),
         Picked::Head(name) => form.head = Some(name),
     }
-    state.shown_gen += 1;
     follow(state)
 }
 
@@ -1295,7 +1217,7 @@ pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
         out.push(write);
         let why = match (pr, refused(state, repo, pr)) {
             (_, Some(why)) => Some(why),
-            (true, None) => head_problem(state, repo, form).err(),
+            (true, None) => head_problem(state, repo, &form).err(),
             (false, None) => templates::split(&form.text)
                 .0
                 .is_empty()

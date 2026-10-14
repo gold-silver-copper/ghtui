@@ -444,21 +444,15 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
             // GitHub asks first.
             let title = crate::ui::text::truncate(it.title(), 50);
             let restore = state.first_key(Action::ArchiveItem);
-            let confirm = crate::act::Confirm {
-                action,
-                about,
-                title: format!("Archive “{title}”?"),
-                facts: vec![(
-                    format!(
-                        "It leaves the project's views; {restore} on it under Archived restores it"
-                    ),
-                    false,
-                )],
-                choices: vec![("Archive".into(), change)],
-                selected: 0,
-                sending: false,
-                error: None,
-            };
+            let facts = vec![(
+                format!(
+                    "It leaves the project's views; {restore} on it under Archived restores it"
+                ),
+                false,
+            )];
+            let title = format!("Archive “{title}”?");
+            let choices = vec![("Archive".into(), change)];
+            let confirm = crate::act::Confirm::new(action, about, title, facts, choices);
             state.overlay = Some(crate::state::Overlay::Confirm(Box::new(confirm)));
             Vec::new()
         }

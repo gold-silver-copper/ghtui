@@ -234,8 +234,8 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                     .as_ref()
                     .map(|p| (p.start_line, p.original.as_slice(), p.suggested.as_slice())),
                 note: compose.note(),
-                error: compose.error.as_deref(),
-                sending: compose.sending,
+                error: compose.sent.error.as_deref(),
+                sending: compose.sent.sending,
                 save: match &compose.target {
                     crate::review::ComposeTarget::Reply { .. } => "post reply",
                     crate::review::ComposeTarget::Conversation { .. } => "post comment",
@@ -267,8 +267,8 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 pending: pending.len(),
                 on_github: dialog.on_github,
                 rejected,
-                error: dialog.error.as_deref(),
-                sending: dialog.sending,
+                error: dialog.sent.error.as_deref(),
+                sending: dialog.sent.sending,
                 quick: dialog.quick,
             }
             .render(area, buf);
@@ -282,7 +282,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 facts: &confirm.facts,
                 choices: &choices,
                 selected: confirm.selected,
-                error: confirm.error.as_deref(),
+                error: confirm.sent.error.as_deref(),
                 sending: busy.as_deref(),
             }
             .render(area, buf);
@@ -295,7 +295,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 facts: &ask.facts,
                 choices: &choices,
                 selected: ask.selected,
-                error: ask.error.as_deref(),
+                error: ask.sent.error.as_deref(),
                 sending: ask.busy(),
             }
             .render(area, buf);

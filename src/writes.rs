@@ -6,7 +6,6 @@
 //! questions.
 
 use crate::route::{Route, gists, releases, wiki};
-use std::collections::HashMap;
 
 use crate::api::watch::Watched;
 use crate::ui::overlays::PaletteItem;
@@ -26,21 +25,6 @@ pub const ACTIONS: [Action; 6] = [
     Action::NewWikiPage,
     Action::Lists,
 ];
-
-/// The forms being written.
-#[derive(Debug, Default)]
-pub struct Writing {
-    /// New and edited releases, by their form's page: leaving the form
-    /// keeps it.
-    pub releases: HashMap<Route, crate::release::Form>,
-    /// New and edited gists, by their form's page.
-    pub gists: HashMap<Route, crate::gist::Form>,
-    /// New and edited wiki pages, by their form's page.
-    pub wikis: HashMap<Route, crate::wiki::form::Form>,
-    /// Labels, milestones, branches and tags, forks, new repositories
-    /// and files.
-    pub housekeeping: crate::housekeeping::Housekeeping,
-}
 
 // ---- where they work -------------------------------------------------------------
 
@@ -219,12 +203,12 @@ impl Text {
         }
     }
 
-    fn route(&self) -> Route {
+    pub fn route(&self) -> &Route {
         match self {
             Text::Release(route)
             | Text::GistFile(route, _)
             | Text::Wiki(route)
-            | Text::Housekeeping(route) => route.clone(),
+            | Text::Housekeeping(route) => route,
         }
     }
 }
@@ -262,7 +246,6 @@ pub fn keep_text(state: &mut State, text: &Text, written: String) {
         Text::Wiki(route) => crate::wiki::form::keep_text(state, route, written),
         Text::Housekeeping(route) => crate::housekeeping::keep_text(state, route, written),
     }
-    state.shown_gen += 1;
 }
 
 /// ctrl-s in the composer: keeps its text, and saves the form.
@@ -273,7 +256,7 @@ pub fn save(state: &mut State) -> Vec<Cmd> {
     {
         let (text, written) = (text.clone(), c.text());
         keep_text(state, &text, written);
-        if state.route() != Some(&text.route()) {
+        if state.route() != Some(text.route()) {
             return Vec::new();
         }
     }
@@ -320,54 +303,6 @@ pub fn describe(link: &WriteLink) -> &'static str {
         WriteLink::Save => "Save it",
         WriteLink::Asset(_) => "Save the asset",
         WriteLink::Housekeeping(row) => crate::housekeeping::describe(*row),
-    }
-}
-
-/// Says `text` where it'll be seen: in the composer or the question when
-/// one's open, else in the status bar.
-pub(crate) fn say(state: &mut State, text: String) {
-    match &mut state.overlay {
-        Some(Overlay::Compose(c)) => {
-            c.sending = false;
-            c.error = Some(text);
-        }
-        Some(Overlay::Ask(a)) => {
-            a.sending = false;
-            a.error = Some(text);
-        }
-        _ => state.error(text),
-    }
-}
-
-/// Marks the composer or the question that sent something as waiting
-/// for GitHub.
-pub(crate) fn sending(state: &mut State) {
-    match &mut state.overlay {
-        Some(Overlay::Compose(c)) => {
-            c.sending = true;
-            c.error = None;
-        }
-        Some(Overlay::Ask(a)) => {
-            a.sending = true;
-            a.error = None;
-        }
-        _ => {}
-    }
-    state.shown_gen += 1;
-}
-
-/// Closes the composer or question that sent something to `route`'s
-/// form, once it's done.
-pub(crate) fn close_sender(state: &mut State, route: &Route) {
-    let ours = match &state.overlay {
-        Some(Overlay::Compose(c)) => {
-            matches!(&c.target, crate::review::ComposeTarget::Write(t) if t.route() == *route)
-        }
-        Some(Overlay::Ask(a)) => a.route == *route,
-        _ => false,
-    };
-    if ours {
-        state.overlay = None;
     }
 }
 
@@ -575,7 +510,7 @@ pub fn answer(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
         Answer::DeleteRelease => crate::release::delete(state, route),
         Answer::DeleteTag => crate::release::delete_tag(state, route),
         Answer::KeepTag => {
-            close_sender(state, route);
+            crate::forms::close_sender(state, route);
             if let Route::Releases(releases::Release { tag, .. }) = route {
                 state.info(format!("Kept the tag {tag}"));
             }
@@ -601,15 +536,8 @@ pub(crate) fn ask(
     let choices = (choices.into_iter())
         .map(|(label, a)| (label, crate::create::Answer::Write(a)))
         .collect();
-    state.overlay = Some(Overlay::Ask(Box::new(crate::create::Ask {
-        route,
-        title,
-        facts,
-        choices,
-        selected: 0,
-        sending: false,
-        error: None,
-    })));
+    let ask = crate::create::Ask::new(route, title, facts, choices);
+    state.overlay = Some(Overlay::Ask(Box::new(ask)));
 }
 
 /// After GitHub's data arrives: brings the form on screen up to date.

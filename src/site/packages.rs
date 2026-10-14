@@ -105,7 +105,7 @@ pub fn delete(state: &mut State, route: &Route, id: u64) -> Vec<Cmd> {
     };
     let name = (detail(state, at).and_then(|d| d.versions.items.iter().find(|v| v.id == id)))
         .map_or_else(|| id.to_string(), |v| v.name.clone());
-    crate::writes::sending(state);
+    crate::forms::sending(state);
     let delete = DeleteVersion {
         at: at.clone(),
         id,
@@ -130,7 +130,7 @@ impl Job for DeleteVersion {
         };
         match result {
             Ok(()) => {
-                crate::writes::close_sender(state, &route);
+                crate::forms::close_sender(state, &route);
                 state.info(format!("Deleted version {} of {}", d.name, d.at.name));
                 let page = Route::Site(Page::Package {
                     at: d.at.clone(),
@@ -144,7 +144,7 @@ impl Job for DeleteVersion {
                 }
             }
             Err(why) => {
-                crate::writes::say(state, format!("GitHub didn't delete the version: {why}"));
+                crate::forms::say(state, format!("GitHub didn't delete the version: {why}"));
                 Vec::new()
             }
         }

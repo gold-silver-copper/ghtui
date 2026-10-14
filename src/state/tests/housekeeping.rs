@@ -479,7 +479,10 @@ fn a_file_is_edited_and_committed_on_a_new_branch() {
     assert_eq!(asked(&s).title, "Open a pull request for octocat-patch-1?");
     press(&mut s, "<Enter>");
     assert_eq!(s.route(), Some(&Route::Pulls(pulls::NewPr(ghtui()))));
-    let pr = &s.creating.forms[&Route::Pulls(pulls::NewPr(ghtui()))];
+    let pr = (s
+        .forms
+        .get::<crate::create::Form>(&Route::Pulls(pulls::NewPr(ghtui()))))
+    .unwrap();
     assert_eq!(pr.head.as_deref(), Some("octocat-patch-1"));
 }
 
@@ -511,7 +514,11 @@ fn a_file_changed_meanwhile_keeps_your_text() {
     fixtures::done(&mut s, commit, Err(fixtures::failure(why)));
     assert_eq!(s.route(), Some(&form));
     assert!(page_text(&s).contains("changed on GitHub since you opened it"));
-    let kept = &s.writing.housekeeping.forms[&form].text;
+    let kept = &s
+        .forms
+        .get::<crate::housekeeping::Form>(&form)
+        .unwrap()
+        .text;
     assert!(kept.starts_with("Mine. "), "{kept}");
 }
 

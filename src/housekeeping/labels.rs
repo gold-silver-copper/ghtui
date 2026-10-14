@@ -9,8 +9,8 @@ use crate::ui::page::Page;
 use crate::ui::pages::{Mark, WriteFormView};
 
 use super::{
-    Chosen, Expected, Field, Form, FormOf, Subject, ask, expect, failed, form, form_mut, form_row,
-    item, refused, selected,
+    Chosen, Expected, Field, Form, FormOf, Subject, ask, expect, form, form_mut, form_row, item,
+    refused, selected,
 };
 use crate::data::DataKey;
 use crate::keymap::Action;
@@ -127,7 +127,6 @@ pub(super) fn follow(
         }
         None => f.set(Field::Colour, colour),
     }
-    state.shown_gen += 1;
     // A new label starts with its name.
     if name.is_none() && state.overlay.is_none() {
         return super::open_field(state, route, Field::Name);
@@ -203,13 +202,13 @@ pub(super) fn submit(
     was: Option<&str>,
 ) -> Vec<Cmd> {
     if let Some(why) = refused(state, repo, "Changing labels") {
-        crate::writes::say(state, why);
+        crate::forms::say(state, why);
         return Vec::new();
     }
-    let change = match change(form(state, route)) {
+    let change = match change(&form(state, route)) {
         Ok(c) => c,
         Err(why) => {
-            crate::writes::say(state, why);
+            crate::forms::say(state, why);
             return Vec::new();
         }
     };
@@ -218,14 +217,13 @@ pub(super) fn submit(
             .any(|l| l.name.eq_ignore_ascii_case(&change.name) && Some(l.name.as_str()) != was)
     });
     if taken {
-        crate::writes::say(
+        crate::forms::say(
             state,
             format!("{repo} has a label named {} already", change.name),
         );
         return Vec::new();
     }
-    form_mut(state, route).sending = true;
-    crate::writes::sending(state);
+    crate::forms::form_sending(state, route);
     state.info(format!("Saving the label {}…", change.name));
     work::start(Save {
         repo: repo.clone(),
@@ -262,7 +260,7 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
 
 #[must_use]
 pub(super) fn delete(state: &mut State, repo: RepoId, name: String) -> Vec<Cmd> {
-    crate::writes::sending(state);
+    crate::forms::sending(state);
     work::start(Save {
         repo,
         was: Some(name),
@@ -294,12 +292,12 @@ impl Job for Save {
         });
         let page = Route::Issues(issues::Labels(repo.clone()));
         if let Err(why) = result {
-            failed(state, &form, &why);
+            crate::forms::failed(state, &form, why.to_string());
             return Vec::new();
         }
-        crate::writes::close_sender(state, &page);
-        crate::writes::close_sender(state, &form);
-        state.writing.housekeeping.forms.remove(&form);
+        crate::forms::close_sender(state, &page);
+        crate::forms::close_sender(state, &form);
+        state.forms.take::<Form>(&form);
         let said = match (&change, &was) {
             (Some(c), None) => format!("Created the label {}", c.name),
             (Some(c), Some(_)) => format!("Saved the label {}", c.name),
@@ -345,7 +343,7 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route) {
         None => format!("New label in {repo}"),
     };
     let mut status = Vec::new();
-    if let Ok(c) = change(f) {
+    if let Ok(c) = change(&f) {
         status.push((format!("Shows as  {}  (#{})", c.name, c.color), Mark::Fine));
     }
     let save_key = state.first_key(Action::Create);
@@ -353,18 +351,18 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route) {
         heading,
         base: None,
         rows: vec![
-            form_row(f, Field::Name, "Label name"),
-            form_row(f, Field::Description, "Description (optional)"),
-            form_row(f, Field::Colour, "#rrggbb"),
+            form_row(&f, Field::Name, "Label name"),
+            form_row(&f, Field::Description, "Description (optional)"),
+            form_row(&f, Field::Colour, "#rrggbb"),
         ],
         status,
         boxes: Vec::new(),
         after: Vec::new(),
         write: "",
-        button: super::button(&route_of(route), f),
+        button: super::button(&route_of(route), &f),
         save_key: &save_key,
         why_not: super::problem(state, route, &route_of(route)),
-        error: f.error.as_deref(),
+        error: state.forms.sent(route).error.as_deref(),
     };
     crate::ui::pages::write_form(page, &view);
 }

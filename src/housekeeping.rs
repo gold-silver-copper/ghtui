@@ -13,7 +13,8 @@
 //! GitHub until it shows the change, as [`crate::writes`] does.
 
 use crate::route::{Family, Route, Target, Url, code, issues};
-use std::collections::{BTreeMap, HashMap};
+use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::api::browse::Results;
@@ -329,9 +330,9 @@ pub struct Form {
     pub text: String,
     /// Filled in from what GitHub has, once.
     pub started: bool,
-    pub sending: bool,
-    pub error: Option<String>,
 }
+
+impl crate::forms::Fields for Form {}
 
 impl Form {
     pub fn get(&self, field: Field) -> &str {
@@ -355,8 +356,6 @@ impl Form {
 /// What housekeeping keeps between keys.
 #[derive(Debug, Default)]
 pub struct Housekeeping {
-    /// The forms being written, by their page: leaving one keeps it.
-    pub forms: HashMap<Route, Form>,
     /// What the question open is about.
     pub asked: Option<Subject>,
     /// The branch to ask about deleting once GitHub says whether its
@@ -386,11 +385,6 @@ pub enum Subject {
     Propose(RepoId, String, Option<String>),
 }
 
-fn blank() -> &'static Form {
-    static BLANK: std::sync::LazyLock<Form> = std::sync::LazyLock::new(Form::default);
-    &BLANK
-}
-
 /// The form on screen: its page and what it's of.
 fn here(state: &State) -> Option<(Route, FormOf)> {
     match state.route()? {
@@ -399,17 +393,12 @@ fn here(state: &State) -> Option<(Route, FormOf)> {
     }
 }
 
-pub(crate) fn form<'a>(state: &'a State, route: &Route) -> &'a Form {
-    (state.writing.housekeeping.forms.get(route)).unwrap_or_else(|| blank())
+pub(crate) fn form<'a>(state: &'a State, route: &Route) -> Cow<'a, Form> {
+    state.forms.shown(route)
 }
 
 pub(crate) fn form_mut<'a>(state: &'a mut State, route: &Route) -> &'a mut Form {
-    state
-        .writing
-        .housekeeping
-        .forms
-        .entry(route.clone())
-        .or_default()
+    state.forms.edit(route)
 }
 
 /// Why you can't change `repo`'s labels, milestones, branches, tags or
@@ -435,7 +424,7 @@ fn open(state: &mut State, of: FormOf) -> Vec<Cmd> {
     if state.route() == Some(&route) {
         return compose(state);
     }
-    state.writing.housekeeping.forms.remove(&route);
+    state.forms.take::<Form>(&route);
     let mut cmds = file.map_or_else(Vec::new, |file| state.ensure(file, true));
     cmds.extend(state.push(route));
     cmds.extend(follow(state));
@@ -588,8 +577,8 @@ fn new_here(state: &mut State, route: Route) -> Vec<Cmd> {
 #[must_use]
 fn submit(state: &mut State, of: &FormOf) -> Vec<Cmd> {
     let route = Route::Housekeeping(of.clone());
-    if form(state, &route).sending {
-        crate::writes::say(state, "It's being sent".into());
+    if state.forms.sent(&route).sending {
+        crate::forms::say(state, "It's being sent".into());
         return Vec::new();
     }
     match of {
@@ -691,7 +680,7 @@ fn page_doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
 /// A form's rows in the menu: write its text, and make or save it.
 fn form_doables(state: &State, route: &Route, of: &FormOf, out: &mut Vec<Doable>) {
     let f = form(state, route);
-    let busy = f.sending.then(|| "it's being sent".to_owned());
+    let busy = (state.forms.sent(route).sending).then(|| "it's being sent".to_owned());
     if matches!(
         of,
         FormOf::Milestone { .. }
@@ -709,7 +698,13 @@ fn form_doables(state: &State, route: &Route, of: &FormOf, out: &mut Vec<Doable>
         ));
     }
     let why = busy.or_else(|| problem(state, route, of));
-    out.push(row("This page", Action::Create, button(of, f), "save", why));
+    out.push(row(
+        "This page",
+        Action::Create,
+        button(of, &f),
+        "save",
+        why,
+    ));
 }
 
 /// What the form's button says.
@@ -743,13 +738,13 @@ fn problem(state: &State, route: &Route, of: &FormOf) -> Option<String> {
     let f = form(state, route);
     match of {
         FormOf::Label { repo, .. } => {
-            refused(state, repo, "Changing labels").or_else(|| labels::change(f).err())
+            refused(state, repo, "Changing labels").or_else(|| labels::change(&f).err())
         }
         FormOf::Milestone { repo, .. } => {
-            refused(state, repo, "Changing milestones").or_else(|| milestones::change(f).err())
+            refused(state, repo, "Changing milestones").or_else(|| milestones::change(&f).err())
         }
-        FormOf::Fork(repo) => repos::fork_problem(state, repo, f),
-        FormOf::NewRepo => repos::repo_problem(f),
+        FormOf::Fork(repo) => repos::fork_problem(state, repo, &f),
+        FormOf::NewRepo => repos::repo_problem(&f),
         FormOf::File { .. } => files::problem(state, route, of),
     }
 }
@@ -965,7 +960,7 @@ pub fn compose(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     };
     let f = form(state, &route);
-    if f.sending {
+    if state.forms.sent(&route).sending {
         state.info("It's being sent");
         return Vec::new();
     }
@@ -983,7 +978,7 @@ pub fn compose(state: &mut State) -> Vec<Cmd> {
         }
     }
     let text = f.text.clone();
-    state.shown_gen += 1;
+    state.forms.touch(&route);
     let target = crate::review::ComposeTarget::Write(crate::writes::Text::Housekeeping(route));
     let cmds = state.compose(target, &text);
     if let Some(crate::state::Overlay::Compose(c)) = &mut state.overlay {
@@ -994,9 +989,8 @@ pub fn compose(state: &mut State) -> Vec<Cmd> {
 }
 
 pub fn keep_text(state: &mut State, route: &Route, text: String) {
-    let f = form_mut(state, route);
-    f.text = text;
-    f.error = None;
+    form_mut(state, route).text = text;
+    state.forms.sent_mut(route).error = None;
 }
 
 /// The composer's title.
@@ -1171,7 +1165,6 @@ fn check(route: &Route, field: Field, value: &str) -> Option<String> {
 pub fn open_field(state: &mut State, route: &Route, field: Field) -> Vec<Cmd> {
     if field.toggles() {
         form_mut(state, route).toggle(field);
-        state.shown_gen += 1;
         return Vec::new();
     }
     crate::writes::open_picker(
@@ -1186,9 +1179,8 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
         Chosen::Field(route, field, value) => {
             let f = form_mut(state, &route);
             f.set(field, value);
-            f.error = None;
             let blank = f.text.is_empty();
-            state.shown_gen += 1;
+            state.forms.sent_mut(&route).error = None;
             // A new file, once named, is written, as on GitHub.
             let new_file = matches!(
                 &route,
@@ -1279,7 +1271,7 @@ fn ask(
     let Some(route) = state.route().cloned() else {
         return;
     };
-    state.writing.housekeeping.asked = subject;
+    state.housekeeping.asked = subject;
     let choices = (choices.into_iter())
         .map(|(label, a)| (label, crate::writes::Answer::Housekeeping(a)))
         .collect();
@@ -1289,7 +1281,7 @@ fn ask(
 /// The question about `route` was answered.
 #[must_use]
 pub fn answer(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
-    let subject = state.writing.housekeeping.asked.clone();
+    let subject = state.housekeeping.asked.clone();
     match (answer, subject) {
         (Answer::Commit, _) => files::commit(state, route),
         (Answer::Delete, Some(Subject::Label(repo, name))) => labels::delete(state, repo, name),
@@ -1306,7 +1298,7 @@ pub fn answer(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
             }),
         ) => refs::send(state, repo, kind, name, from),
         (Answer::Clone, Some(Subject::Clone { url, dir })) => {
-            crate::writes::sending(state);
+            crate::forms::sending(state);
             crate::work::start(repos::CloneTo { url, dir })
         }
         (Answer::Propose, Some(Subject::Propose(repo, branch, base))) => {
@@ -1350,16 +1342,6 @@ pub struct FileWrite {
     /// The tip GitHub's API makes it on (a new branch's start).
     pub head: String,
     pub clone: Option<Clone>,
-}
-
-/// Says `why` where it'll be seen, and marks the form unsent.
-fn failed(state: &mut State, route: &Route, why: &impl std::fmt::Display) {
-    let why = why.to_string();
-    if let Some(f) = state.writing.housekeeping.forms.get_mut(route) {
-        f.sending = false;
-        f.error = Some(why.clone());
-    }
-    crate::writes::say(state, why);
 }
 
 /// The form's rows for the page, each set in a picker.

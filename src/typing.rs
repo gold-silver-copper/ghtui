@@ -29,14 +29,14 @@ pub fn on_paste(state: &mut State, text: &str) -> Vec<Cmd> {
     };
     match &mut state.overlay {
         Some(Overlay::Compose(c)) => {
-            if !c.sending {
-                (c.discard_armed, c.error) = (None, None);
+            if !c.sent.sending {
+                (c.discard_armed, c.sent.error) = (None, None);
                 c.input.insert_str(&text);
             }
         }
         Some(Overlay::Submit(d)) => {
-            if !d.sending {
-                (d.discard_armed, d.error) = (None, None);
+            if !d.sent.sending {
+                (d.discard_armed, d.sent.error) = (None, None);
                 d.input.insert_str(&text);
             }
         }

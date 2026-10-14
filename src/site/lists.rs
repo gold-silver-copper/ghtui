@@ -335,7 +335,7 @@ pub fn delete(state: &mut State, route: &Route) -> Vec<Cmd> {
     let Ok(list) = yours(state, login).map(|l| l.list.clone()) else {
         return Vec::new();
     };
-    crate::writes::sending(state);
+    crate::forms::sending(state);
     let delete = DeleteList {
         login: login.clone(),
         slug: slug.clone(),
@@ -361,7 +361,7 @@ impl Job for DeleteList {
         });
         match result {
             Ok(()) => {
-                crate::writes::close_sender(state, &route);
+                crate::forms::close_sender(state, &route);
                 state.info(format!("Deleted the list “{}”", d.name));
                 if state.route() != Some(&route) {
                     return Vec::new();
@@ -378,7 +378,7 @@ impl Job for DeleteList {
                 state.replace(stars, true, None)
             }
             Err(why) => {
-                crate::writes::say(state, refused("delete the list", &why));
+                crate::forms::say(state, refused("delete the list", &why));
                 Vec::new()
             }
         }

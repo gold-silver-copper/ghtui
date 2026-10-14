@@ -18,6 +18,7 @@ use ratatui_textarea::TextArea;
 
 use crate::api::change::Change;
 use crate::diff_screen::{self, DiffOf, DiffScreen, LastReview};
+use crate::forms::Sent;
 use crate::keymap::Action;
 use crate::picker::{self, PickItem};
 use crate::state::{Api, Cmd, Git, OutdatedThread, Overlay, Screen, State};
@@ -75,6 +76,17 @@ pub enum ComposeTarget {
     Setting(crate::settings::Form),
 }
 
+impl ComposeTarget {
+    /// The form's page, for a form's text.
+    pub fn form(&self) -> Option<&crate::route::Route> {
+        match self {
+            ComposeTarget::Form(route) => Some(route),
+            ComposeTarget::Write(text) => Some(text.route()),
+            _ => None,
+        }
+    }
+}
+
 /// A suggested change and what it replaces.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Preview {
@@ -87,9 +99,7 @@ pub struct Compose {
     pub target: ComposeTarget,
     pub input: TextArea<'static>,
     pub preview: Option<Preview>,
-    /// A reply is being posted.
-    pub sending: bool,
-    pub error: Option<String>,
+    pub sent: Sent,
     /// The key (esc or ctrl-c) pressed once with text in the editor: only
     /// that key, pressed again, throws the text away.
     pub discard_armed: Option<&'static str>,
@@ -105,8 +115,7 @@ impl Compose {
             target,
             input: editor(theme, text),
             preview: None,
-            sending: false,
-            error: None,
+            sent: Sent::default(),
             discard_armed: None,
             completing: crate::typing::Completing::default(),
             saved: None,
@@ -205,8 +214,7 @@ pub struct SubmitDialog {
     pub pr: PrRef,
     pub event: ReviewEvent,
     pub input: TextArea<'static>,
-    pub sending: bool,
-    pub error: Option<String>,
+    pub sent: Sent,
     /// Enter submits: opened to approve from the pull request's page.
     pub quick: bool,
     /// Your saved review (its drafts go with it), read from disk when the
@@ -229,8 +237,7 @@ impl SubmitDialog {
             pr,
             event: ReviewEvent::Comment,
             input,
-            sending: false,
-            error: None,
+            sent: Sent::default(),
             quick: false,
             saved: None,
             discard_armed: None,
@@ -569,9 +576,9 @@ pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcom
         });
         cmds.extend(state.load_visible(false));
     } else if let Some(Overlay::Submit(dialog)) = &mut state.overlay {
-        dialog.sending = false;
+        dialog.sent.sending = false;
         dialog.on_github = outcome.on_github.or(dialog.on_github);
-        dialog.error = Some(match (&outcome.error, outcome.rejected.len()) {
+        dialog.sent.error = Some(match (&outcome.error, outcome.rejected.len()) {
             (Some(err), _) => err.clone(),
             (None, n) => format!(
                 "GitHub rejected {n} comment{}; they're marked in the diff. The review stays pending on GitHub until you submit again.",
@@ -989,7 +996,7 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     let Some(Overlay::Compose(compose)) = &mut state.overlay else {
         return Vec::new();
     };
-    if compose.sending {
+    if compose.sent.sending {
         return Vec::new();
     }
     if let Some(cmds) = crate::site::replies::on_key(state, key) {
@@ -1028,7 +1035,7 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         KeyCode::Char('s') if ctrl => return save_compose(state),
         _ => {
             compose.discard_armed = None;
-            compose.error = None;
+            compose.sent.error = None;
             compose.completing.selected = 0;
             compose.input.input(key);
         }
@@ -1041,11 +1048,11 @@ pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 /// goes ahead. Each key warns for itself, so esc then ctrl-c still asks.
 pub(crate) fn may_discard(state: &mut State, key: &'static str, verb: &str) -> bool {
     let (text, armed, error, what) = match &mut state.overlay {
-        Some(Overlay::Compose(c)) => (c.text(), &mut c.discard_armed, &mut c.error, "comment"),
+        Some(Overlay::Compose(c)) => (c.text(), &mut c.discard_armed, &mut c.sent.error, "comment"),
         Some(Overlay::Submit(d)) => (
             d.input.lines().join("\n"),
             &mut d.discard_armed,
-            &mut d.error,
+            &mut d.sent.error,
             "summary",
         ),
         _ => return true,
@@ -1071,12 +1078,12 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
     }
     let body = compose.text();
     if body.trim().is_empty() {
-        compose.error = Some("Write something first".into());
+        compose.sent.error = Some("Write something first".into());
         return Vec::new();
     }
     let target = compose.target.clone();
     if let ComposeTarget::Edit(e) = target {
-        compose.sending = true;
+        compose.sent.sending = true;
         let edit = crate::api::edit::Edit::Body {
             of: e.of,
             id: e.id,
@@ -1091,7 +1098,7 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
         return crate::create::submit(state);
     }
     if let ComposeTarget::Discussion(w) = target {
-        compose.sending = true;
+        compose.sent.sending = true;
         return crate::discuss::send(&w, body);
     }
     if let ComposeTarget::NewDiscussion(s) = &target {
@@ -1103,17 +1110,17 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
     if let ComposeTarget::ProjectDraft(d) = target {
         return match d.send(&body) {
             Ok(cmds) => {
-                compose.sending = true;
+                compose.sent.sending = true;
                 cmds
             }
             Err(why) => {
-                compose.error = Some(why);
+                compose.sent.error = Some(why);
                 Vec::new()
             }
         };
     }
     if let ComposeTarget::Conversation { subject_id, .. } = target {
-        compose.sending = true;
+        compose.sent.sending = true;
         let change = Change::Comment {
             subject: subject_id,
             body,
@@ -1121,7 +1128,7 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
         return vec![crate::act::send(change, crate::act::By::Compose)];
     }
     if let ComposeTarget::Commit { repo, oid } = target {
-        compose.sending = true;
+        compose.sent.sending = true;
         let change = Change::CommitComment { repo, oid, body };
         return vec![crate::act::send(change, crate::act::By::Compose)];
     }
@@ -1134,7 +1141,7 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
     match target {
         ComposeTarget::Reply { thread_id } => {
             if let Some(Overlay::Compose(compose)) = &mut state.overlay {
-                compose.sending = true;
+                compose.sent.sending = true;
             }
             let reply = Change::Reply {
                 thread: thread_id,
@@ -1187,7 +1194,7 @@ pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     let Some(Overlay::Submit(dialog)) = &mut state.overlay else {
         return Vec::new();
     };
-    if dialog.sending {
+    if dialog.sent.sending {
         return Vec::new();
     }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -1209,7 +1216,7 @@ pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         KeyCode::Enter if dialog.quick => return submit(state),
         _ => {
             dialog.discard_armed = None;
-            dialog.error = None;
+            dialog.sent.error = None;
             dialog.input.input(key);
         }
     }
@@ -1246,11 +1253,11 @@ fn submit(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     };
     let (None, Some(drafts), Some(head)) = (problem, drafts, head) else {
-        dialog.error = problem.map(Into::into);
+        dialog.sent.error = problem.map(Into::into);
         return Vec::new();
     };
-    dialog.sending = true;
-    dialog.error = None;
+    dialog.sent.sending = true;
+    dialog.sent.error = None;
     vec![Cmd::Api(Api::SubmitReview {
         pr,
         head,
