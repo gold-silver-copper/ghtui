@@ -765,6 +765,19 @@ fn given<'a>(found: &'a [(&str, String)], name: &str, default: &'a str) -> &'a s
         .map_or(default, |(_, v)| v.as_str())
 }
 
+/// A form's text read against its `lines`: each field's value, or what
+/// it was in `lines` when it isn't written.
+fn read(text: &str, lines: Vec<(&'static str, String)>) -> Result<impl Fn(&str) -> String, String> {
+    let names: Vec<&'static str> = lines.iter().map(|(n, _)| *n).collect();
+    let found = fields(text, &names)?;
+    Ok(move |name: &str| {
+        let default = (lines.iter())
+            .find(|(n, _)| *n == name)
+            .map_or("", |(_, v)| v.as_str());
+        given(&found, name, default).to_owned()
+    })
+}
+
 fn list(value: &str) -> Vec<String> {
     (value.split(','))
         .map(str::trim)
@@ -775,15 +788,7 @@ fn list(value: &str) -> Vec<String> {
 
 /// A rule from the form's text; what isn't written stays as in `base`.
 pub fn parse_rule(text: &str, base: &RuleForm) -> Result<RuleForm, String> {
-    let names: Vec<&'static str> = rule_lines(base).iter().map(|(n, _)| *n).collect();
-    let found = fields(text, &names)?;
-    let lines = rule_lines(base);
-    let get = |name: &str| {
-        let default = (lines.iter())
-            .find(|(n, _)| *n == name)
-            .map_or("", |(_, v)| v.as_str());
-        given(&found, name, default).to_owned()
-    };
+    let get = read(text, rule_lines(base))?;
     let on = |name: &str| flag(name, &get(name));
     let pattern = get(PATTERN);
     if pattern.is_empty() {
@@ -849,15 +854,7 @@ pub fn hook_text(h: &HookForm) -> String {
 }
 
 pub fn parse_hook(text: &str, base: &HookForm) -> Result<HookForm, String> {
-    let names = [URL, CONTENT, SECRET, SSL, EVENTS, ACTIVE];
-    let found = fields(text, &names)?;
-    let lines = hook_lines(base);
-    let get = |name: &str| {
-        let default = (lines.iter())
-            .find(|(n, _)| *n == name)
-            .map_or("", |(_, v)| v.as_str());
-        given(&found, name, default).to_owned()
-    };
+    let get = read(text, hook_lines(base))?;
     let url = get(URL);
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err(format!(
