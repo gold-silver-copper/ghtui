@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::route::app;
+use crate::route::code;
 
 #[test]
 fn home_selects_the_first_row_and_opens_it() {
@@ -235,7 +236,7 @@ fn going_back_home_fetches_cached_sections() {
     let (value, fetched_at) = (Data::Search(Box::new(mine(1, 1))), 0);
     let cached = Remote::cached(Some(crate::store::Cached { value, fetched_at }));
     state.data.insert(key.clone(), cached);
-    let _ = state.start_at(Target::Page(Route::Repo(ghtui())).into());
+    let _ = state.start_at(Target::Page(Route::Code(code::Repo(ghtui()))).into());
     let cmds = state.back();
     assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
 }

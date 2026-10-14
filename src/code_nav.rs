@@ -6,6 +6,7 @@
 //! used (`gR`). GitHub's code search is asked only when there's no clone
 //! to read, or it can't be read in time.
 
+use crate::route::code;
 use std::time::Duration;
 
 use crate::api::browse::Blob;
@@ -142,12 +143,12 @@ fn no_symbols(path: &str) -> String {
 fn here(state: &State) -> Result<Here, String> {
     match state.screen() {
         Screen::Page(p) => {
-            let (Route::Blob {
+            let (Route::Code(code::Blob {
                 repo, rev, path, ..
-            }
-            | Route::Blame {
+            })
+            | Route::Code(code::Blame {
                 repo, rev, path, ..
-            }) = &p.route
+            })) = &p.route
             else {
                 return Err("Symbols are a file's: open one, or Files changed".to_owned());
             };
@@ -394,12 +395,12 @@ pub fn answered(state: &mut State, ask: &Ask, answer: Result<Answer, String>) ->
         if p.path == ask.path {
             return Choice::Line(p.line);
         }
-        let route = Route::Blob {
+        let route = Route::Code(code::Blob {
             repo: ask.repo.clone(),
             rev: ask.rev.clone(),
             path: p.path.clone(),
             lines: Some((p.line, p.line)),
-        };
+        });
         Choice::Go(Target::Page(route).into())
     };
     let title = match &ask.want {

@@ -1,6 +1,7 @@
 //! Copying links.
 
 use super::*;
+use crate::route::code;
 
 impl State {
     /// The web address under the cursor: in the word under it, else the
@@ -26,20 +27,20 @@ impl State {
     pub fn here_url(&self) -> String {
         // Lines selected in a file: their range.
         if let Screen::Page(p) = self.screen()
-            && let Route::Blob {
+            && let Route::Code(code::Blob {
                 repo, rev, path, ..
-            } = &p.route
+            }) = &p.route
             && let (Some(a), Some(b)) = (
                 p.range.and_then(|i| p.line_of(i)),
                 p.selected.and_then(|i| p.line_of(i)),
             )
         {
-            let route = Route::Blob {
+            let route = Route::Code(code::Blob {
                 repo: repo.clone(),
                 rev: rev.clone(),
                 path: path.clone(),
                 lines: Some((a.min(b), a.max(b))),
-            };
+            });
             return route.url();
         }
         let link = match self.screen() {

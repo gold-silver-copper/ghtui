@@ -1,4 +1,5 @@
 use super::*;
+use crate::route::code;
 
 /// Two routes to tell tabs apart by.
 fn issue(n: u64) -> Route {
@@ -124,11 +125,11 @@ fn a_tab_from_a_diff_link_reopens_on_it() {
 /// reopens on that branch, not on `feature` with `x` as a path.
 #[test]
 fn a_tab_on_a_slashed_branch_reopens_on_it() {
-    let tree = Route::Tree {
+    let tree = Route::Code(code::Tree {
         repo: RepoId::new("o", "r"),
         rev: "feature/x".into(),
         path: "src".into(),
-    };
+    });
     let mut s = state();
     let _ = s.push(tree.clone());
     let urls = s.tab_urls();
@@ -184,12 +185,12 @@ fn plain_links_open_the_branch_github_names() {
     assert_eq!(fetches(s.go(Dest::from_url(url))), vec![fetch(key.clone())]);
     let depth = s.screens.len();
     let cmds = fetched(&mut s, key, Data::RefIn(Some("feature/x".into())));
-    let file = Route::Blob {
+    let file = Route::Code(code::Blob {
         repo: ghtui(),
         rev: "feature/x".into(),
         path: "src/lib.rs".into(),
         lines: Some((2, 2)),
-    };
+    });
     assert_eq!(route(&s), file);
     assert_eq!(s.screens.len(), depth, "in its place");
     let text = DataKey::Blob(ghtui(), "feature/x".into(), "src/lib.rs".into());
@@ -199,11 +200,11 @@ fn plain_links_open_the_branch_github_names() {
     let _ = s.go(Dest::from_url(&format!("{base}/tree/feature/x/src")));
     assert_eq!(
         route(&s),
-        Route::Tree {
+        Route::Code(code::Tree {
             repo: ghtui(),
             rev: "feature/x".into(),
             path: "src".into()
-        }
+        })
     );
     let _ = s.go(Dest::from_url(&format!("{base}/blob/main/README.md")));
     assert_eq!(route(&s), blob("main", "README.md"));

@@ -3,6 +3,7 @@
 //! change (to GitHub, or to git in your clone), and the page follows
 //! GitHub until it shows it.
 
+use crate::route::code;
 use std::path::PathBuf;
 
 use crate::api::housekeeping::{
@@ -383,7 +384,7 @@ fn a_repository_is_forked_and_opened() {
     };
     done(&mut s, HDone::Forked(form, Ok(made)));
     let fork = crate::api::model::RepoId::new("octocat", "ghtui");
-    assert_eq!(s.route(), Some(&Route::Repo(fork)));
+    assert_eq!(s.route(), Some(&Route::Code(code::Repo(fork))));
     assert!(s.busy().is_some_and(|b| b.contains("make the repository")));
 }
 
@@ -431,7 +432,7 @@ fn a_new_repository_is_made_and_cloning_offered() {
     };
     done(&mut s, HDone::Made(form, Ok(made)));
     let repo = crate::api::model::RepoId::new("ghtui-org", "tools");
-    assert_eq!(s.route(), Some(&Route::Repo(repo)));
+    assert_eq!(s.route(), Some(&Route::Code(code::Repo(repo))));
     assert_eq!(asked(&s).title, "Clone ghtui-org/tools?");
     let cmds = press(&mut s, "<Enter>");
     assert_eq!(
@@ -595,11 +596,11 @@ fn a_file_is_deleted_with_a_commit() {
     assert!(write.commit.additions.is_empty());
     assert_eq!(write.commit.message, "Delete main.rs");
     done(&mut s, HDone::Committed(form, write, Ok(())));
-    let folder = Route::Tree {
+    let folder = Route::Code(code::Tree {
         repo: ghtui(),
         rev: "main".into(),
         path: "src".into(),
-    };
+    });
     assert_eq!(s.route(), Some(&folder));
 }
 

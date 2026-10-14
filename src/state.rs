@@ -3,6 +3,7 @@
 //! [`Cmd`]s for the runtime to execute in the background.
 
 use crate::route::app;
+use crate::route::code;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -619,7 +620,7 @@ impl State {
             Screen::Diff(_) => Context::Diff,
             Screen::Page(p) => match &p.route {
                 Route::Job { .. } => Context::Log,
-                Route::Blob { .. } | Route::Blame { .. } => Context::File,
+                Route::Code(code::Blob { .. }) | Route::Code(code::Blame { .. }) => Context::File,
                 Route::Project { .. } | Route::ProjectItem { .. } => Context::Project,
                 Route::Settings { .. } => Context::Settings,
                 route if route.list_query().is_some() => Context::List,
@@ -680,7 +681,7 @@ impl State {
     /// another, so a branch already known is the one (short of a tag that
     /// extends it).
     pub(crate) fn split(&self, route: &Route, rev: Option<&str>) -> Option<Route> {
-        let Route::Unsplit { repo, spot, .. } = route else {
+        let Route::Code(code::Unsplit { repo, spot, .. }) = route else {
             return None;
         };
         let key = DataKey::RefIn(repo.clone(), spot.clone());

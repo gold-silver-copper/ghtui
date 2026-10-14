@@ -48,19 +48,17 @@ impl PageScreen {
         // Lists start on their first row, a job on a step and a file on the
         // lines linked; reading pages (issues, pull requests, files) start
         // with nothing selected.
-        let list = !matches!(
-            route,
-            Route::Issue { .. }
-                | Route::Blob { lines: None, .. }
-                | Route::Blame { lines: None, .. }
-                | Route::Commit { .. }
-                | Route::Release { .. }
-                | Route::Discussion { .. }
-                | Route::Pr {
-                    tab: PrTab::Conversation,
-                    ..
-                }
-        );
+        let list = route.starts_on_row()
+            && !matches!(
+                route,
+                Route::Issue { .. }
+                    | Route::Release { .. }
+                    | Route::Discussion { .. }
+                    | Route::Pr {
+                        tab: PrTab::Conversation,
+                        ..
+                    }
+            );
         Self {
             route,
             scroll: 0,

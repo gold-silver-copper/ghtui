@@ -10,6 +10,7 @@ use crate::api::GitHub;
 use crate::api::housekeeping::{FileCommit, FileLook, RefKind};
 use crate::api::model::RepoId;
 use crate::create::Look;
+use crate::route::code;
 use crate::ui::page::{Link, Page};
 use crate::ui::pages::{Mark, TextBox, WriteFormView};
 
@@ -526,11 +527,11 @@ pub(super) fn on_committed(
         (FileChange::Delete, _) | (_, None) => {
             let path = c.deletions.first().cloned().unwrap_or_default();
             let dir = path.rsplit_once('/').map_or("", |(dir, _)| dir).to_owned();
-            let page = Route::Tree {
+            let page = Route::Code(code::Tree {
                 repo: repo.clone(),
                 rev: c.branch.clone(),
                 path: dir,
-            };
+            });
             (page, None, path)
         }
         (_, Some((path, text))) => {
@@ -594,7 +595,7 @@ pub(super) fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
     };
     let why = why_not(state, repo);
     match route {
-        Route::Blob { .. } => {
+        Route::Code(code::Blob { .. }) => {
             out.push(row(
                 "Edit",
                 Action::EditComment,

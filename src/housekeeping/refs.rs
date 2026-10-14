@@ -10,6 +10,7 @@ use crate::api::model::RepoId;
 use crate::create::Look;
 use crate::git::local::Clone;
 use crate::picker::fuzzy_score;
+use crate::route::code;
 
 use super::{
     Chosen, Expected, Pick, RefWrite, Subject, Work, ask, clone_here, expect, item, refused,
@@ -336,7 +337,7 @@ pub(super) fn on_rules(
         .housekeeping
         .rules
         .insert((repo.clone(), name.to_owned()), look);
-    let still = state.route() == Some(&Route::Branches(repo.clone()))
+    let still = state.route() == Some(&Route::Code(code::Branches(repo.clone())))
         && picked(state, RefKind::Branch).is_some_and(|(n, _)| n == name)
         && state.overlay.is_none();
     if still {
@@ -428,8 +429,8 @@ pub(super) fn on_done(state: &mut State, work: Work, result: Result<(), String>)
         return Vec::new();
     }
     let page = match kind {
-        RefKind::Branch => Route::Branches(repo.clone()),
-        RefKind::Tag => Route::Tags(repo.clone()),
+        RefKind::Branch => Route::Code(code::Branches(repo.clone())),
+        RefKind::Tag => Route::Code(code::Tags(repo.clone())),
     };
     crate::writes::close_sender(state, &page);
     let there = matches!(write, RefWrite::Create(_));
@@ -453,8 +454,8 @@ pub(super) fn on_done(state: &mut State, work: Work, result: Result<(), String>)
 /// The menu's rows on the branches and tags.
 pub(super) fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
     let (repo, kind) = match route {
-        Route::Branches(repo) => (repo, RefKind::Branch),
-        Route::Tags(repo) => (repo, RefKind::Tag),
+        Route::Code(code::Branches(repo)) => (repo, RefKind::Branch),
+        Route::Code(code::Tags(repo)) => (repo, RefKind::Tag),
         _ => return,
     };
     let why = refused(state, repo, what(kind));

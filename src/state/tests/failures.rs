@@ -1,6 +1,7 @@
 //! What pages say when their data fails or is still on its way.
 
 use super::*;
+use crate::route::code;
 
 /// Delivers a failed fetch of `key`.
 fn failed(state: &mut State, key: DataKey) {
@@ -19,7 +20,7 @@ fn failed(state: &mut State, key: DataKey) {
 #[test]
 fn a_failed_readme_says_why_under_the_files() {
     let mut state = state();
-    let _ = state.push(Route::Repo(ghtui()));
+    let _ = state.push(Route::Code(code::Repo(ghtui())));
     let overview = Data::Repo(Box::new(fixtures::overview()));
     fetched(&mut state, DataKey::Repo(ghtui()), overview);
     failed(&mut state, DataKey::Readme(ghtui()));
@@ -36,12 +37,12 @@ fn a_failed_blame_says_why_instead_of_loading() {
     let mut state = with_repo();
     let (repo, rev, path) = (ghtui(), "main".to_owned(), "src/main.rs".to_owned());
     let blob = DataKey::Blob(repo.clone(), rev.clone(), path.clone());
-    let route = Route::Blame {
+    let route = Route::Code(code::Blame {
         repo,
         rev,
         path,
         lines: None,
-    };
+    });
     let _ = state.push(route.clone());
     fetched(&mut state, blob, Data::Blob(Box::new(fixtures::blob())));
     let Some(key) = state.needs(&route).pop() else {
@@ -238,7 +239,7 @@ fn decoration(route: &Route, need: &DataKey) -> bool {
         || matches!(
             (route, need),
             (_, K::LastCommits(..))
-                | (Route::CommitChecks { .. }, K::Commit(..))
+                | (Route::Code(code::CommitChecks { .. }), K::Commit(..))
                 | (
                     Route::Pr {
                         tab: PrTab::Checks,

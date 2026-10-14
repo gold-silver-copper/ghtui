@@ -1,6 +1,7 @@
 //! Keys on pages, the actions menu and the status bar.
 
 use super::*;
+use crate::route::code;
 use crate::ui::diff_doc::Pos;
 
 /// On a list that can't scroll, a page down goes to its last row and
@@ -50,14 +51,18 @@ fn j_moves_between_rows_and_scrolls_through_text() {
 fn h_l_and_u_move_like_a_file_manager() {
     let mut state = with_repo();
     press(&mut state, "j<Enter>");
-    let crates = Route::Tree {
+    let crates = Route::Code(code::Tree {
         repo: ghtui(),
         rev: "main".into(),
         path: "crates".into(),
-    };
+    });
     assert_eq!(route(&state), crates, "l opens");
     press(&mut state, "u");
-    assert_eq!(route(&state), Route::Repo(ghtui()), "u: the folder above");
+    assert_eq!(
+        route(&state),
+        Route::Code(code::Repo(ghtui())),
+        "u: the folder above"
+    );
     press(&mut state, "<C-o>");
     assert_eq!(route(&state), crates, "ctrl-o: back");
     press(&mut state, "uu");
@@ -408,7 +413,7 @@ fn commit_tabs_go_into_the_files_and_back() {
     press(&mut s, "gt");
     assert!(matches!(
         s.route(),
-        Some(crate::route::Route::CommitChecks { .. })
+        Some(crate::route::Route::Code(code::CommitChecks { .. }))
     ));
     press(&mut s, "gt");
     assert!(
@@ -418,7 +423,7 @@ fn commit_tabs_go_into_the_files_and_back() {
     press(&mut s, "gTgT");
     assert!(matches!(
         s.route(),
-        Some(crate::route::Route::Commit { .. })
+        Some(crate::route::Route::Code(code::Commit { .. }))
     ));
 }
 
@@ -494,10 +499,10 @@ fn file_lines_copy_and_blame() {
     press(&mut s, "<Esc>gb");
     assert!(matches!(
         s.route(),
-        Some(Route::Blame {
+        Some(Route::Code(code::Blame {
             lines: Some((5, 5)),
             ..
-        })
+        }))
     ));
 }
 
@@ -632,7 +637,7 @@ fn blame_runs_open_their_commit() {
     press(&mut s, "ggj");
     assert!(selected(&s).is_some_and(|l| l.contains("/commit/")));
     press(&mut s, "<Enter>");
-    assert!(matches!(s.route(), Some(Route::Commit { .. })));
+    assert!(matches!(s.route(), Some(Route::Code(code::Commit { .. }))));
 }
 
 /// A pull request's commit goes up to it, and on to its next commit.
@@ -640,10 +645,12 @@ fn blame_runs_open_their_commit() {
 fn pr_commits_step_and_go_up() {
     let mut s = with_pr();
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
-    let commit = |oid: &str| Route::Commit {
-        repo: pr.repo.clone(),
-        oid: oid.into(),
-        pr: Some(12),
+    let commit = |oid: &str| {
+        Route::Code(code::Commit {
+            repo: pr.repo.clone(),
+            oid: oid.into(),
+            pr: Some(12),
+        })
     };
     let first = "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567";
     let _ = s.push(commit(first));

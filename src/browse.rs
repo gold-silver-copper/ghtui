@@ -1,13 +1,14 @@
 //! Browsing: the data behind each page, and building pages from it.
 
 use crate::route::Family;
+use crate::route::code;
 use std::collections::HashSet;
 
 use std::collections::BTreeSet;
 
 use crate::api::browse::{
-    CommitDetail, CommitInfo, DiscussionsOf, Gist, IssueDetail, PrActivity, Release, RepoOverview,
-    SearchResults, StateCounts, UserList, WikiPage,
+    CommitInfo, DiscussionsOf, Gist, IssueDetail, PrActivity, Release, RepoOverview, SearchResults,
+    StateCounts, UserList, WikiPage,
 };
 use crate::api::model::{PrDetail, PrRef, RepoId};
 use crate::api::project::{Project, ProjectsOf};
@@ -32,9 +33,6 @@ const LISTS: u16 = 200;
 /// The list a page loads more of.
 pub fn paged(route: &Route) -> Option<DataKey> {
     match route {
-        Route::Commits { repo, rev, path } => {
-            Some(DataKey::History(repo.clone(), rev.clone(), path.clone()))
-        }
         Route::Stargazers(repo) => Some(DataKey::Users(UserList::Stargazers(repo.clone()))),
         Route::Watchers(repo) => Some(DataKey::Users(UserList::Watchers(repo.clone()))),
         Route::Forks(repo) => Some(DataKey::Forks(repo.clone())),
@@ -57,11 +55,8 @@ pub fn paged(route: &Route) -> Option<DataKey> {
                 ProfileTab::People => DataKey::Users(UserList::People(login)),
             })
         }
-        Route::Tags(repo) => Some(DataKey::Tags(repo.clone())),
-        Route::Branches(repo) => Some(DataKey::Branches(repo.clone())),
         Route::Teams(org) => Some(DataKey::Teams(org.to_lowercase())),
         Route::Gists(login) => Some(DataKey::Gists(login.to_lowercase())),
-        Route::Compare { repo, spec } => Some(DataKey::Compare(repo.clone(), spec.clone())),
         Route::Deployments { repo, environment } => {
             Some(DataKey::Deployments(repo.clone(), environment.clone()))
         }
@@ -77,6 +72,7 @@ pub fn paged(route: &Route) -> Option<DataKey> {
             Some(DataKey::Alerts(repo.clone(), *kind, query.clone()))
         }
         Route::App(p) => p.paged(),
+        Route::Code(p) => p.paged(),
         Route::Site(p) => p.paged(),
         Route::Housekeeping(p) => p.paged(),
         Route::Labels(repo) => Some(DataKey::Labels(repo.clone())),
@@ -105,33 +101,11 @@ pub(crate) fn needs(route: &Route) -> Vec<DataKey> {
     let header = |repo: &RepoId| K::Repo(repo.clone());
     let list = route.search().map(|(kind, query)| K::Search(kind, query));
     match route {
-        Route::App(_) | Route::NewGist | Route::Site(_) | Route::Housekeeping(_) => Vec::new(),
-        Route::Repo(repo) => vec![
-            header(repo),
-            K::Readme(repo.clone()),
-            K::LastCommits(repo.clone(), "HEAD".into(), String::new()),
-        ],
-        Route::Tree { repo, rev, path } => vec![
-            header(repo),
-            K::Tree(repo.clone(), rev.clone(), path.clone()),
-            K::LastCommits(repo.clone(), rev.clone(), path.clone()),
-        ],
-        Route::Blob {
-            repo, rev, path, ..
-        } => vec![
-            header(repo),
-            K::Blob(repo.clone(), rev.clone(), path.clone()),
-        ],
-        Route::Blame {
-            repo, rev, path, ..
-        } => vec![
-            header(repo),
-            K::Blob(repo.clone(), rev.clone(), path.clone()),
-            K::Blame(repo.clone(), rev.clone(), path.clone()),
-        ],
-        Route::Unsplit { repo, spot, .. } => {
-            vec![header(repo), K::RefIn(repo.clone(), spot.clone())]
-        }
+        Route::App(_)
+        | Route::Code(_)
+        | Route::NewGist
+        | Route::Site(_)
+        | Route::Housekeeping(_) => Vec::new(),
         Route::Issues { repo, .. } | Route::Pulls { repo, .. } => {
             let counts = route.state_counts().map(K::StateCounts);
             std::iter::once(header(repo))
@@ -232,11 +206,6 @@ pub(crate) fn needs(route: &Route) -> Vec<DataKey> {
             .chain(paged(route))
             .collect(),
         Route::Dispatch { repo, file } => crate::actions::needs(repo, file),
-        Route::CommitChecks { repo, oid } => vec![
-            header(repo),
-            K::Commit(repo.clone(), oid.clone()),
-            K::CommitChecks(repo.clone(), oid.clone()),
-        ],
         Route::Release { repo, tag } => {
             vec![header(repo), K::Release(repo.clone(), tag.clone())]
         }
@@ -245,9 +214,6 @@ pub(crate) fn needs(route: &Route) -> Vec<DataKey> {
         | Route::Watchers(repo)
         | Route::Forks(repo)
         | Route::Releases(repo)
-        | Route::Tags(repo)
-        | Route::Branches(repo)
-        | Route::Compare { repo, .. }
         | Route::Deployments { repo, .. }
         | Route::Milestones { repo, .. }
         | Route::Milestone { repo, .. }
@@ -266,26 +232,6 @@ pub(crate) fn needs(route: &Route) -> Vec<DataKey> {
         Route::Settings { repo, page } => {
             vec![header(repo), K::Settings(repo.clone(), *page)]
         }
-        Route::Commit { repo, oid, pr } => {
-            let mut needs = vec![
-                header(repo),
-                K::CommitComments(repo.clone(), oid.clone()),
-                K::Commit(repo.clone(), oid.clone()),
-            ];
-            // Its place among the pull request's commits.
-            if let Some(number) = pr {
-                let pr = PrRef {
-                    repo: repo.clone(),
-                    number: *number,
-                };
-                needs.push(K::PrActivity(pr));
-            }
-            needs
-        }
-        Route::Commits { repo, rev, path } => vec![
-            header(repo),
-            K::History(repo.clone(), rev.clone(), path.clone()),
-        ],
         Route::User { login, tab } => {
             // A user's lists show above what they starred.
             let lists = (*tab == ProfileTab::Stars).then(|| K::StarLists(login.to_lowercase()));
@@ -301,7 +247,7 @@ pub(crate) fn needs(route: &Route) -> Vec<DataKey> {
 /// Whether `need` is a repository's header on one of its other pages
 /// (fetched only when missing).
 pub fn is_header(route: &Route, key: &DataKey) -> bool {
-    matches!(key, DataKey::Repo(_)) && !matches!(route, Route::Repo(_))
+    matches!(key, DataKey::Repo(_)) && !matches!(route, Route::Code(code::Repo(_)))
 }
 
 /// How wide a page gets: reading stays narrow enough to follow, lists
@@ -326,8 +272,6 @@ fn width_of(route: &Route) -> Width {
             tab: PrTab::Conversation,
             ..
         } => Width::ReadingAside,
-        Route::Repo(_) => Width::ListsAside,
-        Route::Blob { path, .. } if pages::is_markdown(path) => Width::Reading,
         Route::Wiki { .. }
         | Route::Discussion { .. }
         | Route::Release { .. }
@@ -349,18 +293,14 @@ fn width_of(route: &Route) -> Width {
         Route::Pr {
             tab: PrTab::Checks, ..
         }
-        | Route::CommitChecks { .. }
         | Route::Actions { .. }
         | Route::WorkflowRun { .. }
         | Route::Job { .. }
         | Route::Workflow { .. }
-        | Route::Blob { .. }
-        | Route::Blame { .. }
-        | Route::Branches(_)
-        | Route::Tags(_)
         | Route::Project { .. }
         | Route::Deployments { .. } => Width::Full,
         Route::App(p) => p.width(),
+        Route::Code(p) => p.width(),
         Route::Site(p) => p.width(),
         Route::Housekeeping(p) => p.width(),
         _ => Width::Lists,
@@ -446,11 +386,11 @@ impl State {
             .iter()
             .position(|c| c.oid.starts_with(oid) || oid.starts_with(&c.oid))?;
         let link = |c: &CommitInfo| {
-            let route = Route::Commit {
+            let route = Route::Code(code::Commit {
                 repo: repo.clone(),
                 oid: c.oid.clone(),
                 pr: Some(number),
-            };
+            });
             route.url()
         };
         Some(pages::PrCommitAt {
@@ -587,69 +527,7 @@ impl State {
         };
         match route {
             Route::App(p) => p.build(b, &mut page),
-            Route::Repo(repo) => {
-                let overview = f.get(&DataKey::Repo(repo.clone()));
-                #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
-                pages::repo_title(&mut page, repo, overview.ready_unchecked());
-                if let Some(o) = overview.show(&mut page, "the repository") {
-                    let key = DataKey::LastCommits(repo.clone(), "HEAD".into(), String::new());
-                    #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
-                    let commits = f.get(&key).ready_unchecked();
-                    let readme = f.get(&DataKey::Readme(repo.clone()));
-                    pages::repo_code(&mut page, repo, o, commits, readme, cx);
-                }
-            }
-            Route::Tree { repo, rev, path } => {
-                let key = DataKey::LastCommits(repo.clone(), rev.clone(), path.clone());
-                #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
-                let commits = f.get(&key).ready_unchecked();
-                let dir = pages::Listing {
-                    repo,
-                    rev,
-                    path,
-                    entries: f.get(&DataKey::Tree(repo.clone(), rev.clone(), path.clone())),
-                    commits,
-                };
-                pages::repo_dir(&mut page, dir, cx);
-            }
-            Route::Blob {
-                repo,
-                rev,
-                path,
-                lines,
-            } => {
-                let key = DataKey::Blob(repo.clone(), rev.clone(), path.clone());
-                if let Some(blob) = f.get(&key).show(&mut page, "the file") {
-                    let file = pages::FileAt {
-                        repo,
-                        rev,
-                        path,
-                        lines: *lines,
-                    };
-                    pages::file(&mut page, file, blob, keys);
-                }
-            }
-            Route::Blame {
-                repo,
-                rev,
-                path,
-                lines,
-            } => {
-                let blob = f.get(&DataKey::Blob(repo.clone(), rev.clone(), path.clone()));
-                let blame = f.get(&DataKey::Blame(repo.clone(), rev.clone(), path.clone()));
-                let file = pages::FileAt {
-                    repo,
-                    rev,
-                    path,
-                    lines: *lines,
-                };
-                pages::blame(&mut page, file, blob, blame, keys, now);
-            }
-            // Shown until the ref is known, then replaced (`State::settle`).
-            Route::Unsplit { repo, spot, .. } => {
-                let key = DataKey::RefIn(repo.clone(), spot.clone());
-                let _ = f.get::<Option<String>>(&key).show(&mut page, "the branch");
-            }
+            Route::Code(p) => p.build(b, &mut page),
             Route::Issues { repo, query } | Route::Pulls { repo, query } => {
                 let is_pr = matches!(route, Route::Pulls { .. });
                 // A filtered list counts what the filter finds, as GitHub's
@@ -796,19 +674,12 @@ impl State {
             }
             Route::Forks(_) => pages::repos(&mut page, "Forks", f.paged(route), now),
             Route::Releases(repo) => pages::releases(&mut page, repo, f.paged(route), now),
-            Route::Tags(repo) => pages::tags(&mut page, repo, f.paged(route), now),
-            Route::Branches(repo) => pages::branches(&mut page, repo, f.paged(route), icons, now),
             Route::Milestones { repo, closed } => {
                 pages::milestones(&mut page, repo, f.paged(route), *closed, now);
             }
             Route::Milestone { repo, .. } => {
                 if let Some(m) = f.paged(route).show(&mut page, &title) {
                     pages::milestone(&mut page, repo, m, icons, now);
-                }
-            }
-            Route::Compare { repo, spec } => {
-                if let Some(c) = f.paged(route).show(&mut page, &title) {
-                    pages::compare(&mut page, repo, spec, c, now);
                 }
             }
             Route::Wiki { repo, page: name } => {
@@ -910,10 +781,6 @@ impl State {
                 pages::workflow(&mut page, repo, wf, f.paged(route), now);
             }
             Route::Dispatch { repo, file } => crate::actions::build(self, &mut page, repo, file),
-            Route::CommitChecks { repo, oid } => {
-                let checks = f.get(&DataKey::CommitChecks(repo.clone(), oid.clone()));
-                pages::commit_checks(&mut page, checks, now);
-            }
             Route::Release { repo, tag } => {
                 let key = DataKey::Release(repo.clone(), tag.clone());
                 if let Some(r) = f.get(&key).show(&mut page, &title) {
@@ -939,26 +806,6 @@ impl State {
             } => {
                 if let Some(p) = f.paged::<Project>(route).show(&mut page, &title) {
                     pages::project_item(&mut page, project, *view, p, *item, cx);
-                }
-            }
-            Route::Commits { repo, rev, path } => {
-                pages::commit_history(&mut page, repo, rev, path, f.paged(route), now);
-            }
-            Route::Commit { repo, oid, pr } => {
-                let key = DataKey::Commit(repo.clone(), oid.clone());
-                if let Some(c) = f.get::<CommitDetail>(&key).show(&mut page, &title) {
-                    if let Some(at) = pr.and_then(|n| self.pr_commit_at(repo, n, &c.oid)) {
-                        pages::pr_commit_nav(&mut page, &at);
-                    }
-                    let files = Route::Commit {
-                        repo: repo.clone(),
-                        oid: c.oid.clone(),
-                        pr: None,
-                    };
-                    let files = format!("{}#files", files.url());
-                    pages::commit(&mut page, repo, c, &files, now);
-                    let comments = DataKey::CommitComments(repo.clone(), oid.clone());
-                    pages::commit_comments(&mut page, repo, c, f.get(&comments), cx);
                 }
             }
             Route::User { login, tab } => {

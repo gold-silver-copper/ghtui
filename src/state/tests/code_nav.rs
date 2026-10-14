@@ -1,6 +1,7 @@
 use crate::api::browse::Blob;
 use crate::code_nav::{Answer, Ask, Place, Want};
 use crate::diff::anchor::Side;
+use crate::route::code;
 use crate::ui::diff_doc::Pos;
 
 use super::*;
@@ -95,12 +96,12 @@ fn gd_asks_the_repository_for_one_outside_the_file() {
     update(&mut s, Msg::Code(ask, Ok(answer)));
     assert_eq!(
         s.route(),
-        Some(&Route::Blob {
+        Some(&Route::Code(code::Blob {
             repo: ghtui(),
             rev: "main".into(),
             path: "src/other.rs".into(),
             lines: Some((12, 12)),
-        })
+        }))
     );
     assert!(said(&s).contains("Still indexing"), "{}", said(&s));
 }
@@ -156,12 +157,12 @@ fn repository_symbols_and_references_are_listed() {
     press(&mut s, "lib::<Enter>");
     assert_eq!(
         s.route(),
-        Some(&Route::Blob {
+        Some(&Route::Code(code::Blob {
             repo: ghtui(),
             rev: "main".into(),
             path: "src/main.rs".into(),
             lines: Some((2, 2)),
-        })
+        }))
     );
 
     // None found: says so, and what the index doesn't hold yet.

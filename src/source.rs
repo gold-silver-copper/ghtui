@@ -130,20 +130,8 @@ pub fn by_git(key: &DataKey, after: Option<&str>) -> bool {
 /// The data a page reads that git can answer, whose source it says.
 pub fn shown(route: &Route) -> Option<DataKey> {
     let key = match route {
-        Route::Tree { repo, rev, path } => DataKey::Tree(repo.clone(), rev.clone(), path.clone()),
-        Route::Blob {
-            repo, rev, path, ..
-        } => DataKey::Blob(repo.clone(), rev.clone(), path.clone()),
-        Route::Blame {
-            repo, rev, path, ..
-        } => DataKey::Blame(repo.clone(), rev.clone(), path.clone()),
-        Route::Commits { repo, rev, path } => {
-            DataKey::History(repo.clone(), rev.clone(), path.clone())
-        }
-        Route::Commit { repo, oid, .. } => DataKey::Commit(repo.clone(), oid.clone()),
-        Route::Compare { repo, spec } => DataKey::Compare(repo.clone(), spec.clone()),
-        Route::Tags(repo) => DataKey::Tags(repo.clone()),
         Route::Site(p) => return p.shown_source(),
+        Route::Code(p) => return p.shown_source(),
         Route::Search {
             kind: SearchKind::Code,
             query,

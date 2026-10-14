@@ -1,6 +1,7 @@
 //! The search box, with its suggestions.
 
 use super::*;
+use crate::route::code;
 
 pub struct SearchBox {
     pub input: TextArea<'static>,
@@ -307,7 +308,7 @@ impl State {
             }
             for r in live {
                 let detail = format!("☆ {}", pages::compact(r.stars));
-                let pick = Pick::Go(Target::Page(Route::Repo(r.repo.clone())).into());
+                let pick = Pick::Go(Target::Page(Route::Code(code::Repo(r.repo.clone()))).into());
                 out.push(suggestion("▤", r.repo.to_string(), &detail, "", pick));
             }
         }

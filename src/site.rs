@@ -20,6 +20,7 @@ use crate::api::explore::{Since, Topic};
 use crate::api::lists::ListPage;
 use crate::api::model::RepoId;
 use crate::api::packages::{Kind, PackageRef, PackagesOf};
+use crate::route::code;
 use crate::ui::pages::url as links;
 
 use crate::browse::{Build, Width};
@@ -162,7 +163,7 @@ impl Family for Page {
     fn up(&self, _: &State) -> Option<Route> {
         Some(match self {
             Page::Insights { repo, .. } | Page::Packages(PackagesOf::Repo(repo)) => {
-                Route::Repo(repo.clone())
+                Route::Code(code::Repo(repo.clone()))
             }
             Page::Explore { .. } | Page::Topic(_) => Route::App(app::Home),
             Page::StarList { login, .. } => Route::User {

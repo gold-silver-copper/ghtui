@@ -1,6 +1,7 @@
 //! Keys on pages: moving, scrolling, following links, cancelling.
 
 use super::*;
+use crate::route::code;
 
 /// Actions on a page screen. Those that don't work on pages say where
 /// they do.
@@ -34,7 +35,9 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 .find(|&i| is_row(p, i) && visible(p, i, height));
         }
         // A file's line is this page: say what you can do with it.
-        Action::Open if matches!(p.route, Route::Blob { .. }) && p.selected.is_some() => {
+        Action::Open
+            if matches!(p.route, Route::Code(code::Blob { .. })) && p.selected.is_some() =>
+        {
             let line = p.selected.and_then(|i| p.line_of(i)).unwrap_or(1);
             let (copy, blame) = (
                 state.first_key(Action::Copy),
@@ -228,22 +231,22 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
             let line = p.selected.and_then(|i| p.line_of(i));
             let lines = line.map(|n| (n, n));
             let route = match p.route.clone() {
-                Route::Blob {
+                Route::Code(code::Blob {
                     repo, rev, path, ..
-                } => Route::Blame {
+                }) => Route::Code(code::Blame {
                     repo,
                     rev,
                     path,
                     lines,
-                },
-                Route::Blame {
+                }),
+                Route::Code(code::Blame {
                     repo, rev, path, ..
-                } => Route::Blob {
+                }) => Route::Code(code::Blob {
                     repo,
                     rev,
                     path,
                     lines,
-                },
+                }),
                 _ => {
                     state.info(action.not_here());
                     return Vec::new();
@@ -251,7 +254,7 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
             };
             return state.push(route);
         }
-        Action::VisualLines if matches!(p.route, Route::Blob { .. }) => {
+        Action::VisualLines if matches!(p.route, Route::Code(code::Blob { .. })) => {
             let (range, what) = match p.range {
                 Some(_) => (None, "Selection cleared"),
                 None => (p.selected, "Selecting lines · y copies their link"),
@@ -261,11 +264,11 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
             state.info(what);
         }
         Action::NextCommit | Action::PrevCommit => {
-            let Route::Commit {
+            let Route::Code(code::Commit {
                 repo,
                 oid,
                 pr: Some(number),
-            } = p.route.clone()
+            }) = p.route.clone()
             else {
                 state.info(
                     "Next and previous commits are a pull request's: open one from its Commits tab",

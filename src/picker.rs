@@ -4,6 +4,7 @@
 
 use crate::api::browse::SearchKind;
 use crate::api::model::RepoId;
+use crate::route::code;
 use crate::theme::Bg;
 use crate::ui::bars::Notice;
 use crate::ui::diff_doc::Pos;
@@ -225,12 +226,12 @@ impl State {
     #[must_use]
     pub fn open_finder(&mut self, branches: bool) -> Vec<Cmd> {
         let (repo, rev, path, file) = match self.route() {
-            Some(Route::Tree { repo, rev, path }) => {
+            Some(Route::Code(code::Tree { repo, rev, path })) => {
                 (repo.clone(), rev.clone(), path.clone(), false)
             }
-            Some(Route::Blob {
+            Some(Route::Code(code::Blob {
                 repo, rev, path, ..
-            }) => (repo.clone(), rev.clone(), path.clone(), true),
+            })) => (repo.clone(), rev.clone(), path.clone(), true),
             Some(route) if let Some(repo) = route.repo() => {
                 let default = self.overview(repo).and_then(|o| o.default_branch.clone());
                 let rev = default.unwrap_or_else(|| "HEAD".into());
@@ -453,9 +454,9 @@ impl State {
                 let route = if file {
                     Route::blob(repo, rev, path)
                 } else if path.is_empty() && is_default {
-                    Route::Repo(repo)
+                    Route::Code(code::Repo(repo))
                 } else {
-                    Route::Tree { repo, rev, path }
+                    Route::Code(code::Tree { repo, rev, path })
                 };
                 let go = Choice::Go(Target::Page(route).into());
                 rows.push((score, item(name, hint), go));

@@ -10,6 +10,7 @@
 //! gh-dash's history is full of these: crashes on empty or missing data,
 //! duplicate rows after a quick refresh, the wrong row acted on.
 
+use crate::route::code;
 use std::collections::{HashMap, HashSet};
 
 use proptest::prelude::*;
@@ -39,15 +40,15 @@ fn routes() -> [Route; 3] {
             kind: SearchKind::Issues,
             query: "repo:o/r".into(),
         },
-        Route::Branches(repo()),
-        Route::Repo(repo()),
+        Route::Code(code::Branches(repo())),
+        Route::Code(code::Repo(repo())),
     ]
 }
 
 fn key_of(route: &Route) -> DataKey {
     match route {
         Route::Search { kind, query } => DataKey::Search(*kind, query.clone()),
-        Route::Branches(repo) => DataKey::Branches(repo.clone()),
+        Route::Code(code::Branches(repo)) => DataKey::Branches(repo.clone()),
         _ => DataKey::Repo(repo()),
     }
 }
@@ -76,7 +77,7 @@ fn page(route: &Route, start: u64, len: u8, total: u64, next: bool) -> Data {
                 next,
             })))
         }
-        Route::Branches(_) => {
+        Route::Code(code::Branches(_)) => {
             let base = fixtures::branches().items.into_iter().next();
             let items = (start..start + u64::from(len))
                 .filter_map(|n| {

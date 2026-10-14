@@ -1,6 +1,7 @@
 //! Writing: star and comment.
 
 use super::*;
+use crate::route::code;
 
 #[must_use]
 pub fn star(state: &mut State) -> Vec<Cmd> {
@@ -78,7 +79,7 @@ pub(super) fn comment_with(state: &mut State, text: &str, quoting: Option<String
         Some(Route::Discussion { .. }) => return crate::discuss::act(state, Action::Comment),
         Some(route) if crate::writes::is_form(route) => return crate::writes::compose(state),
         // A commit's comments.
-        Some(Route::Commit { repo, oid, .. }) => {
+        Some(Route::Code(code::Commit { repo, oid, .. })) => {
             let target = ComposeTarget::Commit {
                 repo: repo.clone(),
                 oid: oid.clone(),

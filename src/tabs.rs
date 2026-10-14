@@ -5,6 +5,7 @@
 //! requests and diffs are shared: two tabs on one pull request share its
 //! fetch, its diff and its review drafts.
 
+use crate::route::code;
 use crate::ui::page::Link;
 use crate::ui::text::short_sha;
 
@@ -50,12 +51,14 @@ pub fn title(screen: &Screen) -> String {
         Screen::Page(p) => match &p.route {
             Route::Issue { repo, number } => format!("{}#{number}", repo.name),
             Route::Pr { pr, .. } => format!("{}#{}", pr.repo.name, pr.number),
-            Route::Blob { path, .. } | Route::Tree { path, .. } if !path.is_empty() => {
+            Route::Code(code::Blob { path, .. }) | Route::Code(code::Tree { path, .. })
+                if !path.is_empty() =>
+            {
                 path.rsplit('/').next().unwrap_or(path).to_owned()
             }
-            Route::Commit { oid, .. } => short_sha(oid).to_owned(),
+            Route::Code(code::Commit { oid, .. }) => short_sha(oid).to_owned(),
             Route::Search { query, .. } => format!("⌕ {query}"),
-            Route::Repo(repo) => repo.to_string(),
+            Route::Code(code::Repo(repo)) => repo.to_string(),
             // A repository's other pages, without the owner.
             route => match route.repo() {
                 Some(repo) => route.title().replacen(&format!("{}/", repo.owner), "", 1),
@@ -137,15 +140,15 @@ impl State {
             },
             Screen::Diff(d) => Target::Page(match &d.of {
                 DiffOf::Pr(pr) => Route::pr(pr.clone()),
-                DiffOf::Commit(repo, oid) => Route::Commit {
+                DiffOf::Commit(repo, oid) => Route::Code(code::Commit {
                     repo: repo.clone(),
                     oid: oid.to_string(),
                     pr: None,
-                },
-                DiffOf::Range(repo, from, to) => Route::Compare {
+                }),
+                DiffOf::Range(repo, from, to) => Route::Code(code::Compare {
                     repo: repo.clone(),
                     spec: format!("{from}..{to}"),
-                },
+                }),
             })
             .into(),
         };

@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::route::app;
+use crate::route::code;
 
 #[test]
 fn palette_goes_places_and_runs_actions() {
@@ -75,7 +76,7 @@ fn an_older_suggestion_reply_does_not_replace_a_newer_one() {
     assert_eq!(
         picks.last(),
         Some(&nav::Pick::Go(
-            Target::Page(Route::Repo(RepoId::new("o", "ratatui"))).into()
+            Target::Page(Route::Code(code::Repo(RepoId::new("o", "ratatui")))).into()
         )),
         "the suggestions for `rat` vanished"
     );
@@ -93,7 +94,7 @@ fn palette_searches_github() {
     assert_eq!(
         state.commands("ratatui/ratatui")[0].1,
         Some(Choice::Go(
-            Target::Page(Route::Repo(RepoId::new("ratatui", "ratatui"))).into()
+            Target::Page(Route::Code(code::Repo(RepoId::new("ratatui", "ratatui")))).into()
         ))
     );
 }
@@ -271,7 +272,7 @@ fn search_box_jumps_searches_and_loads_more() {
     assert_eq!(
         picks.last(),
         Some(&nav::Pick::Go(
-            Target::Page(Route::Repo(RepoId::new("o", "bugs"))).into()
+            Target::Page(Route::Code(code::Repo(RepoId::new("o", "bugs")))).into()
         ))
     );
     press(&mut state, "<Enter>");

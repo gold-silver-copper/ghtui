@@ -2,6 +2,7 @@
 //! the keys and replies that lead there had happened.
 
 use super::*;
+use crate::route::code;
 
 /// A pull request as Home's sections list it.
 pub(crate) fn row(
@@ -131,7 +132,7 @@ pub(crate) fn ghtui() -> RepoId {
 /// A repository's Code tab with everything it asked for delivered.
 pub(crate) fn with_repo() -> State {
     let mut state = state();
-    let _ = state.push(Route::Repo(ghtui()));
+    let _ = state.push(Route::Code(code::Repo(ghtui())));
     fetched(
         &mut state,
         DataKey::Repo(ghtui()),
@@ -163,12 +164,12 @@ pub(crate) fn with_blame() -> State {
     let mut state = with_repo();
     let (repo, rev, path) = (ghtui(), "main".to_owned(), "src/main.rs".to_owned());
     let blob = DataKey::Blob(repo.clone(), rev.clone(), path.clone());
-    let route = Route::Blame {
+    let route = Route::Code(code::Blame {
         repo,
         rev,
         path,
         lines: Some((5, 5)),
-    };
+    });
     let _ = state.push(route.clone());
     fetched(&mut state, blob, Data::Blob(Box::new(fixtures::blob())));
     let Some(key) = state.needs(&route).pop() else {
@@ -266,11 +267,11 @@ pub(crate) fn with_issues() -> State {
 pub(crate) fn with_commit() -> State {
     let mut state = with_repo();
     let commit = fixtures::commit();
-    let route = Route::Commit {
+    let route = Route::Code(code::Commit {
         repo: ghtui(),
         oid: commit.oid.clone(),
         pr: None,
-    };
+    });
     let comments = DataKey::CommitComments(ghtui(), commit.oid.clone());
     open(&mut state, route, Data::Commit(Box::new(commit)));
     let comment = crate::api::commit_comments::CommitComment {
@@ -376,11 +377,11 @@ pub(crate) fn with_tabs(n: usize) -> State {
         Route::pr(PrRef::parse("gold-silver-copper/ghtui#12").unwrap()),
         Route::user("octocat"),
         Route::blob(ghtui(), "main".into(), "crates/app/src/main.rs".into()),
-        Route::Commit {
+        Route::Code(code::Commit {
             repo: ghtui(),
             oid: fixtures::commit().oid,
             pr: None,
-        },
+        }),
         Route::Releases(ghtui()),
         Route::Stargazers(ghtui()),
     ];
@@ -535,7 +536,7 @@ pub(crate) fn with_tags() -> State {
     let mut state = with_repo();
     open(
         &mut state,
-        Route::Tags(ghtui()),
+        Route::Code(code::Tags(ghtui())),
         Data::Tags(Box::new(fixtures::tags())),
     );
     state
@@ -546,7 +547,7 @@ pub(crate) fn with_branches() -> State {
     let mut state = with_repo();
     open(
         &mut state,
-        Route::Branches(ghtui()),
+        Route::Code(code::Branches(ghtui())),
         Data::Branches(Box::new(fixtures::branches())),
     );
     state
@@ -597,10 +598,10 @@ pub(crate) fn with_deployments() -> State {
 /// Two tags compared.
 pub(crate) fn with_compare() -> State {
     let mut state = with_repo();
-    let route = Route::Compare {
+    let route = Route::Code(code::Compare {
         repo: ghtui(),
         spec: "v0.1.0...v0.2.0".into(),
-    };
+    });
     open(
         &mut state,
         route,
@@ -611,11 +612,11 @@ pub(crate) fn with_compare() -> State {
 /// A branch's commits.
 pub(crate) fn with_history() -> State {
     let mut state = with_repo();
-    let route = Route::Commits {
+    let route = Route::Code(code::Commits {
         repo: ghtui(),
         rev: "main".into(),
         path: String::new(),
-    };
+    });
     open(
         &mut state,
         route,

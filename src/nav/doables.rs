@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::route::app;
+use crate::route::code;
 
 /// Something you can do here.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -260,7 +261,7 @@ impl State {
         let route = &p.route;
         // A file's line is this page, as a log's is: nothing to open.
         let line = matches!(route, Route::Job { .. }) && p.code_line().is_some();
-        if !matches!(route, Route::Blob { .. }) && !line {
+        if !matches!(route, Route::Code(code::Blob { .. })) && !line {
             let mut open = here(Action::Open, "Open the selected row", "open");
             match p.selected_link() {
                 // A new issue's or pull request's text box.
@@ -317,13 +318,16 @@ impl State {
                 out.push(row);
             }
         }
-        if let Route::Commit { pr: Some(_), .. } = route {
+        if let Route::Code(code::Commit { pr: Some(_), .. }) = route {
             out.push(here(Action::NextCommit, "Next commit", "next commit"));
             out.push(here(Action::PrevCommit, "Previous commit", ""));
         }
-        if matches!(route, Route::Blob { .. } | Route::Blame { .. }) {
+        if matches!(
+            route,
+            Route::Code(code::Blob { .. }) | Route::Code(code::Blame { .. })
+        ) {
             let blame = match route {
-                Route::Blob { .. } => "Blame this line",
+                Route::Code(code::Blob { .. }) => "Blame this line",
                 _ => "Back to the file",
             };
             out.push(here(Action::Blame, blame, "blame"));
@@ -340,7 +344,7 @@ impl State {
         // A word cursor moves along a line of code.
         if matches!(
             route,
-            Route::Blob { .. } | Route::Blame { .. } | Route::Job { .. }
+            Route::Code(code::Blob { .. }) | Route::Code(code::Blame { .. }) | Route::Job { .. }
         ) {
             let why = (p.word_cursor().is_none()).then(|| "no line of code is selected".to_owned());
             for action in [
@@ -355,7 +359,10 @@ impl State {
             }
         }
         // Code navigation: a file's symbols, and a name's definition.
-        if matches!(route, Route::Blob { .. } | Route::Blame { .. }) {
+        if matches!(
+            route,
+            Route::Code(code::Blob { .. }) | Route::Code(code::Blame { .. })
+        ) {
             out.push(here(Action::Symbols, "Symbols in this file", ""));
             let mut definition = here(Action::Definition, Action::Definition.description(), "");
             if p.word_cursor().is_none() {
@@ -404,7 +411,9 @@ impl State {
             out.push(here(Action::FindFile, "Go to file", "go to file"));
             if matches!(
                 route,
-                Route::Repo(_) | Route::Tree { .. } | Route::Blob { .. }
+                Route::Code(code::Repo(_))
+                    | Route::Code(code::Tree { .. })
+                    | Route::Code(code::Blob { .. })
             ) {
                 out.push(here(Action::Branch, "Switch branches or tags", "branch"));
                 let starred = self.overview(repo).is_some_and(|o| o.starred);
@@ -414,7 +423,7 @@ impl State {
         }
         if matches!(
             route,
-            Route::Issue { .. } | Route::Pr { .. } | Route::Commit { .. }
+            Route::Issue { .. } | Route::Pr { .. } | Route::Code(code::Commit { .. })
         ) {
             out.push(here(Action::Comment, "Write a comment", "comment"));
             let mut quote = here(Action::QuoteReply, "Reply quoting the selected comment", "");

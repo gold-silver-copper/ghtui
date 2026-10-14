@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::api::browse::{DiscussionsOf, RepoSummary, SearchKind};
 use crate::api::change::Change;
-use crate::api::model::{PrRef, RepoId};
+use crate::api::model::RepoId;
 use crate::diff::anchor::Side;
 use crate::theme::{Bg, Theme};
 use crate::ui::chrome::{self, KeyRow, SuggestRow};

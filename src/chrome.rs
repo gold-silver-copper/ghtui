@@ -10,6 +10,7 @@ use crate::api::model::{PrRef, RepoId};
 use crate::api::project::{self, Project, ProjectOwner, ProjectRef, ProjectsOf};
 use crate::git::Oid;
 use crate::route::app;
+use crate::route::code;
 use crate::ui::chrome::{Crumb, PageTab};
 use crate::ui::pages::{PrTab, ProfileTab};
 use ratatui::layout::Rect;
@@ -145,6 +146,7 @@ impl State {
     fn page_chrome(&self, route: &Route, c: &mut Chrome) {
         match route {
             Route::App(p) => p.chrome(self, c),
+            Route::Code(p) => p.chrome(self, c),
             Route::Housekeeping(p) => p.chrome(self, c),
             Route::Notifications { .. } => c.crumb("Notifications", None),
             Route::Pr { pr, tab } => {
@@ -157,15 +159,6 @@ impl State {
                     PrTab::Review | PrTab::Reviewed(_) => 4,
                 });
                 c.title = Some(pr.clone());
-            }
-            Route::Commit { repo, oid, .. } | Route::CommitChecks { repo, oid } => {
-                repo_crumbs(repo, c);
-                let pr = match route {
-                    Route::Commit { pr, .. } => *pr,
-                    _ => None,
-                };
-                self.commit_tabs(repo, oid, pr, c);
-                c.active = Some(usize::from(matches!(route, Route::CommitChecks { .. })));
             }
             Route::Gist { owner, id } => {
                 // Its owner, from the gist when the URL doesn't say.
@@ -197,10 +190,6 @@ impl State {
             Route::Gists(login) => {
                 c.crumb(login, Some(Target::Page(Route::user(login))));
                 c.crumb("Gists", None);
-            }
-            Route::Compare { repo, spec } => {
-                repo_crumbs(repo, c);
-                self.compare_page_tabs(repo, spec, c);
             }
             Route::Discussions {
                 of: DiscussionsOf::Org(org),
@@ -455,23 +444,23 @@ impl State {
     }
 
     /// A commit's tabs: the commit, and its files.
-    fn commit_tabs(&self, repo: &RepoId, oid: &str, pr: Option<u64>, c: &mut Chrome) {
+    pub(crate) fn commit_tabs(&self, repo: &RepoId, oid: &str, pr: Option<u64>, c: &mut Chrome) {
         let detail = self.picked::<CommitDetail>(&DataKey::Commit(repo.clone(), oid.to_owned()));
         let full = detail.map_or(oid, |d| d.oid.as_str());
         c.tabs.push((
             new_tab("◷", "Commit", None),
-            Target::Page(Route::Commit {
+            Target::Page(Route::Code(code::Commit {
                 repo: repo.clone(),
                 oid: full.to_owned(),
                 pr,
-            }),
+            })),
         ));
         c.tabs.push((
             new_tab("✓", "Checks", None),
-            Target::Page(Route::CommitChecks {
+            Target::Page(Route::Code(code::CommitChecks {
                 repo: repo.clone(),
                 oid: full.to_owned(),
-            }),
+            })),
         ));
         // A short SHA or a ref has files once its full ID is known.
         if let Ok(oid) = Oid::parse(full) {
@@ -482,24 +471,11 @@ impl State {
         }
     }
 
-    /// A comparison's tabs: its commits, and its files once known.
-    fn compare_page_tabs(&self, repo: &RepoId, spec: &str, c: &mut Chrome) {
-        let key = DataKey::Compare(repo.clone(), spec.to_owned());
-        let comparison = match self.get(&key) {
-            Some(Data::Compare(cmp)) => Some(&**cmp),
-            _ => None,
-        };
-        let range = comparison
-            .and_then(|cmp| Some((Oid::parse(&cmp.from).ok()?, Oid::parse(&cmp.to).ok()?)));
-        compare_tabs(repo, spec, range, comparison, c);
-        c.active = Some(0);
-    }
-
     fn repo_tabs(&self, repo: &RepoId, c: &mut Chrome) {
         let o = self.overview(repo);
         c.tabs.push((
             new_tab("<>", "Code", None),
-            Target::Page(Route::Repo(repo.clone())),
+            Target::Page(Route::Code(code::Repo(repo.clone()))),
         ));
         if o.is_none_or(|o| o.has_issues) {
             c.tabs.push((
@@ -674,6 +650,7 @@ fn section(route: &Route) -> Section {
         | Route::Alerts { .. }
         | Route::Alert { .. } => Section::Security,
         Route::App(p) => p.section(),
+        Route::Code(p) => p.section(),
         Route::Site(p) => p.section(),
         Route::Housekeeping(p) => p.section(),
         Route::Settings { .. } => Section::Settings,
@@ -683,7 +660,7 @@ fn section(route: &Route) -> Section {
 
 /// A comparison's tabs: its commits, and (once its ends are known) the
 /// files changed between them.
-fn compare_tabs(
+pub(crate) fn compare_tabs(
     repo: &RepoId,
     spec: &str,
     range: Option<(Oid, Oid)>,
@@ -692,10 +669,10 @@ fn compare_tabs(
 ) {
     c.tabs.push((
         new_tab("◷", "Commits", comparison.map(|cmp| cmp.commits.total())),
-        Target::Page(Route::Compare {
+        Target::Page(Route::Code(code::Compare {
             repo: repo.clone(),
             spec: spec.to_owned(),
-        }),
+        })),
     ));
     if let Some((from, to)) = range {
         c.tabs.push((
@@ -711,9 +688,12 @@ fn compare_tabs(
         ));
     }
 }
-fn repo_crumbs(repo: &RepoId, c: &mut Chrome) {
+pub(crate) fn repo_crumbs(repo: &RepoId, c: &mut Chrome) {
     c.crumb(&repo.owner, Some(Target::Page(Route::user(&repo.owner))));
-    c.crumb(&repo.name, Some(Target::Page(Route::Repo(repo.clone()))));
+    c.crumb(
+        &repo.name,
+        Some(Target::Page(Route::Code(code::Repo(repo.clone())))),
+    );
 }
 
 impl Chrome {

@@ -12,6 +12,7 @@
 //! git ([`git`]); elsewhere GitHub's API does it. Then the page follows
 //! GitHub until it shows the change, as [`crate::writes`] does.
 
+use crate::route::code;
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
@@ -157,18 +158,18 @@ impl Family for FormOf {
                 repo: repo.clone(),
                 closed: false,
             },
-            FormOf::Fork(repo) => Route::Repo(repo.clone()),
+            FormOf::Fork(repo) => Route::Code(code::Repo(repo.clone())),
             FormOf::NewRepo => return None,
             FormOf::File {
                 repo,
                 rev,
                 path,
                 change: FileChange::New,
-            } => Route::Tree {
+            } => Route::Code(code::Tree {
                 repo: repo.clone(),
                 rev: rev.clone(),
                 path: path.clone(),
-            },
+            }),
             FormOf::File {
                 repo, rev, path, ..
             } => Route::blob(repo.clone(), rev.clone(), path.clone()),
@@ -473,12 +474,14 @@ pub fn claims(state: &State, action: Action) -> bool {
         Route::Labels(_) | Route::Milestones { .. } | Route::Milestone { .. }
     );
     match action {
-        Action::EditComment => lists || matches!(route, Route::Blob { .. }),
+        Action::EditComment => lists || matches!(route, Route::Code(code::Blob { .. })),
         Action::DeleteComment => {
             lists
                 || matches!(
                     route,
-                    Route::Blob { .. } | Route::Branches(_) | Route::Tags(_)
+                    Route::Code(code::Blob { .. })
+                        | Route::Code(code::Branches(_))
+                        | Route::Code(code::Tags(_))
                 )
         }
         Action::Close => matches!(route, Route::Milestones { .. } | Route::Milestone { .. }),
@@ -508,17 +511,17 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
         (Action::Close, Some(Route::Milestones { repo, .. } | Route::Milestone { repo, .. })) => {
             milestones::toggle(state, &repo)
         }
-        (Action::DeleteComment, Some(Route::Branches(repo))) => {
+        (Action::DeleteComment, Some(Route::Code(code::Branches(repo)))) => {
             refs::ask_delete(state, &repo, RefKind::Branch)
         }
-        (Action::DeleteComment, Some(Route::Tags(repo))) => {
+        (Action::DeleteComment, Some(Route::Code(code::Tags(repo)))) => {
             refs::ask_delete(state, &repo, RefKind::Tag)
         }
         (
             Action::EditComment | Action::DeleteComment,
-            Some(Route::Blob {
+            Some(Route::Code(code::Blob {
                 repo, rev, path, ..
-            }),
+            })),
         ) => {
             let change = if action == Action::EditComment {
                 FileChange::Edit
@@ -543,16 +546,18 @@ fn new_here(state: &mut State, route: Route) -> Vec<Cmd> {
         Route::Milestones { repo, .. } | Route::Milestone { repo, .. } => {
             milestones::open(state, &repo, None)
         }
-        Route::Branches(repo) => refs::start(state, &repo, RefKind::Branch),
-        Route::Tags(repo) => refs::start(state, &repo, RefKind::Tag),
-        Route::Tree { repo, rev, path } => files::open(state, repo, rev, path, FileChange::New),
-        Route::Blob {
+        Route::Code(code::Branches(repo)) => refs::start(state, &repo, RefKind::Branch),
+        Route::Code(code::Tags(repo)) => refs::start(state, &repo, RefKind::Tag),
+        Route::Code(code::Tree { repo, rev, path }) => {
+            files::open(state, repo, rev, path, FileChange::New)
+        }
+        Route::Code(code::Blob {
             repo, rev, path, ..
-        } => {
+        }) => {
             let folder = path.rsplit_once('/').map_or("", |(dir, _)| dir).to_owned();
             files::open(state, repo, rev, folder, FileChange::New)
         }
-        Route::Repo(repo) => {
+        Route::Code(code::Repo(repo)) => {
             let Some(branch) = state.overview(&repo).and_then(|o| o.default_branch.clone()) else {
                 state.info("The repository hasn't loaded yet");
                 return Vec::new();
@@ -658,8 +663,12 @@ fn page_doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
             ));
         }
         Route::Milestones { .. } | Route::Milestone { .. } => milestones::doables(state, out),
-        Route::Branches(_) | Route::Tags(_) => refs::doables(state, route, out),
-        Route::Tree { .. } | Route::Blob { .. } | Route::Repo(_) => {
+        Route::Code(code::Branches(_)) | Route::Code(code::Tags(_)) => {
+            refs::doables(state, route, out);
+        }
+        Route::Code(code::Tree { .. })
+        | Route::Code(code::Blob { .. })
+        | Route::Code(code::Repo(_)) => {
             files::doables(state, route, out);
         }
         _ => {}
@@ -741,7 +750,9 @@ fn problem(state: &State, route: &Route, of: &FormOf) -> Option<String> {
 pub fn follow(state: &mut State) -> Vec<Cmd> {
     let mut cmds = Vec::new();
     match state.route().cloned() {
-        Some(Route::Branches(repo) | Route::Tags(repo)) => cmds.extend(clone_of(state, &repo).1),
+        Some(Route::Code(code::Branches(repo)) | Route::Code(code::Tags(repo))) => {
+            cmds.extend(clone_of(state, &repo).1);
+        }
         Some(route @ Route::Housekeeping(_)) => {
             let Route::Housekeeping(of) = &route else {
                 return cmds;

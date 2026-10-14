@@ -1,6 +1,7 @@
 //! Following links: by keys, letters, comment links and the mouse.
 
 use super::*;
+use crate::route::code;
 
 #[test]
 fn browser_and_copy_use_the_selection_or_the_page() {
@@ -147,7 +148,7 @@ fn the_mouse_follows_links_switches_tabs_and_scrolls() {
     let (x, y) = find(&state, "crates");
     let _ = click(&mut state, x, y);
     assert!(
-        matches!(route(&state), Route::Tree { .. }),
+        matches!(route(&state), Route::Code(code::Tree { .. })),
         "a click follows a link"
     );
     let _ = state.back();
@@ -314,8 +315,8 @@ fn pages_link_to_milestones_branches_and_tags() {
     let repo = with_repo();
     let repo_routes = routes(&repo);
     let id = super::ghtui();
-    assert!(repo_routes.contains(&Route::Branches(id.clone())));
-    assert!(repo_routes.contains(&Route::Tags(id)));
+    assert!(repo_routes.contains(&Route::Code(code::Branches(id.clone()))));
+    assert!(repo_routes.contains(&Route::Code(code::Tags(id))));
 }
 
 /// Every github.com link on ghtui's pages (and their tabs) opens a

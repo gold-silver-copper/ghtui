@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::api::project::ProjectsOf;
+use crate::route::code;
 use crate::route::{Family, app};
 
 /// A page you visited, for "jump to" suggestions.
@@ -26,7 +27,10 @@ impl State {
     #[must_use]
     pub(crate) fn record_visit(&mut self, route: &Route) -> Vec<Cmd> {
         // An unsplit page is recorded as the page it turns out to be.
-        if matches!(route, Route::App(app::Home) | Route::Unsplit { .. }) {
+        if matches!(
+            route,
+            Route::App(app::Home) | Route::Code(code::Unsplit { .. })
+        ) {
             return Vec::new();
         }
         let url = route.url();
@@ -184,30 +188,9 @@ pub fn up_level(state: &mut State) -> Vec<Cmd> {
 
 /// The page above this one, like GitHub's breadcrumbs.
 pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
-    let default = |repo: &RepoId| state.overview(repo).and_then(|o| o.default_branch.clone());
-    let folder = |repo: &RepoId, rev: &str, path: &str| {
-        let parent = path.rsplit_once('/').map_or("", |(p, _)| p);
-        if parent.is_empty() && default(repo).as_deref() == Some(rev) {
-            Route::Repo(repo.clone())
-        } else {
-            Route::Tree {
-                repo: repo.clone(),
-                rev: rev.to_owned(),
-                path: parent.to_owned(),
-            }
-        }
-    };
     Some(match route {
         Route::App(p) => return p.up(state),
-        Route::Repo(repo) => Route::user(&repo.owner),
-        Route::Tree { repo, path, .. } if path.is_empty() => Route::Repo(repo.clone()),
-        Route::Tree { repo, rev, path }
-        | Route::Blob {
-            repo, rev, path, ..
-        } => folder(repo, rev, path),
-        Route::Blame {
-            repo, rev, path, ..
-        } => Route::blob(repo.clone(), rev.clone(), path.clone()),
+        Route::Code(p) => return p.up(state),
         Route::Settings {
             repo,
             page: crate::api::settings::SettingsPage::Hook(_),
@@ -222,20 +205,15 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             ..
         }
         | Route::Pulls { repo, .. }
-        | Route::Commits { repo, .. }
-        | Route::Unsplit { repo, .. }
         | Route::Stargazers(repo)
         | Route::Watchers(repo)
         | Route::Forks(repo)
         | Route::Releases(repo)
-        | Route::Tags(repo)
-        | Route::Branches(repo)
-        | Route::Compare { repo, .. }
         | Route::Deployments { repo, .. }
         | Route::Milestones { repo, .. }
         | Route::Wiki { repo, page: None }
         | Route::Projects(ProjectsOf::Repo(repo))
-        | Route::Actions { repo, .. } => Route::Repo(repo.clone()),
+        | Route::Actions { repo, .. } => Route::Code(code::Repo(repo.clone())),
         Route::Discussion { of, .. } => Route::Discussions {
             of: of.clone(),
             category: None,
@@ -280,26 +258,6 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             run: *run,
             attempt: None,
         },
-        Route::CommitChecks { repo, oid } => Route::Commit {
-            repo: repo.clone(),
-            oid: oid.clone(),
-            pr: None,
-        },
-        // A pull request's commit leads up to the pull request.
-        Route::Commit {
-            repo,
-            pr: Some(number),
-            ..
-        } => Route::pr(PrRef {
-            repo: repo.clone(),
-            number: *number,
-        }),
-        // A commit's history leads up to it.
-        Route::Commit { repo, oid, .. } => Route::Commits {
-            repo: repo.clone(),
-            rev: oid.clone(),
-            path: String::new(),
-        },
         Route::Issue { repo, .. } => Route::Issues {
             repo: repo.clone(),
             query: crate::route::OPEN.into(),
@@ -337,7 +295,9 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             query: crate::route::OPEN.into(),
         },
         Route::Alerts { repo, .. } => Route::Advisories(Some(repo.clone())),
-        Route::Advisories(repo) => repo.clone().map_or(Route::App(app::Home), Route::Repo),
+        Route::Advisories(repo) => repo
+            .clone()
+            .map_or(Route::App(app::Home), |x| Route::Code(code::Repo(x))),
         Route::Projects(ProjectsOf::Owner(owner)) => Route::user(owner.login()),
         Route::Project { project, .. } => Route::Projects(ProjectsOf::Owner(project.owner.clone())),
         Route::ProjectItem { project, view, .. } => Route::Project {

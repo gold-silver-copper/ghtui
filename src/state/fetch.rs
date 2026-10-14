@@ -132,6 +132,7 @@ impl State {
     pub fn needs(&self, route: &Route) -> Vec<DataKey> {
         match route {
             Route::App(p) => p.needs(self),
+            Route::Code(p) => p.needs(self),
             Route::Site(p) => p.needs(self),
             Route::Housekeeping(p) => p.needs(self),
             _ => browse::needs(route),
