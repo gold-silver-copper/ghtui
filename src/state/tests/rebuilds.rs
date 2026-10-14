@@ -73,6 +73,54 @@ fn a_page_is_built_again_once_its_times_move_on() {
     assert!(std::ptr::eq(built(&state), before));
 }
 
+/// Times that turn over at different seconds move on together, at the
+/// minute timer: a page is built at most once a minute for them, and
+/// other timers (a watched pull request's) never build it for them.
+#[test]
+fn recent_times_build_a_page_at_most_once_a_minute() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use crate::api::browse::Comment;
+    use crate::api::model::Capped;
+    use crate::api::timeline::Item;
+
+    static CLOCK: AtomicU64 = AtomicU64::new(NOW);
+    let mut state = with_pr();
+    state.clock = || CLOCK.load(Ordering::Relaxed);
+    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let items = [130, 347, 615, 1801]
+        .map(|ago| {
+            Item::Comment(Comment {
+                id: Some(ago),
+                author: "octocat".into(),
+                body: "Looks right".into(),
+                created_at: crate::ui::time::iso8601(NOW - ago),
+                ..Default::default()
+            })
+        })
+        .into();
+    let mut activity = fixtures::activity();
+    activity.timeline = Capped::new(items, 4);
+    fetched(
+        &mut state,
+        DataKey::PrActivity(pr),
+        Data::PrActivity(Box::new(activity)),
+    );
+    let mut builds = 0;
+    for second in 1..=300 {
+        CLOCK.store(NOW + second, Ordering::Relaxed);
+        let before = built(&state);
+        update(&mut state, Msg::Timer(Timer::Watch(0)));
+        assert!(std::ptr::eq(built(&state), before), "at {second}s");
+        if second % 60 == 0 {
+            update(&mut state, Msg::Timer(Timer::Minute));
+            builds += usize::from(!std::ptr::eq(built(&state), before));
+        }
+    }
+    // Each minute, one of them reads differently.
+    assert_eq!(builds, 5);
+}
+
 /// Where git read a file comes with the file, and the page says it.
 #[test]
 fn a_file_says_where_git_read_it() {

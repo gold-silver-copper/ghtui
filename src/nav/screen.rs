@@ -20,7 +20,7 @@ pub struct PageScreen {
     pub(super) page: Arc<Page>,
     pub(super) built: Option<Built>,
     /// When a time the page shows relative to now ("3m ago") reads
-    /// differently, and the page is built again.
+    /// differently: the next minute timer builds the page again.
     pub(super) expires: u64,
     /// Nothing has been selected or scrolled yet: select the first visible
     /// item once the page has items.
@@ -191,12 +191,12 @@ impl State {
     }
 
     /// Rebuilds the page on screen if what it shows changed (its data,
-    /// the width, a time relative to now), and keeps its scroll and
-    /// selection valid.
+    /// the width, a time relative to now, by the last minute timer), and
+    /// keeps its scroll and selection valid.
     pub fn sync_page(&mut self) {
         let width = self.page_width();
         let height = self.page_height();
-        let now = (self.clock)();
+        let (now, minute) = ((self.clock)(), self.minute);
         let Screen::Page(p) = self.screen() else {
             return;
         };
@@ -208,7 +208,7 @@ impl State {
             width,
             self.compact(),
         );
-        let rebuild = (p.built != Some(built) || now >= p.expires).then(|| p.route.clone());
+        let rebuild = (p.built != Some(built) || minute >= p.expires).then(|| p.route.clone());
         let page = rebuild
             .map(|route| crate::ui::time::until_changed(|| self.build_page(&route, width, now)));
         if let Screen::Page(p) = self.screen_mut() {

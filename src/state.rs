@@ -387,6 +387,10 @@ pub struct State {
     pub density: crate::config::Density,
     /// Unix seconds; pages show relative times.
     pub clock: fn() -> u64,
+    /// When [`Timer::Minute`] last fired (Unix seconds): a page is built
+    /// again for a time it shows only once it reads differently by then,
+    /// so all of a minute's times move on together.
+    pub minute: u64,
     /// The spinner's frame, and whether its next frame is scheduled.
     pub spinner: usize,
     pub spinning: bool,
@@ -450,6 +454,7 @@ impl State {
             icons,
             density: crate::config::Density::default(),
             clock: crate::store::now,
+            minute: 0,
             spinner: 0,
             spinning: false,
             live: false,

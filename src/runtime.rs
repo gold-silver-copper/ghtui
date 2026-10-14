@@ -462,7 +462,11 @@ fn spawn(
                 if cached && key.cache_first() {
                     send_cached(gh.clone(), key.clone()).await;
                 }
-                let (result, source) = data::load::load(&gh, &local, &key, None, Some(&tx)).await;
+                // A first look before the rest only for a page showing
+                // nothing yet: one showing it already would be built
+                // twice, the first time with less.
+                let early = cached.then_some(&tx);
+                let (result, source) = data::load::load(&gh, &local, &key, None, early).await;
                 if cached && !key.cache_first() && matches!(result, Err(ApiError::Offline(_))) {
                     send_cached(gh.clone(), key.clone()).await;
                 }

@@ -223,7 +223,10 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             }
         }
         // Settling rebuilds the page if a time it shows has moved on.
-        Msg::Timer(Timer::Minute) => return vec![Cmd::Timer(Timer::Minute, 60_000)],
+        Msg::Timer(Timer::Minute) => {
+            state.minute = (state.clock)();
+            return vec![Cmd::Timer(Timer::Minute, 60_000)];
+        }
         Msg::SuggestDue(q) => {
             if let Some(Overlay::Search(sb)) = &state.overlay
                 && sb.query() == q
