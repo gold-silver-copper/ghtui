@@ -485,12 +485,6 @@ impl Pick {
     }
 }
 
-/// What choosing one of their rows does.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Chosen {
-    Lists(lists::SetLists),
-}
-
 pub fn rows(
     state: &crate::state::State,
     pick: &Pick,
@@ -501,13 +495,6 @@ pub fn rows(
 )> {
     match pick {
         Pick::Lists(repo) => lists::rows(state, repo, q),
-    }
-}
-
-#[must_use]
-pub fn choose(state: &mut crate::state::State, chosen: Chosen) -> Vec<crate::state::Cmd> {
-    match chosen {
-        Chosen::Lists(work) => lists::choose(state, work),
     }
 }
 

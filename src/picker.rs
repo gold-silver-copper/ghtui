@@ -160,7 +160,6 @@ pub enum Choice {
     Form(crate::create::Picked),
     /// Go to this line of the file on screen.
     Line(u32),
-    Project(crate::projects::Chosen),
     /// Dismiss a security alert so.
     Alert(crate::api::change::Change),
     Subscribe(crate::watch::Subscribe),
@@ -177,7 +176,6 @@ pub enum Choice {
     },
     Description(Route, String),
     FileName(Route, Option<usize>, String),
-    Site(crate::site::Chosen),
     Housekeeping(crate::housekeeping::Chosen),
     Workflows(crate::workflows::Chosen),
     /// A step of an action's plan ([`crate::act::take`]).
@@ -377,9 +375,7 @@ impl State {
             Kind::Workflows(pick) => (crate::workflows::rows(self, pick, q).into_iter())
                 .map(|(row, chosen)| (row, chosen.map(Choice::Workflows)))
                 .collect(),
-            Kind::Project(pick) => (crate::projects::rows(self, pick, q).into_iter())
-                .map(|(row, chosen)| (row, chosen.map(Choice::Project)))
-                .collect(),
+            Kind::Project(pick) => crate::projects::rows(self, pick, q),
             Kind::Alert(d) => (crate::security::rows(d, q).into_iter())
                 .map(|(row, change)| (row, Some(Choice::Alert(change))))
                 .collect(),
@@ -749,7 +745,6 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
             state.edit_home(path, crate::home::Edit::Rename { at, title }, what)
         }
         Choice::Edit(_) => Vec::new(),
-        Choice::Project(chosen) => crate::projects::choose(state, chosen),
         Choice::Alert(change) => crate::security::choose(state, change),
         Choice::Subscribe(work) => crate::watch::choose(state, work),
         Choice::Tag(route, tag) => crate::release::choose_tag(state, &route, tag),
@@ -759,7 +754,6 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
         }
         Choice::Description(route, text) => crate::gist::set_description(state, &route, text),
         Choice::FileName(route, file, name) => crate::gist::set_name(state, &route, file, name),
-        Choice::Site(chosen) => crate::site::choose(state, chosen),
         Choice::Housekeeping(chosen) => crate::housekeeping::choose(state, chosen),
         Choice::Workflows(chosen) => crate::workflows::choose(state, chosen),
         Choice::Step(step) => crate::act::take(state, Ok(step)),

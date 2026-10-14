@@ -1140,8 +1140,8 @@ fn notifies(change: &Change) -> bool {
 }
 
 /// What a change is doing while GitHub answers: "Merging".
-pub(crate) fn doing(change: &Change) -> &'static str {
-    match change {
+pub(crate) fn doing(change: &Change) -> std::borrow::Cow<'static, str> {
+    let doing = match change {
         Change::Comment { .. } | Change::CommitComment { .. } | Change::Reply { .. } => "Posting",
         Change::Star { starred: true, .. } => "Starring",
         Change::Star { .. } => "Unstarring",
@@ -1162,13 +1162,20 @@ pub(crate) fn doing(change: &Change) -> &'static str {
         Change::MarkEach { .. } => "Marking them done",
         Change::Edit(edit) => crate::edit::doing(edit),
         Change::Discussion(d) => crate::discuss::doing(d),
-        Change::SetProjectField { value: None, .. } => "Clearing the field",
-        Change::SetProjectField { .. } => "Setting the field",
+        Change::SetProjectField { said, value, .. } => {
+            let doing = if value.is_some() {
+                "Setting"
+            } else {
+                "Clearing"
+            };
+            return format!("{doing} {said}").into();
+        }
         Change::Alert(c) => crate::security::doing(c),
         Change::Project(c) => crate::projects::doing(c),
         Change::Manage(m) => crate::manage::doing(m),
         Change::Settings(c) => crate::settings::doing(c),
-    }
+    };
+    doing.into()
 }
 
 /// What a change did, once GitHub said so.

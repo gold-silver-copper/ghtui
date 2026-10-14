@@ -16,7 +16,7 @@ use crate::route::{Route, issues, pulls};
 use crate::state::{Cmd, State};
 use crate::ui::overlays::PaletteItem;
 
-use super::{At, Chosen, On, Pick};
+use super::{At, On, Pick};
 
 /// The issue or pull request on screen, and where its projects are
 /// loaded.
@@ -118,11 +118,7 @@ pub fn act(state: &mut State) -> Vec<Cmd> {
 }
 
 /// The projects to choose from.
-pub fn project_rows(
-    state: &State,
-    subject: &Subject,
-    q: &str,
-) -> Vec<(PaletteItem, Option<Chosen>)> {
+pub fn project_rows(state: &State, subject: &Subject, q: &str) -> crate::picker::Rows {
     let list = key(subject).and_then(|k| state.picked::<Capped<InProject>>(&k));
     let Some(list) = list else {
         let item = crate::picker::item("Its projects haven't loaded yet", "");
@@ -144,7 +140,7 @@ pub fn project_rows(
                 on: On::Sidebar(subject.clone(), p.id.clone()),
                 item: p.item.clone(),
             };
-            (item, p.can_update.then_some(Chosen::Project(at)))
+            (item, p.can_update.then(|| super::listing(Pick::Field(at))))
         })
         .collect()
 }

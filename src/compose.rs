@@ -96,9 +96,15 @@ pub struct Compose {
 
 impl Compose {
     pub fn new(theme: &Theme, target: Target, text: &str) -> Self {
+        let mut input = editor(theme, text);
+        // A draft's text goes below its title.
+        if matches!(target, Target::ProjectDraft(_)) && input.lines().len() == 1 {
+            input.insert_newline();
+            input.insert_newline();
+        }
         Self {
             target,
-            input: editor(theme, text),
+            input,
             preview: None,
             sent: Sent::default(),
             discard_armed: None,

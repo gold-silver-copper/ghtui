@@ -22,12 +22,11 @@ use crate::ui::overlays::PaletteItem;
 use crate::ui::page::Link;
 use crate::ui::pages::item_link;
 
-use crate::act::{By, Subject, awaiting_here};
+use crate::act::{By, Step, Subject, awaiting_here};
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::picker::entry;
-use crate::picker::{Kind, fuzzy_score};
+use crate::picker::{Choice, Kind, Rows, entry, fuzzy_score};
 use crate::state::{Cmd, Screen, State};
 
 /// A project's own actions.
@@ -209,20 +208,6 @@ impl Pick {
             Pick::Project(_) => "Find a project",
         }
     }
-}
-
-/// What choosing a row does.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Chosen {
-    /// List this field's values.
-    Field(At, NodeId),
-    /// List this project's fields.
-    Project(At),
-    Set(At, Change),
-    /// Add an issue or pull request to the project at a view.
-    Add(ProjectRef, Option<u64>, Change),
-    /// Write a new draft, starting from its title.
-    Draft(Drafting, String),
 }
 
 /// The project on screen at its view, as loaded, and its item that's
@@ -464,11 +449,7 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
             let Ok(d) = draft(state, &h) else {
                 return Vec::new();
             };
-            let text = if d.body.trim().is_empty() {
-                format!("{}\n\n", d.title)
-            } else {
-                format!("{}\n\n{}", d.title, d.body)
-            };
+            let text = format!("{}\n\n{}", d.title, d.body);
             let drafting = Drafting {
                 project,
                 view,
@@ -561,7 +542,7 @@ fn column_step(state: &mut State, next: bool) {
 }
 
 /// A picker's rows: what each says, and what choosing it does.
-pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
+pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
     let at = match pick {
         Pick::Column(at) | Pick::Field(at) | Pick::Value(at, _) => at,
         Pick::Add(project, view) => return adding(state, project, *view, q),
@@ -586,7 +567,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
             value,
             said,
         };
-        Some(Chosen::Set(at.clone(), change))
+        Some(Choice::Step(Step::Send(change, at.about())))
     };
     let field = match pick {
         Pick::Column(_) => p.column,
@@ -597,8 +578,8 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
                 .filter(|f| f.kind.settable() && fuzzy_score(q, &f.name).is_some())
                 .map(|f| {
                     let hint = p.value(&f.id).map_or("", FieldValue::text);
-                    let chosen = Chosen::Field(at.clone(), f.id.clone());
-                    entry(f.name.clone(), hint, Some(chosen))
+                    let values = Pick::Value(at.clone(), f.id.clone());
+                    entry(f.name.clone(), hint, Some(listing(values)))
                 })
                 .collect();
         }
@@ -663,12 +644,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
 /// The rows adding an item offers for what's typed: the issue or pull
 /// request it names (`owner/repo#123`, or its link), and a new draft
 /// titled with it.
-fn adding(
-    state: &State,
-    project: &ProjectRef,
-    view: Option<u64>,
-    q: &str,
-) -> Vec<(PaletteItem, Option<Chosen>)> {
+fn adding(state: &State, project: &ProjectRef, view: Option<u64>, q: &str) -> Rows {
     let q = q.trim();
     let key = DataKey::Project(project.clone(), view);
     let Some(p) = state.picked::<Project>(&key) else {
@@ -707,8 +683,8 @@ fn adding(
                     repo,
                     number,
                 });
-                let chosen = Chosen::Add(project.clone(), view, change);
-                rows.push(entry(label, "↵", Some(chosen)));
+                let add = Step::Send(change, Subject::Project(project.clone(), view));
+                rows.push(entry(label, "↵", Some(Choice::Step(add))));
             }
         }
     }
@@ -722,7 +698,10 @@ fn adding(
     rows.push(entry(
         format!("New draft “{q}”"),
         "↵ writes it",
-        Some(Chosen::Draft(drafting, q.to_owned())),
+        Some(Choice::Step(Step::Compose(
+            compose::Target::ProjectDraft(drafting),
+            q.to_owned(),
+        ))),
     ));
     rows
 }
@@ -731,9 +710,9 @@ fn adding(
 fn typed(
     field: &ProjectField,
     q: &str,
-    set: impl Fn(&ProjectField, Option<FieldValue>) -> Option<Chosen>,
-) -> (PaletteItem, Option<Chosen>) {
-    let row = |label: String, chosen: Option<Chosen>| {
+    set: impl Fn(&ProjectField, Option<FieldValue>) -> Option<Choice>,
+) -> (PaletteItem, Option<Choice>) {
+    let row = |label: String, chosen: Option<Choice>| {
         let hint = if chosen.is_some() { "↵" } else { "" };
         let item = PaletteItem {
             label,
@@ -769,43 +748,9 @@ fn is_date(s: &str) -> bool {
             && (1..=31).contains(&d.parse::<u8>().unwrap_or(0)))
 }
 
-/// What choosing a row does: list a field's values, or send the change.
-#[must_use]
-pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
-    match chosen {
-        Chosen::Field(at, field) => state.open_picker(Kind::Project(Pick::Value(at, field))),
-        Chosen::Project(at) => state.open_picker(Kind::Project(Pick::Field(at))),
-        Chosen::Add(project, view, change) => {
-            if let Change::Project(c) = &change {
-                state.info(format!("{}…", doing(c)));
-            }
-            vec![crate::act::send(
-                change,
-                By::Act(Subject::Project(project, view)),
-            )]
-        }
-        Chosen::Draft(drafting, title) => {
-            state.overlay = None;
-            let cmds = state.compose(compose::Target::ProjectDraft(drafting), &title);
-            // Its text goes below the title.
-            if let Some(crate::state::Overlay::Compose(c)) = &mut state.overlay {
-                c.input.insert_newline();
-                c.input.insert_newline();
-            }
-            cmds
-        }
-        Chosen::Set(at, change) => {
-            if let Change::SetProjectField { said, value, .. } = &change {
-                let doing = if value.is_some() {
-                    "Setting"
-                } else {
-                    "Clearing"
-                };
-                state.info(format!("{doing} {said}…"));
-            }
-            vec![crate::act::send(change, By::Act(at.about()))]
-        }
-    }
+/// The row that lists `pick`'s rows.
+fn listing(pick: Pick) -> Choice {
+    Choice::Step(Step::Pick(Kind::Project(pick)))
 }
 
 /// Whether the project at `view`, as loaded, shows `change`: the item has

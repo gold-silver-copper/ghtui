@@ -52,6 +52,14 @@ impl SetLists {
             (None, false) => format!("Took {} out of “{}”", self.repo, self.list),
         }
     }
+
+    /// The picker's row that sends it.
+    fn chosen(self) -> Choice {
+        Choice::Step(crate::act::Step::Start(
+            format!("{}…", self.said()),
+            self.into(),
+        ))
+    }
 }
 
 /// What the page shows once GitHub has the change.
@@ -170,7 +178,7 @@ pub fn rows(
                 list: l.name.clone(),
                 add: !has,
             };
-            entry(label, hint, Some(Choice::Site(super::Chosen::Lists(work))))
+            entry(label, hint, Some(work.chosen()))
         })
         .collect();
     let name = q.trim();
@@ -189,11 +197,7 @@ pub fn rows(
             add: true,
         };
         let label = format!("+ Make the list “{name}” and add it");
-        rows.push(entry(
-            label,
-            "↵",
-            Some(Choice::Site(super::Chosen::Lists(work))),
-        ));
+        rows.push(entry(label, "↵", Some(work.chosen())));
     }
     if mine.lists.left_out() > 0 {
         let n = mine.lists.left_out();
@@ -211,13 +215,6 @@ pub fn rows(
         ));
     }
     rows
-}
-
-/// Sends a list chosen in the picker.
-#[must_use]
-pub fn choose(state: &mut State, work: SetLists) -> Vec<Cmd> {
-    state.info(format!("{}…", work.said()));
-    work::start(work)
 }
 
 impl Job for SetLists {
