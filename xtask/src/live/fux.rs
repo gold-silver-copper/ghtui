@@ -1,4 +1,4 @@
-//! Driving ghtui through a private fux server (`fux help agents`): its own
+//! Driving ghtui through a private fux server (`fux help-agents`): its own
 //! socket and `XDG_RUNTIME_DIR` under the run's directory, so it can't
 //! reach anyone's own fux session.
 
@@ -17,6 +17,9 @@ const SIZE: (u16, u16) = (216, 60);
 
 /// How long a screen waits for something by default.
 const WAIT: Duration = Duration::from_secs(30);
+
+/// How often a wait reads a settled screen again.
+const POLL: Duration = Duration::from_millis(250);
 
 /// The fux binary: `--fux`, else `fux` on PATH, else ~/code/fux's build;
 /// one that speaks fuxth (`fux help-agents`): its words drive the server.
@@ -185,7 +188,7 @@ impl Pane {
             let kind = if is_key(word) { "key" } else { "text" };
             cmd.args(["str", word, kind]);
         }
-        cmd.args(["400", "wait-idle", "20", "timeout", "send-keys"]);
+        cmd.args(["10", "timeout", "send-keys"]);
         settled(&cmd.output()?, &format!("keys `{keys}`"))
     }
 
@@ -207,7 +210,7 @@ impl Pane {
     pub fn type_text(&self, text: &str) -> Result<()> {
         let mut cmd = self.fux.pane(&self.name);
         cmd.args(["keys", "str", text, "text"]);
-        cmd.args(["200", "wait-idle", "20", "timeout", "send-keys"]);
+        cmd.args(["10", "timeout", "send-keys"]);
         settled(&cmd.output()?, "typing")
     }
 
@@ -280,10 +283,9 @@ impl Pane {
         })
     }
 
-    /// Waits until `found` finds something on screen, waking at each
-    /// change of it (fux's `wait-change`, a couple of seconds at a time, so
-    /// a change between reading the screen and waiting is never missed by
-    /// more than that).
+    /// Waits until `found` finds something on screen, reading it again
+    /// each time ghtui has settled and a moment has passed: fux waits for
+    /// a burst of drawing to end, but has no wait for any change at all.
     pub fn wait_until<T>(
         &self,
         what: &str,
@@ -312,13 +314,14 @@ impl Pane {
             }
             let secs = left.as_secs().clamp(1, 2).to_string();
             let out = (self.fux.pane(&self.name))
-                .args(["opts", "wait-change", &secs, "timeout", "wait"])
+                .args(["opts", &secs, "timeout", "wait"])
                 .output()?;
             match out.status.code() {
-                Some(0 | 6 | 124) => {}
+                Some(0 | 124) => {}
                 Some(3) => bail!("ghtui exited while waiting for {what}: {}", tail(&out)),
                 _ => check(&out, "fux wait")?,
             }
+            std::thread::sleep(POLL.min(left));
         }
     }
 
@@ -326,11 +329,13 @@ impl Pane {
         let _ = (self.fux.pane(&self.name)).arg("kill").output();
     }
 
-    /// Waits for the screen to be still for a second (ten at most).
+    /// Waits for ghtui to settle (ten seconds at most), then a second
+    /// more, for what a reply that was on its way draws.
     fn wait_idle(&self) {
         let _ = (self.fux.pane(&self.name))
-            .args(["opts", "1000", "wait-idle", "10", "timeout", "wait"])
+            .args(["opts", "10", "timeout", "wait"])
             .output();
+        std::thread::sleep(Duration::from_secs(1));
     }
 }
 
@@ -357,10 +362,11 @@ fn is_key(word: &str) -> bool {
     }
 }
 
-/// `send-keys --wait-idle`: settled (0), or the keys changed nothing (5).
+/// `send-keys`: settled (0), or still drawing at the time limit (124),
+/// which the waits after it see through.
 fn settled(out: &Output, what: &str) -> Result<()> {
     match out.status.code() {
-        Some(0 | 5) => Ok(()),
+        Some(0 | 124) => Ok(()),
         Some(3) => bail!("ghtui exited after {what}: {}", tail(out)),
         _ => check(out, &format!("fux send-keys ({what})")),
     }
