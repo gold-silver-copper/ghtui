@@ -58,6 +58,7 @@ tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 url = "2.5.8"
 cynic = { version = "3.14.0", features = ["rkyv"] }
+cynic-parser = { version = "0.11.2", default-features = false }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "http2", "json", "stream"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
 http = "1"
@@ -87,7 +88,6 @@ tree-sitter-bash = { version = "0.25.1", optional = true }
 cynic-codegen = { version = "3.14.0", features = ["rkyv"] }
 
 [dev-dependencies]
-cynic-parser = { version = "0.11.2", default-features = false }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 insta = "1.49.0"
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
