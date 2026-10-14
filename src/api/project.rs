@@ -682,7 +682,7 @@ const ITEMS: usize = 50;
 pub const ALL_ITEMS: usize = 1000;
 
 /// A change to a project's items, other than setting a field.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ProjectChange {
     /// Add an issue or pull request, by its repository and number.
     Add {

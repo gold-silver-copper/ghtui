@@ -36,10 +36,10 @@ fn a_comment_github_can_t_be_reached_for_waits_on_its_page_and_goes_when_it_s_ba
     let [Cmd::Offline(Off::Queue(Op::Add(entry)))] = cmds.as_slice() else {
         panic!("{cmds:?}")
     };
-    let comment = Write::Comment {
+    let comment = Write::Change(Change::Comment {
         subject: NodeId::new("I_14"),
         body: "Thanks!".into(),
-    };
+    });
     assert_eq!(entry.write, comment);
     assert_eq!(entry.page, issue(14).url());
 
@@ -102,10 +102,10 @@ fn a_refused_write_is_sent_again_copied_or_thrown_away_from_its_row() {
     let refused = Entry {
         id: 3,
         at: 0,
-        write: Write::Comment {
+        write: Write::Change(Change::Comment {
             subject: NodeId::new("I_14"),
             body: "Too late".into(),
-        },
+        }),
         page: issue(14).url(),
         title: "gold-silver-copper/ghtui#14".into(),
         status: Status::Refused("the conversation is locked".into()),

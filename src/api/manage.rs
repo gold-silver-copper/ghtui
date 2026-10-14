@@ -16,7 +16,7 @@ use crate::api::raw;
 pub use crate::api::timeline::LockReason;
 
 /// An issue by its repository and number.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct IssueAt {
     pub repo: RepoId,
     pub number: u64,
@@ -67,7 +67,7 @@ impl std::fmt::Display for IssueAt {
 }
 
 /// Why a comment is hidden, as GitHub's "Hide" menu offers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum HideReason {
     Spam,
     Abuse,
@@ -188,7 +188,7 @@ impl DiscussionReason {
 }
 
 /// A change to an issue, a pull request or a discussion.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Manage {
     /// Delete a pull request's head branch.
     DeleteBranch {

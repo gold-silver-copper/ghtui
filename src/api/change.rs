@@ -17,7 +17,7 @@ use crate::api::queries::{
 };
 
 /// A change to make on GitHub.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Change {
     /// Comment on an issue or pull request.
     Comment {

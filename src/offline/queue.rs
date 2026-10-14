@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 use crate::api::change::{Change, CloseReason};
 use crate::api::discussion::Discuss;
 use crate::api::edit::Edit;
-use crate::api::model::{NodeId, PrRef, RepoId, ReviewEvent};
+use crate::api::model::{PrRef, ReviewEvent};
 use crate::api::{ApiError, GitHub};
 use crate::store::{DraftComment, Store};
 
@@ -50,43 +50,11 @@ pub enum Status {
     Unsure(String),
 }
 
-/// What's queued: the changes that can wait for GitHub. Merging and the
-/// like aren't: what they'd do depends on GitHub's state when they're
-/// sent.
+/// What's queued: a change that can wait for GitHub ([`Write::of`]), or
+/// a review.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Write {
-    Comment {
-        subject: NodeId,
-        body: String,
-    },
-    CommitComment {
-        repo: RepoId,
-        oid: String,
-        body: String,
-    },
-    Reply {
-        thread: NodeId,
-        body: String,
-    },
-    Star {
-        repo: RepoId,
-        id: NodeId,
-        starred: bool,
-    },
-    SetPrOpen {
-        pr: NodeId,
-        open: bool,
-    },
-    CloseIssue {
-        issue: NodeId,
-        reason: CloseReason,
-    },
-    ReopenIssue {
-        issue: NodeId,
-    },
-    /// A comment's text, a title, a reaction, labels and the like.
-    Edit(Edit),
-    Discussion(Discuss),
+    Change(Change),
     /// A review, with its comments.
     Review(Review),
 }
@@ -105,71 +73,67 @@ pub struct Review {
 }
 
 impl Write {
-    /// `change`, if it can wait for GitHub.
+    /// `change`, if it can wait for GitHub: merging and the like can't,
+    /// as what they'd do depends on GitHub's state when they're sent.
     pub fn of(change: &Change) -> Option<Self> {
-        Some(match change.clone() {
-            Change::Comment { subject, body } => Write::Comment { subject, body },
-            Change::CommitComment { repo, oid, body } => Write::CommitComment { repo, oid, body },
-            Change::Reply { thread, body } => Write::Reply { thread, body },
-            Change::Star { repo, id, starred } => Write::Star { repo, id, starred },
-            Change::SetPrOpen { pr, open } => Write::SetPrOpen { pr, open },
-            Change::CloseIssue { issue, reason } => Write::CloseIssue { issue, reason },
-            Change::ReopenIssue { issue } => Write::ReopenIssue { issue },
-            Change::Edit(edit) => Write::Edit(edit),
-            Change::Discussion(discuss) => Write::Discussion(discuss),
-            _ => return None,
-        })
-    }
-
-    /// The change to send (a review isn't one).
-    pub fn change(&self) -> Option<Change> {
-        Some(match self.clone() {
-            Write::Comment { subject, body } => Change::Comment { subject, body },
-            Write::CommitComment { repo, oid, body } => Change::CommitComment { repo, oid, body },
-            Write::Reply { thread, body } => Change::Reply { thread, body },
-            Write::Star { repo, id, starred } => Change::Star { repo, id, starred },
-            Write::SetPrOpen { pr, open } => Change::SetPrOpen { pr, open },
-            Write::CloseIssue { issue, reason } => Change::CloseIssue { issue, reason },
-            Write::ReopenIssue { issue } => Change::ReopenIssue { issue },
-            Write::Edit(edit) => Change::Edit(edit),
-            Write::Discussion(discuss) => Change::Discussion(discuss),
-            Write::Review(_) => return None,
-        })
+        let waits = matches!(
+            change,
+            Change::Comment { .. }
+                | Change::CommitComment { .. }
+                | Change::Reply { .. }
+                | Change::Star { .. }
+                | Change::SetPrOpen { .. }
+                | Change::CloseIssue { .. }
+                | Change::ReopenIssue { .. }
+                | Change::Edit(_)
+                | Change::Discussion(_)
+        );
+        waits.then(|| Write::Change(change.clone()))
     }
 
     /// Whether sending it twice does what sending it once does: then a
     /// send whose fate isn't known is simply sent again.
     pub fn idempotent(&self) -> bool {
         match self {
-            Write::Comment { .. }
-            | Write::CommitComment { .. }
-            | Write::Reply { .. }
-            | Write::Review(_) => false,
-            Write::Discussion(d) => !matches!(d, Discuss::Comment { .. }),
-            Write::Star { .. }
-            | Write::SetPrOpen { .. }
-            | Write::CloseIssue { .. }
-            | Write::ReopenIssue { .. }
-            | Write::Edit(_) => true,
+            Write::Review(_)
+            | Write::Change(Change::Comment { .. } | Change::CommitComment { .. })
+            | Write::Change(Change::Reply { .. }) => false,
+            Write::Change(Change::Discussion(d)) => !matches!(d, Discuss::Comment { .. }),
+            Write::Change(_) => true,
         }
     }
 
     /// What it is, as people say it ("A comment", "Closing the issue").
     pub fn what(&self) -> String {
-        match self {
-            Write::Comment { .. } | Write::CommitComment { .. } => "A comment".into(),
-            Write::Reply { .. } => "A reply".into(),
-            Write::Star { starred: true, .. } => "Starring the repository".into(),
-            Write::Star { .. } => "Unstarring the repository".into(),
-            Write::SetPrOpen { open: true, .. } => "Reopening the pull request".into(),
-            Write::SetPrOpen { .. } => "Closing the pull request".into(),
-            Write::CloseIssue { reason, .. } => match reason {
+        let change = match self {
+            Write::Change(change) => change,
+            Write::Review(r) => {
+                let event = match r.event {
+                    ReviewEvent::Approve => "An approval",
+                    ReviewEvent::RequestChanges => "A review asking for changes",
+                    ReviewEvent::Comment => "A review",
+                };
+                return match r.drafts.len() {
+                    0 => event.to_owned(),
+                    1 => format!("{event}, with a comment"),
+                    n => format!("{event}, with {n} comments"),
+                };
+            }
+        };
+        match change {
+            Change::Comment { .. } | Change::CommitComment { .. } => "A comment".into(),
+            Change::Reply { .. } => "A reply".into(),
+            Change::Star { starred: true, .. } => "Starring the repository".into(),
+            Change::Star { .. } => "Unstarring the repository".into(),
+            Change::SetPrOpen { open: true, .. } => "Reopening the pull request".into(),
+            Change::SetPrOpen { .. } => "Closing the pull request".into(),
+            Change::CloseIssue { reason, .. } => match reason {
                 CloseReason::Completed => "Closing the issue as completed".into(),
                 CloseReason::NotPlanned => "Closing the issue as not planned".into(),
                 CloseReason::Duplicate => "Closing the issue as a duplicate".into(),
             },
-            Write::ReopenIssue { .. } => "Reopening the issue".into(),
-            Write::Edit(edit) => match edit {
+            Change::ReopenIssue { .. } => "Reopening the issue".into(),
+            Change::Edit(edit) => match edit {
                 Edit::Body { .. } => "An edit".into(),
                 Edit::Delete { .. } => "Deleting a comment".into(),
                 Edit::Title { title, .. } => format!("A new title: {title}"),
@@ -188,7 +152,7 @@ impl Write {
                     None => "No milestone".into(),
                 },
             },
-            Write::Discussion(d) => match d {
+            Change::Discussion(d) => match d {
                 Discuss::Comment {
                     reply_to: Some(_), ..
                 } => "A reply".into(),
@@ -198,31 +162,21 @@ impl Write {
                 Discuss::Answer { on: true, .. } => "Marking the answer".into(),
                 Discuss::Answer { .. } => "Unmarking the answer".into(),
             },
-            Write::Review(r) => {
-                let event = match r.event {
-                    ReviewEvent::Approve => "An approval",
-                    ReviewEvent::RequestChanges => "A review asking for changes",
-                    ReviewEvent::Comment => "A review",
-                };
-                match r.drafts.len() {
-                    0 => event.to_owned(),
-                    1 => format!("{event}, with a comment"),
-                    n => format!("{event}, with {n} comments"),
-                }
-            }
+            // Never queued.
+            _ => "A change".into(),
         }
     }
 
     /// The text written, to show and to copy.
     pub fn text(&self) -> Option<String> {
         match self {
-            Write::Comment { body, .. }
-            | Write::CommitComment { body, .. }
-            | Write::Reply { body, .. }
-            | Write::Edit(Edit::Body { body, .. })
-            | Write::Discussion(Discuss::Comment { body, .. } | Discuss::Edit { body, .. }) => {
-                Some(body.clone())
-            }
+            Write::Change(
+                Change::Comment { body, .. }
+                | Change::CommitComment { body, .. }
+                | Change::Reply { body, .. }
+                | Change::Edit(Edit::Body { body, .. })
+                | Change::Discussion(Discuss::Comment { body, .. } | Discuss::Edit { body, .. }),
+            ) => Some(body.clone()),
             Write::Review(r) => {
                 let comments = r.drafts.iter().map(|d| match d.line {
                     Some(line) => format!("{}:{line}\n{}", d.path, d.body),
@@ -234,7 +188,7 @@ impl Write {
                     .collect();
                 (!all.is_empty()).then(|| all.join("\n\n"))
             }
-            _ => None,
+            Write::Change(_) => None,
         }
     }
 }
@@ -489,26 +443,24 @@ pub fn start(
 async fn send(gh: &GitHub, write: Write) -> Sent {
     match write {
         Write::Review(review) => crate::runtime::send_review(gh, review).await,
-        write => match write.change() {
-            Some(change) => Sent::of(gh.change(&change).await),
-            None => Sent::Refused("ghtui can't send it".into()),
-        },
+        Write::Change(change) => Sent::of(gh.change(&change).await),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::model::NodeId;
     use std::cell::RefCell;
 
     fn comment(body: &str) -> Entry {
         Entry {
             id: 0,
             at: 1,
-            write: Write::Comment {
+            write: Write::Change(Change::Comment {
                 subject: NodeId::new("I_1"),
                 body: body.into(),
-            },
+            }),
             page: "https://github.com/o/r/issues/1".into(),
             title: "o/r#1".into(),
             status: Status::Queued,
@@ -522,7 +474,7 @@ mod tests {
             remove: Vec::new(),
         };
         Entry {
-            write: Write::Edit(edit),
+            write: Write::Change(Change::Edit(edit)),
             ..comment("")
         }
     }
@@ -665,7 +617,7 @@ mod tests {
             body: "hi".into(),
         };
         let write = Write::of(&comment).unwrap();
-        assert_eq!(write.change(), Some(comment));
+        assert_eq!(write, Write::Change(comment));
         assert!(!write.idempotent());
     }
 }

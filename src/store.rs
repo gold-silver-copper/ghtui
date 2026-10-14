@@ -22,7 +22,7 @@ use redb::{Database, Durability, ReadableDatabase, TableDefinition, TableHandle}
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Bump whenever the meaning or encoding of any table changes.
-pub const SCHEMA_VERSION: u64 = 16;
+pub const SCHEMA_VERSION: u64 = 17;
 
 /// Where the pages visited lately are kept.
 pub const VISITS: &str = "visits";

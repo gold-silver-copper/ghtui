@@ -365,7 +365,7 @@ impl crate::api::browse::Page for AlertList {
 }
 
 /// Dismissing (for a secret, resolving) an alert, or reopening it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AlertChange {
     pub alert: AlertRef,
     /// GitHub's word for why, and a comment (may be empty); `None`

@@ -72,7 +72,7 @@ pub struct Inbox {
 
 /// A thread as it was when marked: by its ID, and when GitHub said it
 /// was last updated.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ThreadAt {
     pub id: String,
     pub updated_at: String,

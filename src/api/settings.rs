@@ -384,7 +384,7 @@ pub struct DeployKey {
 }
 
 /// A change to a repository's settings.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SettingsChange {
     CreateRule {
         repo_id: NodeId,
