@@ -42,7 +42,7 @@ fn rows(state: &State, query: &str) -> Vec<Row> {
         // Said short: the list is narrow.
         Err(why) if why.contains("read:user") => vec![
             note("Your token lacks the read:user scope:".to_owned()),
-            note("gh auth refresh -s read:user adds it".to_owned()),
+            note(format!("{} adds it", crate::api::refresh("read:user"))),
         ],
         Err(why) => vec![note(why)],
         Ok(replies) if replies.is_empty() => vec![note("You have no saved replies".to_owned())],

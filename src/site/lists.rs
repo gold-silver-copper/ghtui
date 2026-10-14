@@ -263,13 +263,7 @@ impl Job for SetLists {
 fn refused(what: &str, why: &Failure) -> String {
     let why = why.to_string();
     if why.contains("['user']") {
-        let flag = match crate::host::current() {
-            h if h.is_enterprise() => format!("--hostname {} ", h.name()),
-            _ => String::new(),
-        };
-        format!(
-            "Changing your lists takes your token's user scope, which it lacks: `gh auth refresh {flag}-s user` adds it"
-        )
+        crate::api::scope_missing("Changing your lists", "user")
     } else {
         format!("GitHub didn't {what}: {why}")
     }

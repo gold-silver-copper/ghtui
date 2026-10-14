@@ -67,6 +67,8 @@ pub struct NewPr {
 mod wire {
     use serde::Deserialize;
 
+    pub use crate::api::browse::wire::{Counted, Name};
+
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct Repo {
@@ -75,24 +77,12 @@ mod wire {
         pub has_issues_enabled: bool,
         pub is_archived: bool,
         pub viewer_permission: Option<String>,
-        pub default_branch_ref: Option<Named>,
-        pub labels: Option<Connection<Label>>,
-        pub assignable_users: Connection<User>,
-        pub milestones: Option<Connection<Milestone>>,
+        pub default_branch_ref: Option<Name>,
+        pub labels: Option<Counted<Label>>,
+        pub assignable_users: Counted<User>,
+        pub milestones: Option<Counted<Milestone>>,
         pub issue_templates: Option<Tree>,
         pub pull_request_templates: Option<Vec<Template>>,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Named {
-        pub name: String,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Connection<T> {
-        pub total_count: i64,
-        pub nodes: Option<Vec<Option<T>>>,
     }
 
     #[derive(Deserialize)]
@@ -160,18 +150,8 @@ mod wire {
     }
 }
 
-fn capped<T, U>(c: Option<wire::Connection<T>>, f: impl FnMut(T) -> U) -> Capped<U> {
-    let Some(c) = c else {
-        return Capped::default();
-    };
-    let items: Vec<U> = c
-        .nodes
-        .unwrap_or_default()
-        .into_iter()
-        .flatten()
-        .map(f)
-        .collect();
-    Capped::new(items, u64::try_from(c.total_count).unwrap_or_default())
+fn capped<T, U>(c: Option<wire::Counted<T>>, mut f: impl FnMut(T) -> U) -> Capped<U> {
+    c.map_or_else(Capped::default, |c| c.into_capped(|t| Some(f(t))))
 }
 
 impl GitHub {

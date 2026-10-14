@@ -238,19 +238,11 @@ impl GitHub {
 
     /// One of the traffic's answers, or what GitHub's refusal means.
     async fn traffic_part(&self, path: &str) -> Result<String, ApiError> {
-        let answer = self.rest_answer(path).await?;
-        if answer.status() == 403 {
-            #[derive(Deserialize)]
-            struct Message {
-                message: Option<String>,
-            }
-            let message = serde_json::from_str::<Message>(answer.body())
-                .ok()
-                .and_then(|m| m.message)
-                .unwrap_or_default();
-            return Err(ApiError::Denied(traffic_refusal(&message)));
-        }
-        answer.checked(path.trim_start_matches("/repos/"))?;
+        let what = path.trim_start_matches("/repos/");
+        let answer = self.rest_refusable(path, what, |status, message, _| {
+            (status == 403).then(|| traffic_refusal(message))
+        });
+        let answer = answer.await?.map_err(ApiError::Denied)?;
         Ok(answer.body().to_owned())
     }
 
@@ -366,16 +358,13 @@ fn from_stats(contributors: Vec<wire::Contributor>, weekdays: [u32; 7], now: u64
 mod wire {
     use serde::Deserialize;
 
+    use crate::api::browse::UserLogin as Login;
+
     #[derive(Deserialize)]
     pub struct Contributor {
         pub author: Option<Login>,
         pub total: u64,
         pub weeks: Vec<StatWeek>,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Login {
-        pub login: String,
     }
 
     #[derive(Deserialize)]

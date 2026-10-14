@@ -23,13 +23,7 @@ pub fn settings_url() -> String {
 fn refusal(err: ApiError) -> ApiError {
     match err {
         ApiError::GraphQl(messages) if messages.iter().any(|m| m.contains("read:user")) => {
-            let flag = match crate::host::current() {
-                h if h.is_enterprise() => format!("--hostname {} ", h.name()),
-                _ => String::new(),
-            };
-            ApiError::Denied(format!(
-                "Saved replies take your token's read:user scope, which it lacks: `gh auth refresh {flag}-s read:user` adds it"
-            ))
+            ApiError::Denied(crate::api::scope_missing("Saved replies", "read:user"))
         }
         err => err,
     }

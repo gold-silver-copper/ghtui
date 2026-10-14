@@ -53,7 +53,7 @@ impl Job for Subscribe {
                 // GitHub sets a thread's subscription only for a token with
                 // the notifications scope, which gh doesn't ask for.
                 let text = if why.contains("'notifications'") {
-                    "Subscribing to a thread takes your token's notifications scope: gh auth refresh -s notifications adds it".to_owned()
+                    crate::api::scope_missing("Subscribing to a thread", "notifications")
                 } else if why.to_lowercase().contains("not accessible") {
                     format!(
                         "GitHub didn't change your subscription: {why}. A fine-grained token can't: a classic one can"

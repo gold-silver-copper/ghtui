@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::api::browse::{Page, Results, wire};
+use crate::api::browse::{Page, Results, UserLogin as Login, wire};
 use crate::api::client::{ApiError, GitHub};
 use crate::api::model::{Capped, IssueState, Label, NodeId, PrState, RepoId, Status};
 use crate::api::raw;
@@ -719,13 +719,12 @@ fn scoped(err: ApiError) -> ApiError {
     let read = messages.iter().any(|m| m.contains("'read:project'"));
     let write = messages.iter().any(|m| m.contains("'project'"));
     if write {
-        ApiError::GraphQl(vec![
-            "changing a project takes the project scope, which your token lacks: `gh auth refresh -s project` adds it".into(),
-        ])
+        ApiError::GraphQl(vec![crate::api::scope_missing(
+            "Changing a project",
+            "project",
+        )])
     } else if read {
-        ApiError::GraphQl(vec![
-            "projects take the read:project scope, which your token lacks: `gh auth refresh -s read:project` adds it".into(),
-        ])
+        ApiError::GraphQl(vec![crate::api::scope_missing("Projects", "read:project")])
     } else {
         err
     }
@@ -1216,11 +1215,6 @@ enum WireContent {
     },
     Issue(WireLinked),
     PullRequest(WireLinked),
-}
-
-#[derive(Deserialize)]
-struct Login {
-    login: String,
 }
 
 #[derive(Deserialize)]

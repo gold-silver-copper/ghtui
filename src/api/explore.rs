@@ -153,11 +153,7 @@ impl GitHub {
         #[serde(rename_all = "camelCase")]
         struct Graph {
             stargazer_count: u64,
-            related_topics: Vec<Named>,
-        }
-        #[derive(Deserialize)]
-        struct Named {
-            name: String,
+            related_topics: Vec<crate::api::browse::wire::Name>,
         }
         let path = format!(
             "/search/topics?q={}&per_page=10",

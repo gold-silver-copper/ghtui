@@ -212,14 +212,18 @@ pub struct FileCommit {
 /// The token's `workflow` scope, which changing a workflow's file takes.
 pub fn workflow_scoped(err: ApiError) -> ApiError {
     let lacks = |m: &str| m.contains("workflow") && m.contains("scope");
+    let denied = || {
+        ApiError::Denied(crate::api::scope_missing(
+            "Changing a workflow's file",
+            "workflow",
+        ))
+    };
     match &err {
-        ApiError::GraphQl(m) if m.iter().any(|m| lacks(m)) => ApiError::Denied(WORKFLOW.into()),
-        ApiError::Http { message, .. } if lacks(message) => ApiError::Denied(WORKFLOW.into()),
+        ApiError::GraphQl(m) if m.iter().any(|m| lacks(m)) => denied(),
+        ApiError::Http { message, .. } if lacks(message) => denied(),
         _ => err,
     }
 }
-
-const WORKFLOW: &str = "Changing a workflow's file takes your token's workflow scope: `gh auth refresh -s workflow` adds it";
 
 /// A ref's path below `/git/refs/` or a label's name, each segment
 /// escaped.

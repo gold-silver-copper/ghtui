@@ -41,3 +41,26 @@ pub mod workflows;
 
 pub use crate::store::Cached;
 pub use client::{ApiError, GitHub, Polled};
+
+/// The `gh` command that adds `scope` to the token, naming an Enterprise
+/// host.
+pub fn refresh(scope: &str) -> String {
+    match crate::host::current() {
+        h if h.is_enterprise() => format!("gh auth refresh --hostname {} -s {scope}", h.name()),
+        _ => format!("gh auth refresh -s {scope}"),
+    }
+}
+
+/// What to say when the token lacks the `scope` that `what` takes.
+pub fn scope_missing(what: &str, scope: &str) -> String {
+    format!(
+        "{what}: your token lacks the {scope} scope; `{}` adds it",
+        refresh(scope)
+    )
+}
+
+/// Whether a classic token's scopes (GitHub's `x-oauth-scopes`, comma
+/// separated) include `scope`.
+pub fn has_scope(scopes: &str, scope: &str) -> bool {
+    scopes.split(',').any(|s| s.trim() == scope)
+}

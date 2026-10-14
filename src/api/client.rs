@@ -8,8 +8,8 @@ use std::time::Duration;
 use crate::store::{Cached, HttpEntry, Store};
 use cynic::{MutationBuilder, QueryBuilder};
 use http::{HeaderMap, HeaderValue, StatusCode, header};
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::api::auth::Token;
@@ -1016,6 +1016,36 @@ impl GitHub {
         Ok(Answer(
             self.send(&Request::Get { path, cached: None }).await?,
         ))
+    }
+
+    /// GETs a REST path: GitHub's answer, or, when it refused, what
+    /// `refused` makes of the refusal from its status, GitHub's message
+    /// and the answer (its headers say a token's scopes). A refusal it
+    /// makes nothing of is the error its status means.
+    pub(crate) async fn rest_refusable<E>(
+        &self,
+        path: &str,
+        what: impl std::fmt::Display,
+        refused: impl FnOnce(u16, &str, &Answer) -> Option<E>,
+    ) -> Result<Result<Answer, E>, ApiError> {
+        #[derive(Deserialize)]
+        struct Message {
+            message: Option<String>,
+        }
+        let answer = self.rest_answer(path).await?;
+        let status = answer.status();
+        if (200..300).contains(&status) {
+            return Ok(Ok(answer));
+        }
+        let message = serde_json::from_str::<Message>(answer.body())
+            .ok()
+            .and_then(|m| m.message)
+            .unwrap_or_default();
+        if let Some(why) = refused(status, &message, &answer) {
+            return Ok(Err(why));
+        }
+        answer.checked(&what)?;
+        Err(ApiError::Decode(format!("{what}: status {status}")))
     }
 
     /// [`Self::rest_write`], for a change whose answer says what it made
