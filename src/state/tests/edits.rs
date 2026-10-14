@@ -71,10 +71,7 @@ fn a_comment_is_edited_in_place_and_followed() {
     // mentioned.
     let opened = press(&mut s, ",e");
     assert!(
-        opened.iter().all(|c| matches!(
-            c,
-            crate::state::Cmd::Api(crate::state::Api::FetchMentionable(_))
-        )),
+        fixtures::asked(&opened) == [DataKey::Mentionable(ghtui())] && opened.len() == 1,
         "{opened:?}"
     );
     let Some(Overlay::Compose(c)) = &s.overlay else {

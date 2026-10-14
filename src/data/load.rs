@@ -234,6 +234,8 @@ async fn answer(
         K::FileLook(repo, rev, path) => {
             Data::FileLook(Box::new(gh.file_look(repo, rev, path).await?))
         }
+        K::Mentionable(repo) => Data::Mentionable(Box::new(gh.mentionable(repo).await?)),
+        K::Unread => Data::Unread(gh.unread().await?),
     })
 }
 

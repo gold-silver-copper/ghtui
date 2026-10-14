@@ -459,7 +459,6 @@ fn spawn(
     spawn_guarded(tx, replies, |tx| async move {
         let msg = match api {
             Api::FetchViewer => Msg::Viewer(gh.viewer_login().await),
-            Api::FetchUnread => Msg::Unread(gh.unread().await),
             Api::Fetch { key, cached } => {
                 // Nothing on screen yet: the cache's copy, first or (for
                 // what shows it only then) while GitHub can't be reached.
@@ -578,10 +577,6 @@ fn spawn(
             Api::FetchLastReview { pr, login } => {
                 let result = gh.last_review_commit(&pr, &login).await;
                 Msg::Diff(pr.into(), DiffMsg::LastReview(result))
-            }
-            Api::FetchMentionable(repo) => {
-                let result = gh.mentionable(&repo).await;
-                Msg::Mentionable(repo, result)
             }
             Api::Poll { pr, asks } => {
                 let polls = asks.into_iter().map(|ask| {
@@ -707,7 +702,6 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
     }
     let msg = match cmd {
         Cmd::Api(Api::FetchViewer) => Msg::Viewer(api()),
-        Cmd::Api(Api::FetchUnread) => Msg::Unread(api()),
         Cmd::Api(Api::Fetch { key, .. }) => Msg::Fetched {
             key: key.clone(),
             result: api(),
@@ -774,7 +768,6 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         Cmd::Api(Api::FetchLastReview { pr, .. }) => {
             Msg::Diff(pr.clone().into(), DiffMsg::LastReview(api()))
         }
-        Cmd::Api(Api::FetchMentionable(repo)) => Msg::Mentionable(repo.clone(), api()),
         Cmd::Git(Git::Code(ask)) => Msg::Code(ask.clone(), Err("ghtui hit a bug".into())),
         Cmd::Api(Api::Poll { pr, .. }) => Msg::Polled(pr.clone(), Vec::new()),
         Cmd::Api(Api::Watch { what, .. }) => Msg::Watched(what.clone(), Vec::new()),

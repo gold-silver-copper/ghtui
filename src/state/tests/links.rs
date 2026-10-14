@@ -200,20 +200,21 @@ fn the_header_counts_the_unread_and_opens_the_inbox() {
     });
     let header =
         |s: &State| -> Vec<String> { s.chrome().right.into_iter().map(|(t, _)| t).collect() };
-    let polled = |count, more, poll_secs| {
-        Msg::Unread(Ok(Unread {
+    let polled = |s: &mut State, count, more, poll_secs| {
+        let unread = Unread {
             count,
             more,
             poll_secs,
-        }))
+        };
+        fixtures::fetched(s, DataKey::Unread, Data::Unread(unread))
     };
-    let cmds = update(&mut state, polled(3, false, 60));
+    let cmds = polled(&mut state, 3, false, 60);
     assert_eq!(cmds, vec![Cmd::Timer(Timer::Unread(1), 60_000)]);
     assert!(header(&state).contains(&"● 3 unread".to_owned()));
-    let poll = vec![Cmd::Api(Api::FetchUnread)];
-    assert_eq!(update(&mut state, Msg::Timer(Timer::Unread(1))), poll);
+    let poll = update(&mut state, Msg::Timer(Timer::Unread(1)));
+    assert_eq!(fixtures::asked(&poll), [DataKey::Unread]);
     // Asked again after a change: the earlier timer lets go.
-    let cmds = update(&mut state, polled(50, true, 120));
+    let cmds = polled(&mut state, 50, true, 120);
     assert_eq!(cmds, vec![Cmd::Timer(Timer::Unread(2), 120_000)]);
     assert!(update(&mut state, Msg::Timer(Timer::Unread(1))).is_empty());
     assert!(header(&state).contains(&"● 50+ unread".to_owned()));
@@ -240,10 +241,15 @@ fn the_header_counts_the_unread_and_opens_the_inbox() {
     assert_eq!(route(&state), inbox);
 
     // None unread, or a poll that failed: no count.
-    update(&mut state, polled(0, false, 60));
+    polled(&mut state, 0, false, 60);
     assert_eq!(header(&state), ["@octocat"]);
-    update(&mut state, polled(2, false, 60));
-    let failed = Msg::Unread(Err(ApiError::Network("down".into())));
+    polled(&mut state, 2, false, 60);
+    let failed = Msg::Fetched {
+        key: DataKey::Unread,
+        result: Err(ApiError::Network("down".into())),
+        cached_at: None,
+        source: None,
+    };
     assert_eq!(
         update(&mut state, failed),
         vec![Cmd::Timer(Timer::Unread(5), 60_000)]

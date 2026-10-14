@@ -5,14 +5,13 @@ use crate::route::{Route, issues, pulls};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui_textarea::TextArea;
 
-use crate::api::ApiError;
 use crate::api::browse::{IssueDetail, PrActivity};
 use crate::api::mention::Mentionable;
 use crate::api::model::{PrRef, RepoId};
 use crate::data::DataKey;
 use crate::diff_screen::DiffOf;
 use crate::picker;
-use crate::state::{Api, Cmd, Overlay, Screen, State};
+use crate::state::{Cmd, Overlay, Screen, State};
 
 /// Choices the completion list shows at most.
 pub const SHOWN: usize = 6;
@@ -184,7 +183,8 @@ pub fn completions(state: &State) -> Option<Vec<Choice>> {
     if compose.completing.dismissed == Some(typed.at) {
         return None;
     }
-    let known = repo_here(state).and_then(|repo| state.mentionable.get(&repo));
+    let known =
+        repo_here(state).and_then(|repo| state.picked::<Mentionable>(&DataKey::Mentionable(repo)));
     let query = typed.query.to_lowercase();
     let choices: Vec<Choice> = if typed.sigil == '@' {
         let mut people = participants(state);
@@ -254,32 +254,12 @@ pub fn on_compose_key(state: &mut State, key: KeyEvent) -> Option<Vec<Cmd>> {
 }
 
 /// Asks GitHub who and what the repository on screen can mention, once a
-/// session, when a comment box opens.
+/// session (again after a failure, or a write), when a comment box opens.
 #[must_use]
 pub fn fetch_mentionable(state: &mut State) -> Vec<Cmd> {
-    let Some(repo) = repo_here(state) else {
-        return Vec::new();
-    };
-    if state.mentionable.contains_key(&repo) {
-        return Vec::new();
-    }
-    state
-        .mentionable
-        .insert(repo.clone(), Mentionable::default());
-    vec![Cmd::Api(Api::FetchMentionable(repo))]
-}
-
-/// GitHub's answer to [`fetch_mentionable`].
-pub fn on_mentionable(state: &mut State, repo: RepoId, result: Result<Mentionable, ApiError>) {
-    match result {
-        Ok(found) => {
-            state.mentionable.insert(repo, found);
-        }
-        // Asked again with the next comment box.
-        Err(err) => {
-            tracing::warn!(%repo, %err, "couldn't read who to mention");
-            state.mentionable.remove(&repo);
-        }
+    match repo_here(state) {
+        Some(repo) => state.ensure(DataKey::Mentionable(repo), false),
+        None => Vec::new(),
     }
 }
 

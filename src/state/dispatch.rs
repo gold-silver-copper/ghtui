@@ -67,7 +67,18 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
         } => Some(key.clone()),
         _ => None,
     };
+    let unread = matches!(
+        &msg,
+        Msg::Fetched {
+            key: DataKey::Unread,
+            cached_at: None,
+            ..
+        }
+    );
     let mut cmds = handle(state, msg);
+    if unread {
+        cmds.extend(state.unread_polled());
+    }
     if let Some(pr) = activity {
         crate::live::activity_loaded(state, &pr);
         cmds.extend(crate::talk::want_lines(state, &pr));
@@ -120,7 +131,6 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Resize(w, h) => state.size = (w, h),
         Msg::Viewer(Ok(login)) => state.viewer = Some(login),
         Msg::Viewer(Err(err)) => tracing::warn!(%err, "could not fetch viewer"),
-        Msg::Unread(result) => return state.unread_polled(result),
         Msg::Timer(Timer::Unread(poll)) => return state.unread_due(poll),
         Msg::Fetched {
             key,
@@ -241,7 +251,6 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Watched(what, answers) => return crate::live::page::on_watched(state, &what, answers),
         Msg::Paste(text) => return crate::typing::on_paste(state, &text),
         Msg::Focus(focused) => crate::live::on_focus(state, focused),
-        Msg::Mentionable(repo, result) => crate::typing::on_mentionable(state, repo, result),
         Msg::Code(ask, result) => return crate::code_nav::answered(state, &ask, result),
         Msg::Edited(purpose, result) => return on_edited(state, purpose, result),
         Msg::HomeEdited { edit, result, what } => return state.home_edited(&edit, result, what),

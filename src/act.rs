@@ -905,7 +905,10 @@ fn on_changed(state: &mut State, change: &Change, by: By, result: Result<(), Fai
             }
             state.info(done(change));
             // The unread count follows, as the inbox does.
-            let mut cmds = Vec::from_iter(notifies(change).then_some(Cmd::Api(Api::FetchUnread)));
+            let mut cmds = Vec::new();
+            if notifies(change) {
+                cmds.extend(state.ensure(DataKey::Unread, true));
+            }
             if let Change::Edit(_) = change {
                 cmds.extend(crate::edit::after(state));
             }
@@ -1000,7 +1003,7 @@ impl Expectation for Shows {
         let mut cmds = state.ensure_route(route, true);
         // GitHub may count the unread later than it marks them.
         if notifies(&self.change) {
-            cmds.push(Cmd::Api(Api::FetchUnread));
+            cmds.extend(state.ensure(DataKey::Unread, true));
         }
         cmds
     }

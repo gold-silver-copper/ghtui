@@ -2388,6 +2388,12 @@ pub(crate) fn sample(key: &DataKey) -> Data {
             undeletable: false,
         })),
         K::FileLook(..) => Data::FileLook(Box::new(file_look())),
+        K::Mentionable(_) => Data::Mentionable(Box::default()),
+        K::Unread => Data::Unread(crate::api::notifications::Unread {
+            count: 3,
+            more: false,
+            poll_secs: 60,
+        }),
     }
 }
 

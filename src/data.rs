@@ -24,8 +24,9 @@ use crate::api::housekeeping::{BranchRules, FileLook, LabelInfo, Owners, Templat
 use crate::api::insights::{Activity, Dependencies, Traffic};
 use crate::api::lists::{ListPage, MyLists, StarList};
 use crate::api::manage::{Categories, Target};
+use crate::api::mention::Mentionable;
 use crate::api::model::{Capped, PrDetail, PrRef, RepoId};
-use crate::api::notifications::Inbox;
+use crate::api::notifications::{Inbox, Unread};
 use crate::api::packages::{PackageDetail, PackageList, PackageRef, PackagesOf};
 use crate::api::project::{InProject, Project, ProjectRef, ProjectSummary, ProjectsOf};
 use crate::api::release::TagLook;
@@ -171,6 +172,10 @@ pub enum DataKey {
     BranchRules(RepoId, String),
     /// A file at a revision, where its form starts.
     FileLook(RepoId, String, String),
+    /// Who and what a repository's comments can mention.
+    Mentionable(RepoId),
+    /// How many of your notifications are unread, for the header.
+    Unread,
 }
 
 impl DataKey {
@@ -205,6 +210,8 @@ impl DataKey {
                 | DataKey::TagLook(..)
                 | DataKey::BranchRules(..)
                 | DataKey::FileLook(..)
+                | DataKey::Mentionable(_)
+                | DataKey::Unread
                 // Git answers these.
                 | DataKey::Clone(_)
                 | DataKey::Head { .. }
@@ -348,6 +355,10 @@ data! {
     BranchRules(Box<BranchRules>) => BranchRules,
     #[serde(skip)]
     FileLook(Box<FileLook>) => FileLook,
+    #[serde(skip)]
+    Mentionable(Box<Mentionable>) => Mentionable,
+    #[serde(skip)]
+    Unread(Unread) => Unread,
 }
 
 impl Data {

@@ -523,7 +523,8 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
     assert_eq!(sent, vec![fixtures::change(read, By::Confirm(all.clone()))]);
     let cmds = answer(&mut s, &sent, Ok(()));
     says(&s, "Marked read");
-    assert!(cmds.contains(&Cmd::Api(Api::FetchUnread)), "{cmds:?}");
+    assert!(fixtures::asks(&cmds, &DataKey::Unread), "{cmds:?}");
+    fetched(&mut s, DataKey::Unread, fixtures::sample(&DataKey::Unread));
     // GitHub marks them a moment later: until then, the inbox is asked
     // again.
     let mut inbox = crate::fixtures::notifications();
@@ -533,7 +534,7 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
     inbox.list.items.iter_mut().for_each(|n| n.unread = false);
     let cmds = fetched(&mut s, key.clone(), shown(&inbox));
     assert!(s.following.is_none());
-    assert!(cmds.contains(&Cmd::Api(Api::FetchUnread)), "{cmds:?}");
+    assert!(fixtures::asks(&cmds, &DataKey::Unread), "{cmds:?}");
     press(&mut s, ",N");
     says(&s, "Nothing shown is unread");
 

@@ -26,12 +26,13 @@ fn completions(s: &State) -> Vec<String> {
 fn completion_offers_participants_and_inserts_the_mention() {
     let (mut s, pr, cmds) = composing();
     let repo = pr.repo;
-    assert!(cmds.contains(&Cmd::Api(Api::FetchMentionable(repo.clone()))));
+    let key = DataKey::Mentionable(repo);
+    assert!(fixtures::asks(&cmds, &key));
     let known = Mentionable {
         users: vec!["alicia".into(), "bob".into()],
         issues: vec![(12, "Fix the parser".into()), (9, "Docs".into())],
     };
-    update(&mut s, Msg::Mentionable(repo, Ok(known)));
+    fixtures::fetched(&mut s, key, Data::Mentionable(Box::new(known)));
 
     press(&mut s, "cc @al");
     assert_eq!(completions(&s), ["@alice", "@alicia"]);

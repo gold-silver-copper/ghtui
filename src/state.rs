@@ -51,8 +51,6 @@ pub enum Msg {
     Key(KeyEvent),
     Resize(u16, u16),
     Viewer(Result<String, ApiError>),
-    /// How many notifications are unread.
-    Unread(Result<crate::api::notifications::Unread, ApiError>),
     /// Page data; with `cached_at` (when it was fetched), the cached copy
     /// shown while fetching. Where git could have answered, `source` says
     /// where it came from.
@@ -98,11 +96,6 @@ pub enum Msg {
     Paste(String),
     /// The terminal came into focus (`true`) or left it.
     Focus(bool),
-    /// Who and what a repository's comments can mention.
-    Mentionable(
-        crate::api::model::RepoId,
-        Result<crate::api::mention::Mentionable, ApiError>,
-    ),
     /// What the repository's clone (or code search) answered about code.
     Code(
         crate::code_nav::Ask,
@@ -197,8 +190,6 @@ pub enum Cmd {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Api {
     FetchViewer,
-    /// How many notifications are unread, answered by [`Msg::Unread`].
-    FetchUnread,
     /// Fetch page data; with `cached`, first send what the cache has.
     Fetch {
         key: DataKey,
@@ -243,8 +234,6 @@ pub enum Api {
         pr: PrRef,
         login: String,
     },
-    /// Who and what the repository's comments can mention.
-    FetchMentionable(crate::api::model::RepoId),
     /// Whether a watched pull request changed, asked with ETags.
     Poll {
         pr: PrRef,
@@ -434,8 +423,6 @@ pub struct State {
     pub shown_gen: u64,
     pub diffs: HashMap<DiffOf, DiffState>,
     pub viewer: Option<String>,
-    /// How many notifications are unread, for the header.
-    pub unread: Option<crate::api::notifications::Unread>,
     /// The latest poll of the unread count: an older poll's timer is
     /// let go.
     pub unread_poll: u64,
@@ -476,8 +463,6 @@ pub struct State {
     pub page_watch: Option<crate::live::page::PageWatch>,
     /// The terminal has the focus.
     pub focused: bool,
-    /// Who and what each repository's comments can mention, once asked.
-    pub mentionable: HashMap<crate::api::model::RepoId, crate::api::mention::Mentionable>,
     /// The forms being written, by their page: leaving one keeps it.
     pub forms: crate::forms::Forms,
     /// A pull request to check out once it's loaded.
@@ -512,7 +497,6 @@ impl State {
             shown_gen: 0,
             diffs: HashMap::new(),
             viewer: None,
-            unread: None,
             unread_poll: 0,
             rate_limits: RateLimits::default(),
             overlay: None,
@@ -536,7 +520,6 @@ impl State {
             watch: None,
             page_watch: None,
             focused: true,
-            mentionable: HashMap::new(),
             forms: crate::forms::Forms::default(),
             checkout: None,
             housekeeping: crate::housekeeping::Housekeeping::default(),

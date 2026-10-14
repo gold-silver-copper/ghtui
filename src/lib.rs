@@ -243,7 +243,7 @@ async fn run(started: Instant) -> Result<()> {
         .map(|c| c.value)
         .unwrap_or_default();
     cmds.push(state::Cmd::Timer(state::Timer::Minute, 60_000));
-    cmds.push(state::Cmd::Api(Api::FetchUnread));
+    cmds.extend(state.ensure(crate::data::DataKey::Unread, true));
     state.sync_page();
 
     install_panic_hook();
