@@ -1564,7 +1564,7 @@ pub fn workflow_run() -> WorkflowRun {
             job(3, "test (macos)", CheckOutcome::Pending, None),
         ]
         .into(),
-        artifacts: vec![crate::api::actions::Artifact {
+        artifacts: vec![crate::api::workflows::Artifact {
             id: 31,
             name: "coverage-report".into(),
             size: 1_572_864,
@@ -1576,12 +1576,12 @@ pub fn workflow_run() -> WorkflowRun {
 }
 
 /// A failing test's annotation, on a line of a file.
-pub fn check_annotation() -> crate::api::actions::Annotation {
-    crate::api::actions::Annotation {
+pub fn check_annotation() -> crate::api::workflows::Annotation {
+    crate::api::workflows::Annotation {
         path: Some("src/theme.rs".into()),
         start_line: 3,
         end_line: 3,
-        level: crate::api::actions::Level::Failure,
+        level: crate::api::workflows::Level::Failure,
         title: "heat_levels_stay_apart".into(),
         message: "assertion failed: contrast(a, b) > 1.5".into(),
         url: Some(

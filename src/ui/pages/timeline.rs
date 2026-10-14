@@ -428,12 +428,8 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
                 segs.push(Seg::new(short_sha(before).to_owned(), Role::Code));
                 segs.push(meta(" to "));
                 segs.push(Seg::new(short_sha(after).to_owned(), Role::Code));
-                if let (Ok(from), Ok(to)) = (
-                    crate::git::Oid::parse(before),
-                    crate::git::Oid::parse(after),
-                ) {
-                    let range = crate::diff_screen::DiffOf::Range(here.clone(), from, to);
-                    let target = range.url();
+                if crate::git::Oid::parse(before).is_ok() && crate::git::Oid::parse(after).is_ok() {
+                    let target = url::files(&url::compare(here, before, after));
                     segs.push(meta(" · "));
                     segs.push(link_seg(page, "Compare", target.clone(), Role::Link));
                     link = Some(Link::Url(target));
@@ -1122,9 +1118,7 @@ pub fn commit_comments(
         now: cx.now,
         unfolded: Marks::none().unfolded,
     };
-    let diff = crate::git::Oid::parse(&d.oid)
-        .ok()
-        .map(|oid| crate::diff_screen::DiffOf::Commit(repo.clone(), oid));
+    let diff = crate::git::Oid::parse(&d.oid).is_ok();
     page.blank();
     let title = match comments.total() {
         0 => "No comments yet".to_owned(),
@@ -1134,16 +1128,12 @@ pub fn commit_comments(
     for c in comments {
         connector(page);
         let at = c.path.as_ref().map(|path| {
-            let line = c.line.map(|l| {
-                let pos = crate::diff::anchor::LinePos {
-                    side: crate::diff::anchor::Side::Right,
-                    line: l,
-                };
-                (pos, pos)
-            });
-            let target = diff
-                .as_ref()
-                .map_or_else(|| url::commit(repo, &d.oid), |of| of.file_url(path, line));
+            let target = if diff {
+                let line = c.line.map(|l| format!("R{l}")).unwrap_or_default();
+                url::diff_file(&url::commit(repo, &d.oid), path, &line)
+            } else {
+                url::commit(repo, &d.oid)
+            };
             (super::review::place(path, c.line), target)
         });
         let verb = match &at {

@@ -143,7 +143,7 @@ impl Input {
 /// A workflow file's `workflow_dispatch` inputs; `None` if it can't be
 /// run by hand.
 pub fn dispatch_inputs(file: &str) -> Option<Vec<Input>> {
-    use crate::create::yaml::{self, Value};
+    use crate::yaml::{self, Value};
     let doc = yaml::parse(file);
     // `on` is a name, a list of names, or a map of them.
     let on = doc.get("on").or_else(|| doc.get("true"))?;

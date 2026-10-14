@@ -204,13 +204,13 @@ mod security;
 mod settings;
 mod site;
 mod smoke;
+mod workflows;
 mod writes;
 
 mod tabs;
 
 pub(super) mod diff;
 
-mod actions;
 mod fetch;
 mod home;
 mod jobs;

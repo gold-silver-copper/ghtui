@@ -7,9 +7,9 @@ use crate::route::{Route, runs};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::api::actions::{Input, InputKind, dispatch_inputs};
 use crate::api::browse::{Blob, Refs, Workflow, WorkflowRun};
 use crate::api::model::RepoId;
+use crate::api::workflows::{Input, InputKind, dispatch_inputs};
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
@@ -275,14 +275,14 @@ fn on_row(state: &mut State, row: &Row) -> Vec<Cmd> {
     match row {
         Row::Ref => {
             let repo = here(state).map(|(r, _)| r);
-            let mut cmds = state.open_picker(crate::picker::Kind::Actions(Pick::Ref));
+            let mut cmds = state.open_picker(crate::picker::Kind::Workflows(Pick::Ref));
             if let Some(repo) = repo {
                 cmds.extend(state.ensure(DataKey::Refs(repo), false));
             }
             cmds
         }
         Row::Input(name) => {
-            state.open_picker(crate::picker::Kind::Actions(Pick::Input(name.clone())))
+            state.open_picker(crate::picker::Kind::Workflows(Pick::Input(name.clone())))
         }
         _ => Vec::new(),
     }
@@ -307,7 +307,7 @@ pub fn save(state: &mut State, id: u64, name: &str) -> Vec<Cmd> {
         id,
         name: name.to_owned(),
     };
-    state.open_picker(crate::picker::Kind::Actions(pick))
+    state.open_picker(crate::picker::Kind::Workflows(pick))
 }
 
 // ---- running a workflow by hand -----------------------------------------------
@@ -584,7 +584,7 @@ pub fn checks_loaded(state: &mut State, pr: &crate::api::model::PrRef) {
     let Some(checks) = state.picked::<crate::api::browse::Checks>(&key) else {
         return;
     };
-    let list: Vec<(String, crate::api::actions::Annotation)> = (checks.items.iter())
+    let list: Vec<(String, crate::api::workflows::Annotation)> = (checks.items.iter())
         .flat_map(|c| c.annotations.iter().map(|a| (c.name.clone(), a.clone())))
         .filter(|(_, a)| a.path.is_some())
         .collect();
@@ -599,9 +599,9 @@ pub fn checks_loaded(state: &mut State, pr: &crate::api::model::PrRef) {
 /// Check annotations as the diff shows them: on their lines, as GitHub
 /// shows them in Files changed, each a one-comment thread from its check.
 pub fn in_diff(
-    checks: &[(String, crate::api::actions::Annotation)],
+    checks: &[(String, crate::api::workflows::Annotation)],
 ) -> Vec<crate::ui::annotations::Annotation> {
-    use crate::api::actions::Level;
+    use crate::api::workflows::Level;
     use crate::ui::annotations::{Annotation, AnnotationComment, AnnotationKey, Place};
     (checks.iter().enumerate())
         .filter_map(|(n, (check, a))| {

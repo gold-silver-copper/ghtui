@@ -1,6 +1,5 @@
 //! GitHub API access: auth, GraphQL and REST, rate limits, retries, caching.
 
-pub mod actions;
 pub mod auth;
 pub mod browse;
 pub mod change;
@@ -38,6 +37,7 @@ pub mod security;
 pub mod settings;
 pub mod timeline;
 pub mod watch;
+pub mod workflows;
 
 pub use crate::store::Cached;
 pub use client::{ApiError, GitHub, Polled};

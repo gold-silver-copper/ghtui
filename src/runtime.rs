@@ -862,7 +862,7 @@ fn review_writer(
 }
 
 /// The signals that ask ghtui to stop: quitting on them restores the
-/// terminal (a plain `kill` used to leave it in raw mode with mouse
+/// terminal (a plain `kill` would leave it in raw mode with mouse
 /// reporting on).
 struct StopSignals {
     #[cfg(unix)]

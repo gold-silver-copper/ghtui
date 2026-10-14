@@ -1,5 +1,5 @@
-//! The forms for what used to need the browser: a new release, a gist
-//! made or changed, a wiki page written.
+//! The forms for writes made on GitHub: a new release, a gist made or
+//! changed, a wiki page written.
 
 use super::*;
 use crate::ui::form::Row;

@@ -37,7 +37,6 @@ use crate::state::{Cmd, Screen, State};
 pub mod files;
 pub mod git;
 pub mod labels;
-pub(crate) use labels::label_url;
 pub mod milestones;
 pub mod refs;
 pub mod repos;

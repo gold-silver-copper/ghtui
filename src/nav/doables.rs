@@ -545,7 +545,7 @@ impl State {
                     | Kind::Project(_)
                     | Kind::Alert(_)
                     | Kind::Write(_)
-                    | Kind::Actions(_)
+                    | Kind::Workflows(_)
                     | Kind::Manage(_)
                     | Kind::Settings(_) => "choose",
                     Kind::Code { .. } => "go there",

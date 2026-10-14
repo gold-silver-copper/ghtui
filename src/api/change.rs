@@ -1,5 +1,9 @@
-//! What ghtui changes on GitHub, other than a review: every such write is
-//! a [`Change`], sent by [`GitHub::change`].
+//! The changes ghtui makes to issues, pull requests, discussions, runs,
+//! notifications, projects, alerts and a repository's settings: each is a
+//! [`Change`], sent by [`GitHub::change`]; the writes the offline queue
+//! keeps until GitHub is back are some of them. Reviews, releases, gists,
+//! wikis, labels, milestones, files and the like are written by their own
+//! jobs.
 
 use crate::schema::schema;
 

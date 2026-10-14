@@ -1,10 +1,10 @@
 //! Saving a run's artifacts, and running a workflow by hand.
 
 use super::*;
-use crate::actions::{Dispatch, SaveArtifact};
 use crate::route::runs;
 use crate::ui::form::Row;
 use crate::ui::page::Link;
+use crate::workflows::{Dispatch, SaveArtifact};
 
 /// Selects the row on screen whose link is `link`.
 fn select_link(s: &mut State, link: &Link) {

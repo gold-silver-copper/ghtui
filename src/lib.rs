@@ -1,7 +1,8 @@
 //! `ghtui`: a keyboard-driven terminal client for GitHub. The binary runs
 //! [`main`]; the library is there so fuzz targets can reach its parts.
 
-// What used to be the workspace's libraries.
+// The parts that know nothing of the app: GitHub, diffs, git, storage,
+// the theme and drawing.
 pub mod api;
 pub mod diff;
 pub mod git;
@@ -12,7 +13,6 @@ pub mod theme;
 pub mod ui;
 
 mod act;
-mod actions;
 mod browse;
 mod chrome;
 mod code_index;
@@ -62,7 +62,9 @@ mod view;
 mod watch;
 pub mod wiki;
 mod work;
+mod workflows;
 mod writes;
+mod yaml;
 
 use crate::route::{Dest, Route, Target, issues, pulls};
 use std::path::PathBuf;

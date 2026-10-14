@@ -4,7 +4,7 @@
 //! ([`crate::create`]), a release ([`crate::release`]), a gist
 //! ([`crate::gist`]), a wiki page ([`crate::wiki::form`]),
 //! housekeeping's ([`crate::housekeeping`]), and running a workflow by
-//! hand ([`crate::actions`]). They're kept in one map by their page, so
+//! hand ([`crate::workflows`]). They're kept in one map by their page, so
 //! leaving one keeps it, each with what it [`Sent`]. A change to one is
 //! a new version of it, which is what its page is built again for.
 //!

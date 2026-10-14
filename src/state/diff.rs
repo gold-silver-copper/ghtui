@@ -68,7 +68,7 @@ impl State {
             ]);
             // Its checks' annotations show on their lines.
             cmds.extend(self.ensure(DataKey::PrChecks(pr.clone()), false));
-            crate::actions::checks_loaded(self, pr);
+            crate::workflows::checks_loaded(self, pr);
         }
         // A commit's comments on its lines, which join puts in its diff.
         if let DiffOf::Commit(repo, oid) = of {

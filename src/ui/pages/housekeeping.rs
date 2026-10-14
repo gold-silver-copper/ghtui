@@ -70,7 +70,7 @@ pub fn labels_page(
         l,
         "No labels yet.",
         |page, label| {
-            let target = crate::housekeeping::label_url(repo, &label.name);
+            let target = url::label(repo, &label.name);
             item(page, target, |page, link| {
                 let chip = Seg::linked(
                     format!(" {} ", label.name),

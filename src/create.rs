@@ -12,7 +12,6 @@
 
 mod page;
 pub mod templates;
-pub(crate) mod yaml;
 
 use crate::route::{Route, issues, pulls};
 use std::borrow::Cow;

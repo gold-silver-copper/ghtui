@@ -55,7 +55,7 @@ pub enum Kind {
     /// A subscription, a release's tag, a gist's names ([`crate::writes`]).
     Write(crate::writes::Pick),
     /// Where to save an artifact; a workflow's branch or input.
-    Actions(crate::actions::Pick),
+    Workflows(crate::workflows::Pick),
     /// Locking, hiding, a base, sub-issues and the like ([`crate::manage`]).
     Manage(crate::manage::Pick),
     /// Someone to invite, a role, a repository's name ([`crate::settings`]).
@@ -93,7 +93,7 @@ impl Picker {
             Kind::Project(ref pick) => pick.title(),
             Kind::Alert(ref d) => d.title(),
             Kind::Write(ref pick) => pick.title(),
-            Kind::Actions(ref pick) => pick.title(),
+            Kind::Workflows(ref pick) => pick.title(),
             Kind::Manage(ref pick) => pick.title(),
             Kind::Settings(ref pick) => pick.title(),
         }
@@ -132,7 +132,7 @@ pub enum Choice {
     /// Dismiss a security alert so.
     Alert(crate::api::change::Change),
     Write(crate::writes::Chosen),
-    Actions(crate::actions::Chosen),
+    Workflows(crate::workflows::Chosen),
     Manage(crate::manage::Chosen),
     Settings(crate::settings::Chosen),
 }
@@ -195,7 +195,7 @@ impl State {
             Kind::Project(ref pick) => pick.placeholder(),
             Kind::Alert(ref d) => d.placeholder(),
             Kind::Write(ref pick) => pick.placeholder(),
-            Kind::Actions(ref pick) => pick.placeholder(),
+            Kind::Workflows(ref pick) => pick.placeholder(),
             Kind::Manage(ref pick) => pick.placeholder(),
             Kind::Settings(ref pick) => pick.placeholder(),
         };
@@ -284,8 +284,8 @@ impl State {
                 let choice = Choice::Title(titling.clone(), path.clone(), q.to_owned());
                 vec![(item(label, "↵"), Some(choice))]
             }
-            Kind::Actions(pick) => (crate::actions::rows(self, pick, q).into_iter())
-                .map(|(row, chosen)| (row, chosen.map(Choice::Actions)))
+            Kind::Workflows(pick) => (crate::workflows::rows(self, pick, q).into_iter())
+                .map(|(row, chosen)| (row, chosen.map(Choice::Workflows)))
                 .collect(),
             Kind::Project(pick) => (crate::projects::rows(self, pick, q).into_iter())
                 .map(|(row, chosen)| (row, chosen.map(Choice::Project)))
@@ -660,7 +660,7 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
         Choice::Project(chosen) => crate::projects::choose(state, chosen),
         Choice::Alert(change) => crate::security::choose(state, change),
         Choice::Write(chosen) => crate::writes::choose(state, chosen),
-        Choice::Actions(chosen) => crate::actions::choose(state, chosen),
+        Choice::Workflows(chosen) => crate::workflows::choose(state, chosen),
         Choice::Manage(chosen) => crate::manage::choose(state, chosen),
         Choice::Settings(chosen) => crate::settings::choose(state, chosen),
     }

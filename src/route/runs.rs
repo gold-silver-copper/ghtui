@@ -153,7 +153,7 @@ impl Family for Page {
             Workflow { file, .. } => std::iter::once(K::Workflow(repo.clone(), file.clone()))
                 .chain(self.paged())
                 .collect(),
-            Dispatch { file, .. } => return crate::actions::needs(repo, file),
+            Dispatch { file, .. } => return crate::workflows::needs(repo, file),
             Actions { .. } | Deployments { .. } => self.paged().into_iter().collect(),
         };
         std::iter::once(K::Repo(repo.clone())).chain(own).collect()
@@ -197,7 +197,7 @@ impl Family for Page {
     }
 
     fn form(&self) -> Option<&'static crate::forms::Kind> {
-        matches!(self, Dispatch { .. }).then_some(&crate::actions::FORM)
+        matches!(self, Dispatch { .. }).then_some(&crate::workflows::FORM)
     }
 
     fn build(&self, b: Build<'_>, page: &mut crate::ui::page::Page) {
@@ -234,7 +234,7 @@ impl Family for Page {
                 let wf = b.get(&DataKey::Workflow(repo.clone(), file.clone()));
                 pages::workflow(page, repo, wf, b.list(self.paged()), now);
             }
-            Dispatch { repo, file } => crate::actions::build(b.state, page, repo, file),
+            Dispatch { repo, file } => crate::workflows::build(b.state, page, repo, file),
             Deployments { repo, environment } => {
                 let env = environment.as_deref();
                 pages::deployments(page, repo, b.list(self.paged()), env, now);

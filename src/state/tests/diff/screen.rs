@@ -173,7 +173,7 @@ fn a_commits_files_have_its_tabs() {
 #[test]
 fn diff_links_go_to_their_file() {
     let mut s = state();
-    let hash = crate::diff_screen::path_hash("notes.txt");
+    let hash = crate::ui::pages::url::path_hash("notes.txt");
     let url = format!("https://github.com/o/r/pull/7/files#diff-{hash}R1");
     let _ = s.follow(&crate::ui::page::Link::Url(url));
     s.diffs.insert(DiffOf::Pr(pr()), fixture_diff());
@@ -236,7 +236,7 @@ fn line_links_copy_and_open_on_their_lines() {
         [crate::state::Cmd::Copy(url)] => url.clone(),
         cmds => panic!("{cmds:?}"),
     };
-    let hash = crate::diff_screen::path_hash("src/point.rs");
+    let hash = crate::ui::pages::url::path_hash("src/point.rs");
     let files = format!("https://github.com/o/r/pull/7/files#diff-{hash}");
     assert_eq!(
         copied(&mut s, "y"),

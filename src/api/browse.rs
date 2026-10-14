@@ -67,7 +67,7 @@ pub struct CheckItem {
     pub url: Option<String>,
     /// What a check run says about lines of code, worst first.
     #[serde(default)]
-    pub annotations: Capped<crate::api::actions::Annotation>,
+    pub annotations: Capped<crate::api::workflows::Annotation>,
 }
 
 /// The checks on a commit.
@@ -1543,7 +1543,7 @@ pub struct WireCheckRun {
     pub details_url: Option<Uri>,
     pub check_suite: Option<WireSuite>,
     #[arguments(first: 50)]
-    pub annotations: Option<crate::api::actions::WireAnnotations>,
+    pub annotations: Option<crate::api::workflows::WireAnnotations>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -2185,7 +2185,7 @@ impl WireCheckRun {
                 .map(|a| {
                     let a = a.into_capped();
                     let total = a.total();
-                    Capped::new(crate::api::actions::sorted(a.items), total)
+                    Capped::new(crate::api::workflows::sorted(a.items), total)
                 })
                 .unwrap_or_default(),
         }
@@ -2238,7 +2238,7 @@ pub struct WorkflowRun {
     pub jobs: Capped<JobSummary>,
     /// What it made to keep.
     #[serde(default)]
-    pub artifacts: Capped<crate::api::actions::Artifact>,
+    pub artifacts: Capped<crate::api::workflows::Artifact>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2337,7 +2337,7 @@ pub struct Job {
     pub run: JobRun,
     /// What it says about lines of code, worst first.
     #[serde(default)]
-    pub annotations: Capped<crate::api::actions::Annotation>,
+    pub annotations: Capped<crate::api::workflows::Annotation>,
 }
 
 /// The run a job is in.

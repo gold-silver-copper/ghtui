@@ -1008,7 +1008,7 @@ pub(crate) mod tests {
             line(crate::diff::anchor::Side::Left, 3),
             line(crate::diff::anchor::Side::Right, 5),
         );
-        let anchor = format!("diff-{}L3-R5", crate::diff_screen::path_hash("a.rs"));
+        let anchor = format!("diff-{}L3-R5", crate::ui::pages::url::path_hash("a.rs"));
         for of in [
             DiffOf::Pr(pr.clone()),
             DiffOf::Commit(pr.repo.clone(), from.clone()),

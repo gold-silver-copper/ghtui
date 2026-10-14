@@ -57,13 +57,9 @@ pub(super) fn picked(state: &State) -> Option<&LabelInfo> {
         return None;
     };
     let list = list(state, repo)?;
-    selected(state, &list.items, |l| label_url(repo, &l.name))
-}
-
-/// A label's link: its open issues.
-pub fn label_url(repo: &RepoId, name: &str) -> String {
-    use crate::ui::pages::url as links;
-    format!("{}/labels/{}", links::repo(repo), links::encode_path(name))
+    selected(state, &list.items, |l| {
+        crate::ui::pages::url::label(repo, &l.name)
+    })
 }
 
 /// `,o` or `,e`: the label's form.

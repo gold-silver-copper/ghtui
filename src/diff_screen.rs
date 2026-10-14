@@ -74,7 +74,7 @@ impl DiffOf {
     pub fn url(&self) -> String {
         match self {
             DiffOf::Pr(_) => self.page(),
-            DiffOf::Commit(..) | DiffOf::Range(..) => format!("{}#files", self.page()),
+            DiffOf::Commit(..) | DiffOf::Range(..) => links::files(&self.page()),
         }
     }
 
@@ -91,7 +91,7 @@ impl DiffOf {
             Some((start, end)) => format!("{}-{}", line(start), line(end)),
             None => String::new(),
         };
-        format!("{}#diff-{}{lines}", self.page(), path_hash(path))
+        links::diff_file(&self.page(), path, &lines)
     }
 
     /// The page its files are on.
@@ -264,7 +264,7 @@ pub struct DiffInputs {
     /// Threads and comments that came in since you started looking.
     pub fresh: HashSet<NodeId>,
     /// What the head's check runs say about its lines, by check.
-    pub checks: Vec<(String, crate::api::actions::Annotation)>,
+    pub checks: Vec<(String, crate::api::workflows::Annotation)>,
 }
 
 impl DiffInputs {
@@ -408,7 +408,7 @@ impl DiffState {
             reviewed: i.review.reviewed_hunks.iter().cloned().collect(),
             annotations: (annotations(i.thread_list(), &self.mapped, &i.review.pending, &i.fresh))
                 .into_iter()
-                .chain(crate::actions::in_diff(&i.checks))
+                .chain(crate::workflows::in_diff(&i.checks))
                 .collect(),
         }
     }
@@ -1106,16 +1106,6 @@ fn toggle_reviewed(screen: &DiffScreen, state: &mut DiffState, notice: &mut Noti
     })
 }
 
-/// How GitHub names a file in its diffs' anchors: the SHA-256 of its path,
-/// in hex.
-pub fn path_hash(path: &str) -> String {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(path.as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
-}
-
 /// The link to what's under the cursor: the lines selected, or the line
 /// under it, or else its file.
 pub fn here_url(screen: &DiffScreen, state: &DiffState) -> String {
@@ -1171,7 +1161,7 @@ fn anchor_pos(anchor: &str, state: &DiffState, pr: bool) -> Option<Option<Landin
     if let Some(rest) = anchor.strip_prefix("diff-") {
         let (hash, lines) = rest.split_at_checked(64).unwrap_or((rest, ""));
         let Some((file, f)) =
-            (doc.files().iter().enumerate()).find(|(_, f)| path_hash(f.meta.path()) == hash)
+            (doc.files().iter().enumerate()).find(|(_, f)| links::path_hash(f.meta.path()) == hash)
         else {
             return Some(None);
         };

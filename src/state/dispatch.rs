@@ -76,7 +76,7 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
         crate::live::page::loaded(state, &key);
     }
     if let Some(pr) = checks {
-        crate::actions::checks_loaded(state, &pr);
+        crate::workflows::checks_loaded(state, &pr);
     }
     if data || state.route() != opened.as_ref() {
         cmds.extend(crate::follow::follow(state));

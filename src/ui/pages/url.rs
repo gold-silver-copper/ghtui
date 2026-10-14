@@ -49,13 +49,26 @@ pub fn pull_tab(pr: &PrRef, tab: &str) -> String {
 /// A file in a pull request's Files changed, at a line (`R12` new,
 /// `L12` old) if given.
 pub fn diff_line(pr: &PrRef, path: &str, line: Option<(char, u32)>) -> String {
-    let hash = crate::diff_screen::path_hash(path);
     let line = line.map(|(side, n)| format!("{side}{n}"));
-    format!(
-        "{}#diff-{hash}{}",
-        pull_tab(pr, "files"),
-        line.unwrap_or_default()
-    )
+    diff_file(&pull_tab(pr, "files"), path, &line.unwrap_or_default())
+}
+/// A file in the diff on `page` (a pull request's files, a commit, a
+/// comparison), at `lines` (`R10-R12`), as GitHub anchors them.
+pub fn diff_file(page: &str, path: &str, lines: &str) -> String {
+    format!("{page}#diff-{}{lines}", path_hash(path))
+}
+/// How GitHub names a file in its diffs' anchors: the SHA-256 of its path,
+/// in hex.
+pub fn path_hash(path: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(path.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+/// A commit's or a comparison's files, from its page.
+pub fn files(page: &str) -> String {
+    format!("{page}#files")
 }
 pub fn search(kind: SearchKind, query: &str) -> String {
     let kind = match kind {
@@ -74,6 +87,10 @@ pub fn commit(repo: &RepoId, oid: &str) -> String {
 }
 pub fn compare(repo: &RepoId, from: &str, to: &str) -> String {
     format!("{}/compare/{from}..{to}", self::repo(repo))
+}
+/// A label's link: its open issues.
+pub fn label(repo: &RepoId, name: &str) -> String {
+    format!("{}/labels/{}", self::repo(repo), encode_path(name))
 }
 pub fn release(repo: &RepoId, tag: &str) -> String {
     format!("{}/{repo}/releases/tag/{}", base(), encode_path(tag))

@@ -176,6 +176,6 @@ jobs! {
     Checkout(crate::create::Checkout),
     Push(crate::create::Push),
     Submit(crate::create::Submit),
-    SaveArtifact(crate::actions::SaveArtifact),
-    Dispatch(crate::actions::Dispatch),
+    SaveArtifact(crate::workflows::SaveArtifact),
+    Dispatch(crate::workflows::Dispatch),
 }

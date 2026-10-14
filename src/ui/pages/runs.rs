@@ -1,7 +1,7 @@
 //! Checks, and Actions: workflows, runs, jobs and their logs.
 
 use super::*;
-use crate::api::actions::{Annotation, Artifact, Input, InputKind, Level};
+use crate::api::workflows::{Annotation, Artifact, Input, InputKind, Level};
 use crate::ui::form::Row;
 
 pub(super) fn outcome_mark(o: CheckOutcome) -> (&'static str, Role) {

@@ -137,7 +137,7 @@ impl State {
             Link::FindFile => self.open_finder(false),
             Link::Section(i) => self.open_section(*i),
             Link::Form(row) => crate::forms::row(self, row),
-            Link::Artifact { id, name } => crate::actions::save(self, *id, name),
+            Link::Artifact { id, name } => crate::workflows::save(self, *id, name),
             Link::Asset(name) => crate::release::assets::open(self, name),
             Link::Review(link) => crate::talk::follow(self, link),
             Link::Setting(link) => crate::settings::follow_link(self, link),
