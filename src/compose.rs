@@ -97,10 +97,20 @@ pub struct Compose {
 impl Compose {
     pub fn new(theme: &Theme, target: Target, text: &str) -> Self {
         let mut input = editor(theme, text);
-        // A draft's text goes below its title.
-        if matches!(target, Target::ProjectDraft(_)) && input.lines().len() == 1 {
-            input.insert_newline();
-            input.insert_newline();
+        match target {
+            // A draft's text goes below its title.
+            Target::ProjectDraft(_) if input.lines().len() == 1 => {
+                input.insert_newline();
+                input.insert_newline();
+            }
+            // A form starts on its first field: a setting's first value,
+            // a discussion's title.
+            Target::Setting(_) | Target::NewDiscussion(_) => {
+                for to in crate::forms::TITLE {
+                    input.move_cursor(*to);
+                }
+            }
+            _ => {}
         }
         Self {
             target,

@@ -23,7 +23,10 @@ use crate::diff_screen::{self, DiffOf, DiffScreen, LastReview};
 use crate::forms::Sent;
 use crate::keymap::Action;
 use crate::picker::{self, PickItem};
+use crate::route::{Route, pulls};
 use crate::state::{Api, Cmd, Git, OutdatedThread, Overlay, Screen, State};
+use crate::ui::page::{Link, ReviewLink};
+use crate::ui::pages::PrTab;
 use crate::work::{Cx, Failure, Job};
 
 /// A review's comment being written: where it goes, or what it answers.
@@ -73,7 +76,8 @@ impl Comment {
     pub fn save(&self) -> &'static str {
         match self {
             Comment::Reply { .. } => "post reply",
-            Comment::Line { .. } | Comment::File { .. } | Comment::Draft { .. } => "add to review",
+            Comment::Draft { .. } => "save draft",
+            Comment::Line { .. } | Comment::File { .. } => "add to review",
         }
     }
 
@@ -250,6 +254,23 @@ pub fn target(
         }),
         Err(err) => Err(format!("Can't comment there: {err}")),
     }
+}
+
+/// Where a draft is: its lines, or its file.
+fn place(d: &DraftComment) -> Comment {
+    let path = d.path.clone();
+    let Some(line) = d.line else {
+        return Comment::File { path, reason: None };
+    };
+    let end = LinePos {
+        side: side_of(d.side),
+        line,
+    };
+    let start = LinePos {
+        side: side_of(d.start_side.unwrap_or(d.side)),
+        line: d.start_line.unwrap_or(line),
+    };
+    Comment::Line { path, start, end }
 }
 
 fn draft_side(side: Side) -> DraftSide {
@@ -661,6 +682,18 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             let thread_id = thread_id.clone();
             state.compose(Target::Review(Comment::Reply { thread_id }), "")
         }
+        // `c` on a draft's rows comments where it is, as on its line.
+        Action::Comment
+            if screen.selection.is_none()
+                && matches!(diff.doc.row(cursor), Some(Row::Thread(_)))
+                && let Some(&AnnotationKey::Draft(id)) = annotation.as_ref().map(|a| &a.key) =>
+        {
+            let pending = &diff.inputs().review.pending;
+            let Some(target) = pending.iter().find(|d| d.id == id).map(place) else {
+                return Vec::new();
+            };
+            state.compose(Target::Review(target), "")
+        }
         Action::Comment => {
             // The selection stays until the comment is added.
             match target(&diff.doc, cursor, half, screen.selection) {
@@ -734,49 +767,26 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             if (resolved && !ann.can_resolve) || (!resolved && !ann.can_unresolve) {
                 return state.just_say("You can't change this thread");
             }
-            // Optimistic; rolled back if GitHub refuses.
-            diff.edit(|i| i.set_resolved(&thread_id, resolved));
+            // Optimistic; rolled back if GitHub refuses. The cursor stays
+            // on the thread as it folds or unfolds.
+            diff_screen::preserving_position(screen, diff, |d| {
+                d.edit(|i| i.set_resolved(&thread_id, resolved));
+            });
             crate::work::start(Resolve {
                 pr,
                 thread: thread_id,
                 resolved,
             })
         }
-        Action::Delete => {
-            let Some(AnnotationKey::Draft(id)) = annotation.map(|a| a.key) else {
-                return state.just_say("Move to a draft comment to delete it");
-            };
-            let Some(at) = diff.inputs().review.pending.iter().position(|d| d.id == id) else {
-                return Vec::new();
-            };
-            let save = diff.edit_review(&pr, |i| i.deleted = Some(i.review.pending.remove(at)));
-            let undo = state.first_key(Action::UndoDelete);
-            state.info(format!("Draft deleted · {undo} brings it back"));
-            save
-        }
-        Action::UndoDelete => {
-            let Some(mut draft) = diff.edit(|i| i.deleted.take()) else {
-                return state.just_say("No deleted draft to bring back");
-            };
-            let save = diff.edit_review(&pr, |i| {
-                if i.review.pending.iter().any(|d| d.id == draft.id) {
-                    draft.id = i.review.next_draft_id();
-                }
-                i.review.pending.push(draft);
-            });
-            state.info("Draft restored");
-            save
-        }
+        Action::Delete => match annotation.map(|a| a.key) {
+            Some(AnnotationKey::Draft(id)) => delete_draft(state, &pr, id),
+            _ => state.just_say("Move to a draft comment to delete it"),
+        },
+        Action::UndoDelete => restore_draft(state, &pr),
         // On a thread or draft (the diff handles the rest).
         Action::Open => {
-            let pending = &diff.inputs().review.pending;
-            let draft = annotation.and_then(|a| match a.key {
-                AnnotationKey::Draft(id) => pending.iter().find(|d| d.id == id),
-                AnnotationKey::Thread(_) | AnnotationKey::Check(_) => None,
-            });
-            if let Some(draft) = draft {
-                let (id, body) = (draft.id, draft.body.clone());
-                return state.compose(Target::Review(Comment::Draft { id }), &body);
+            if let Some(&AnnotationKey::Draft(id)) = annotation.as_ref().map(|a| &a.key) {
+                return edit_draft(state, &pr, id);
             }
             // A line of a comment with a link follows it.
             let url = match (diff.doc.row(cursor), diff.doc.files().get(cursor.file)) {
@@ -806,6 +816,143 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         _ => state.just_say(action.not_here()),
     }
 }
+
+/// Opens the composer on your draft `id`. From the Review tab, it opens
+/// Files changed on the draft first, where the composer goes.
+#[must_use]
+fn edit_draft(state: &mut State, pr: &PrRef, id: u64) -> Vec<Cmd> {
+    let mut cmds = match state.screen() {
+        Screen::Page(p) => match p.selected_link().cloned() {
+            Some(link) => state.follow(&link),
+            None => Vec::new(),
+        },
+        Screen::Diff(_) => Vec::new(),
+    };
+    let of = DiffOf::Pr(pr.clone());
+    let pending = state.diffs.get(&of).map(|d| &d.inputs().review.pending);
+    let Some(body) = pending
+        .and_then(|p| p.iter().find(|d| d.id == id))
+        .map(|d| d.body.clone())
+    else {
+        return cmds;
+    };
+    cmds.extend(state.compose(Target::Review(Comment::Draft { id }), &body));
+    cmds
+}
+
+/// Deletes your draft `id`, which `ctrl-z` brings back.
+#[must_use]
+fn delete_draft(state: &mut State, pr: &PrRef, id: u64) -> Vec<Cmd> {
+    let Some(diff) = state.diffs.get_mut(&DiffOf::Pr(pr.clone())) else {
+        return Vec::new();
+    };
+    let Some(at) = diff.inputs().review.pending.iter().position(|d| d.id == id) else {
+        return Vec::new();
+    };
+    let save = diff.edit_review(pr, |i| i.deleted = Some(i.review.pending.remove(at)));
+    let undo = state.first_key(Action::UndoDelete);
+    state.info(format!("Draft deleted · {undo} brings it back"));
+    save
+}
+
+/// Brings back the draft just deleted.
+#[must_use]
+fn restore_draft(state: &mut State, pr: &PrRef) -> Vec<Cmd> {
+    let Some(diff) = state.diffs.get_mut(&DiffOf::Pr(pr.clone())) else {
+        return Vec::new();
+    };
+    let Some(mut draft) = diff.edit(|i| i.deleted.take()) else {
+        return state.just_say("No deleted draft to bring back");
+    };
+    let save = diff.edit_review(pr, |i| {
+        if i.review.pending.iter().any(|d| d.id == draft.id) {
+            draft.id = i.review.next_draft_id();
+        }
+        i.review.pending.push(draft);
+    });
+    state.info("Draft restored");
+    save
+}
+
+/// Your draft that's selected: under the diff's cursor, or a row of the
+/// Review tab.
+fn draft_here(state: &State) -> Option<(PrRef, u64)> {
+    match state.screen() {
+        Screen::Diff(screen) if screen.focus == diff_screen::Pane::Diff => {
+            let doc = &state.diffs.get(&screen.of)?.doc;
+            let ann = doc.annotation_under(screen.cursor, screen.half)?;
+            match doc.annotations().get(ann as usize)?.key {
+                AnnotationKey::Draft(id) => Some((screen.of.pr()?.clone(), id)),
+                AnnotationKey::Thread(_) | AnnotationKey::Check(_) => None,
+            }
+        }
+        Screen::Diff(_) => None,
+        Screen::Page(p) => match p.selected_link()? {
+            Link::Review(ReviewLink::Draft { pr, id, .. }) => Some((pr.clone(), *id)),
+            _ => None,
+        },
+    }
+}
+
+/// The pull request whose Review tab is on screen.
+fn review_tab(state: &State) -> Option<&PrRef> {
+    match state.route()? {
+        Route::Pulls(pulls::Pr {
+            pr,
+            tab: PrTab::Review,
+        }) => Some(pr),
+        _ => None,
+    }
+}
+
+/// Whether your drafts' keys take `action` here: `,e` and `,D` on a
+/// draft, as Enter and del do in Files changed, and on the Review tab del
+/// on a draft and `ctrl-z` after deleting one.
+pub fn takes(state: &State, action: Action) -> bool {
+    match action {
+        Action::EditComment | Action::DeleteComment => draft_here(state).is_some(),
+        Action::Delete => review_tab(state).is_some() && draft_here(state).is_some(),
+        Action::UndoDelete => review_tab(state).is_some(),
+        _ => false,
+    }
+}
+
+#[must_use]
+fn draft_action(state: &mut State, action: Action) -> Vec<Cmd> {
+    if action == Action::UndoDelete {
+        return match review_tab(state).cloned() {
+            Some(pr) => restore_draft(state, &pr),
+            None => Vec::new(),
+        };
+    }
+    let Some((pr, id)) = draft_here(state) else {
+        return Vec::new();
+    };
+    match action {
+        Action::EditComment => edit_draft(state, &pr, id),
+        _ => delete_draft(state, &pr, id),
+    }
+}
+
+/// Your drafts' rows in the menu, where one is selected.
+fn offers(state: &State, out: &mut Vec<crate::nav::Doable>) {
+    if draft_here(state).is_some() {
+        for (action, label) in [
+            (Action::EditComment, "Edit your draft"),
+            (Action::DeleteComment, "Delete your draft"),
+        ] {
+            out.push(crate::nav::row("Edit", action, label, "", None));
+        }
+    }
+}
+
+/// Your drafts, edited and deleted where they're selected.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    takes,
+    act: draft_action,
+    offers,
+    ..crate::features::Feature::NONE
+};
 
 /// Shows what `choice` picks: the whole PR, the changes since your last
 /// review, or a commit (from `mark` to it, if a range was marked).

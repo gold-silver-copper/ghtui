@@ -133,6 +133,102 @@ fn the_review_tab_lists_drafts_and_threads_and_opens_them() {
     assert_eq!(doc.annotation_at(screen.cursor), Some(1), "the open thread");
 }
 
+/// The Review tab on o/r#7 with these drafts read, the diff listed.
+fn review_tab(drafts: Vec<crate::store::DraftComment>) -> (State, PrRef) {
+    let mut s = state();
+    s.size = (120, 14);
+    let pr = PrRef::parse("o/r#7").unwrap();
+    let _ = s.push(Route::Pulls(pulls::Pr {
+        pr: pr.clone(),
+        tab: PrTab::Review,
+    }));
+    let _ = crate::fixtures::pr_fetched(&mut s, &pr, Ok(crate::fixtures::pr_detail()));
+    s.diffs.insert(DiffOf::Pr(pr.clone()), fixture_diff());
+    let review = ReviewState {
+        pending: drafts,
+        ..ReviewState::default()
+    };
+    diff_msg(&mut s, &pr, DiffMsg::ReviewLoaded(Ok(review)));
+    diff_msg(&mut s, &pr, DiffMsg::ThreadsLoaded(Ok(Vec::new())));
+    (s, pr)
+}
+
+/// Selects the Review tab's row of draft `id`.
+fn select_draft(s: &mut State, id: u64) {
+    for _ in 0..9 {
+        if matches!(page(s).selected_link(), Some(crate::ui::page::Link::Review(
+            crate::ui::page::ReviewLink::Draft { id: at, .. }
+        )) if *at == id)
+        {
+            return;
+        }
+        press(s, "j");
+    }
+    panic!("no row for draft {id}");
+}
+
+/// A draft on the Review tab is deleted (`,D` or del) and brought back
+/// there, and `,e` edits it in Files changed.
+#[test]
+fn the_review_tab_edits_and_deletes_drafts() {
+    let (mut s, pr) = review_tab(vec![crate::fixtures::draft(
+        1,
+        5,
+        "Name it for what it holds",
+    )]);
+    select_draft(&mut s, 1);
+    let cmds = press(&mut s, ",D");
+    assert!(
+        matches!(&cmds[..], [Cmd::SaveReview(_, r)] if r.pending.is_empty()),
+        "{cmds:?}"
+    );
+    let text = super::page_text(&s);
+    assert!(!text.contains("Name it for"), "{text}");
+    let cmds = press(&mut s, "<C-z>");
+    assert!(
+        matches!(&cmds[..], [Cmd::SaveReview(_, r)] if r.pending.len() == 1),
+        "{cmds:?}"
+    );
+    select_draft(&mut s, 1);
+    let cmds = press(&mut s, "<Delete>");
+    assert!(
+        matches!(&cmds[..], [Cmd::SaveReview(_, r)] if r.pending.is_empty()),
+        "{cmds:?}"
+    );
+    press(&mut s, "<C-z>");
+    select_draft(&mut s, 1);
+    press(&mut s, ",e");
+    assert_eq!(screen(&s).of, DiffOf::Pr(pr));
+    assert!(matches!(
+        overlay!(s, Compose).target,
+        compose::Target::Review(crate::review::Comment::Draft { id: 1 })
+    ));
+}
+
+/// A file's draft opened from the Review tab shows under its file's
+/// header, not below the screen.
+#[test]
+fn a_files_draft_opens_in_view() {
+    let draft = crate::store::DraftComment {
+        path: "zz/pending.rs".into(),
+        line: None,
+        ..crate::fixtures::draft(1, 0, "Is this file needed?")
+    };
+    let (mut s, pr) = review_tab(vec![draft]);
+    select_draft(&mut s, 1);
+    press(&mut s, "<Enter>");
+    let _ = s.settle_diff();
+    let doc = &s.diffs[&DiffOf::Pr(pr)].doc;
+    let screen = screen(&s);
+    let height = usize::from(s.layout().content.height) - 1;
+    let top = doc.to_global(screen.top);
+    let body = (0..doc.total_rows())
+        .rfind(|g| doc.annotation_at(doc.to_pos(*g)) == Some(0))
+        .expect("the draft has rows");
+    assert_eq!(doc.files()[screen.cursor.file].meta.path(), "zz/pending.rs");
+    assert!(body < top + height, "{top} {body} {height}");
+}
+
 /// Threads arriving above the cursor push its line down, and the
 /// cursor goes with it.
 #[test]

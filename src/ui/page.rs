@@ -90,12 +90,18 @@ pub enum ReviewLink {
         pr: crate::api::model::PrRef,
         commit: String,
     },
+    /// Your draft `id`, at `url`: its line in Files changed.
+    Draft {
+        pr: crate::api::model::PrRef,
+        id: u64,
+        url: String,
+    },
 }
 
 impl Link {
     pub fn url(&self) -> Option<&str> {
         match self {
-            Link::Url(url) => Some(url),
+            Link::Url(url) | Link::Review(ReviewLink::Draft { url, .. }) => Some(url),
             _ => None,
         }
     }

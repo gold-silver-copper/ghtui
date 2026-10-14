@@ -619,7 +619,7 @@ fn a_review_comment_is_edited_in_its_thread() {
     );
     assert!(s.overlay.is_none());
 
-    // On the draft.
+    // On the draft, it edits the draft.
     let doc = &s.diff().unwrap().doc;
     let draft = doc.annotations().iter().position(Annotation::is_draft);
     let at = doc.annotation_pos(u32::try_from(draft.unwrap()).unwrap());
@@ -631,7 +631,10 @@ fn a_review_comment_is_edited_in_its_thread() {
         };
     }
     press(&mut s, ",e");
-    crate::fixtures::says(&s, "That's your draft");
+    assert!(matches!(
+        &s.overlay,
+        Some(Overlay::Compose(c)) if matches!(c.target, crate::compose::Target::Review(crate::review::Comment::Draft { .. }))
+    ));
 }
 
 /// Intra-line emphasis, code moved between files, and a

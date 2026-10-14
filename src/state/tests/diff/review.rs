@@ -375,3 +375,149 @@ fn an_outdated_mapping_is_for_its_own_job() {
     diff_msg(&mut s, &pr, DiffMsg::Job(new, line(7)));
     assert_eq!(s.diffs[&of].mapped()[&NodeId::new("old")], Some(7));
 }
+
+/// The diff on o/r#7 with these drafts read, and the cursor on the
+/// first row of the body of the draft `id`.
+fn on_draft(drafts: Vec<crate::store::DraftComment>, id: u64) -> (State, PrRef) {
+    let (mut s, pr) = unread_diff_state(120);
+    let review = ReviewState {
+        pending: drafts,
+        ..ReviewState::default()
+    };
+    diff_msg(&mut s, &pr, DiffMsg::ReviewLoaded(Ok(review)));
+    let doc = &s.diffs[&DiffOf::Pr(pr.clone())].doc;
+    let ann = (doc.annotations().iter())
+        .position(|a| a.key == AnnotationKey::Draft(id))
+        .unwrap();
+    let row = (0..doc.total_rows())
+        .map(|g| doc.to_pos(g))
+        .find(|p| {
+            matches!(doc.row(*p), Some(Row::Thread(_)))
+                && doc.annotation_at(*p) == Some(u32::try_from(ann).unwrap())
+        })
+        .expect("the draft has rows");
+    if let Screen::Diff(d) = s.screens.last_mut() {
+        d.cursor = row;
+    }
+    (s, pr)
+}
+
+/// `c` on a draft comments where the draft is: on its line, or on its
+/// file for a file's draft.
+#[test]
+fn c_on_a_draft_comments_where_it_is() {
+    let line = fixtures::draft(1, 14, "Use a constant");
+    let file = crate::store::DraftComment {
+        line: None,
+        ..fixtures::draft(2, 0, "Split this file")
+    };
+    let (mut s, _) = on_draft(vec![line.clone(), file.clone()], 1);
+    press(&mut s, "c");
+    let r14 = crate::diff::anchor::LinePos {
+        side: crate::diff::anchor::Side::Right,
+        line: 14,
+    };
+    assert_eq!(
+        overlay!(s, Compose).target,
+        compose::Target::Review(crate::review::Comment::Line {
+            path: "src/point.rs".into(),
+            start: r14,
+            end: r14,
+        })
+    );
+    let (mut s, _) = on_draft(vec![line, file], 2);
+    press(&mut s, "c");
+    assert_eq!(
+        overlay!(s, Compose).target,
+        compose::Target::Review(crate::review::Comment::File {
+            path: "src/point.rs".into(),
+            reason: None,
+        })
+    );
+}
+
+/// Editing a draft says ctrl-s saves it, and `,e` and `,D` edit and
+/// delete it as Enter and del do.
+#[test]
+fn a_draft_is_edited_and_deleted_by_the_comment_keys() {
+    let (mut s, pr) = on_draft(vec![fixtures::draft(1, 14, "Use a constant")], 1);
+    press(&mut s, ",e");
+    assert!(matches!(
+        overlay!(s, Compose).target,
+        compose::Target::Review(crate::review::Comment::Draft { id: 1 })
+    ));
+    let shown = screen_text(&s);
+    assert!(shown.contains("save draft"), "{shown}");
+    assert!(!shown.contains("add to review"), "{shown}");
+    press(&mut s, "!<C-s>");
+    let of = DiffOf::Pr(pr);
+    assert_eq!(
+        s.diffs[&of].inputs().review.pending[0].body,
+        "Use a constant!"
+    );
+    let cmds = press(&mut s, ",D");
+    assert!(matches!(&cmds[..], [Cmd::SaveReview(_, r)] if r.pending.is_empty()));
+    says(&s, "ctrl-z");
+}
+
+/// Resolving a thread folds it, and the cursor stays on it, so the same
+/// key unresolves it.
+#[test]
+fn the_cursor_stays_on_a_thread_it_resolves() {
+    let (mut s, pr) = diff_state(120);
+    diff_msg(
+        &mut s,
+        &pr,
+        DiffMsg::ThreadsLoaded(Ok(vec![thread("open", Some(14), false, false)])),
+    );
+    let of = DiffOf::Pr(pr);
+    // The thread's last row, below its fold.
+    let (doc, ann) = (&s.diffs[&of].doc, 0);
+    let last = (0..doc.total_rows())
+        .map(|g| doc.to_pos(g))
+        .rfind(|p| {
+            matches!(doc.row(*p), Some(Row::Thread(_))) && doc.annotation_at(*p) == Some(ann)
+        })
+        .unwrap();
+    if let Screen::Diff(d) = s.screens.last_mut() {
+        d.cursor = last;
+    }
+    for resolved in [true, false] {
+        let job = fixtures::sent::<crate::review::Resolve>(&press(&mut s, ",t"));
+        assert_eq!(job.resolved, resolved);
+        let doc = &s.diffs[&of].doc;
+        assert_eq!(
+            doc.annotation_at(screen(&s).cursor),
+            Some(ann),
+            "resolved: {resolved}"
+        );
+        fixtures::done(&mut s, job, Ok(()));
+    }
+}
+
+/// A search's match off screen comes into view with the thread under
+/// it, not on the screen's last row with the thread below it.
+#[test]
+fn a_match_shows_with_its_thread() {
+    let (mut s, pr) = diff_state(120);
+    s.size.1 = 14;
+    diff_msg(
+        &mut s,
+        &pr,
+        DiffMsg::ThreadsLoaded(Ok(vec![thread("open", Some(14), false, false)])),
+    );
+    press(&mut s, "gg");
+    to_line(&mut s, "origin");
+    let doc = &s.diffs[&DiffOf::Pr(pr)].doc;
+    let screen = screen(&s);
+    let height = usize::from(s.layout().content.height) - 1;
+    let (top, cursor) = (doc.to_global(screen.top), doc.to_global(screen.cursor));
+    let thread_end = (cursor + 1..doc.total_rows())
+        .take_while(|g| matches!(doc.row(doc.to_pos(*g)), Some(Row::Thread(_))))
+        .last()
+        .expect("the thread is under the line");
+    assert!(
+        top < cursor && thread_end < top + height,
+        "{top} {cursor} {thread_end} {height}"
+    );
+}

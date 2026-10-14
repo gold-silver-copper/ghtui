@@ -126,6 +126,7 @@ pub fn describe(link: &ReviewLink) -> &'static str {
         ReviewLink::Open { .. } => "Open the review",
         ReviewLink::AsReviewed { .. } => "The changes as the review saw them",
         ReviewLink::Since { .. } => "What changed since the review",
+        ReviewLink::Draft { .. } => "Your draft, in Files changed",
     }
 }
 
@@ -142,6 +143,7 @@ pub fn follow(state: &mut State, link: &ReviewLink) -> Vec<Cmd> {
         })),
         ReviewLink::AsReviewed { pr, commit } => as_reviewed(state, pr, commit),
         ReviewLink::Since { pr, commit } => since(state, pr, commit),
+        ReviewLink::Draft { url, .. } => state.go(crate::route::Dest::from_url(url)),
     }
 }
 

@@ -292,6 +292,21 @@ fn webhooks_are_added_disabled_redelivered_and_deleted() {
     );
 }
 
+/// A new webhook's form starts on its first field: what's typed is its
+/// payload URL.
+#[test]
+fn a_new_webhooks_form_starts_on_its_payload_url() {
+    let mut s = on(SettingsPage::Hooks);
+    press(&mut s, ",n");
+    press(&mut s, "https://example.com/new");
+    let text = composed(&s);
+    assert_eq!(
+        text.lines().next(),
+        Some("Payload URL: https://example.com/new"),
+        "{text}"
+    );
+}
+
 /// A deploy key with write access says so before it's added; a key
 /// can't be edited, only deleted.
 #[test]

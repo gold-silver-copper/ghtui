@@ -186,6 +186,9 @@ pub struct DiffScreen {
     /// (`diff-<hash>L3-R5`), or a review comment (`discussion_r<id>`,
     /// `r<id>`).
     pub anchor: Option<String>,
+    /// The cursor jumped (to a search's match, a link's thread): the view
+    /// is to show it with the threads under it.
+    pub reveal: bool,
 }
 
 impl DiffScreen {
@@ -205,6 +208,7 @@ impl DiffScreen {
             shift: 0,
             word: None,
             anchor: None,
+            reveal: false,
         }
     }
 
@@ -1010,6 +1014,24 @@ fn face_thread(screen: &mut DiffScreen, state: &DiffState) {
     }
 }
 
+/// Unless the cursor's row and the thread rows under it are all in view,
+/// scrolls them into it: the cursor in the middle, as vim's `n` puts a
+/// match off screen, or higher when the threads would run off the bottom.
+fn reveal(screen: &mut DiffScreen, doc: &Doc, height: usize) {
+    let cursor = doc.to_global(screen.cursor);
+    let threads = (cursor + 1..doc.total_rows())
+        .take_while(|&g| matches!(doc.row(doc.to_pos(g)), Some(Row::Thread(_))))
+        .count();
+    let rows = (threads + 1).min(height);
+    // Row 0 of the view is the sticky header's, but on a file's header.
+    let first = doc.to_global(screen.top) + usize::from(screen.cursor.row != 0);
+    if cursor >= first && cursor + rows <= doc.to_global(screen.top) + height {
+        return;
+    }
+    let above = (height / 2).min(height - rows).max(1);
+    screen.top = doc.to_pos(cursor.saturating_sub(above));
+}
+
 /// Puts `pos` at the top of the view with the cursor on it.
 fn jump(screen: &mut DiffScreen, pos: Pos) {
     screen.cursor = pos;
@@ -1036,6 +1058,7 @@ pub fn search(screen: &mut DiffScreen, state: &DiffState, query: String, forward
 /// there's one, on the first word there that has `query`.
 fn go_to_match(screen: &mut DiffScreen, doc: &Doc, pos: Pos, query: &str) {
     screen.cursor = pos;
+    screen.reveal = true;
     let Some(code) = doc
         .code_at(pos, screen.half)
         .filter(|_| screen.word.is_some())
@@ -1251,7 +1274,10 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
                         screen.selection = (from != cursor).then_some(from);
                         screen.top = state.doc.offset(from, -2);
                     }
-                    None => face_thread(screen, state),
+                    None => {
+                        face_thread(screen, state);
+                        screen.reveal = true;
+                    }
                 }
             }
             // A review comment waits for the threads.
@@ -1262,6 +1288,9 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
     let doc = &state.doc;
     screen.cursor = doc.clamp(screen.cursor);
     let height = usize::from(lay.diff.height).max(1);
+    if std::mem::take(&mut screen.reveal) {
+        reveal(screen, doc, height);
+    }
     let total = doc.total_rows();
     let cursor = doc.to_global(screen.cursor);
     let mut top = doc.to_global(screen.top).min(total.saturating_sub(height));

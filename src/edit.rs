@@ -544,6 +544,8 @@ pub fn doables(state: &State) -> Vec<Doable> {
                 )
         })
         .filter(|a| *a != Action::RequestReviews || matches!(about, Subject::Pr(_)))
+        // A draft's are your drafts' ([`crate::review::takes`]).
+        .filter(|a| !crate::review::takes(state, *a))
         .map(|action| {
             let label = match action {
                 Action::EditComment => format!("Edit {what}"),

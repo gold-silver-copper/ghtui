@@ -397,7 +397,9 @@ its review stands, so you don't have to piece it together:
 - what still stops the merge.
 
 Each row opens what it's about: a draft or a thread in Files changed at
-its line, a review its own page. A review's page has its summary and
+its line, a review its own page. On a draft, `,e` edits it (in Files
+changed) and `,D` or `del` deletes it, which `ctrl-z` brings back, as
+they do on a draft in Files changed, where `c` comments on its line. A review's page has its summary and
 every thread it started or replied in, then two ways into Files
 changed: the changes it reviewed, as the pull request was at its commit
 (from git), and what changed since, marked as "since your last review"
