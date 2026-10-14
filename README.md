@@ -1116,7 +1116,9 @@ page says which), else from GitHub's API. It keeps what the API answered
 in the cache under the same key (a list's first page), where
 `DataKey::kept` allows, and reads it back by that key. In the state, each
 key's data is a `Remote`: loading, failed and why, or there, with when it
-was fetched. Pages read it through `State::get`, never on their own.
+was fetched. Pages read it through `State::get`, never on their own,
+and so do pickers, the composer's `@` mentions, the header's unread
+count and the search box's suggestions.
 
 **Fast from the cache.** The first paint comes from a local cache (redb,
 `src/store.rs`), then everything is refreshed in the background. What's
@@ -1147,8 +1149,8 @@ data it needs changes, its form changes, or a time it shows relative to
 now ("3m ago") reads differently. The pages are drawn by `src/ui/pages/`,
 which, like `src/api/`, names no app module.
 
-**A write is a job.** Everything ghtui writes, to GitHub or to git in
-your clone, is a job (`src/work.rs`): a struct that says how it runs and
+**A write is a job.** Everything ghtui writes, to GitHub, to git in
+your clone or to Home's sections in your config, is a job (`src/work.rs`): a struct that says how it runs and
 what its answer does (`impl Job`), listed once in `jobs!`, which makes the
 `Work` a command carries and the `Done` its answer comes back as. A job
 fails with one error type, `work::Failure`, which says GitHub's own words
@@ -1157,8 +1159,10 @@ run, a notification, a project or a repository's settings is one job, a
 `Change` (`act::Changing`), and what the offline queue keeps is made of
 them. What an action does where you are is planned once by the feature
 that owns it, as a step (`act::Step`: send it, ask first, choose in a
-picker, or write in the composer), and the key, the menu and the palette
-all ask that plan, so they can't disagree.
+picker, write in the composer, or start a job), and the key, the menu
+and the palette all ask that plan, so they can't disagree; a picker's
+row can be such a step too. Asking first is one question
+(`forms::Ask`), about a form or about what an action changes.
 
 **After a write, the page follows GitHub until it shows it**
 (`src/follow.rs`). The feature that made the write says what the page
