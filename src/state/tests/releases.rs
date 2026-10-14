@@ -11,7 +11,7 @@ use ratatui_textarea::CursorMove;
 
 use super::*;
 use crate::fixtures::{self};
-use crate::ui::page::{Link, WriteLink};
+use crate::ui::page::Link;
 
 const ID: u64 = 272_100_001;
 
@@ -162,7 +162,7 @@ fn a_release_is_deleted_then_its_tag_asked_about() {
 fn an_asset_is_saved_where_you_say() {
     let mut s = with_release();
     let name = "ghtui-x86_64-linux.tar.gz";
-    let asset = Link::Write(WriteLink::Asset(name.into()));
+    let asset = Link::Asset(name.into());
     select_link(&mut s, &asset);
     press(&mut s, "<Enter>");
     let sent = fixtures::sent::<assets::Save>(&press(&mut s, "<Enter>"));
@@ -221,7 +221,7 @@ fn assets_are_uploaded_and_deleted() {
     assert!(s.following.is_none());
 
     let name = "ghtui-aarch64-macos.tar.gz";
-    select_link(&mut s, &Link::Write(WriteLink::Asset(name.into())));
+    select_link(&mut s, &Link::Asset(name.into()));
     press(&mut s, ",D");
     assert_eq!(asked(&s).title, format!("Delete {name}?"));
     let sent = fixtures::sent::<assets::Delete>(&press(&mut s, "<Enter>"));

@@ -16,11 +16,11 @@ use crate::api::model::{Capped, NodeId, PrRef, RepoId};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::act::{By, Confirm, Subject};
+use crate::compose;
 use crate::data::{Data, DataKey};
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::{self, Choice};
-use crate::review::ComposeTarget;
 use crate::state::{Api, Cmd, Overlay, Remote, Screen, State};
 use crate::ui::annotations::{AnnotationKey, ThreadRowKind};
 use crate::ui::diff_doc::{Pos, Row};
@@ -529,7 +529,7 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
             state.info(why);
             Vec::new()
         }
-        Ok(Plan::Edit(editing, body)) => state.compose(ComposeTarget::Edit(editing), &body),
+        Ok(Plan::Edit(editing, body)) => state.compose(compose::Target::Edit(editing), &body),
         Ok(Plan::Delete(confirm)) => {
             state.overlay = Some(Overlay::Confirm(confirm));
             Vec::new()

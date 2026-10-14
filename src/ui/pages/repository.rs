@@ -457,7 +457,7 @@ pub fn release(page: &mut Page, repo: &RepoId, r: &Release, now: u64) {
         vec![Seg::new("↵ saves one", Role::Meta)]
     };
     list_box(page, title, hint, &r.assets, "No assets.", |page, a| {
-        let target = Link::Write(crate::ui::page::WriteLink::Asset(a.name.clone()));
+        let target = Link::Asset(a.name.clone());
         item(page, target, |page, link| {
             let right = vec![Seg::new(
                 format!(

@@ -65,7 +65,10 @@ fn comment_draft_edit_and_delete() {
     to_line(&mut s, "origin");
     press(&mut s, "c");
     let compose = overlay!(s, Compose);
-    assert!(matches!(compose.target, ComposeTarget::Line { .. }));
+    assert!(matches!(
+        compose.target,
+        compose::Target::Review(crate::review::Comment::Line { .. })
+    ));
     press(&mut s, "Use a constant");
     let cmds = press(&mut s, "<C-s>");
     assert!(s.overlay.is_none());
@@ -89,7 +92,7 @@ fn comment_draft_edit_and_delete() {
     // The cursor is on the commented line; Enter edits the draft.
     press(&mut s, "<Enter>");
     assert!(
-        matches!(&s.overlay, Some(Overlay::Compose(c)) if matches!(c.target, ComposeTarget::Draft { .. }))
+        matches!(&s.overlay, Some(Overlay::Compose(c)) if matches!(c.target, compose::Target::Review(crate::review::Comment::Draft { .. })))
     );
     press(&mut s, "!");
     press(&mut s, "<C-s>");
@@ -134,10 +137,10 @@ fn lines_outside_githubs_diff_become_file_comments() {
     let compose = overlay!(s, Compose);
     assert!(matches!(
         &compose.target,
-        ComposeTarget::File {
+        compose::Target::Review(crate::review::Comment::File {
             reason: Some(_),
             ..
-        }
+        })
     ));
 }
 
@@ -171,7 +174,9 @@ fn cancelling_a_comment_keeps_the_selection() {
     // Again, and the comment covers the same lines.
     press(&mut s, "c");
     let compose = overlay!(s, Compose);
-    assert!(matches!(&compose.target, ComposeTarget::Line { start, end, .. } if start != end));
+    assert!(
+        matches!(&compose.target, compose::Target::Review(crate::review::Comment::Line { start, end, .. }) if start != end)
+    );
     press(&mut s, "Fine<C-s>");
     assert!(screen(&s).selection.is_none(), "an added comment ends it");
 }

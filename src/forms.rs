@@ -16,8 +16,127 @@ use std::any::Any;
 use std::borrow::Cow;
 use std::collections::HashMap;
 
+use ratatui_textarea::CursorMove;
+
+use crate::compose::Target;
+use crate::keymap::Action;
+use crate::nav::Doable;
 use crate::route::Route;
-use crate::state::{Overlay, State};
+use crate::state::{Cmd, Overlay, State};
+use crate::ui::form::Row;
+use crate::ui::page::Link;
+
+/// What a kind of form does, on its pages ([`crate::route::Family::form`]).
+pub struct Kind {
+    /// `c`, or Enter on part `part` of its text: the composer on it.
+    pub compose: fn(&mut State, usize) -> Vec<Cmd>,
+    /// Enter on one of its rows.
+    pub row: fn(&mut State, &Row) -> Vec<Cmd>,
+    /// `,s`, ctrl-s or its button: makes it, saves it, or asks first.
+    pub submit: fn(&mut State) -> Vec<Cmd>,
+    /// Brings it up to date with what's arrived: filled in from GitHub's
+    /// data once, and the like.
+    pub follow: fn(&mut State) -> Vec<Cmd>,
+    /// The menu's rows on its page.
+    pub offers: fn(&State, &mut Vec<Doable>),
+}
+
+/// The form on screen, if a form's page is.
+fn here(state: &State) -> Option<&'static Kind> {
+    state.route()?.family().form()
+}
+
+/// Whether `action` is the form's on screen: making it, and writing its
+/// text.
+pub fn claims(state: &State, action: Action) -> bool {
+    matches!(action, Action::Create | Action::Comment) && here(state).is_some()
+}
+
+/// Runs one of the actions [`claims`] says are the form's.
+#[must_use]
+pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
+    match action {
+        Action::Comment => compose_here(state),
+        _ => submit(state),
+    }
+}
+
+/// `,s` or ctrl-s on a form's page.
+#[must_use]
+pub fn submit(state: &mut State) -> Vec<Cmd> {
+    let Some(kind) = here(state) else {
+        return Vec::new();
+    };
+    if state.route().is_some_and(|r| state.forms.sent(r).sending) {
+        say(state, "It's being sent".into());
+        return Vec::new();
+    }
+    (kind.submit)(state)
+}
+
+/// `c` on a form's page: the composer on the text selected (the first,
+/// when it's a row of another).
+#[must_use]
+pub fn compose_here(state: &mut State) -> Vec<Cmd> {
+    let Some(kind) = here(state) else {
+        return Vec::new();
+    };
+    let selected = match state.screen() {
+        crate::state::Screen::Page(p) => p.selected_link(),
+        crate::state::Screen::Diff(_) => None,
+    };
+    let part = match selected {
+        Some(Link::Form(Row::Text(i) | Row::Rename(i) | Row::Remove(i))) => *i,
+        _ => 0,
+    };
+    (kind.compose)(state, part)
+}
+
+/// Enter on one of a form's rows.
+#[must_use]
+pub fn row(state: &mut State, row: &Row) -> Vec<Cmd> {
+    match (row, here(state)) {
+        (Row::New, _) => crate::state::apply(state, Action::NewHere),
+        (Row::Text(part), Some(kind)) => (kind.compose)(state, *part),
+        (Row::Save, Some(_)) => submit(state),
+        (_, Some(kind)) => (kind.row)(state, row),
+        (_, None) => Vec::new(),
+    }
+}
+
+/// After GitHub's data arrives, or a form's page opens: brings the form
+/// on screen up to date.
+#[must_use]
+pub fn follow(state: &mut State) -> Vec<Cmd> {
+    here(state).map_or_else(Vec::new, |kind| (kind.follow)(state))
+}
+
+/// The menu's rows for the form on screen.
+pub fn offers(state: &State, out: &mut Vec<Doable>) {
+    if let Some(kind) = here(state) {
+        (kind.offers)(state, out);
+    }
+}
+
+/// The menu's rows for the form on screen: writing its text (labelled
+/// `write`, for a form with text), and saving it (`save`: its label and
+/// short name), unless it's being sent or `why` it can't be.
+pub(crate) fn offer(
+    state: &State,
+    write: Option<&str>,
+    save: (&str, &'static str),
+    why: Option<String>,
+    out: &mut Vec<Doable>,
+) {
+    let sending = state.route().is_some_and(|r| state.forms.sent(r).sending);
+    let busy = sending.then(|| "it's being sent".to_owned());
+    if let Some(label) = write {
+        let row = crate::writes::row("This page", Action::Comment, label, "write", busy.clone());
+        out.push(row);
+    }
+    let row = crate::writes::row("This page", Action::Create, save.0, save.1, busy.or(why));
+    out.push(row);
+}
 
 /// Whether GitHub (or git) is still answering what was sent, and why it
 /// refused when it did.
@@ -51,7 +170,23 @@ impl Sent {
 }
 
 /// A form's fields, as written so far.
-pub trait Fields: Any + Send {}
+pub trait Fields: Any + Send {
+    /// Part `part` of its text, as the composer writes it (most forms have
+    /// one part, some none).
+    fn text(&mut self, _part: usize) -> Option<&mut String> {
+        None
+    }
+
+    /// The composer's title on part `part`, on the form's page `route`.
+    fn title(&self, _route: &Route, _part: usize) -> String {
+        String::new()
+    }
+
+    /// What ctrl-s in the composer does, for its hint.
+    fn save(&self, _route: &Route) -> &'static str {
+        "save"
+    }
+}
 
 /// What only says it was sent.
 impl Fields for () {}
@@ -116,10 +251,13 @@ impl Forms {
         fields.downcast_mut()
     }
 
-    /// The form at `route` shows something new, though its fields are
-    /// the same (the composer opened on it).
-    pub fn touch(&mut self, route: &Route) {
-        self.entry(route);
+    fn fields(&self, route: &Route) -> Option<&dyn Fields> {
+        Some(self.map.get(route)?.fields.as_ref())
+    }
+
+    fn fields_mut(&mut self, route: &Route) -> Option<&mut dyn Fields> {
+        self.map.get(route)?;
+        Some(self.entry(route).fields.as_mut())
     }
 
     /// The form at `route`, taken away: blank if there was none.
@@ -142,6 +280,90 @@ impl Forms {
     pub fn version(&self, route: &Route) -> u64 {
         self.map.get(route).map_or(0, |e| e.version)
     }
+}
+
+/// The composer on a form: part `part` of the form at `route`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Text {
+    pub route: Route,
+    pub part: usize,
+}
+
+impl Text {
+    pub fn title(&self, state: &State) -> String {
+        let fields = state.forms.fields(&self.route);
+        fields
+            .map(|f| f.title(&self.route, self.part))
+            .unwrap_or_default()
+    }
+
+    pub fn save(&self, state: &State) -> &'static str {
+        let fields = state.forms.fields(&self.route);
+        fields.map_or("save", |f| f.save(&self.route))
+    }
+
+    /// What's written, kept with the form (esc, or before saving).
+    pub fn keep(&self, state: &mut State, written: String) {
+        let forms = &mut state.forms;
+        if let Some(text) = forms
+            .fields_mut(&self.route)
+            .and_then(|f| f.text(self.part))
+        {
+            *text = written;
+        }
+        forms.sent_mut(&self.route).error = None;
+    }
+
+    /// ctrl-s: keeps what's written, and saves the form on screen.
+    #[must_use]
+    pub fn save_form(&self, state: &mut State, written: String) -> Vec<Cmd> {
+        self.keep(state, written);
+        if state.route() != Some(&self.route) {
+            return Vec::new();
+        }
+        crate::state::apply(state, Action::Create)
+    }
+}
+
+/// Where writing starts in a text whose title is its first line: the
+/// title's end.
+pub(crate) const TITLE: &[CursorMove] = &[CursorMove::Top, CursorMove::End];
+
+/// Opens the composer on part `part` of the form at `route`, with what's
+/// written there, moved by `cursor` to where writing starts.
+#[must_use]
+pub(crate) fn compose<F: Fields + Default>(
+    state: &mut State,
+    route: &Route,
+    part: usize,
+    cursor: &[CursorMove],
+) -> Vec<Cmd> {
+    if state.forms.sent(route).sending {
+        state.info("It's being sent");
+        return Vec::new();
+    }
+    // Its box on the page makes way.
+    let Some(text) = state.forms.edit::<F>(route).text(part).cloned() else {
+        return Vec::new();
+    };
+    let target = Target::Form(Text {
+        route: route.clone(),
+        part,
+    });
+    let cmds = state.compose(target, &text);
+    if let Some(Overlay::Compose(c)) = &mut state.overlay {
+        for &to in cursor {
+            c.input.move_cursor(to);
+        }
+    }
+    cmds
+}
+
+/// Whether the composer is open on part `part` of the form at `route`:
+/// its box on the page makes way.
+pub(crate) fn composing(state: &State, route: &Route, part: usize) -> bool {
+    matches!(&state.overlay, Some(Overlay::Compose(c))
+        if matches!(&c.target, Target::Form(t) if t.route == *route && t.part == part))
 }
 
 impl Overlay {
@@ -197,7 +419,7 @@ pub(crate) fn failed(state: &mut State, route: &Route, why: String) {
 /// `route`, once it's done.
 pub(crate) fn close_sender(state: &mut State, route: &Route) {
     let ours = match &state.overlay {
-        Some(Overlay::Compose(c)) => c.target.form() == Some(route),
+        Some(Overlay::Compose(c)) => matches!(&c.target, Target::Form(t) if t.route == *route),
         Some(Overlay::Ask(a)) => a.route == *route,
         _ => false,
     };

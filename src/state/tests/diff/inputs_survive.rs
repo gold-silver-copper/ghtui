@@ -78,7 +78,7 @@ fn loading() -> (State, PrRef, crate::diff_job::JobId) {
 }
 
 /// Where `c` on the changed line 15 would put a comment.
-fn comment_target(s: &mut State) -> ComposeTarget {
+fn comment_target(s: &mut State) -> compose::Target {
     press(s, "/");
     press(s, "fifteen changed<Enter>");
     press(s, "c");
@@ -88,13 +88,13 @@ fn comment_target(s: &mut State) -> ComposeTarget {
     target
 }
 
-fn is_file_comment(target: &ComposeTarget) -> bool {
+fn is_file_comment(target: &compose::Target) -> bool {
     matches!(
         target,
-        ComposeTarget::File {
+        compose::Target::Review(crate::review::Comment::File {
             reason: Some(_),
             ..
-        }
+        })
     )
 }
 

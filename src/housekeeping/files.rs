@@ -555,7 +555,7 @@ pub(super) fn propose(
         form.base = base;
     }
     let mut cmds = state.push(route);
-    cmds.extend(crate::create::follow(state));
+    cmds.extend(crate::forms::follow(state));
     cmds
 }
 
@@ -633,11 +633,7 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
         None => status.push(("Looking for your clone…".into(), Mark::Waiting)),
         _ => status.push(("Will be committed on GitHub, as you".into(), Mark::Fine)),
     }
-    let composing = matches!(
-        &state.overlay,
-        Some(crate::state::Overlay::Compose(c))
-            if c.target == crate::review::ComposeTarget::Write(crate::writes::Text::Housekeeping(route.clone()))
-    );
+    let composing = crate::forms::composing(state, route, 0);
     let now = path(&f).to_owned();
     let hint = "ctrl-e for $EDITOR";
     let body = if composing { "" } else { f.text.as_str() };
@@ -650,7 +646,7 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
             markdown: crate::ui::pages::is_markdown(&now),
             empty: "Nothing written yet.",
             hint,
-            link: Link::Comment,
+            link: Link::Form(crate::ui::form::Row::Text(0)),
             actions: Vec::new(),
         }],
     };

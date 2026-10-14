@@ -74,17 +74,12 @@ pub(super) fn comment_with(state: &mut State, text: &str, quoting: Option<String
         Some(Route::Pulls(pulls::Pr { pr, .. })) => {
             state.activity(pr).map(|a| (a.id.clone(), pr.to_string()))
         }
-        // A new issue's or pull request's title and description.
-        Some(Route::Issues(issues::NewIssue(_)) | Route::Pulls(pulls::NewPr(_))) => {
-            return crate::create::compose(state);
-        }
         Some(Route::Discussions(discussions::Discussion { .. })) => {
             return crate::discuss::act(state, Action::Comment);
         }
-        Some(route) if crate::writes::is_form(route) => return crate::writes::compose(state),
         // A commit's comments.
         Some(Route::Code(code::Commit { repo, oid, .. })) => {
-            let target = ComposeTarget::Commit {
+            let target = compose::Target::Commit {
                 repo: repo.clone(),
                 oid: oid.clone(),
             };
@@ -99,7 +94,7 @@ pub(super) fn comment_with(state: &mut State, text: &str, quoting: Option<String
         state.info("Still loading");
         return Vec::new();
     };
-    let target = ComposeTarget::Conversation {
+    let target = compose::Target::Conversation {
         subject_id,
         name,
         quoting,

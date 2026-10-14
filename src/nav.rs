@@ -23,11 +23,11 @@ use ratatui_textarea::TextArea;
 use serde::{Deserialize, Serialize};
 
 use crate::browse;
+use crate::compose;
 use crate::data::{Data, DataKey};
 use crate::diff_screen::{self, Pane};
 use crate::keymap::Action;
 use crate::picker::{fuzzy_score, move_in_list};
-use crate::review::ComposeTarget;
 use crate::route::{self, Dest, Route, Target};
 use crate::state::{Api, Cmd, Overlay, Remote, Screen, State, apply};
 

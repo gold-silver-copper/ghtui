@@ -1,7 +1,7 @@
 //! New issues and pull requests: the template chooser, and the form.
 
 use super::*;
-use crate::ui::page::FormLink;
+use crate::ui::form::Row;
 
 /// Something to start a new issue from: a template, a blank issue, or a
 /// link the repository sends you to instead.
@@ -44,7 +44,7 @@ pub struct Field {
     pub values: Vec<(String, Option<String>)>,
     /// What it says without values (or why they can't be set).
     pub none: String,
-    pub link: FormLink,
+    pub link: Row,
 }
 
 /// How a line about the branches reads.
@@ -65,7 +65,7 @@ pub struct FormView<'a> {
     /// A pull request's base and head branches (empty: not chosen).
     pub branches: Option<(&'a str, &'a str)>,
     /// Lines about the branches; with `Push`, Enter on it pushes.
-    pub status: Vec<(String, Mark, Option<FormLink>)>,
+    pub status: Vec<(String, Mark, Option<Row>)>,
     /// The title on the first line, then the description.
     pub text: &'a str,
     /// The keys that write the text, and that make it.
@@ -87,7 +87,7 @@ pub fn new_form(page: &mut Page, v: &FormView<'_>) {
         Role::Title,
     )]);
     if let Some(name) = v.template {
-        item(page, Link::Form(FormLink::Templates), |page, link| {
+        item(page, Link::Form(Row::Templates), |page, link| {
             page.line(vec![
                 Seg::new("Template: ", Role::Meta),
                 Seg::new(name.to_owned(), Role::Strong),
@@ -97,10 +97,7 @@ pub fn new_form(page: &mut Page, v: &FormView<'_>) {
     }
     if let Some((base, head)) = v.branches {
         page.blank();
-        for (what, name, target) in [
-            ("base: ", base, FormLink::Base),
-            ("compare: ", head, FormLink::Head),
-        ] {
+        for (what, name, target) in [("base: ", base, Row::Base), ("compare: ", head, Row::Head)] {
             item(page, Link::Form(target), |page, link| {
                 let name = if name.is_empty() {
                     Seg::linked("choose a branch ▾", Role::Link, link)
@@ -146,7 +143,7 @@ pub fn new_form(page: &mut Page, v: &FormView<'_>) {
         });
     }
     page.blank();
-    item(page, Link::Form(FormLink::Create), |page, link| {
+    item(page, Link::Form(Row::Save), |page, link| {
         let button = format!(" {} ", v.create);
         let role = match v.why_not {
             Some(_) => Role::Chip(Bg::ContainerHigh),
@@ -199,7 +196,7 @@ fn text_box(page: &mut Page, v: &FormView<'_>) {
         Some((title, rest)) => (title.trim(), rest.trim()),
         None => (v.text.trim(), ""),
     };
-    item(page, Link::Comment, |page, link| {
+    item(page, Link::Form(Row::Text(0)), |page, link| {
         let title = if title.is_empty() {
             Seg::linked("Add a title", Role::Meta, link)
         } else {

@@ -17,6 +17,7 @@ mod browse;
 mod chrome;
 mod code_index;
 mod code_nav;
+mod compose;
 mod config;
 #[cfg(test)]
 mod crawl;

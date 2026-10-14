@@ -189,6 +189,10 @@ impl Family for Page {
         c.title = Some(pr.clone());
     }
 
+    fn form(&self) -> Option<&'static crate::forms::Kind> {
+        matches!(self, NewPr(_)).then_some(&crate::create::FORM)
+    }
+
     fn build(&self, b: Build<'_>, page: &mut crate::ui::page::Page) {
         let (state, cx, now) = (b.state, b.cx, b.cx.now);
         let (pr, tab) = match self {

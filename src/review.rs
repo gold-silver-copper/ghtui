@@ -1,7 +1,6 @@
 //! Reviewing: comment targets, drafts, suggestions, and turning GitHub
 //! threads and local drafts into annotations.
 
-use crate::route::pulls;
 use std::collections::{HashMap, HashSet};
 
 use crate::api::model::{NewThread, ReviewEvent, ReviewThread, Side as ApiSide};
@@ -17,15 +16,16 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui_textarea::TextArea;
 
 use crate::api::change::Change;
+use crate::compose::{Compose, Target, editor};
 use crate::diff_screen::{self, DiffOf, DiffScreen, LastReview};
 use crate::forms::Sent;
 use crate::keymap::Action;
 use crate::picker::{self, PickItem};
 use crate::state::{Api, Cmd, Git, OutdatedThread, Overlay, Screen, State};
 
-/// What a comment being written will be attached to.
+/// A review's comment being written: where it goes, or what it answers.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ComposeTarget {
+pub enum Comment {
     /// One line (`start == end`) or a range, by file line numbers.
     Line {
         path: String,
@@ -41,47 +41,46 @@ pub enum ComposeTarget {
     Reply { thread_id: NodeId },
     /// Editing an existing draft.
     Draft { id: u64 },
-    /// A comment on an issue or pull request's conversation, posted right
-    /// away; quoting the comment made `quoting` (its time, as links name it).
-    Conversation {
-        subject_id: NodeId,
-        name: String,
-        quoting: Option<String>,
-    },
-    /// Editing a comment or description already on GitHub, saved right
-    /// away.
-    Edit(crate::edit::Editing),
-    /// A comment on a commit as a whole, posted right away.
-    Commit {
-        repo: crate::api::model::RepoId,
-        oid: String,
-    },
-    /// The title and description of the new issue or pull request on this
-    /// page ([`crate::create`]).
-    Form(crate::route::Route),
-    /// A comment, a reply or an edit in a discussion
-    /// ([`crate::discuss`]), saved right away.
-    Discussion(crate::discuss::Writing),
-    /// A project's draft issue, new or edited ([`crate::projects`]):
-    /// its title on the first line, then its text.
-    ProjectDraft(crate::projects::Drafting),
-    /// A release's, a gist's or a wiki page's text, on its form's page
-    /// ([`crate::writes`]).
-    Write(crate::writes::Text),
-    /// A new discussion: its title on the first line, then its text
-    /// ([`crate::manage`]).
-    NewDiscussion(crate::manage::Starting),
-    /// A repository's rule, webhook or deploy key, as `Name: value`
-    /// lines ([`crate::settings`]).
-    Setting(crate::settings::Form),
 }
 
-impl ComposeTarget {
-    /// The form's page, for a form's text.
-    pub fn form(&self) -> Option<&crate::route::Route> {
+impl Comment {
+    /// The composer's title.
+    pub fn title(&self) -> String {
+        let side = |s: Side| match s {
+            Side::Left => "old",
+            Side::Right => "new",
+        };
         match self {
-            ComposeTarget::Form(route) => Some(route),
-            ComposeTarget::Write(text) => Some(text.route()),
+            Comment::Line { path, start, end } if start == end => {
+                format!("Comment on {path}:{} ({})", end.line, side(end.side))
+            }
+            Comment::Line { path, start, end } => format!(
+                "Comment on {path}, lines {}–{} ({})",
+                start.line,
+                end.line,
+                side(end.side)
+            ),
+            Comment::File { path, .. } => format!("Comment on the file {path}"),
+            Comment::Reply { .. } => "Reply".to_owned(),
+            Comment::Draft { .. } => "Edit draft".to_owned(),
+        }
+    }
+
+    /// What ctrl-s does, for the composer's hint.
+    pub fn save(&self) -> &'static str {
+        match self {
+            Comment::Reply { .. } => "post reply",
+            Comment::Line { .. } | Comment::File { .. } | Comment::Draft { .. } => "add to review",
+        }
+    }
+
+    /// Why a comment asked for on lines is on the whole file.
+    pub fn note(&self) -> Option<&str> {
+        match self {
+            Comment::File {
+                reason: Some(reason),
+                ..
+            } => Some(reason),
             _ => None,
         }
     }
@@ -95,97 +94,13 @@ pub struct Preview {
     pub suggested: Vec<String>,
 }
 
-pub struct Compose {
-    pub target: ComposeTarget,
-    pub input: TextArea<'static>,
-    pub preview: Option<Preview>,
-    pub sent: Sent,
-    /// The key (esc or ctrl-c) pressed once with text in the editor: only
-    /// that key, pressed again, throws the text away.
-    pub discard_armed: Option<&'static str>,
-    /// The list of who or what an `@` or `#` being typed can be.
-    pub completing: crate::typing::Completing,
-    /// Your saved replies, listed to insert one (`ctrl-g`).
-    pub saved: Option<crate::site::replies::Choosing>,
-}
-
-impl Compose {
-    pub fn new(theme: &Theme, target: ComposeTarget, text: &str) -> Self {
-        Self {
-            target,
-            input: editor(theme, text),
-            preview: None,
-            sent: Sent::default(),
-            discard_armed: None,
-            completing: crate::typing::Completing::default(),
-            saved: None,
-        }
-    }
-
-    pub fn text(&self) -> String {
-        self.input.lines().join("\n")
-    }
-
-    /// Why a comment asked for on lines is on the whole file.
-    pub fn note(&self) -> Option<&str> {
-        match &self.target {
-            ComposeTarget::File {
-                reason: Some(reason),
-                ..
-            } => Some(reason),
-            _ => None,
-        }
-    }
-
-    /// Rows the composer wants on screen.
-    pub fn rows(&self) -> u16 {
-        let preview = (self.preview.as_ref()).map(|p| p.original.len() + p.suggested.len());
-        crate::ui::review_sheets::compose_rows(preview, self.note().is_some())
-    }
-
-    pub fn title(&self) -> String {
-        let side = |s: Side| match s {
-            Side::Left => "old",
-            Side::Right => "new",
-        };
-        match &self.target {
-            ComposeTarget::Line { path, start, end } if start == end => {
-                format!("Comment on {path}:{} ({})", end.line, side(end.side))
-            }
-            ComposeTarget::Line { path, start, end } => format!(
-                "Comment on {path}, lines {}–{} ({})",
-                start.line,
-                end.line,
-                side(end.side)
-            ),
-            ComposeTarget::File { path, .. } => format!("Comment on the file {path}"),
-            ComposeTarget::Reply { .. } => "Reply".to_owned(),
-            ComposeTarget::Draft { .. } => "Edit draft".to_owned(),
-            ComposeTarget::Conversation { name, .. } => format!("Comment on {name}"),
-            ComposeTarget::Edit(e) => format!("Edit {}", e.name),
-            ComposeTarget::Discussion(w) => w.title.clone(),
-            ComposeTarget::ProjectDraft(d) => d.title.clone(),
-            ComposeTarget::NewDiscussion(s) => s.title(),
-            ComposeTarget::Setting(f) => f.title(),
-            ComposeTarget::Commit { oid, .. } => format!("Comment on commit {}", short_sha(oid)),
-            ComposeTarget::Form(crate::route::Route::Pulls(pulls::NewPr(_))) => {
-                "New pull request: its title on the first line, then its description".to_owned()
-            }
-            ComposeTarget::Form(_) => {
-                "New issue: its title on the first line, then its description".to_owned()
-            }
-            ComposeTarget::Write(_) => "Write".to_owned(),
-        }
-    }
-}
-
 /// The row of the diff the composer opens under: the last selected line,
 /// the end of the thread or draft it's about, or the file's header.
-pub fn compose_anchor(doc: &Doc, screen: &DiffScreen, target: &ComposeTarget) -> Pos {
+pub fn compose_anchor(doc: &Doc, screen: &DiffScreen, target: &Target) -> Pos {
     let cursor = screen.cursor;
     match target {
-        ComposeTarget::File { .. } => Pos { row: 0, ..cursor },
-        ComposeTarget::Reply { .. } | ComposeTarget::Draft { .. } | ComposeTarget::Edit(_) => {
+        Target::Review(Comment::File { .. }) => Pos { row: 0, ..cursor },
+        Target::Review(Comment::Reply { .. } | Comment::Draft { .. }) | Target::Edit(_) => {
             let ann = doc.annotation_under(cursor, screen.half);
             (cursor.row + 1..)
                 .map(|row| Pos { row, ..cursor })
@@ -195,15 +110,7 @@ pub fn compose_anchor(doc: &Doc, screen: &DiffScreen, target: &ComposeTarget) ->
                 .last()
                 .unwrap_or(cursor)
         }
-        ComposeTarget::Line { .. }
-        | ComposeTarget::Conversation { .. }
-        | ComposeTarget::Discussion(_)
-        | ComposeTarget::ProjectDraft(_)
-        | ComposeTarget::NewDiscussion(_)
-        | ComposeTarget::Setting(_)
-        | ComposeTarget::Form(_)
-        | ComposeTarget::Write(_)
-        | ComposeTarget::Commit { .. } => screen
+        _ => screen
             .selection
             .filter(|s| doc.to_global(*s) > doc.to_global(cursor))
             .unwrap_or(cursor),
@@ -269,13 +176,6 @@ impl SubmitDialog {
 }
 
 /// A box for writing Markdown: long lines wrap, at words where they can.
-fn editor(theme: &Theme, text: &str) -> TextArea<'static> {
-    let mut input = crate::nav::new_input(theme, Bg::ContainerHigh);
-    input.set_wrap_mode(ratatui_textarea::WrapMode::WordOrGlyph);
-    input.insert_str(text.trim_end_matches('\n'));
-    input
-}
-
 /// Why `$EDITOR` was opened, and where its text goes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditPurpose {
@@ -322,7 +222,7 @@ pub fn target(
     cursor: Pos,
     half: Side,
     selection: Option<Pos>,
-) -> Result<ComposeTarget, String> {
+) -> Result<Comment, String> {
     let file = doc.files().get(cursor.file).ok_or("No file here")?;
     let path = file.meta.path().to_owned();
     let from = match selection {
@@ -331,14 +231,14 @@ pub fn target(
         None => cursor,
     };
     let Some((start, end)) = doc.line_range(from, cursor, half) else {
-        return Ok(ComposeTarget::File { path, reason: None });
+        return Ok(Comment::File { path, reason: None });
     };
     let Some(commentable) = doc.commentable(cursor.file) else {
         return Err("This file's diff hasn't loaded yet".into());
     };
     match commentable.validate(start, end) {
-        Ok(()) => Ok(ComposeTarget::Line { path, start, end }),
-        Err(AnchorError::NotCommentable) => Ok(ComposeTarget::File {
+        Ok(()) => Ok(Comment::Line { path, start, end }),
+        Err(AnchorError::NotCommentable) => Ok(Comment::File {
             path,
             reason: Some(
                 "That line isn't part of GitHub's diff, so this will be a comment on the file."
@@ -364,7 +264,7 @@ fn side_of(side: DraftSide) -> Side {
 }
 
 /// A new draft for a line or file target.
-pub fn draft(target: &ComposeTarget, body: &str, id: u64, commit: &str) -> Option<DraftComment> {
+pub fn draft(target: &Comment, body: &str, id: u64, commit: &str) -> Option<DraftComment> {
     let base = |path: &str| DraftComment {
         id,
         path: path.to_owned(),
@@ -377,7 +277,7 @@ pub fn draft(target: &ComposeTarget, body: &str, id: u64, commit: &str) -> Optio
         error: None,
     };
     match target {
-        ComposeTarget::Line { path, start, end } => {
+        Comment::Line { path, start, end } => {
             let ranged = start != end;
             Some(DraftComment {
                 side: draft_side(end.side),
@@ -387,18 +287,8 @@ pub fn draft(target: &ComposeTarget, body: &str, id: u64, commit: &str) -> Optio
                 ..base(path)
             })
         }
-        ComposeTarget::File { path, .. } => Some(base(path)),
-        ComposeTarget::Reply { .. }
-        | ComposeTarget::Draft { .. }
-        | ComposeTarget::Conversation { .. }
-        | ComposeTarget::Edit(_)
-        | ComposeTarget::Discussion(_)
-        | ComposeTarget::ProjectDraft(_)
-        | ComposeTarget::NewDiscussion(_)
-        | ComposeTarget::Setting(_)
-        | ComposeTarget::Form(_)
-        | ComposeTarget::Write(_)
-        | ComposeTarget::Commit { .. } => None,
+        Comment::File { path, .. } => Some(base(path)),
+        Comment::Reply { .. } | Comment::Draft { .. } => None,
     }
 }
 
@@ -633,7 +523,8 @@ pub(crate) fn on_edited(
                 return Vec::new();
             }
             let body = suggestion_body(&suggested.join("\n"));
-            let mut compose = Compose::new(theme, ComposeTarget::Line { path, start, end }, &body);
+            let target = Target::Review(Comment::Line { path, start, end });
+            let mut compose = Compose::new(theme, target, &body);
             compose.preview = Some(Preview {
                 start_line: start.line,
                 original,
@@ -773,20 +664,16 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 return info(state, "You can't reply to this one");
             }
             let thread_id = thread_id.clone();
-            state.compose(ComposeTarget::Reply { thread_id }, "")
+            state.compose(Target::Review(Comment::Reply { thread_id }), "")
         }
         Action::Comment => {
             // The selection stays until the comment is added.
             match target(&diff.doc, cursor, half, screen.selection) {
                 Ok(target) => {
-                    if let ComposeTarget::File {
-                        reason: Some(reason),
-                        ..
-                    } = &target
-                    {
-                        state.info(reason.clone());
+                    if let Some(reason) = target.note() {
+                        state.info(reason);
                     }
-                    state.compose(target, "")
+                    state.compose(Target::Review(target), "")
                 }
                 Err(err) => error(state, &err),
             }
@@ -812,14 +699,14 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 return Vec::new();
             };
             let path = file.meta.path().to_owned();
-            state.compose(ComposeTarget::File { path, reason: None }, "")
+            state.compose(Target::Review(Comment::File { path, reason: None }), "")
         }
         Action::Suggest => {
             let target = match target(&diff.doc, cursor, half, screen.selection) {
                 Ok(target) => target,
                 Err(err) => return error(state, &err),
             };
-            let ComposeTarget::Line { path, start, end } = target else {
+            let Comment::Line { path, start, end } = target else {
                 return error(state, "Suggestions need lines GitHub can comment on");
             };
             if start.side != Side::Right || end.side != Side::Right {
@@ -894,7 +781,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             });
             if let Some(draft) = draft {
                 let (id, body) = (draft.id, draft.body.clone());
-                return state.compose(ComposeTarget::Draft { id }, &body);
+                return state.compose(Target::Review(Comment::Draft { id }), &body);
             }
             // A line of a comment with a link follows it.
             let url = match (diff.doc.row(cursor), diff.doc.files().get(cursor.file)) {
@@ -991,165 +878,26 @@ pub(crate) fn apply_commit_choice(
     })]
 }
 
+/// `ctrl-s` in the composer on a review's comment: drafts join the
+/// pending review (and are saved); replies post right away.
 #[must_use]
-pub(crate) fn on_compose_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
-    let Some(Overlay::Compose(compose)) = &mut state.overlay else {
-        return Vec::new();
-    };
-    if compose.sent.sending {
-        return Vec::new();
-    }
-    if let Some(cmds) = crate::site::replies::on_key(state, key) {
-        return cmds;
-    }
-    if let Some(cmds) = crate::typing::on_compose_key(state, key) {
-        return cmds;
-    }
-    let Some(Overlay::Compose(compose)) = &mut state.overlay else {
-        return Vec::new();
-    };
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    match key.code {
-        // A form keeps what's written: its page shows it.
-        KeyCode::Esc if let ComposeTarget::Form(route) = &compose.target => {
-            let (route, text) = (route.clone(), compose.text());
-            crate::create::keep_text(state, &route, text);
-            state.overlay = None;
-        }
-        KeyCode::Esc if let ComposeTarget::Write(target) = &compose.target => {
-            let (target, text) = (target.clone(), compose.text());
-            crate::writes::keep_text(state, &target, text);
-            state.overlay = None;
-        }
-        KeyCode::Esc => {
-            if may_discard(state, "esc", "discard") {
-                state.overlay = None;
-            }
-        }
-        KeyCode::Char('e') if ctrl => {
-            return vec![Cmd::Edit {
-                purpose: EditPurpose::Compose,
-                text: compose.text(),
-            }];
-        }
-        KeyCode::Char('s') if ctrl => return save_compose(state),
-        _ => {
-            compose.discard_armed = None;
-            compose.sent.error = None;
-            compose.completing.selected = 0;
-            compose.input.input(key);
-        }
-    }
-    Vec::new()
-}
-
-/// Whether `key` may throw away the text typed in the composer or the
-/// review summary: the first press only warns, a second of the same key
-/// goes ahead. Each key warns for itself, so esc then ctrl-c still asks.
-pub(crate) fn may_discard(state: &mut State, key: &'static str, verb: &str) -> bool {
-    let (text, armed, error, what) = match &mut state.overlay {
-        Some(Overlay::Compose(c)) => (c.text(), &mut c.discard_armed, &mut c.sent.error, "comment"),
-        Some(Overlay::Submit(d)) => (
-            d.input.lines().join("\n"),
-            &mut d.discard_armed,
-            &mut d.sent.error,
-            "summary",
-        ),
-        _ => return true,
-    };
-    if text.trim().is_empty() || *armed == Some(key) {
-        return true;
-    }
-    *armed = Some(key);
-    *error = Some(format!("Press {key} again to {verb} this {what}"));
-    false
-}
-
-/// `ctrl-s` in the composer: drafts join the pending review (and are saved);
-/// replies post right away.
-#[must_use]
-pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
-    let Some(Overlay::Compose(compose)) = &mut state.overlay else {
-        return Vec::new();
-    };
-    // A form says itself what it lacks.
-    if let ComposeTarget::Write(_) = compose.target {
-        return crate::writes::save(state);
-    }
-    let body = compose.text();
-    if body.trim().is_empty() {
-        compose.sent.error = Some("Write something first".into());
-        return Vec::new();
-    }
-    let target = compose.target.clone();
-    if let ComposeTarget::Edit(e) = target {
-        compose.sent.sending = true;
-        let edit = crate::api::edit::Edit::Body {
-            of: e.of,
-            id: e.id,
-            body,
-        };
-        return vec![crate::act::send(
-            Change::Edit(edit),
-            crate::act::By::Edit(e.about),
-        )];
-    }
-    if let ComposeTarget::Form(_) = target {
-        return crate::create::submit(state);
-    }
-    if let ComposeTarget::Discussion(w) = target {
-        compose.sent.sending = true;
-        return crate::discuss::send(&w, body);
-    }
-    if let ComposeTarget::NewDiscussion(s) = &target {
-        return crate::manage::start(state, s, &body);
-    }
-    if let ComposeTarget::Setting(f) = &target {
-        return crate::settings::submit(state, f, &body);
-    }
-    if let ComposeTarget::ProjectDraft(d) = target {
-        return match d.send(&body) {
-            Ok(cmds) => {
-                compose.sent.sending = true;
-                cmds
-            }
-            Err(why) => {
-                compose.sent.error = Some(why);
-                Vec::new()
-            }
-        };
-    }
-    if let ComposeTarget::Conversation { subject_id, .. } = target {
-        compose.sent.sending = true;
-        let change = Change::Comment {
-            subject: subject_id,
-            body,
-        };
-        return vec![crate::act::send(change, crate::act::By::Compose)];
-    }
-    if let ComposeTarget::Commit { repo, oid } = target {
-        compose.sent.sending = true;
-        let change = Change::CommitComment { repo, oid, body };
-        return vec![crate::act::send(change, crate::act::By::Compose)];
-    }
+pub(crate) fn save(state: &mut State, comment: Comment, body: String) -> Vec<Cmd> {
     let Some((screen, diff)) = state.diff_parts() else {
         return Vec::new();
     };
     let Some(pr) = screen.of.pr().cloned() else {
         return Vec::new();
     };
-    match target {
-        ComposeTarget::Reply { thread_id } => {
-            if let Some(Overlay::Compose(compose)) = &mut state.overlay {
-                compose.sent.sending = true;
-            }
+    match comment {
+        Comment::Reply { thread_id } => {
+            crate::forms::sending(state);
             let reply = Change::Reply {
                 thread: thread_id,
                 body,
             };
             vec![crate::act::send(reply, crate::act::By::Reply(pr))]
         }
-        ComposeTarget::Draft { id } => {
+        Comment::Draft { id } => {
             let save = diff.edit_review(&pr, |i| {
                 if let Some(d) = i.review.pending.iter_mut().find(|d| d.id == id) {
                     d.body = body;
@@ -1159,16 +907,7 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
             state.overlay = None;
             save
         }
-        ComposeTarget::Conversation { .. }
-        | ComposeTarget::Edit(_)
-        | ComposeTarget::Discussion(_)
-        | ComposeTarget::ProjectDraft(_)
-        | ComposeTarget::NewDiscussion(_)
-        | ComposeTarget::Setting(_)
-        | ComposeTarget::Form(_)
-        | ComposeTarget::Write(_)
-        | ComposeTarget::Commit { .. } => Vec::new(),
-        target @ (ComposeTarget::Line { .. } | ComposeTarget::File { .. }) => {
+        target @ (Comment::Line { .. } | Comment::File { .. }) => {
             let Some(head) = diff.head() else {
                 return Vec::new();
             };
@@ -1200,7 +939,7 @@ pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::Esc => {
-            if may_discard(state, "esc", "discard") {
+            if crate::compose::may_discard(state, "esc", "discard") {
                 state.overlay = None;
             }
         }
@@ -1313,7 +1052,7 @@ mod tests {
             side: Side::Right,
             line,
         };
-        let range = ComposeTarget::Line {
+        let range = Comment::Line {
             path: "a.rs".into(),
             start: right(3),
             end: right(5),
@@ -1326,7 +1065,7 @@ mod tests {
         let thread = new_thread(&d);
         assert_eq!((thread.line, thread.start_line), (Some(5), Some(3)));
 
-        let single = ComposeTarget::Line {
+        let single = Comment::Line {
             path: "a.rs".into(),
             start: right(4),
             end: right(4),
@@ -1338,14 +1077,14 @@ mod tests {
             "single lines have no start"
         );
 
-        let file = ComposeTarget::File {
+        let file = Comment::File {
             path: "a.rs".into(),
             reason: None,
         };
         assert_eq!(draft(&file, "x", 3, "head").unwrap().line, None);
         assert!(
             draft(
-                &ComposeTarget::Reply {
+                &Comment::Reply {
                     thread_id: NodeId::new("t")
                 },
                 "x",

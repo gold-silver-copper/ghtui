@@ -11,7 +11,7 @@ use ratatui_textarea::CursorMove;
 use super::*;
 use crate::fixtures::{self};
 
-fn composer(s: &mut State) -> &mut crate::review::Compose {
+fn composer(s: &mut State) -> &mut crate::compose::Compose {
     match &mut s.overlay {
         Some(Overlay::Compose(c)) => c,
         _ => panic!("no composer"),

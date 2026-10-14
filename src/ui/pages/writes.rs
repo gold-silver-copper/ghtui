@@ -2,7 +2,7 @@
 //! made or changed, a wiki page written.
 
 use super::*;
-use crate::ui::page::WriteLink;
+use crate::ui::form::Row;
 
 /// A row of a form: what it's called, what it's set to, and what Enter on
 /// it does (none: it only says).
@@ -11,7 +11,7 @@ pub struct FormRow {
     pub value: String,
     /// The value is a placeholder or a note, not what's set.
     pub unset: bool,
-    pub link: Option<WriteLink>,
+    pub link: Option<Row>,
 }
 
 /// A box of text the composer writes: its title (the first line, or a
@@ -29,7 +29,7 @@ pub struct TextBox<'a> {
     /// What Enter on it does.
     pub link: Link,
     /// What else can be done with it, by name ("rename", "remove").
-    pub actions: Vec<(&'static str, WriteLink)>,
+    pub actions: Vec<(&'static str, Row)>,
 }
 
 pub struct WriteFormView<'a> {
@@ -78,7 +78,7 @@ pub fn write_form(page: &mut Page, v: &WriteFormView<'_>) {
         form_row(page, row);
     }
     page.blank();
-    item(page, Link::Write(WriteLink::Save), |page, link| {
+    item(page, Link::Form(Row::Save), |page, link| {
         let role = match v.why_not {
             Some(_) => Role::Chip(Bg::ContainerHigh),
             None => Role::Chip(Bg::SuccessContainer),
@@ -110,7 +110,7 @@ fn form_row(page: &mut Page, row: &FormRow) {
     };
     let name = Seg::new(format!("{:<12}", row.name), Role::Strong);
     match &row.link {
-        Some(target) => item(page, Link::Write(target.clone()), |page, link| {
+        Some(target) => item(page, Link::Form(target.clone()), |page, link| {
             page.wrapped(vec![name, value(Some(link))], 0, Frame::None);
         }),
         None => page.wrapped(vec![name, value(None)], 0, Frame::None),
@@ -127,7 +127,7 @@ fn text_box(page: &mut Page, b: &TextBox<'_>, v: &WriteFormView<'_>) {
     let right = vec![Seg::new(right, Role::Meta)];
     let title_start = page.lines.len();
     let title_link = match rename {
-        Some((_, target)) => page.link(Link::Write(target.clone())),
+        Some((_, target)) => page.link(Link::Form(target.clone())),
         None => page.link(b.link.clone()),
     };
     let title = if b.title.is_empty() {
@@ -167,7 +167,7 @@ fn text_box(page: &mut Page, b: &TextBox<'_>, v: &WriteFormView<'_>) {
         link,
     );
     for (name, target) in b.actions.iter().filter(|(name, _)| *name != "rename") {
-        item(page, Link::Write(target.clone()), |page, link| {
+        item(page, Link::Form(target.clone()), |page, link| {
             page.line(vec![Seg::linked(
                 format!("  {name} this file"),
                 Role::Link,

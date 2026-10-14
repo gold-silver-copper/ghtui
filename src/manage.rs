@@ -1174,7 +1174,7 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
             work::start(checkout)
         }
         Chosen::Write(starting, text) => {
-            let target = crate::review::ComposeTarget::NewDiscussion(starting);
+            let target = crate::compose::Target::NewDiscussion(starting);
             state.compose(target, &text)
         }
     }
@@ -1399,7 +1399,7 @@ impl Job for Start {
             }
         };
         if let Some(Overlay::Compose(c)) = &state.overlay
-            && let crate::review::ComposeTarget::NewDiscussion(_) = c.target
+            && let crate::compose::Target::NewDiscussion(_) = c.target
         {
             state.overlay = None;
         }

@@ -447,11 +447,7 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route) {
     }
     let write = state.first_key(Action::Comment);
     let save_key = state.first_key(Action::Create);
-    let composing = matches!(
-        &state.overlay,
-        Some(crate::state::Overlay::Compose(c))
-            if c.target == crate::review::ComposeTarget::Write(crate::writes::Text::Housekeeping(route.clone()))
-    );
+    let composing = crate::forms::composing(state, route, 0);
     let body = if composing { "" } else { f.text.as_str() };
     let view = WriteFormView {
         heading,
@@ -468,7 +464,7 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route) {
             markdown: true,
             empty: "No description.",
             hint: "In Markdown (ctrl-e for $EDITOR)",
-            link: Link::Comment,
+            link: Link::Form(crate::ui::form::Row::Text(0)),
             actions: Vec::new(),
         }],
         after: Vec::new(),

@@ -328,7 +328,7 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec
 /// Once GitHub says whether the branch asked about is protected: its
 /// deletion is asked about, if it's still the one selected.
 #[must_use]
-pub(super) fn follow(state: &mut State) -> Vec<Cmd> {
+pub(crate) fn follow(state: &mut State) -> Vec<Cmd> {
     let Some((repo, name)) = state.housekeeping.deleting.clone() else {
         return Vec::new();
     };

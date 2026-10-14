@@ -20,8 +20,9 @@ use crate::api::model::RepoId;
 use crate::api::release::{Made, NewRelease, Notes, TagLook};
 use crate::create::templates;
 use crate::route::{Route, releases};
+use crate::ui::form::Row;
 use crate::ui::overlays::PaletteItem;
-use crate::ui::page::{Link, Page, WriteLink};
+use crate::ui::page::{Link, Page};
 use crate::ui::pages::{FormRow, Mark, TextBox, WriteFormView};
 
 use crate::data::DataKey;
@@ -30,10 +31,9 @@ use crate::forms::{Fields, say};
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::fuzzy_score;
-use crate::review::ComposeTarget;
-use crate::state::{Cmd, Overlay, State};
+use crate::state::{Cmd, State};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::{Answer, Chosen, Pick, Text, item, row};
+use crate::writes::{Answer, Chosen, Pick, item, row};
 
 /// A release, as written so far: a new one, or one being edited.
 #[derive(Debug, Clone)]
@@ -58,7 +58,27 @@ pub struct Form {
     pub generating: bool,
 }
 
-impl Fields for Form {}
+impl Fields for Form {
+    fn text(&mut self, _: usize) -> Option<&mut String> {
+        Some(&mut self.text)
+    }
+
+    fn title(&self, route: &Route, _: usize) -> String {
+        match route {
+            Route::Releases(releases::EditRelease { tag, .. }) => {
+                format!("Editing {tag}: its title on the first line, then its notes")
+            }
+            _ => "New release: its title on the first line, then its notes".into(),
+        }
+    }
+
+    fn save(&self, route: &Route) -> &'static str {
+        match route {
+            Route::Releases(releases::EditRelease { .. }) => "save…",
+            _ => "publish…",
+        }
+    }
+}
 
 /// The release a form edits, as it was.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -319,7 +339,7 @@ pub fn open_edit(state: &mut State) -> Vec<Cmd> {
 /// release, starts a new one by choosing its tag, and asks GitHub about
 /// a tag it hasn't yet.
 #[must_use]
-pub fn follow(state: &mut State) -> Vec<Cmd> {
+fn follow(state: &mut State) -> Vec<Cmd> {
     let Some((route, repo, form)) = here(state) else {
         return Vec::new();
     };
@@ -347,60 +367,52 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
 
 /// The composer, on the title and notes.
 #[must_use]
-pub fn compose(state: &mut State) -> Vec<Cmd> {
-    let Some((route, _, form)) = here(state) else {
+fn compose(state: &mut State) -> Vec<Cmd> {
+    let Some((route, ..)) = here(state) else {
         return Vec::new();
     };
-    if state.forms.sent(&route).sending {
-        state.info("It's being saved");
-        return Vec::new();
-    }
-    let text = form.text.clone();
-    state.forms.touch(&route);
-    let cmds = state.compose(ComposeTarget::Write(Text::Release(route)), &text);
-    if let Some(Overlay::Compose(c)) = &mut state.overlay {
-        c.input.move_cursor(ratatui_textarea::CursorMove::Top);
-        c.input.move_cursor(ratatui_textarea::CursorMove::End);
-    }
-    cmds
+    crate::forms::compose::<Form>(state, &route, 0, crate::forms::TITLE)
 }
 
-pub fn keep_text(state: &mut State, route: &Route, text: String) {
-    state.forms.edit::<Form>(route).text = text;
-    state.forms.sent_mut(route).error = None;
-}
+/// What the release form does.
+pub const FORM: crate::forms::Kind = crate::forms::Kind {
+    compose: |state, _| compose(state),
+    row: on_row,
+    submit,
+    follow,
+    offers,
+};
 
 /// Enter on one of the form's rows.
 #[must_use]
-pub fn follow_link(state: &mut State, link: &WriteLink) -> Vec<Cmd> {
+fn on_row(state: &mut State, link: &Row) -> Vec<Cmd> {
     let Some((route, repo, form)) = here(state) else {
         return Vec::new();
     };
     match link {
-        WriteLink::Tag => crate::writes::open_picker(state, Pick::Tag(route)),
-        WriteLink::Target if form.new_tag(state, &repo) => {
+        Row::Tag => crate::writes::open_picker(state, Pick::Tag(route)),
+        Row::Target if form.new_tag(state, &repo) => {
             crate::writes::open_picker(state, Pick::Target(route))
         }
-        WriteLink::Target => {
+        Row::Target => {
             state.info("The tag is GitHub's already: it's where it is");
             Vec::new()
         }
-        WriteLink::Notes => generate(state),
-        WriteLink::Prerelease => {
+        Row::Notes => generate(state),
+        Row::Prerelease => {
             let form = state.forms.edit::<Form>(&route);
             form.prerelease = !form.prerelease;
             Vec::new()
         }
-        WriteLink::Latest if form.prerelease => {
+        Row::Latest if form.prerelease => {
             state.info("A pre-release is never the latest release");
             Vec::new()
         }
-        WriteLink::Latest => {
+        Row::Latest => {
             let form = state.forms.edit::<Form>(&route);
             form.latest = !form.latest;
             Vec::new()
         }
-        WriteLink::Save => submit(state),
         _ => Vec::new(),
     }
 }
@@ -592,14 +604,10 @@ fn problem(state: &State, repo: &RepoId, form: &Form) -> Option<String> {
 /// `,s`, ctrl-s, or its button: asks whether to publish it or keep a
 /// draft.
 #[must_use]
-pub fn submit(state: &mut State) -> Vec<Cmd> {
+fn submit(state: &mut State) -> Vec<Cmd> {
     let Some((route, repo, form)) = here(state) else {
         return Vec::new();
     };
-    if state.forms.sent(&route).sending {
-        say(state, "It's being saved".into());
-        return Vec::new();
-    }
     let Some(tag) = form.tag.clone() else {
         say(state, "Choose a tag first (Enter on Tag)".into());
         return Vec::new();
@@ -967,23 +975,9 @@ impl Job for Delete {
     }
 }
 
-/// The menu's rows: making a release from a repository's pages, the
-/// form's own, and changing the release on screen.
-pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
-    let Some(repo) = route.repo() else {
-        return;
-    };
+/// The form's rows in the menu: writing it, and saving it.
+fn offers(state: &State, out: &mut Vec<Doable>) {
     if let Some((_, repo, form)) = here(state) {
-        let mut write = row(
-            "This page",
-            Action::Comment,
-            "Write the title and notes",
-            "write",
-            None,
-        );
-        let sending = state.forms.sent(route).sending;
-        write.unavailable = sending.then(|| "it's being saved".into());
-        out.push(write);
         let why = match &form.tag {
             None => Some("choose a tag first".to_owned()),
             Some(_) => problem(state, &repo, &form),
@@ -993,9 +987,17 @@ pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
         } else {
             "Publish the release, or save a draft"
         };
-        out.push(row("This page", Action::Create, publish, "publish", why));
-        return;
+        let write = Some("Write the title and notes");
+        crate::forms::offer(state, write, (publish, "publish"), why, out);
     }
+}
+
+/// The menu's rows: making a release from a repository's pages, and
+/// changing the release on screen.
+pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
+    let Some(repo) = route.repo().filter(|_| here(state).is_none()) else {
+        return;
+    };
     if matches!(route, Route::Releases(releases::Release { .. })) {
         let why = unchangeable(state);
         out.push(row(
@@ -1038,10 +1040,7 @@ pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
 pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
     let form = state.forms.shown::<Form>(route);
     let form = form.as_ref();
-    let composing = matches!(
-        &state.overlay,
-        Some(Overlay::Compose(c)) if c.target == ComposeTarget::Write(Text::Release(route.clone()))
-    );
+    let composing = crate::forms::composing(state, route, 0);
     let mut rows = vec![FormRow {
         name: "Tag",
         value: form
@@ -1049,7 +1048,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
             .as_ref()
             .map_or_else(|| "Choose a tag ▾".into(), |t| format!("{t} ▾")),
         unset: form.tag.is_none(),
-        link: Some(WriteLink::Tag),
+        link: Some(Row::Tag),
     }];
     let mut status = Vec::new();
     if let Some(tag) = &form.tag {
@@ -1080,7 +1079,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
             name: "Target",
             value: format!("{target} ▾"),
             unset: false,
-            link: Some(WriteLink::Target),
+            link: Some(Row::Target),
         });
     }
     let check = |on: bool| if on { "☑" } else { "☐" };
@@ -1094,13 +1093,13 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
             name: "Notes",
             value: format!("Generate release notes · {notes}"),
             unset: false,
-            link: Some(WriteLink::Notes),
+            link: Some(Row::Notes),
         },
         FormRow {
             name: "Pre-release",
             value: format!("{} Set as a pre-release", check(form.prerelease)),
             unset: false,
-            link: Some(WriteLink::Prerelease),
+            link: Some(Row::Prerelease),
         },
         FormRow {
             name: "Latest",
@@ -1110,7 +1109,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
                 format!("{} Set as the latest release", check(form.latest))
             },
             unset: form.prerelease,
-            link: Some(WriteLink::Latest),
+            link: Some(Row::Latest),
         },
     ];
     let (title, notes) = templates::split(&form.text);
@@ -1148,7 +1147,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
             markdown: true,
             empty: "No notes yet.",
             hint: "The first line is the title; then the notes, in Markdown (ctrl-e for $EDITOR)",
-            link: Link::Comment,
+            link: Link::Form(crate::ui::form::Row::Text(0)),
             actions: Vec::new(),
         }],
         after,

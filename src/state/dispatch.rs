@@ -81,11 +81,13 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     if data {
         cmds.extend(crate::follow::follow(state));
         cmds.extend(act::follow(state));
-        cmds.extend(crate::create::follow(state));
-        cmds.extend(crate::writes::follow(state));
+        cmds.extend(crate::create::waiting_checkout(state));
+        cmds.extend(crate::housekeeping::refs::follow(state));
+        cmds.extend(crate::forms::follow(state));
     } else if state.route() != opened.as_ref() {
         cmds.extend(crate::follow::follow(state));
-        cmds.extend(crate::writes::follow(state));
+        cmds.extend(crate::housekeeping::refs::follow(state));
+        cmds.extend(crate::forms::follow(state));
     }
     cmds
 }
@@ -259,7 +261,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
 #[must_use]
 pub(super) fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-        state.quit = crate::review::may_discard(state, "ctrl-c", "quit and discard");
+        state.quit = crate::compose::may_discard(state, "ctrl-c", "quit and discard");
         return Vec::new();
     }
     match &mut state.overlay {
@@ -268,7 +270,7 @@ pub(super) fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         Some(Overlay::Search(_)) => return nav::on_search_box_key(state, key),
         Some(Overlay::Hints(_)) => return nav::on_hints_key(state, key),
         Some(Overlay::Menu(_)) => return nav::on_menu_key(state, key),
-        Some(Overlay::Compose(_)) => return on_compose_key(state, key),
+        Some(Overlay::Compose(_)) => return crate::compose::on_key(state, key),
         Some(Overlay::Submit(_)) => return on_submit_key(state, key),
         Some(Overlay::Confirm(_)) => return act::on_confirm_key(state, key),
         Some(Overlay::Ask(_)) => return crate::create::on_ask_key(state, key),
@@ -487,6 +489,8 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::Refresh => return state.load_visible(true),
         Action::Copy => return nav::copy_link(state),
         Action::OpenInBrowser => return state.go(Target::External(state.here_url()).into()),
+        // The form on screen: making it, and writing its text.
+        _ if crate::forms::claims(state, action) => return crate::forms::act(state, action),
         _ if crate::settings::claims(action) => return crate::settings::act(state, action),
         _ if crate::manage::claims(state, action) => return crate::manage::act(state, action),
         // Labels, milestones, branches and tags, forks, new repositories

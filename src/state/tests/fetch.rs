@@ -104,7 +104,10 @@ fn issue_comments_post_and_refresh() {
     );
     press(&mut state, "c");
     let compose = overlay!(state, Compose);
-    assert_eq!(compose.title(), "Comment on gold-silver-copper/ghtui#14");
+    assert_eq!(
+        compose.target.title(&state),
+        "Comment on gold-silver-copper/ghtui#14"
+    );
     press(&mut state, "Thanks!");
     let cmds = update(
         &mut state,

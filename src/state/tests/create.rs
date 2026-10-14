@@ -10,7 +10,7 @@ use ratatui_textarea::CursorMove;
 
 use super::*;
 use crate::create::{HeadState, Push, Submission, Submit};
-use crate::ui::page::FormLink;
+use crate::ui::form::Row;
 
 /// The repository's page, then `keys` (`,i` or `,p`), with what the form
 /// can have delivered.
@@ -23,7 +23,7 @@ fn form(keys: &str) -> (State, Vec<Cmd>) {
     (s, more)
 }
 
-fn composer(s: &mut State) -> &mut crate::review::Compose {
+fn composer(s: &mut State) -> &mut crate::compose::Compose {
     match &mut s.overlay {
         Some(Overlay::Compose(c)) => c,
         _ => panic!("no composer"),
@@ -122,7 +122,7 @@ fn labels_are_picked_and_text_is_kept() {
     press(&mut s, "<Esc>");
     assert!(s.overlay.is_none());
     assert!(page_text(&s).contains("More."), "{}", page_text(&s));
-    let _ = crate::create::follow_link(&mut s, &FormLink::Labels);
+    let _ = crate::forms::row(&mut s, &Row::Labels);
     // bug is on (from the template): off; then documentation on.
     press(&mut s, "<Enter><Down><Enter>");
     assert!(

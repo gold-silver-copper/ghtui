@@ -462,7 +462,7 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Ok(Plan::Pick(pick)) => state.open_picker(crate::picker::Kind::Settings(pick)),
         Ok(Plan::Write(form, text)) => {
-            let target = crate::review::ComposeTarget::Setting(form);
+            let target = crate::compose::Target::Setting(form);
             state.compose(target, &text)
         }
     }
@@ -1078,7 +1078,7 @@ pub fn submit(state: &mut State, form: &Form, text: &str) -> Vec<Cmd> {
     match confirm(form, text) {
         Err(why) => crate::forms::say(state, why),
         Ok(mut confirm) => {
-            let target = crate::review::ComposeTarget::Setting(form.clone());
+            let target = crate::compose::Target::Setting(form.clone());
             confirm.back = Some((target, text.to_owned()));
             state.overlay = Some(Overlay::Confirm(Box::new(confirm)));
         }

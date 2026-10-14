@@ -1,6 +1,5 @@
 //! The view: a pure function of [`State`] (plus the current time).
 
-use crate::route::pulls;
 use crate::theme::Bg;
 use crate::ui::bars::{Banner, StatusBar};
 use crate::ui::chrome::{Header, KeyPanel, SearchField, SearchPanel, TabBar, TitleBar};
@@ -17,9 +16,9 @@ use crate::ui::diff_view::{DiffView, Keys};
 use crate::ui::file_tree::{FileTree, TREE_BG};
 use crate::ui::review_sheets::{ComposeSheet, ConfirmSheet, SubmitSheet};
 
+use crate::compose::{Compose, Target};
 use crate::diff_screen::{self, DiffScreen, Pane};
 use crate::keymap::Action;
-use crate::review::Compose;
 use crate::state::{Overlay, Screen, State};
 
 /// The single content pane is focused, so it sits one tone above surface.
@@ -90,11 +89,11 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             // edits, scrolled into view.
             let comment_box = composing.and_then(|c| {
                 let (at, under) = match &c.target {
-                    crate::review::ComposeTarget::Conversation {
+                    Target::Conversation {
                         quoting: Some(at), ..
                     } => (Some(at), true),
-                    crate::review::ComposeTarget::Edit(e) => (Some(&e.at), false),
-                    crate::review::ComposeTarget::Discussion(w) => w.place(),
+                    Target::Edit(e) => (Some(&e.at), false),
+                    Target::Discussion(w) => w.place(),
                     _ => (None, false),
                 };
                 let comment = at.and_then(|at| {
@@ -104,7 +103,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 });
                 // A form's text box, or the conversation's comment box.
                 let anchor = match &c.target {
-                    crate::review::ComposeTarget::Write(t) => t.anchor(),
+                    Target::Form(t) => Link::Form(crate::ui::form::Row::Text(t.part)),
                     _ => Link::Comment,
                 };
                 let (item, under) = match comment {
@@ -198,10 +197,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             .render(area, buf);
         }
         Some(Overlay::Compose(compose)) => {
-            let title = match &compose.target {
-                crate::review::ComposeTarget::Write(text) => text.title(state),
-                _ => compose.title(),
-            };
+            let title = compose.target.title(state);
             // Saved replies, while they're listed; else what an `@` or
             // `#` can be.
             let saved = crate::site::replies::shown(state);
@@ -236,22 +232,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 note: compose.note(),
                 error: compose.sent.error.as_deref(),
                 sending: compose.sent.sending,
-                save: match &compose.target {
-                    crate::review::ComposeTarget::Reply { .. } => "post reply",
-                    crate::review::ComposeTarget::Conversation { .. } => "post comment",
-                    crate::review::ComposeTarget::Form(crate::route::Route::Pulls(
-                        pulls::NewPr(_),
-                    )) => "create pull request…",
-                    crate::review::ComposeTarget::Form(_) => "create issue",
-                    crate::review::ComposeTarget::Write(t) => t.save(),
-                    crate::review::ComposeTarget::Edit(_) => "save",
-                    crate::review::ComposeTarget::Discussion(w) => w.save(),
-                    crate::review::ComposeTarget::ProjectDraft(d) if d.draft.is_some() => "save",
-                    crate::review::ComposeTarget::ProjectDraft(_) => "add draft",
-                    crate::review::ComposeTarget::NewDiscussion(_) => "start discussion",
-                    crate::review::ComposeTarget::Setting(f) => f.save(),
-                    _ => "add to review",
-                },
+                save: compose.target.save(state),
                 completions: (completions.as_deref())
                     .map(|c| (c, selected.min(c.len().saturating_sub(1)))),
             }

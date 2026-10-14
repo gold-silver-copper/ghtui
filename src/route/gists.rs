@@ -100,6 +100,10 @@ impl Family for Page {
         }
     }
 
+    fn form(&self) -> Option<&'static crate::forms::Kind> {
+        matches!(self, NewGist | EditGist { .. }).then_some(&crate::gist::FORM)
+    }
+
     fn build(&self, b: Build<'_>, page: &mut crate::ui::page::Page) {
         let now = b.cx.now;
         let route = || Route::Gists(self.clone());

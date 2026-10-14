@@ -83,6 +83,10 @@ impl Family for Page {
         Section::Wiki
     }
 
+    fn form(&self) -> Option<&'static crate::forms::Kind> {
+        matches!(self, WikiEdit { .. }).then_some(&crate::wiki::form::FORM)
+    }
+
     fn build(&self, b: Build<'_>, page: &mut crate::ui::page::Page) {
         let (repo, name) = self.parts();
         let title = self.title();

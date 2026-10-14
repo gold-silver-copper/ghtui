@@ -263,25 +263,10 @@ impl State {
         if !matches!(route, Route::Code(code::Blob { .. })) && !line {
             let mut open = here(Action::Open, "Open the selected row", "open");
             match p.selected_link() {
-                // A new issue's or pull request's text box.
-                Some(Link::Comment)
-                    if matches!(
-                        route,
-                        Route::Issues(issues::NewIssue(_)) | Route::Pulls(pulls::NewPr(_))
-                    ) =>
-                {
-                    open.label = "Write the title and description".into();
-                }
-                Some(Link::Comment) if crate::writes::is_form(route) => {
-                    open.label = "Write it in the composer".into();
-                }
                 Some(link) => {
                     open.label = describe(link);
                     // An artifact or an asset is saved, not opened.
-                    if matches!(
-                        link,
-                        Link::Artifact { .. } | Link::Write(crate::ui::page::WriteLink::Asset(_))
-                    ) {
+                    if matches!(link, Link::Artifact { .. } | Link::Asset(_)) {
                         open.short = "save";
                     }
                 }
@@ -461,6 +446,7 @@ impl State {
             }
             out.push(here(Action::Tab4, "Files changed (review)", ""));
         }
+        crate::forms::offers(self, out);
         crate::create::doables(self, route, out);
         crate::writes::page_doables(self, route, out);
     }
@@ -724,9 +710,9 @@ pub(super) fn describe(link: &Link) -> String {
         Link::FindFile => "Go to file".into(),
         Link::Quote { .. } => "Quote reply".into(),
         Link::Section(_) => "Open the section's list".into(),
-        Link::Form(link) => crate::create::describe(link).into(),
-        Link::Write(link) => crate::writes::describe(link).into(),
-        Link::Artifact { .. } | Link::Dispatch(_) => crate::actions::describe(link).into(),
+        Link::Form(row) => row.describe().into(),
+        Link::Artifact { .. } => "Save the artifact".into(),
+        Link::Asset(_) => "Save the asset".into(),
         Link::Review(link) => crate::talk::describe(link).into(),
         Link::Setting(link) => crate::settings::describe(link).into(),
         Link::Queued(_) => "Open the page it was written on".into(),

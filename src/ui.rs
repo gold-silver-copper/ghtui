@@ -10,6 +10,7 @@ pub mod diff_doc;
 pub mod diff_view;
 pub mod fetched;
 pub mod file_tree;
+pub mod form;
 pub mod icons;
 pub mod markdown;
 pub mod overlays;

@@ -196,6 +196,10 @@ impl Family for Page {
         }
     }
 
+    fn form(&self) -> Option<&'static crate::forms::Kind> {
+        matches!(self, Dispatch { .. }).then_some(&crate::actions::FORM)
+    }
+
     fn build(&self, b: Build<'_>, page: &mut crate::ui::page::Page) {
         let (cx, now) = (b.cx, b.cx.now);
         let title = self.title();

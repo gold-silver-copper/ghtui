@@ -16,7 +16,7 @@ use crate::api::project::{
     FieldKind, FieldValue, ItemContent, Layout, Project, ProjectChange, ProjectField, ProjectItem,
     ProjectRef, grouped,
 };
-use crate::review::ComposeTarget;
+use crate::compose;
 use crate::route::{Route, issues, projects, pulls};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::Link;
@@ -472,7 +472,7 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
                 draft: Some(d.id.clone()),
                 title: "Edit the draft: its title on the first line, then its text".into(),
             };
-            state.compose(ComposeTarget::ProjectDraft(drafting), &text)
+            state.compose(compose::Target::ProjectDraft(drafting), &text)
         }
         (Action::MoveItem, Some(item)) => {
             let at = At {
@@ -796,7 +796,7 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
         }
         Chosen::Draft(drafting, title) => {
             state.overlay = None;
-            let cmds = state.compose(ComposeTarget::ProjectDraft(drafting), &title);
+            let cmds = state.compose(compose::Target::ProjectDraft(drafting), &title);
             // Its text goes below the title.
             if let Some(crate::state::Overlay::Compose(c)) = &mut state.overlay {
                 c.input.insert_newline();

@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::api::housekeeping::LabelInfo;
-use crate::ui::page::WriteLink;
+use crate::ui::form::Row;
 
 /// The keys the labels page names.
 pub struct LabelKeys {
@@ -43,11 +43,7 @@ pub fn labels_page(
     keys: &LabelKeys,
     _now: u64,
 ) {
-    let new = button(
-        page,
-        "New label",
-        Link::Write(WriteLink::Housekeeping(crate::housekeeping::Row::New)),
-    );
+    let new = button(page, "New label", Link::Form(Row::New));
     page.wrapped(
         vec![
             new,

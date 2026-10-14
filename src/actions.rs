@@ -14,8 +14,9 @@ use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::state::{Cmd, State};
+use crate::ui::form::Row;
 use crate::ui::overlays::PaletteItem;
-use crate::ui::page::{DispatchLink, Link, Page};
+use crate::ui::page::Page;
 use crate::ui::pages::{self, DispatchView};
 use crate::work::{self, Cx, Failure, Job};
 
@@ -259,12 +260,20 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
     }
 }
 
-/// Enter on one of this module's rows: an artifact, or the form's.
+/// What the form that runs a workflow by hand does.
+pub const FORM: crate::forms::Kind = crate::forms::Kind {
+    compose: |_, _| Vec::new(),
+    row: on_row,
+    submit: run,
+    follow: |_| Vec::new(),
+    offers: |_, _| {},
+};
+
+/// Enter on one of the form's rows.
 #[must_use]
-pub fn follow_link(state: &mut State, link: &Link) -> Vec<Cmd> {
-    match link {
-        Link::Artifact { id, name } => save(state, *id, name),
-        Link::Dispatch(DispatchLink::Ref) => {
+fn on_row(state: &mut State, row: &Row) -> Vec<Cmd> {
+    match row {
+        Row::Ref => {
             let repo = here(state).map(|(r, _)| r);
             let mut cmds = state.open_picker(crate::picker::Kind::Actions(Pick::Ref));
             if let Some(repo) = repo {
@@ -272,28 +281,16 @@ pub fn follow_link(state: &mut State, link: &Link) -> Vec<Cmd> {
             }
             cmds
         }
-        Link::Dispatch(DispatchLink::Input(name)) => {
+        Row::Input(name) => {
             state.open_picker(crate::picker::Kind::Actions(Pick::Input(name.clone())))
         }
-        Link::Dispatch(DispatchLink::Run) => run(state),
         _ => Vec::new(),
-    }
-}
-
-/// What Enter does on one of this module's rows, for the menu.
-pub fn describe(link: &Link) -> &'static str {
-    match link {
-        Link::Artifact { .. } => "Save the artifact",
-        Link::Dispatch(DispatchLink::Ref) => "Choose the branch it runs on",
-        Link::Dispatch(DispatchLink::Input(_)) => "Set the input",
-        Link::Dispatch(DispatchLink::Run) => "Run the workflow",
-        _ => "",
     }
 }
 
 /// Asks where to save artifact `id` of the run on screen.
 #[must_use]
-fn save(state: &mut State, id: u64, name: &str) -> Vec<Cmd> {
+pub fn save(state: &mut State, id: u64, name: &str) -> Vec<Cmd> {
     let Some(Route::Runs(runs::WorkflowRun { repo, run, attempt })) = state.route().cloned() else {
         return Vec::new();
     };

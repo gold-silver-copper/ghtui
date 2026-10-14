@@ -51,17 +51,15 @@ pub enum Link {
         at: String,
         body: String,
     },
-    /// One of a new issue's or pull request's rows.
-    Form(FormLink),
-    /// One of a release's, a gist's or a wiki page's form's rows.
-    Write(WriteLink),
+    /// One of a form's rows.
+    Form(crate::ui::form::Row),
     /// A run's artifact, by its ID: opening it saves it.
     Artifact {
         id: u64,
         name: String,
     },
-    /// One of the rows of the form that runs a workflow by hand.
-    Dispatch(DispatchLink),
+    /// A release's asset, by its name: opening it saves it.
+    Asset(String),
     /// Something a pull request's review leads to.
     Review(ReviewLink),
     /// A row of a repository's Settings tab ([`crate::settings`]).
@@ -69,43 +67,6 @@ pub enum Link {
     /// A write queued for GitHub, by its place in the queue
     /// ([`crate::offline`]).
     Queued(u64),
-}
-
-/// What a row of a release's, a gist's or a wiki page's form does
-/// ([`crate::writes`]).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum WriteLink {
-    /// Choose the release's tag.
-    Tag,
-    /// Choose what a new tag is made at.
-    Target,
-    /// Have GitHub write the release notes.
-    Notes,
-    Prerelease,
-    Latest,
-    /// The gist's description.
-    Description,
-    /// Write the gist's file at this place.
-    File(usize),
-    Rename(usize),
-    Remove(usize),
-    AddFile,
-    Save,
-    /// A release's asset, by its name: opening it saves it.
-    Asset(String),
-    /// One of housekeeping's rows ([`crate::housekeeping`]).
-    Housekeeping(crate::housekeeping::Row),
-}
-
-/// What a row of the form that runs a workflow by hand does.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum DispatchLink {
-    /// Choose the branch it runs on.
-    Ref,
-    /// Set this input.
-    Input(String),
-    /// Run it.
-    Run,
 }
 
 /// What a row about a review does.
@@ -129,25 +90,6 @@ pub enum ReviewLink {
         pr: crate::api::model::PrRef,
         commit: String,
     },
-}
-
-/// What a row of a new issue's or pull request's form does.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum FormLink {
-    /// Start from the template in this file (empty: a blank issue).
-    Template(String),
-    /// Choose another template.
-    Templates,
-    Labels,
-    Assignees,
-    Milestone,
-    /// The branch to merge into.
-    Base,
-    /// The branch with the changes.
-    Head,
-    /// Push the head branch.
-    Push,
-    Create,
 }
 
 impl Link {

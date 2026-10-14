@@ -21,8 +21,10 @@ use crate::api::browse::Results;
 use crate::api::housekeeping::{LabelChange, LabelInfo, MilestoneChange, RefKind};
 use crate::api::model::RepoId;
 use crate::git::local::Clone;
+pub(crate) use crate::ui::form::Field;
+use crate::ui::form::Row;
 use crate::ui::overlays::PaletteItem;
-use crate::ui::page::{Link, Page, WriteLink};
+use crate::ui::page::{Link, Page};
 
 use crate::browse::{Build, Width};
 use crate::chrome::Section;
@@ -109,6 +111,10 @@ impl Family for FormOf {
                 }
             }
         }
+    }
+
+    fn form(&self) -> Option<&'static crate::forms::Kind> {
+        Some(&FORM)
     }
 
     fn title(&self) -> String {
@@ -266,61 +272,6 @@ pub(crate) fn parse_repo(repo: &RepoId, rest: &[&str], _: &Url<'_>) -> Option<Ta
     FormOf::parse(repo, rest).map(|of| Target::Page(Route::Housekeeping(of)))
 }
 
-/// A row of a form, set in a picker (or, for yes-or-no, toggled).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Field {
-    Name,
-    Colour,
-    Description,
-    Title,
-    Due,
-    Owner,
-    Private,
-    Readme,
-    Gitignore,
-    License,
-    AllBranches,
-    Path,
-    /// A file's commit's branch: empty for the one it's on, else a new one.
-    Branch,
-    Message,
-}
-
-impl Field {
-    /// Its row's name.
-    pub fn name(self) -> &'static str {
-        match self {
-            Field::Name => "Name",
-            Field::Colour => "Colour",
-            Field::Description => "Description",
-            Field::Title => "Title",
-            Field::Due => "Due date",
-            Field::Owner => "Owner",
-            Field::Private => "Visibility",
-            Field::Readme => "README",
-            Field::Gitignore => ".gitignore",
-            Field::License => "Licence",
-            Field::AllBranches => "Branches",
-            Field::Path => "Path",
-            Field::Branch => "Commit to",
-            Field::Message => "Message",
-        }
-    }
-
-    /// Set by Enter alone: yes or no.
-    fn toggles(self) -> bool {
-        matches!(self, Field::Private | Field::Readme | Field::AllBranches)
-    }
-}
-
-/// What Enter on one of housekeeping's rows does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Row {
-    Field(Field),
-    /// The labels page's "New label".
-    New,
-}
-
 /// A form as written so far.
 #[derive(Debug, Clone, Default)]
 pub struct Form {
@@ -332,7 +283,30 @@ pub struct Form {
     pub started: bool,
 }
 
-impl crate::forms::Fields for Form {}
+impl crate::forms::Fields for Form {
+    fn text(&mut self, _: usize) -> Option<&mut String> {
+        Some(&mut self.text)
+    }
+
+    fn title(&self, route: &Route, _: usize) -> String {
+        match route {
+            Route::Housekeeping(FormOf::Milestone { .. }) => "The milestone's description".into(),
+            Route::Housekeeping(FormOf::File { path, change, .. }) => match change {
+                FileChange::New => "The new file's text".into(),
+                _ => format!("Editing {path}"),
+            },
+            _ => String::new(),
+        }
+    }
+
+    fn save(&self, route: &Route) -> &'static str {
+        match route {
+            Route::Housekeeping(FormOf::File { .. }) => "commit…",
+            Route::Housekeeping(FormOf::Milestone { number: None, .. }) => "create",
+            _ => "save",
+        }
+    }
+}
 
 impl Form {
     pub fn get(&self, field: Field) -> &str {
@@ -472,7 +446,6 @@ pub fn claims(state: &State, action: Action) -> bool {
             route,
             Route::Issues(issues::Milestones { .. }) | Route::Issues(issues::Milestone { .. })
         ),
-        Action::Create => matches!(route, Route::Housekeeping(_)),
         _ => false,
     }
 }
@@ -531,7 +504,6 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
             };
             files::open(state, repo, rev, path, change)
         }
-        (Action::Create, Some(Route::Housekeeping(of))) => submit(state, &of),
         _ => {
             state.info(action.not_here());
             Vec::new()
@@ -573,15 +545,29 @@ fn new_here(state: &mut State, route: Route) -> Vec<Cmd> {
     }
 }
 
+/// What housekeeping's forms do.
+pub const FORM: crate::forms::Kind = crate::forms::Kind {
+    compose: |state, _| compose(state),
+    row: |state, row| match (row, state.route().cloned()) {
+        (Row::Field(field), Some(route)) => open_field(state, &route, *field),
+        _ => Vec::new(),
+    },
+    submit,
+    follow,
+    offers: |state, out| {
+        if let Some((route, of)) = here(state) {
+            form_doables(state, &route, &of, out);
+        }
+    },
+};
+
 /// `,s`, ctrl-s or a form's button.
 #[must_use]
-fn submit(state: &mut State, of: &FormOf) -> Vec<Cmd> {
-    let route = Route::Housekeeping(of.clone());
-    if state.forms.sent(&route).sending {
-        crate::forms::say(state, "It's being sent".into());
+fn submit(state: &mut State) -> Vec<Cmd> {
+    let Some((route, of)) = here(state) else {
         return Vec::new();
-    }
-    match of {
+    };
+    match &of {
         FormOf::Label { repo, name } => labels::submit(state, &route, repo, name.as_deref()),
         FormOf::Milestone { repo, number } => milestones::submit(state, &route, repo, *number),
         FormOf::Fork(repo) => repos::fork(state, &route, repo),
@@ -605,14 +591,6 @@ fn selected<'a, T>(state: &State, items: &'a [T], url: impl Fn(&T) -> String) ->
 }
 
 // ---- the menu --------------------------------------------------------------------------
-
-/// The menu's rows for the page on screen: what it edits, then what's
-/// new here, then a fork and a new repository, wherever you are.
-pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
-    if let Route::Housekeeping(of) = route {
-        form_doables(state, route, of, out);
-    }
-}
 
 /// The menu's rows for what changes GitHub here: the page's labels,
 /// milestones, branches, tags or files edited, then what's new here, then
@@ -679,32 +657,23 @@ fn page_doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
 
 /// A form's rows in the menu: write its text, and make or save it.
 fn form_doables(state: &State, route: &Route, of: &FormOf, out: &mut Vec<Doable>) {
-    let f = form(state, route);
-    let busy = (state.forms.sent(route).sending).then(|| "it's being sent".to_owned());
-    if matches!(
+    let written = matches!(
         of,
         FormOf::Milestone { .. }
             | FormOf::File {
                 change: FileChange::Edit | FileChange::New,
                 ..
             }
-    ) {
-        out.push(row(
-            "This page",
-            Action::Comment,
-            "Write the text",
-            "write",
-            busy.clone(),
-        ));
-    }
-    let why = busy.or_else(|| problem(state, route, of));
-    out.push(row(
-        "This page",
-        Action::Create,
-        button(of, &f),
-        "save",
-        why,
-    ));
+    );
+    let write = written.then_some("Write the text");
+    let button = button(of, &form(state, route));
+    crate::forms::offer(
+        state,
+        write,
+        (&button, "save"),
+        problem(state, route, of),
+        out,
+    );
 }
 
 /// What the form's button says.
@@ -751,26 +720,20 @@ fn problem(state: &State, route: &Route, of: &FormOf) -> Option<String> {
 
 // ---- following GitHub ----------------------------------------------------------------------
 
-/// Brings housekeeping's pages up to date with what's arrived: a form
-/// filled in from GitHub's data once, and a branch's deletion asked about
-/// once GitHub says whether it's protected.
+/// Brings housekeeping's form on screen up to date with what's arrived:
+/// filled in from GitHub's data once.
 #[must_use]
-pub fn follow(state: &mut State) -> Vec<Cmd> {
-    let mut cmds = refs::follow(state);
-    let Some(route @ Route::Housekeeping(_)) = state.route().cloned() else {
-        return cmds;
+fn follow(state: &mut State) -> Vec<Cmd> {
+    let Some((route, of)) = here(state) else {
+        return Vec::new();
     };
-    let Route::Housekeeping(of) = &route else {
-        return cmds;
-    };
-    cmds.extend(match of {
+    match &of {
         FormOf::Label { repo, name } => labels::follow(state, &route, repo, name.as_ref()),
         FormOf::Milestone { repo, number } => milestones::follow(state, &route, repo, *number),
         FormOf::Fork(repo) => repos::follow_fork(state, &route, repo),
         FormOf::NewRepo => repos::follow_new(state, &route),
-        FormOf::File { .. } => files::follow(state, &route, of),
-    });
-    cmds
+        FormOf::File { .. } => files::follow(state, &route, &of),
+    }
 }
 
 /// What a page shows once GitHub has a change.
@@ -955,19 +918,14 @@ fn loaded(b: Build<'_>, page: &mut Page, of: &FormOf) -> bool {
 
 /// `c`, or Enter on a form's text: the composer on it.
 #[must_use]
-pub fn compose(state: &mut State) -> Vec<Cmd> {
+fn compose(state: &mut State) -> Vec<Cmd> {
     let Some((route, of)) = here(state) else {
         return Vec::new();
     };
-    let f = form(state, &route);
-    if state.forms.sent(&route).sending {
-        state.info("It's being sent");
-        return Vec::new();
-    }
     match of {
         FormOf::Milestone { .. } => {}
         FormOf::File { change, .. } if change != FileChange::Delete => {
-            if !f.started {
+            if !form(state, &route).started {
                 state.info("The file hasn't loaded yet");
                 return Vec::new();
             }
@@ -977,41 +935,8 @@ pub fn compose(state: &mut State) -> Vec<Cmd> {
             return Vec::new();
         }
     }
-    let text = f.text.clone();
-    state.forms.touch(&route);
-    let target = crate::review::ComposeTarget::Write(crate::writes::Text::Housekeeping(route));
-    let cmds = state.compose(target, &text);
-    if let Some(crate::state::Overlay::Compose(c)) = &mut state.overlay {
-        c.input
-            .move_cursor(ratatui_textarea::CursorMove::Jump(0, 0));
-    }
-    cmds
-}
-
-pub fn keep_text(state: &mut State, route: &Route, text: String) {
-    form_mut(state, route).text = text;
-    state.forms.sent_mut(route).error = None;
-}
-
-/// The composer's title.
-pub fn compose_title(route: &Route) -> String {
-    match route {
-        Route::Housekeeping(FormOf::Milestone { .. }) => "The milestone's description".into(),
-        Route::Housekeeping(FormOf::File { path, change, .. }) => match change {
-            FileChange::New => "The new file's text".into(),
-            _ => format!("Editing {path}"),
-        },
-        _ => String::new(),
-    }
-}
-
-/// What ctrl-s does, for the composer's hint.
-pub fn compose_save(route: &Route) -> &'static str {
-    match route {
-        Route::Housekeeping(FormOf::File { .. }) => "commit…",
-        Route::Housekeeping(FormOf::Milestone { number: None, .. }) => "create",
-        _ => "save",
-    }
+    let start = [ratatui_textarea::CursorMove::Jump(0, 0)];
+    crate::forms::compose::<Form>(state, &route, 0, &start)
 }
 
 // ---- pickers ------------------------------------------------------------------------
@@ -1199,38 +1124,6 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
     }
 }
 
-/// Enter on one of housekeeping's rows.
-#[must_use]
-pub fn follow_link(state: &mut State, row: Row) -> Vec<Cmd> {
-    match (row, state.route().cloned()) {
-        (Row::New, _) => act(state, Action::NewHere),
-        (Row::Field(field), Some(route @ Route::Housekeeping(_))) => {
-            open_field(state, &route, field)
-        }
-        _ => Vec::new(),
-    }
-}
-
-/// What Enter on one of housekeeping's rows does, for the menu.
-pub fn describe(row: Row) -> &'static str {
-    match row {
-        Row::New => "New label",
-        Row::Field(Field::Private) => "Make it public or private",
-        Row::Field(Field::Readme) => "Add a README, or not",
-        Row::Field(Field::AllBranches) => "Copy all branches, or the default one",
-        Row::Field(Field::Owner) => "Choose the owner",
-        Row::Field(Field::Colour) => "Choose the colour",
-        Row::Field(Field::Due) => "Set the due date",
-        Row::Field(Field::Gitignore) => "Choose a .gitignore template",
-        Row::Field(Field::License) => "Choose a licence",
-        Row::Field(Field::Path) => "Name the file, or move it",
-        Row::Field(Field::Branch) => "Choose the branch to commit to",
-        Row::Field(Field::Message) => "Write the commit message",
-        Row::Field(Field::Name | Field::Title) => "Name it",
-        Row::Field(Field::Description) => "Describe it",
-    }
-}
-
 // ---- questions ----------------------------------------------------------------------
 
 /// The answers to housekeeping's questions; what they're about is
@@ -1360,7 +1253,7 @@ fn form_row(f: &Form, field: Field, unset: &str) -> crate::ui::pages::FormRow {
         name: field.name(),
         value,
         unset,
-        link: Some(WriteLink::Housekeeping(Row::Field(field))),
+        link: Some(Row::Field(field)),
     }
 }
 

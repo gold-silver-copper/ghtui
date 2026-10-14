@@ -30,10 +30,9 @@ use crate::forms::{Fields, Sent, say};
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::Choice;
-use crate::review::ComposeTarget;
 use crate::state::{Cmd, Overlay, State};
+use crate::ui::form::Row;
 use crate::ui::overlays::PaletteItem;
-use crate::ui::page::FormLink;
 use crate::work::{self, Cx, Failure, Job};
 pub use page::build;
 use templates::Chooser;
@@ -62,7 +61,27 @@ pub struct Form {
     pub filled_for: Option<(String, String)>,
 }
 
-impl Fields for Form {}
+impl Fields for Form {
+    fn text(&mut self, _: usize) -> Option<&mut String> {
+        Some(&mut self.text)
+    }
+
+    fn title(&self, route: &Route, _: usize) -> String {
+        match route {
+            Route::Pulls(pulls::NewPr(_)) => {
+                "New pull request: its title on the first line, then its description".into()
+            }
+            _ => "New issue: its title on the first line, then its description".into(),
+        }
+    }
+
+    fn save(&self, route: &Route) -> &'static str {
+        match route {
+            Route::Pulls(pulls::NewPr(_)) => "create pull request…",
+            _ => "create issue",
+        }
+    }
+}
 
 impl Form {
     /// Where its head stands against its base, as it's read.
@@ -359,12 +378,20 @@ fn open(state: &mut State, pr: bool) -> Vec<Cmd> {
     cmds
 }
 
+/// What a new issue's or pull request's form does.
+pub const FORM: crate::forms::Kind = crate::forms::Kind {
+    compose: |state, _| compose(state),
+    row: on_row,
+    submit,
+    follow,
+    offers,
+};
+
 /// Brings the form on screen up to date with what's arrived: starts it,
-/// fills in what's known, asks for what's missing; and checks out a pull
-/// request that was waiting to load.
+/// fills in what's known, asks for what's missing.
 #[must_use]
-pub fn follow(state: &mut State) -> Vec<Cmd> {
-    let mut cmds = waiting_checkout(state);
+fn follow(state: &mut State) -> Vec<Cmd> {
+    let mut cmds = Vec::new();
     let Some(route) = state.route().filter(|r| form_repo(r).is_some()).cloned() else {
         return cmds;
     };
@@ -401,46 +428,23 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
 
 /// The composer, on the form on screen: `c`, or Enter on its text box.
 #[must_use]
-pub fn compose(state: &mut State) -> Vec<Cmd> {
+fn compose(state: &mut State) -> Vec<Cmd> {
     let Some((route, form)) = here(state) else {
         return Vec::new();
     };
-    if state.forms.sent(&route).sending {
-        state.info("It's being created");
-        return Vec::new();
-    }
     if matches!(route, Route::Issues(issues::NewIssue(_))) && form.template.is_none() {
         state.info("Choose a template first");
         return Vec::new();
     }
-    let text = form.text.clone();
-    // Its box on the page makes way.
     state.forms.edit::<Form>(&route).opened = true;
-    let cmds = state.compose(ComposeTarget::Form(route), &text);
     // The title first, as on GitHub.
-    if let Some(Overlay::Compose(c)) = &mut state.overlay {
-        c.input.move_cursor(ratatui_textarea::CursorMove::Top);
-        c.input.move_cursor(ratatui_textarea::CursorMove::End);
-    }
-    cmds
-}
-
-/// The composer's text, kept with its form (esc, or before making it).
-pub fn keep_text(state: &mut State, route: &Route, text: String) {
-    state.forms.edit::<Form>(route).text = text;
-    state.forms.sent_mut(route).error = None;
+    crate::forms::compose::<Form>(state, &route, 0, crate::forms::TITLE)
 }
 
 /// `,s`, ctrl-s in the composer, Enter on the form's button: makes the
 /// issue; for a pull request, asks first whether it's a draft.
 #[must_use]
-pub fn submit(state: &mut State) -> Vec<Cmd> {
-    if let Some(Overlay::Compose(c)) = &state.overlay
-        && let ComposeTarget::Form(route) = &c.target
-    {
-        let (route, text) = (route.clone(), c.text());
-        keep_text(state, &route, text);
-    }
+fn submit(state: &mut State) -> Vec<Cmd> {
     let Some((route, form)) = here(state) else {
         state.info("That makes the new issue or pull request on its page (,i or ,p)");
         return Vec::new();
@@ -448,10 +452,6 @@ pub fn submit(state: &mut State) -> Vec<Cmd> {
     let Some(repo) = form_repo(&route).cloned() else {
         return Vec::new();
     };
-    if state.forms.sent(&route).sending {
-        say(state, "It's being created".into());
-        return Vec::new();
-    }
     let (title, body) = templates::split(&form.text);
     let Some(d) = form_data(&state.data, &repo) else {
         say(state, "Still loading what it can have".into());
@@ -884,7 +884,7 @@ fn checkout(state: &mut State) -> Vec<Cmd> {
 
 /// A pull request that was waiting to load before it's checked out.
 #[must_use]
-fn waiting_checkout(state: &mut State) -> Vec<Cmd> {
+pub(crate) fn waiting_checkout(state: &mut State) -> Vec<Cmd> {
     let Some(pr) = state.checkout.clone() else {
         return Vec::new();
     };
@@ -936,38 +936,22 @@ fn start_checkout(state: &mut State, pr: PrRef, d: &PrDetail) -> Vec<Cmd> {
 
 /// Enter on one of a form's rows.
 #[must_use]
-pub fn follow_link(state: &mut State, link: &FormLink) -> Vec<Cmd> {
-    match link {
-        FormLink::Template(file) => choose_template(state, file),
-        FormLink::Templates => {
+fn on_row(state: &mut State, row: &Row) -> Vec<Cmd> {
+    match row {
+        Row::Template(file) => choose_template(state, file),
+        Row::Templates => {
             if let Some(form) = here_mut(state) {
                 form.template = None;
             }
             Vec::new()
         }
-        FormLink::Labels => open_pick(state, Pick::Labels),
-        FormLink::Assignees => open_pick(state, Pick::Assignees),
-        FormLink::Milestone => open_pick(state, Pick::Milestone),
-        FormLink::Base => open_pick(state, Pick::Base),
-        FormLink::Head => open_pick(state, Pick::Head),
-        FormLink::Push => ask_push(state),
-        FormLink::Create => submit(state),
-    }
-}
-
-/// What Enter on one of a form's rows does, for the menu.
-pub fn describe(link: &FormLink) -> &'static str {
-    match link {
-        FormLink::Template(file) if file.is_empty() => "Start a blank issue",
-        FormLink::Template(_) => "Start from this template",
-        FormLink::Templates => "Choose another template",
-        FormLink::Labels => "Choose labels",
-        FormLink::Assignees => "Choose assignees",
-        FormLink::Milestone => "Choose a milestone",
-        FormLink::Base => "Choose the branch to merge into",
-        FormLink::Head => "Choose the branch with the changes",
-        FormLink::Push => "Push the branch to GitHub",
-        FormLink::Create => "Create it",
+        Row::Labels => open_pick(state, Pick::Labels),
+        Row::Assignees => open_pick(state, Pick::Assignees),
+        Row::Milestone => open_pick(state, Pick::Milestone),
+        Row::Base => open_pick(state, Pick::Base),
+        Row::Head => open_pick(state, Pick::Head),
+        Row::Push => ask_push(state),
+        _ => Vec::new(),
     }
 }
 
@@ -1189,20 +1173,23 @@ pub fn pick(state: &mut State, picked: Picked) -> Vec<Cmd> {
     follow(state)
 }
 
-/// What the menu offers here: a new issue or pull request from a
-/// repository's pages, and writing, pushing and making one on its form.
-pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
-    let row = |section, action: Action, label: &str, why: Option<String>| Doable {
+/// A menu row.
+fn doable(section: &'static str, action: Action, label: &str, why: Option<String>) -> Doable {
+    Doable {
         section,
         action,
         label: label.to_owned(),
         short: "",
         unavailable: why,
-    };
-    let Some(repo) = route.repo() else {
-        return;
-    };
-    if let Some((route, form)) = here(state) {
+    }
+}
+
+/// What the menu offers on a form: writing, pushing and making it.
+fn offers(state: &State, out: &mut Vec<Doable>) {
+    let row = doable;
+    if let Some((route, form)) = here(state)
+        && let Some(repo) = form_repo(&route)
+    {
         let pr = matches!(route, Route::Pulls(pulls::NewPr(_)));
         let mut write = row(
             "This page",
@@ -1249,6 +1236,15 @@ pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
             ));
         }
     }
+}
+
+/// What the menu offers on a repository's pages: a new issue or pull
+/// request.
+pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
+    let row = doable;
+    let Some(repo) = route.repo() else {
+        return;
+    };
     out.push(row(
         "New",
         Action::NewIssue,

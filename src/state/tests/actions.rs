@@ -3,7 +3,8 @@
 use super::*;
 use crate::actions::{Dispatch, SaveArtifact};
 use crate::route::runs;
-use crate::ui::page::{DispatchLink, Link};
+use crate::ui::form::Row;
+use crate::ui::page::Link;
 
 /// Selects the row on screen whose link is `link`.
 fn select_link(s: &mut State, link: &Link) {
@@ -57,10 +58,7 @@ fn a_workflow_runs_by_hand_with_its_inputs_and_is_followed() {
     };
     let key = DataKey::Blob(ghtui(), "HEAD".into(), ".github/workflows/ci.yml".into());
     fetched(&mut s, key, Data::Blob(Box::new(blob)));
-    select_link(
-        &mut s,
-        &Link::Dispatch(DispatchLink::Input("outcome".into())),
-    );
+    select_link(&mut s, &Link::Form(Row::Input("outcome".into())));
     press(&mut s, "<Enter>");
     press(&mut s, "pass<Enter>");
     let cmds = press(&mut s, ",E");

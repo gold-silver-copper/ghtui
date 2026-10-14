@@ -13,24 +13,21 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
     let form = state.forms.shown::<Form>(route);
     let form = form.as_ref();
     let pr = matches!(route, Route::Pulls(pulls::NewPr(_)));
-    let composing = matches!(
-        &state.overlay,
-        Some(Overlay::Compose(c)) if c.target == ComposeTarget::Form(route.clone())
-    );
+    let composing = crate::forms::composing(state, route, 0);
     let chooser = form.chooser.as_ref().filter(|c| !pr && c.offers());
     if let (Some(chooser), None) = (chooser, &form.template) {
         let mut starters: Vec<Starter> = (chooser.templates.iter())
             .map(|t| Starter {
                 name: t.name.clone(),
                 about: t.about.clone(),
-                link: Link::Form(FormLink::Template(t.file.clone())),
+                link: Link::Form(Row::Template(t.file.clone())),
             })
             .collect();
         if chooser.blank {
             starters.push(Starter {
                 name: "Blank issue".into(),
                 about: "Start from nothing".into(),
-                link: Link::Form(FormLink::Template(String::new())),
+                link: Link::Form(Row::Template(String::new())),
             });
         }
         starters.extend(chooser.links.iter().map(|l| Starter {
@@ -63,7 +60,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
                 status.push((why.clone(), Mark::Waiting, None));
             }
             (Some(why), _) => {
-                let push = pushing.then_some(FormLink::Push);
+                let push = pushing.then_some(Row::Push);
                 status.push((why.clone(), Mark::Problem, push));
             }
             (None, _) => {}
@@ -112,19 +109,19 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
                 name: "Labels",
                 values: names(&form.labels, &d.labels, true),
                 none: none("None yet"),
-                link: FormLink::Labels,
+                link: Row::Labels,
             },
             Field {
                 name: "Assignees",
                 values: names(&form.assignees, &d.assignees, false),
                 none: none("No one"),
-                link: FormLink::Assignees,
+                link: Row::Assignees,
             },
             Field {
                 name: "Milestone",
                 values: names(form.milestone.as_slice(), &d.milestones, false),
                 none: none("No milestone"),
-                link: FormLink::Milestone,
+                link: Row::Milestone,
             },
         ]
     };

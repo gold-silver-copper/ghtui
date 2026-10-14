@@ -14,11 +14,11 @@ use crate::api::model::NodeId;
 use crate::route::{Route, discussions};
 
 use crate::act::{By, Confirm, Subject};
+use crate::compose;
 use crate::data::DataKey;
 use crate::edit::Choosing;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::review::ComposeTarget;
 use crate::state::{Cmd, Overlay, Screen, State};
 use crate::ui::page::Link;
 
@@ -374,7 +374,7 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
             state.info(why);
             Vec::new()
         }
-        Ok(Plan::Write(w, text)) => state.compose(ComposeTarget::Discussion(w), &text),
+        Ok(Plan::Write(w, text)) => state.compose(compose::Target::Discussion(w), &text),
         Ok(Plan::React(target)) => {
             let choosing = Choosing::React { about, target };
             state.open_picker(crate::picker::Kind::Edit(choosing))

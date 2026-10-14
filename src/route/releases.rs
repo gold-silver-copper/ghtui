@@ -110,6 +110,10 @@ impl Family for Page {
         !matches!(self, Release { .. })
     }
 
+    fn form(&self) -> Option<&'static crate::forms::Kind> {
+        matches!(self, NewRelease(_) | EditRelease { .. }).then_some(&crate::release::FORM)
+    }
+
     fn build(&self, b: Build<'_>, page: &mut crate::ui::page::Page) {
         let now = b.cx.now;
         let title = self.title();

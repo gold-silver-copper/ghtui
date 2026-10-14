@@ -154,6 +154,10 @@ pub trait Family {
     }
     /// Builds the page from what's loaded.
     fn build(&self, b: Build<'_>, page: &mut crate::ui::page::Page);
+    /// The form the page is, if it's one.
+    fn form(&self) -> Option<&'static crate::forms::Kind> {
+        None
+    }
 }
 
 impl Route {

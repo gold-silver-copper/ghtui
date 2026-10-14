@@ -2,14 +2,12 @@
 //! ([`crate::release`]), your gists ([`crate::gist`]), a wiki's pages
 //! ([`crate::wiki::form`]), and what you're subscribed to
 //! ([`crate::watch`]). This module is what they share: their keys and
-//! menu rows, the composer's text on their forms, their pickers and
-//! questions.
+//! menu rows, their pickers and questions.
 
 use crate::route::{Route, gists, releases, wiki};
 
 use crate::api::watch::Watched;
 use crate::ui::overlays::PaletteItem;
-use crate::ui::page::{Link, WriteLink};
 
 use crate::data::DataKey;
 use crate::keymap::Action;
@@ -26,23 +24,8 @@ pub const ACTIONS: [Action; 6] = [
     Action::Lists,
 ];
 
-// ---- where they work -------------------------------------------------------------
-
-/// The forms' pages.
-pub fn is_form(route: &Route) -> bool {
-    matches!(
-        route,
-        Route::Releases(releases::NewRelease(_))
-            | Route::Releases(releases::EditRelease { .. })
-            | Route::Gists(gists::NewGist)
-            | Route::Gists(gists::EditGist { .. })
-            | Route::Wiki(wiki::WikiEdit { .. })
-            | Route::Housekeeping(_)
-    )
-}
-
 /// Whether `action` is these writes' here: their own actions anywhere,
-/// and editing, deleting and making on their pages.
+/// and editing and deleting on their pages.
 pub fn claims(state: &State, action: Action) -> bool {
     let route = state.route();
     ACTIONS.contains(&action)
@@ -64,7 +47,6 @@ pub fn claims(state: &State, action: Action) -> bool {
                     )
                 ) || crate::site::deletes_here(route)
             }
-            Action::Create => route.is_some_and(is_form),
             _ => false,
         }
 }
@@ -96,21 +78,6 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         (Action::Lists, _) => crate::site::lists::open(state),
         (Action::DeleteComment, Some(Route::Site(_))) => crate::site::ask_delete(state),
-        (
-            Action::Create,
-            Some(
-                Route::Releases(releases::NewRelease(_))
-                | Route::Releases(releases::EditRelease { .. }),
-            ),
-        ) => crate::release::submit(state),
-        (
-            Action::Create,
-            Some(Route::Gists(gists::NewGist) | Route::Gists(gists::EditGist { .. })),
-        ) => crate::gist::submit(state),
-        (Action::Create, Some(Route::Wiki(wiki::WikiEdit { .. }))) => {
-            crate::wiki::form::submit(state)
-        }
-        (Action::Create, Some(Route::Housekeeping(_))) => crate::housekeeping::act(state, action),
         _ => {
             state.info(action.not_here());
             Vec::new()
@@ -132,7 +99,6 @@ pub fn page_doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
     crate::gist::doables(state, route, out);
     crate::wiki::form::doables(state, route, out);
     crate::site::doables(state, route, out);
-    crate::housekeeping::doables(state, route, out);
 }
 
 /// A menu row.
@@ -153,158 +119,6 @@ pub(crate) fn row(
 }
 
 // ---- the forms' text and rows -----------------------------------------------------
-
-/// What the composer writes on one of these forms.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Text {
-    /// A release's title and notes, on its form's page.
-    Release(Route),
-    /// One of a gist's files, by its place in the form.
-    GistFile(Route, usize),
-    /// A wiki page's text (a new page's title first).
-    Wiki(Route),
-    /// A milestone's description, a file's text.
-    Housekeeping(Route),
-}
-
-impl Text {
-    /// The composer's title.
-    pub fn title(&self, state: &State) -> String {
-        match self {
-            Text::Release(Route::Releases(releases::EditRelease { tag, .. })) => {
-                format!("Editing {tag}: its title on the first line, then its notes")
-            }
-            Text::Release(_) => {
-                "New release: its title on the first line, then its notes".to_owned()
-            }
-            Text::GistFile(route, i) => crate::gist::file_title(state, route, *i),
-            Text::Wiki(route) => crate::wiki::form::title(state, route),
-            Text::Housekeeping(route) => crate::housekeeping::compose_title(route),
-        }
-    }
-
-    /// What ctrl-s does, for the composer's hint.
-    pub fn save(&self) -> &'static str {
-        match self {
-            Text::Release(Route::Releases(releases::EditRelease { .. })) => "save…",
-            Text::Release(_) => "publish…",
-            Text::GistFile(Route::Gists(gists::NewGist), _) => "create gist…",
-            Text::GistFile(..) => "save gist",
-            Text::Wiki(_) => "save page",
-            Text::Housekeeping(route) => crate::housekeeping::compose_save(route),
-        }
-    }
-
-    /// The row of the page the composer opens in place of.
-    pub fn anchor(&self) -> Link {
-        match self {
-            Text::GistFile(_, i) => Link::Write(WriteLink::File(*i)),
-            Text::Release(_) | Text::Wiki(_) | Text::Housekeeping(_) => Link::Comment,
-        }
-    }
-
-    pub fn route(&self) -> &Route {
-        match self {
-            Text::Release(route)
-            | Text::GistFile(route, _)
-            | Text::Wiki(route)
-            | Text::Housekeeping(route) => route,
-        }
-    }
-}
-
-/// `c`, or Enter on a form's text: the composer on it.
-#[must_use]
-pub fn compose(state: &mut State) -> Vec<Cmd> {
-    match state.route() {
-        Some(
-            Route::Releases(releases::NewRelease(_))
-            | Route::Releases(releases::EditRelease { .. }),
-        ) => crate::release::compose(state),
-        Some(Route::Gists(gists::NewGist) | Route::Gists(gists::EditGist { .. })) => {
-            let selected = match state.screen() {
-                crate::state::Screen::Page(p) => p.selected_link().cloned(),
-                crate::state::Screen::Diff(_) => None,
-            };
-            let file = match selected {
-                Some(Link::Write(WriteLink::File(i) | WriteLink::Rename(i))) => i,
-                _ => 0,
-            };
-            crate::gist::compose(state, file)
-        }
-        Some(Route::Wiki(wiki::WikiEdit { .. })) => crate::wiki::form::compose(state),
-        Some(Route::Housekeeping(_)) => crate::housekeeping::compose(state),
-        _ => Vec::new(),
-    }
-}
-
-/// The composer's text, kept with its form (esc, or before saving).
-pub fn keep_text(state: &mut State, text: &Text, written: String) {
-    match text {
-        Text::Release(route) => crate::release::keep_text(state, route, written),
-        Text::GistFile(route, i) => crate::gist::keep_text(state, route, *i, written),
-        Text::Wiki(route) => crate::wiki::form::keep_text(state, route, written),
-        Text::Housekeeping(route) => crate::housekeeping::keep_text(state, route, written),
-    }
-}
-
-/// ctrl-s in the composer: keeps its text, and saves the form.
-#[must_use]
-pub fn save(state: &mut State) -> Vec<Cmd> {
-    if let Some(Overlay::Compose(c)) = &state.overlay
-        && let crate::review::ComposeTarget::Write(text) = &c.target
-    {
-        let (text, written) = (text.clone(), c.text());
-        keep_text(state, &text, written);
-        if state.route() != Some(text.route()) {
-            return Vec::new();
-        }
-    }
-    act(state, Action::Create)
-}
-
-/// Enter on one of a form's rows.
-#[must_use]
-pub fn follow_link(state: &mut State, link: &WriteLink) -> Vec<Cmd> {
-    if let WriteLink::Housekeeping(row) = link {
-        return crate::housekeeping::follow_link(state, *row);
-    }
-    match state.route() {
-        Some(
-            Route::Releases(releases::NewRelease(_))
-            | Route::Releases(releases::EditRelease { .. }),
-        ) => crate::release::follow_link(state, link),
-        Some(Route::Releases(releases::Release { .. })) => match link {
-            WriteLink::Asset(name) => crate::release::assets::open(state, name),
-            _ => Vec::new(),
-        },
-        Some(Route::Gists(gists::NewGist) | Route::Gists(gists::EditGist { .. })) => {
-            crate::gist::follow_link(state, link)
-        }
-        Some(Route::Wiki(wiki::WikiEdit { .. })) => crate::wiki::form::submit(state),
-        Some(Route::Housekeeping(_)) => crate::housekeeping::act(state, Action::Create),
-        _ => Vec::new(),
-    }
-}
-
-/// What Enter on one of a form's rows does, for the menu.
-pub fn describe(link: &WriteLink) -> &'static str {
-    match link {
-        WriteLink::Tag => "Choose a tag, or make one",
-        WriteLink::Target => "Choose the branch or commit to tag",
-        WriteLink::Notes => "Have GitHub write the release notes",
-        WriteLink::Prerelease => "Mark it a pre-release, or not",
-        WriteLink::Latest => "Make it the latest release, or not",
-        WriteLink::Description => "Write the gist's description",
-        WriteLink::File(_) => "Write the file",
-        WriteLink::Rename(_) => "Rename the file",
-        WriteLink::Remove(_) => "Remove the file",
-        WriteLink::AddFile => "Add a file",
-        WriteLink::Save => "Save it",
-        WriteLink::Asset(_) => "Save the asset",
-        WriteLink::Housekeeping(row) => crate::housekeeping::describe(*row),
-    }
-}
 
 // ---- pickers ------------------------------------------------------------------------
 
@@ -538,14 +352,4 @@ pub(crate) fn ask(
         .collect();
     let ask = crate::create::Ask::new(route, title, facts, choices);
     state.overlay = Some(Overlay::Ask(Box::new(ask)));
-}
-
-/// After GitHub's data arrives: brings the form on screen up to date.
-#[must_use]
-pub fn follow(state: &mut State) -> Vec<Cmd> {
-    let mut cmds = crate::release::follow(state);
-    cmds.extend(crate::gist::follow(state));
-    cmds.extend(crate::wiki::form::follow(state));
-    cmds.extend(crate::housekeeping::follow(state));
-    cmds
 }

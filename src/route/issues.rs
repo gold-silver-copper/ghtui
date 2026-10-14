@@ -153,6 +153,10 @@ impl Family for Page {
         Section::Issues
     }
 
+    fn form(&self) -> Option<&'static crate::forms::Kind> {
+        matches!(self, NewIssue(_)).then_some(&crate::create::FORM)
+    }
+
     fn build(&self, b: Build<'_>, page: &mut crate::ui::page::Page) {
         let (cx, now) = (b.cx, b.cx.now);
         let title = self.title();

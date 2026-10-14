@@ -110,7 +110,7 @@ impl State {
 impl State {
     /// Opens the composer on `target`, starting with `text`.
     #[must_use]
-    pub fn compose(&mut self, target: ComposeTarget, text: &str) -> Vec<Cmd> {
+    pub fn compose(&mut self, target: compose::Target, text: &str) -> Vec<Cmd> {
         let compose = Compose::new(&self.theme, target, text);
         self.overlay = Some(Overlay::Compose(Box::new(compose)));
         crate::typing::fetch_mentionable(self)

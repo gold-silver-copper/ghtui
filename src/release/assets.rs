@@ -14,7 +14,7 @@ use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::state::{Cmd, Screen, State};
 use crate::ui::overlays::PaletteItem;
-use crate::ui::page::{Link, WriteLink};
+use crate::ui::page::Link;
 use crate::work::{self, Cx, Failure, Job};
 use crate::writes::{Answer, Chosen, Pick, item};
 
@@ -139,7 +139,7 @@ pub fn selected(state: &State) -> Option<String> {
         return None;
     };
     match p.selected_link()? {
-        Link::Write(WriteLink::Asset(name)) => Some(name.clone()),
+        Link::Asset(name) => Some(name.clone()),
         _ => None,
     }
 }

@@ -22,6 +22,7 @@ use ratatui_textarea::TextArea;
 use crate::act;
 use crate::api::model::{PatchFile, ReviewEvent, ReviewThread};
 use crate::browse;
+use crate::compose::{self, Compose};
 use crate::data::{Data, DataKey};
 use crate::diff_job::{JobId, JobMsg};
 use crate::diff_screen::{self, DiffOf, DiffPrefs, DiffScreen, DiffState, Pane};
@@ -31,8 +32,7 @@ use crate::nav::{self, Hints, Menu, PageScreen, SearchBox, Visit};
 use crate::notice::Notices;
 use crate::picker::{self, Picker};
 use crate::review::{
-    Compose, ComposeTarget, EditPurpose, SubmitDialog, SubmitOutcome, on_compose_key, on_edited,
-    on_submit_key, review_action,
+    EditPurpose, SubmitDialog, SubmitOutcome, on_edited, on_submit_key, review_action,
 };
 use crate::store::DraftComment;
 use crate::tabs::Tab;

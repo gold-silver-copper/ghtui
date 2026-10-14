@@ -13,8 +13,9 @@ use std::borrow::Cow;
 use crate::api::browse::Gist;
 use crate::api::gist::{FileChange, GistChange, MadeGist, NewGist};
 use crate::route::{Route, app, gists, people};
+use crate::ui::form::Row;
 use crate::ui::overlays::PaletteItem;
-use crate::ui::page::{Link, Page, WriteLink};
+use crate::ui::page::{Link, Page};
 use crate::ui::pages::{FormRow, Mark, TextBox, WriteFormView};
 
 use crate::data::DataKey;
@@ -22,10 +23,9 @@ use crate::follow::{Expectation, Shown};
 use crate::forms::{Fields, say};
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::review::ComposeTarget;
-use crate::state::{Cmd, Overlay, State};
+use crate::state::{Cmd, State};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::{Answer, Chosen, Pick, Text, item, row};
+use crate::writes::{Answer, Chosen, Pick, item, row};
 
 /// A gist being made or changed.
 #[derive(Debug, Clone, Default)]
@@ -42,7 +42,26 @@ pub struct Form {
     pub started: bool,
 }
 
-impl Fields for Form {}
+impl Fields for Form {
+    fn text(&mut self, part: usize) -> Option<&mut String> {
+        Some(&mut self.files.get_mut(part)?.text)
+    }
+
+    fn title(&self, _: &Route, part: usize) -> String {
+        let name = self.files.get(part).map(|f| f.name.as_str());
+        match name.filter(|n| !n.is_empty()) {
+            Some(name) => format!("Gist file {name}"),
+            None => format!("Gist file {} (name it on the form)", part + 1),
+        }
+    }
+
+    fn save(&self, route: &Route) -> &'static str {
+        match route {
+            Route::Gists(gists::NewGist) => "create gist…",
+            _ => "save gist",
+        }
+    }
+}
 
 /// One of a gist's files, as written.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -139,7 +158,7 @@ pub fn open_edit(state: &mut State) -> Vec<Cmd> {
 /// Brings the form on screen up to date: an edit's filled in from the
 /// gist once it's loaded, then the composer opens on its first file.
 #[must_use]
-pub fn follow(state: &mut State) -> Vec<Cmd> {
+fn follow(state: &mut State) -> Vec<Cmd> {
     let Some((route, form)) = here(state) else {
         return Vec::new();
     };
@@ -195,40 +214,15 @@ fn file_of(f: &crate::api::browse::GistFile) -> File {
 
 /// The composer, on file `i` of the form on screen.
 #[must_use]
-pub fn compose(state: &mut State, i: usize) -> Vec<Cmd> {
+fn compose(state: &mut State, i: usize) -> Vec<Cmd> {
     let Some((route, form)) = here(state) else {
         return Vec::new();
     };
-    if state.forms.sent(&route).sending {
-        state.info("It's being saved");
+    if let Some(why) = form.files.get(i).and_then(|f| f.locked.clone()) {
+        state.info(why);
         return Vec::new();
     }
-    let Some(file) = form.files.get(i) else {
-        return Vec::new();
-    };
-    if let Some(why) = &file.locked {
-        state.info(why.clone());
-        return Vec::new();
-    }
-    let text = file.text.clone();
-    state.forms.touch(&route);
-    state.compose(ComposeTarget::Write(Text::GistFile(route, i)), &text)
-}
-
-pub fn keep_text(state: &mut State, route: &Route, i: usize, text: String) {
-    if let Some(file) = state.forms.edit::<Form>(route).files.get_mut(i) {
-        file.text = text;
-    }
-    state.forms.sent_mut(route).error = None;
-}
-
-/// The composer's title, for file `i`.
-pub fn file_title(state: &State, route: &Route, i: usize) -> String {
-    let name = file_name(state, route, i).filter(|n| !n.is_empty());
-    match name {
-        Some(name) => format!("Gist file {name}"),
-        None => format!("Gist file {} (name it on the form)", i + 1),
-    }
+    crate::forms::compose::<Form>(state, &route, i, &[])
 }
 
 /// The gist's description, as written.
@@ -243,22 +237,29 @@ pub fn file_name(state: &State, route: &Route, i: usize) -> Option<String> {
     Some(form.files.get(i)?.name.clone())
 }
 
+/// What a gist's form does.
+pub const FORM: crate::forms::Kind = crate::forms::Kind {
+    compose,
+    row: on_row,
+    submit,
+    follow,
+    offers,
+};
+
 /// Enter on one of the form's rows.
 #[must_use]
-pub fn follow_link(state: &mut State, link: &WriteLink) -> Vec<Cmd> {
+fn on_row(state: &mut State, link: &Row) -> Vec<Cmd> {
     let Some((route, _)) = here(state) else {
         return Vec::new();
     };
     match link {
-        WriteLink::Description => crate::writes::open_picker(state, Pick::Description(route)),
-        WriteLink::File(i) => compose(state, *i),
-        WriteLink::Rename(i) => crate::writes::open_picker(state, Pick::FileName(route, Some(*i))),
-        WriteLink::AddFile => crate::writes::open_picker(state, Pick::FileName(route, None)),
-        WriteLink::Remove(i) => {
+        Row::Description => crate::writes::open_picker(state, Pick::Description(route)),
+        Row::Rename(i) => crate::writes::open_picker(state, Pick::FileName(route, Some(*i))),
+        Row::AddFile => crate::writes::open_picker(state, Pick::FileName(route, None)),
+        Row::Remove(i) => {
             remove(state, &route, *i);
             Vec::new()
         }
-        WriteLink::Save => submit(state),
         _ => Vec::new(),
     }
 }
@@ -415,14 +416,10 @@ fn change(form: &Form, id: &str, files: &[(String, String)]) -> GistChange {
 /// `,s`, ctrl-s or its button: asks whether a new gist is secret or
 /// public; saves an edit.
 #[must_use]
-pub fn submit(state: &mut State) -> Vec<Cmd> {
+fn submit(state: &mut State) -> Vec<Cmd> {
     let Some((route, form)) = here(state) else {
         return Vec::new();
     };
-    if state.forms.sent(&route).sending {
-        say(state, "It's being saved".into());
-        return Vec::new();
-    }
     let files = match named(&form) {
         Ok(files) => files,
         Err(why) => {
@@ -712,24 +709,22 @@ fn back_to(state: &mut State, page: Route) -> Vec<Cmd> {
     }
 }
 
-/// The menu's rows: a new gist anywhere a gist or profile is; changing
-/// and deleting your gist on its page; the form's own.
-pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
+/// The form's rows in the menu: writing it, and saving it.
+fn offers(state: &State, out: &mut Vec<Doable>) {
     if let Some((route, form)) = here(state) {
-        let busy = (state.forms.sent(&route).sending).then(|| "it's being saved".to_owned());
-        out.push(row(
-            "This page",
-            Action::Comment,
-            "Write the selected file",
-            "write",
-            busy.clone(),
-        ));
-        let (label, short) = match route {
+        let save = match route {
             Route::Gists(gists::NewGist) => ("Create the gist (secret or public)", "create"),
             _ => ("Save the gist", "save"),
         };
-        let why = busy.or_else(|| named(&form).err());
-        out.push(row("This page", Action::Create, label, short, why));
+        let write = Some("Write the selected file");
+        crate::forms::offer(state, write, save, named(&form).err(), out);
+    }
+}
+
+/// The menu's rows: a new gist anywhere a gist or profile is; changing
+/// and deleting your gist on its page.
+pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
+    if here(state).is_some() {
         return;
     }
     if let Route::Gists(gists::Gist { .. }) = route {
@@ -766,13 +761,7 @@ pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
 /// The form's page.
 pub fn build(state: &State, page: &mut Page, route: &Route) {
     let form = state.forms.shown::<Form>(route);
-    let composing = match &state.overlay {
-        Some(Overlay::Compose(c)) => match &c.target {
-            ComposeTarget::Write(Text::GistFile(r, i)) if r == route => Some(*i),
-            _ => None,
-        },
-        _ => None,
-    };
+    let composing = |i| crate::forms::composing(state, route, i);
     let editing = matches!(route, Route::Gists(gists::EditGist { .. }));
     let mut rows = vec![FormRow {
         name: "Description",
@@ -782,7 +771,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
             form.description.clone()
         },
         unset: form.description.is_empty(),
-        link: Some(WriteLink::Description),
+        link: Some(Row::Description),
     }];
     let mut status = Vec::new();
     if editing {
@@ -807,22 +796,22 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
     }
     let boxes: Vec<TextBox<'_>> = (form.files.iter().enumerate())
         .map(|(i, f)| {
-            let mut actions = vec![("rename", WriteLink::Rename(i))];
+            let mut actions = vec![("rename", Row::Rename(i))];
             if form.files.len() > 1 {
-                actions.push(("remove", WriteLink::Remove(i)));
+                actions.push(("remove", Row::Remove(i)));
             }
             let markdown = crate::ui::pages::is_markdown(&f.name);
             TextBox {
                 title: f.name.clone(),
                 untitled: "Filename including extension…",
-                body: if composing == Some(i) { "" } else { &f.text },
+                body: if composing(i) { "" } else { &f.text },
                 markdown,
                 empty: "Nothing in it yet.",
                 hint: f
                     .locked
                     .as_deref()
                     .unwrap_or("Enter writes it in the composer (ctrl-e for $EDITOR)"),
-                link: Link::Write(WriteLink::File(i)),
+                link: Link::Form(Row::Text(i)),
                 actions,
             }
         })
@@ -831,7 +820,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
         name: "",
         value: "+ Add file".into(),
         unset: false,
-        link: Some(WriteLink::AddFile),
+        link: Some(Row::AddFile),
     }];
     let write = state.first_key(Action::Comment);
     let save_key = state.first_key(Action::Create);

@@ -59,7 +59,7 @@ pub struct Confirm {
     pub sent: crate::forms::Sent,
     /// The composer it was asked from, with its text: if GitHub refuses,
     /// it opens again.
-    pub back: Option<(crate::review::ComposeTarget, String)>,
+    pub back: Option<(crate::compose::Target, String)>,
 }
 
 impl Confirm {
