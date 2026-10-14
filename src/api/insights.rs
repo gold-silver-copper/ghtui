@@ -129,7 +129,7 @@ pub struct Dependency {
 }
 
 /// A manifest GitHub read, and the dependencies it found there.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
     /// Its path in the repository.
     pub path: String,

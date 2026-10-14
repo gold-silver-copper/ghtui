@@ -90,14 +90,12 @@ pub fn dependencies() -> Dependencies {
                         ],
                         212,
                     ),
-                    unparseable: false,
-                    too_big: false,
+                    ..Default::default()
                 },
                 Manifest {
                     path: "xtask/Cargo.toml".into(),
                     dependencies: Capped::new(vec![dep("duct", ">= 1.0.0, < 2.0.0", None)], 1),
-                    unparseable: false,
-                    too_big: false,
+                    ..Default::default()
                 },
             ],
             2,

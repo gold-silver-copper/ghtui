@@ -217,12 +217,7 @@ mod tests {
         let blame = Blame {
             ranges: vec![range(1, 2, "aaaaaaa"), range(3, 3, "bbbbbbb")],
         };
-        let blob = Blob {
-            path: "a.txt".into(),
-            text: Some("one\ntwo\nthree\n".into()),
-            size: 14,
-            truncated: false,
-        };
+        let blob = crate::fixtures::file("a.txt", "one\ntwo\nthree\n");
         let repo = RepoId::new("o", "r");
         let at = FileAt {
             repo: &repo,

@@ -24,7 +24,7 @@ pub use crate::api::person::{Login, Person};
 
 // ---- models ------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoSummary {
     pub repo: RepoId,
     pub description: Option<String>,
@@ -123,7 +123,7 @@ pub struct TreeEntry {
     pub size: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoOverview {
     pub summary: RepoSummary,
     pub homepage: Option<String>,
@@ -222,7 +222,7 @@ pub struct UserSummary {
 }
 
 /// A release, as listed (no notes or assets) or on its page.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Release {
     /// What REST names it by (to edit or delete it, and its assets).
     #[serde(default)]
@@ -450,7 +450,7 @@ pub struct Comment {
     pub hiding: crate::api::manage::Hiding,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IssueDetail {
     pub repo: RepoId,
     pub number: u64,
@@ -2951,7 +2951,7 @@ impl wire_deployments::Deployment {
 
 /// Two revisions compared: the commits from one to the other, and what
 /// the diff between them is from and to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Comparison {
     pub ahead: u64,
     pub behind: u64,
@@ -3098,7 +3098,7 @@ impl wire_blame::Blame {
 }
 // ---- gists -------------------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GistFile {
     pub name: String,
     pub language: Option<String>,
@@ -3349,7 +3349,7 @@ pub struct AdvisoryPackage {
     pub patched: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     Low,
@@ -3357,11 +3357,12 @@ pub enum Severity {
     High,
     Critical,
     #[serde(other)]
+    #[default]
     Unknown,
 }
 
 /// A security advisory: GitHub's reviewed database's, or a repository's.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Advisory {
     pub ghsa: String,
     pub cve: Option<String>,
@@ -3597,7 +3598,7 @@ pub struct DiscussionList {
     pub results: Results<DiscussionSummary>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscussionDetail {
     /// What comments and edits name it by.
     pub id: NodeId,

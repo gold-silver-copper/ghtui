@@ -671,24 +671,8 @@ mod tests {
         let overview = RepoOverview {
             summary: RepoSummary {
                 repo: repo.clone(),
-                description: None,
-                stars: 0,
-                forks: 0,
-                language: None,
-                language_color: None,
-                pushed_at: None,
-                private: false,
-                fork: false,
-                archived: false,
+                ..Default::default()
             },
-            homepage: None,
-            watchers: 0,
-            open_issues: 0,
-            open_prs: 0,
-            closed_issues: 0,
-            closed_prs: 0,
-            license: None,
-            topics: Vec::new().into(),
             default_branch: Some("main".into()),
             last_commit: Some(CommitInfo {
                 oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
@@ -697,23 +681,16 @@ mod tests {
                 date: "2026-01-14T10:00:00Z".into(),
             }),
             commits: 1,
-            parent: None,
-            starred: false,
-            can_write: false,
-            can_admin: false,
             id: crate::api::model::NodeId::new("R_1"),
             has_issues: true,
-            has_discussions: false,
-            has_wiki: false,
             branches: 1,
-            tags: 0,
-            pinned_issues: Capped::default(),
             entries: vec![TreeEntry {
                 name: "a.rs".into(),
                 path: "a.rs".into(),
                 kind: EntryKind::File,
                 size: Some(1),
             }],
+            ..Default::default()
         };
         let mut page = Page::new(100);
         let readme = None;

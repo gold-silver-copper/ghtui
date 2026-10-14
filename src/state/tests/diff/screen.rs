@@ -424,7 +424,7 @@ pub(in crate::state) fn diff_pr(s: &State) -> crate::api::model::PrRef {
 }
 
 pub(in crate::state) fn with_threads() -> State {
-    use crate::api::model::{NodeId, ReviewComment, ReviewThread, Side};
+    use crate::api::model::{NodeId, ReviewComment, ReviewThread};
     let mut s = diff_at(0, 0);
     let comment = |id: &str, author: &str, body: &str, pending: bool| ReviewComment {
         id: NodeId::new(id),
@@ -441,20 +441,15 @@ pub(in crate::state) fn with_threads() -> State {
         |id: &str, line: Option<u32>, resolved: bool, file_level: bool, comments| ReviewThread {
             id: NodeId::new(id),
             path: "src/point.rs".into(),
-            side: Side::Right,
-            start_side: None,
             line,
-            start_line: None,
             original_line: line,
-            original_start_line: None,
-            outdated: false,
             resolved,
             file_level,
             can_reply: true,
             can_resolve: true,
             can_unresolve: true,
             comments,
-            diff_hunk: String::new(),
+            ..Default::default()
         };
     // Two reacted to the question, you among them.
     let mut asked = comment(
@@ -512,10 +507,9 @@ pub(in crate::state) fn with_threads() -> State {
                 body: "Prefer `Self::default()` here.".into(),
                 side: crate::store::DraftSide::Right,
                 line: Some(15),
-                start_line: None,
-                start_side: None,
                 commit: "h".into(),
                 error: Some("pull_request_review_thread.line must be part of the diff".into()),
+                ..Default::default()
             }],
             ..Default::default()
         }

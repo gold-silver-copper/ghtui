@@ -134,7 +134,7 @@ impl std::fmt::Display for NodeId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RepoId {
     pub owner: String,
     pub name: String,
@@ -229,8 +229,9 @@ pub enum ReviewDecision {
     ReviewRequired,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IssueState {
+    #[default]
     Open,
     Closed,
     /// Closed as not planned (or duplicate).
@@ -239,8 +240,9 @@ pub enum IssueState {
 
 /// Only a pull request is a draft or merged, and only an issue is closed
 /// as not planned: each has its own states.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PrState {
+    #[default]
     Open,
     Draft,
     Closed,
@@ -290,7 +292,7 @@ pub enum ChecksState {
 }
 
 /// Whether a pull request can merge now, and if not, why.
-#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(cynic::Enum, Debug, Clone, Default, Copy, PartialEq, Eq)]
 #[cynic(graphql_type = "MergeStateStatus")]
 pub enum MergeState {
     /// Its branch is behind its base, which requires it to be up to date.
@@ -302,17 +304,19 @@ pub enum MergeState {
     Dirty,
     Draft,
     HasHooks,
+    #[default]
     Unknown,
     /// Some checks didn't pass, but they aren't required.
     Unstable,
 }
 
-#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(cynic::Enum, Debug, Clone, Default, Copy, PartialEq, Eq)]
 #[cynic(graphql_type = "MergeableState")]
 pub enum Mergeable {
     #[cynic(rename = "MERGEABLE")]
     Yes,
     Conflicting,
+    #[default]
     Unknown,
 }
 
@@ -335,7 +339,7 @@ pub struct Label {
 
 /// A pull request, as its page shows it. Where it is (a [`PrRef`]) is
 /// what it's fetched and kept by, not part of it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrDetail {
     /// What changes name it by.
     pub id: NodeId,
@@ -524,12 +528,13 @@ pub struct ViewedFiles {
     pub states: std::collections::HashMap<String, ViewedState>,
 }
 
-#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(cynic::Enum, Debug, Clone, Default, Copy, PartialEq, Eq, Hash)]
 #[cynic(graphql_type = "DiffSide")]
 pub enum Side {
     /// Base (old) lines.
     Left,
     /// Head (new) lines.
+    #[default]
     Right,
 }
 
@@ -550,7 +555,7 @@ pub struct ReviewComment {
     pub review: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewThread {
     pub id: NodeId,
     pub path: String,

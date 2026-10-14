@@ -50,12 +50,7 @@ fn a_workflow_runs_by_hand_with_its_inputs_and_is_followed() {
         file: "ci.yml".into(),
     });
     assert_eq!(route(&s), dispatch);
-    let blob = crate::api::browse::Blob {
-        path: ".github/workflows/ci.yml".into(),
-        text: Some(WORKFLOW.into()),
-        size: WORKFLOW.len() as u64,
-        truncated: false,
-    };
+    let blob = crate::fixtures::file(".github/workflows/ci.yml", WORKFLOW);
     let key = DataKey::Blob(ghtui(), "HEAD".into(), ".github/workflows/ci.yml".into());
     fetched(&mut s, key, Data::Blob(Box::new(blob)));
     select_link(&mut s, &Link::Form(Row::Input("outcome".into())));
@@ -88,12 +83,7 @@ fn a_workflow_runs_by_hand_with_its_inputs_and_is_followed() {
 fn a_workflow_that_cant_run_by_hand_says_so() {
     let mut s = on_workflow();
     press(&mut s, ",E");
-    let blob = crate::api::browse::Blob {
-        path: ".github/workflows/ci.yml".into(),
-        text: Some("on: push\n".into()),
-        size: 9,
-        truncated: false,
-    };
+    let blob = crate::fixtures::file(".github/workflows/ci.yml", "on: push\n");
     let key = DataKey::Blob(ghtui(), "HEAD".into(), ".github/workflows/ci.yml".into());
     fetched(&mut s, key, Data::Blob(Box::new(blob)));
     assert!(fetches(press(&mut s, ",E")).is_empty());

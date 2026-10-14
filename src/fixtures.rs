@@ -13,14 +13,14 @@ use crate::api::browse::{
     UserSummary, Week, WikiPage, Workflow, WorkflowRun,
 };
 use crate::api::model::{
-    Capped, Label, NodeId, PrDetail, PrRef, RepoId, ReviewComment, ReviewState, ReviewThread, Side,
+    Capped, Label, NodeId, PrDetail, PrRef, RepoId, ReviewComment, ReviewState, ReviewThread,
 };
 use crate::api::notifications::{Inbox, Notification};
 use crate::api::timeline::{Event, Item, Latest, Linked, LinkedState, Requested, Review, What};
 use crossterm::event::KeyEvent;
 use std::sync::Arc;
 
-use crate::store::{DraftComment, DraftSide};
+use crate::store::DraftComment;
 use crate::ui::bars::Notice;
 
 use crate::act::By;
@@ -255,12 +255,9 @@ pub(crate) fn draft(id: u64, line: u32, body: &str) -> DraftComment {
         id,
         path: "src/point.rs".into(),
         body: body.into(),
-        side: DraftSide::Right,
         line: Some(line),
-        start_line: None,
-        start_side: None,
         commit: "e".repeat(40),
-        error: None,
+        ..Default::default()
     }
 }
 
@@ -269,15 +266,10 @@ pub(crate) fn thread(id: &str, line: Option<u32>, resolved: bool, outdated: bool
     ReviewThread {
         id: NodeId::new(id),
         path: "src/point.rs".into(),
-        side: Side::Right,
-        start_side: None,
         line,
-        start_line: None,
         original_line: Some(3),
-        original_start_line: None,
         outdated,
         resolved,
-        file_level: false,
         can_reply: true,
         // As GitHub says: only what applies now.
         can_resolve: !resolved,
@@ -292,7 +284,7 @@ pub(crate) fn thread(id: &str, line: Option<u32>, resolved: bool, outdated: bool
             ..Default::default()
         }]
         .into(),
-        diff_hunk: String::new(),
+        ..Default::default()
     }
 }
 
@@ -360,9 +352,7 @@ pub fn repo_summary(repo: &str, stars: u64) -> RepoSummary {
         language: Some("Rust".into()),
         language_color: Some("#dea584".into()),
         pushed_at: Some("2026-10-02T12:00:00Z".into()),
-        private: false,
-        fork: false,
-        archived: false,
+        ..Default::default()
     }
 }
 
@@ -440,10 +430,7 @@ pub fn overview() -> RepoOverview {
             date: "2026-10-03T10:00:00Z".into(),
         }),
         commits: 412,
-        parent: None,
-        starred: false,
         can_write: true,
-        can_admin: false,
         id: NodeId::new("R_ghtui"),
         has_issues: true,
         has_discussions: true,
@@ -463,6 +450,7 @@ pub fn overview() -> RepoOverview {
             entry("Cargo.toml", EntryKind::File, Some(1530)),
             entry("README.md", EntryKind::File, Some(2210)),
         ],
+        ..Default::default()
     }
 }
 
@@ -540,7 +528,7 @@ pub fn commit_comment() -> crate::api::commit_comments::CommitComment {
         created_at: "2026-10-02T12:00:00Z".into(),
         path: Some("src/theme.rs".into()),
         line: Some(12),
-        url: String::new(),
+        ..Default::default()
     }
 }
 
@@ -629,13 +617,18 @@ pub fn checks() -> Checks {
 }
 
 pub fn blob() -> Blob {
+    file(
+        "src/main.rs",
+        "use std::io;\n\n/// Says hello.\nfn main() -> io::Result<()> {\n    println!(\"hello, {}\", 42);\n    Ok(())\n}\n",
+    )
+}
+
+/// The file at `path`, all of it.
+pub fn file(path: &str, text: &str) -> Blob {
     Blob {
-        path: "src/main.rs".into(),
-        text: Some(
-            "use std::io;\n\n/// Says hello.\nfn main() -> io::Result<()> {\n    println!(\"hello, {}\", 42);\n    Ok(())\n}\n"
-                .into(),
-        ),
-        size: 96,
+        path: path.into(),
+        text: Some(text.into()),
+        size: text.len() as u64,
         truncated: false,
     }
 }
@@ -674,7 +667,7 @@ pub fn gist() -> Gist {
         language: Some(language.into()),
         size: text.len() as u64,
         text: Some(text.into()),
-        truncated: false,
+        ..Default::default()
     };
     Gist {
         id: "6cad326836d38bd3a7ae".into(),
@@ -777,7 +770,6 @@ pub fn advisory() -> Advisory {
         severity: crate::api::browse::Severity::High,
         published_at: Some("2026-10-02T12:00:00Z".into()),
         updated_at: Some("2026-10-02T12:00:00Z".into()),
-        withdrawn_at: None,
         cvss: Some((
             "7.2".into(),
             "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:N/I:L/A:L".into(),
@@ -791,6 +783,7 @@ pub fn advisory() -> Advisory {
         }],
         credits: vec!["octocat".into()],
         references: vec!["https://nvd.nist.gov/vuln/detail/CVE-2026-41510".into()],
+        ..Default::default()
     }
 }
 
@@ -974,18 +967,10 @@ pub fn issue() -> IssueDetail {
         .into(),
         comment_count: 1,
         closed_by: vec![linked_pr(12, "Cap the reading width")].into(),
-        branches: Capped::default(),
-        parent: None,
-        sub_issues: Capped::default(),
-        progress: None,
-        blocked_by: Capped::default(),
-        blocking: Capped::default(),
         issue_type: Some("Bug".into()),
         id: NodeId::new("I_14"),
         can_close: true,
         can_reopen: true,
-        locked: None,
-        pinned: false,
         can_write: true,
         editable: editable("I_14"),
         sidebar: crate::api::edit::SidebarPermits {
@@ -994,6 +979,7 @@ pub fn issue() -> IssueDetail {
             milestone: true,
             ..Default::default()
         },
+        ..Default::default()
     }
 }
 
@@ -1128,16 +1114,11 @@ pub(crate) fn pr_detail() -> crate::api::model::PrDetail {
             push_head: true,
             ..Default::default()
         },
-        head_gone: false,
-        locked: None,
         merge_methods: vec![
             crate::api::change::MergeMethod::Squash,
             crate::api::change::MergeMethod::Merge,
         ],
         auto_merge_allowed: true,
-        auto_merge: None,
-        merge_queue: false,
-        queued: None,
         title: "Theme: generate syntax palette from seed".into(),
         author: "octocat".into(),
         state: PrState::Open,
@@ -1181,6 +1162,7 @@ pub(crate) fn pr_detail() -> crate::api::model::PrDetail {
             milestone: true,
             reviewers: true,
         },
+        ..Default::default()
     }
 }
 
@@ -1496,8 +1478,6 @@ pub fn release(full: bool) -> Release {
         name: "ghtui 0.2.0".into(),
         tag: "v0.2.0".into(),
         published_at: Some("2026-09-30T12:00:00Z".into()),
-        prerelease: false,
-        draft: false,
         latest: true,
         author: Some("octocat".into()),
         notes: full.then(|| {
@@ -1512,6 +1492,7 @@ pub fn release(full: bool) -> Release {
         } else {
             Vec::new().into()
         },
+        ..Default::default()
     }
 }
 
@@ -1845,7 +1826,6 @@ pub fn comparison() -> Comparison {
     };
     Comparison {
         ahead: 120,
-        behind: 0,
         commits: Capped::new(
             vec![
                 commit('a', "Branches are a page", "2026-10-01T10:00:00Z"),
@@ -1857,9 +1837,9 @@ pub fn comparison() -> Comparison {
         from: "1".repeat(40),
         to: "c".repeat(40),
         files: 14,
-        files_capped: false,
         additions: 812,
         deletions: 40,
+        ..Default::default()
     }
 }
 /// A page of discussions with two categories.
@@ -1949,8 +1929,6 @@ pub fn discussion() -> DiscussionDetail {
         category: "Q&A".into(),
         answerable: true,
         answered: true,
-        locked: None,
-        closed: None,
         can_close: true,
         can_reopen: true,
         can_lock: true,
@@ -1973,6 +1951,7 @@ pub fn discussion() -> DiscussionDetail {
             },
         ]
         .into(),
+        ..Default::default()
     }
 }
 /// A discussion search's result.
@@ -2113,8 +2092,6 @@ pub fn project() -> crate::api::project::Project {
         ProjectView {
             number: 1,
             name: "Board".into(),
-            layout: Layout::Board,
-            filter: String::new(),
             fields: ids(&[
                 "F_title",
                 "F_status",
@@ -2123,8 +2100,7 @@ pub fn project() -> crate::api::project::Project {
                 "F_estimate",
             ]),
             column: Some(NodeId::new("F_status")),
-            group: None,
-            sort: Vec::new(),
+            ..Default::default()
         },
         ProjectView {
             number: 2,
@@ -2139,9 +2115,8 @@ pub fn project() -> crate::api::project::Project {
                 "F_sprint",
                 "F_due",
             ]),
-            column: None,
-            group: None,
             sort: vec![(NodeId::new("F_estimate"), true)],
+            ..Default::default()
         },
     ];
     let repo = RepoId::new("gold-silver-copper", "ghtui");
@@ -2224,7 +2199,7 @@ pub fn project() -> crate::api::project::Project {
                 id: NodeId::new("DI_3"),
                 title: "Write the board's docs".into(),
                 body: "Explain **h** and **l**, and moving cards.".into(),
-                assignees: Capped::new(Vec::new(), 0),
+                ..Default::default()
             }),
             vec![status("O_todo", "Todo")],
         ),
@@ -2241,8 +2216,7 @@ pub fn project() -> crate::api::project::Project {
             ItemContent::Draft(Draft {
                 id: NodeId::new("DI_5"),
                 title: "Someday: roadmaps".into(),
-                body: String::new(),
-                assignees: Capped::new(Vec::new(), 0),
+                ..Default::default()
             }),
             Vec::new(),
         ),
@@ -2268,8 +2242,7 @@ pub fn project() -> crate::api::project::Project {
                     ItemContent::Draft(Draft {
                         id: NodeId::new("DI_6"),
                         title: "Classic projects".into(),
-                        body: String::new(),
-                        assignees: Capped::new(Vec::new(), 0),
+                        ..Default::default()
                     }),
                     vec![status("O_done", "Done")],
                 )

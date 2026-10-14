@@ -1,4 +1,3 @@
-use crate::api::browse::Blob;
 use crate::code_nav::{Answer, Ask, Place, Want};
 use crate::diff::anchor::Side;
 use crate::route::code;
@@ -12,12 +11,7 @@ const LIB_RS: &str = "use std::io;\n\nfn main() {\n    helper(io::stdin());\n   
 fn with_code() -> State {
     let mut s = with_repo();
     let route = Route::blob(ghtui(), "main".into(), "src/lib.rs".into());
-    let blob = Blob {
-        path: "src/lib.rs".into(),
-        text: Some(LIB_RS.into()),
-        size: 100,
-        truncated: false,
-    };
+    let blob = crate::fixtures::file("src/lib.rs", LIB_RS);
     open(&mut s, route, Data::Blob(Box::new(blob)));
     s
 }
@@ -223,12 +217,7 @@ fn a_search_match_is_the_word_gd_reads() {
     long.push_str("fn last() {\n    valid_login(login).then(|| x);\n}\n");
     let mut s = with_repo();
     let route = Route::blob(ghtui(), "main".into(), "src/lib.rs".into());
-    let blob = Blob {
-        path: "src/lib.rs".into(),
-        text: Some(long),
-        size: 100,
-        truncated: false,
-    };
+    let blob = crate::fixtures::file("src/lib.rs", &long);
     open(&mut s, route, Data::Blob(Box::new(blob)));
     press(&mut s, "gOlast<Enter>ww/valid_login<Enter>");
     assert_eq!(

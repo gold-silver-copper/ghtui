@@ -119,14 +119,15 @@ pub struct ReviewState {
     pub pending: Vec<DraftComment>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DraftSide {
     Left,
+    #[default]
     Right,
 }
 
 /// An unsubmitted review comment, anchored by file line numbers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DraftComment {
     /// Local identifier, unique within the PR.
     pub id: u64,

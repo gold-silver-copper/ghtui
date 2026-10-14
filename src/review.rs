@@ -297,11 +297,8 @@ pub fn draft(target: &Comment, body: &str, id: u64, commit: &str) -> Option<Draf
         path: path.to_owned(),
         body: body.to_owned(),
         side: DraftSide::Right,
-        line: None,
-        start_line: None,
-        start_side: None,
         commit: commit.to_owned(),
-        error: None,
+        ..Default::default()
     };
     match target {
         Comment::Line { path, start, end } => {
@@ -1503,12 +1500,10 @@ mod tests {
             id: 9,
             path: "a.rs".into(),
             body: "b".into(),
-            side: DraftSide::Right,
             line: Some(1),
-            start_line: None,
-            start_side: None,
             commit: "h".into(),
             error: Some("nope".into()),
+            ..Default::default()
         }
     }
 

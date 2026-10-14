@@ -142,12 +142,7 @@ fn tabs_that_dont_fit_say_how_many_are_hidden() {
 fn a_link_to_lines_opens_on_them() {
     let mut state = with_repo();
     let text: String = (1..=80).map(|n| format!("let x{n} = {n};\n")).collect();
-    let blob = crate::api::browse::Blob {
-        path: "src/main.rs".into(),
-        size: text.len() as u64,
-        text: Some(text),
-        truncated: false,
-    };
+    let blob = crate::fixtures::file("src/main.rs", &text);
     let url = "https://github.com/gold-silver-copper/ghtui/blob/main/src/main.rs#L60-L62";
     let crate::route::Target::Page(route) = Dest::from_url(url).target else {
         panic!("{url}");

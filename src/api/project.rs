@@ -99,14 +99,15 @@ pub struct Project {
 }
 
 /// How a view lays out its items.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Layout {
+    #[default]
     Board,
     Table,
     Roadmap,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectView {
     pub number: u64,
     pub name: String,
@@ -242,7 +243,7 @@ pub struct Linked {
 }
 
 /// A draft issue: only in the project.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Draft {
     /// What editing it names it by (not the item's).
     pub id: NodeId,

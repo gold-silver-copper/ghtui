@@ -8,7 +8,7 @@ use crate::api::model::{Capped, NodeId, RepoId, ReviewComment, ReviewThread, Sid
 use crate::api::{ApiError, GitHub};
 
 /// A comment on a commit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitComment {
     /// GitHub's number for it, which its link's anchor uses
     /// (`#commitcomment-…`).

@@ -621,14 +621,13 @@ mod tests {
     fn a_capped_comparison_says_its_counts_are_partial() {
         let c = Comparison {
             ahead: 1,
-            behind: 0,
-            commits: Capped::default(),
             from: "a".into(),
             to: "b".into(),
             files: 300,
             files_capped: true,
             additions: 10,
             deletions: 2,
+            ..Default::default()
         };
         let mut page = Page::new(100);
         compare(&mut page, &RepoId::new("o", "r"), "a...b", &c, 0);
@@ -650,13 +649,8 @@ mod tests {
                 stars: 1200,
                 forks: 30,
                 language: Some("Rust".into()),
-                language_color: None,
-                pushed_at: None,
-                private: false,
-                fork: false,
-                archived: false,
+                ..Default::default()
             },
-            homepage: None,
             watchers: 5,
             open_issues: 3,
             open_prs: 1,
@@ -665,19 +659,9 @@ mod tests {
             license: Some("MIT".into()),
             topics: vec!["tui".into()].into(),
             default_branch: Some("main".into()),
-            last_commit: None,
             commits: 10,
-            parent: None,
-            starred: false,
-            can_write: false,
-            can_admin: false,
             id: crate::api::model::NodeId::new("R_1"),
             has_issues: true,
-            has_discussions: false,
-            has_wiki: false,
-            branches: 0,
-            tags: 0,
-            pinned_issues: Capped::default(),
             entries: vec![
                 TreeEntry {
                     name: "src".into(),
@@ -692,6 +676,7 @@ mod tests {
                     size: Some(120),
                 },
             ],
+            ..Default::default()
         };
         let readme = Some(Box::new(Readme {
             path: "README.md".into(),

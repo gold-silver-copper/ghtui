@@ -3,7 +3,6 @@ use crate::api::change::MergeMethod;
 use crate::api::model::MergeState;
 use crate::api::notifications::ThreadAt;
 use crate::route::{app, runs, search};
-use crate::store::DraftSide;
 
 use super::*;
 use crate::act::{By, Subject};
@@ -360,12 +359,9 @@ fn approving_from_the_page_takes_your_saved_drafts() {
         id: 3,
         path: "src/lib.rs".into(),
         body: "nit".into(),
-        side: DraftSide::Right,
         line: Some(4),
-        start_line: None,
-        start_side: None,
         commit: pr_detail().head_oid,
-        error: None,
+        ..Default::default()
     };
     let saved = ReviewState {
         pending: vec![draft.clone()],

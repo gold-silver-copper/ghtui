@@ -516,12 +516,7 @@ fn words_in_a_file() {
 fn gx_opens_the_address_under_the_cursor() {
     let mut s = super::with_repo();
     let route = Route::blob(super::ghtui(), "main".into(), "a.rs".into());
-    let blob = crate::api::browse::Blob {
-        path: "a.rs".into(),
-        text: Some("// See https://example.com/docs.\n".into()),
-        size: 32,
-        truncated: false,
-    };
+    let blob = crate::fixtures::file("a.rs", "// See https://example.com/docs.\n");
     super::open(&mut s, route, crate::data::Data::Blob(Box::new(blob)));
     let opened = |s: &mut State, keys: &str| match press(s, keys).as_slice() {
         [crate::state::Cmd::OpenUrl(url)] => url.clone(),
