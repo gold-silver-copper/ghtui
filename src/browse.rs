@@ -1,5 +1,6 @@
 //! Browsing: the data behind each page, and building pages from it.
 
+use crate::route::Family;
 use std::collections::HashSet;
 
 use std::collections::BTreeSet;
@@ -75,8 +76,10 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         Route::Alerts { repo, kind, query } => {
             Some(DataKey::Alerts(repo.clone(), *kind, query.clone()))
         }
-        Route::Site(page) => page.paged(),
-        Route::Labels(_) => crate::housekeeping::paged(route),
+        Route::App(p) => p.paged(),
+        Route::Site(p) => p.paged(),
+        Route::Housekeeping(p) => p.paged(),
+        Route::Labels(repo) => Some(DataKey::Labels(repo.clone())),
         _ => route
             .search()
             .map(|(kind, query)| DataKey::Search(kind, query)),
@@ -97,12 +100,12 @@ pub(crate) fn glanced(route: &Route) -> Option<&PrRef> {
 
 /// What a page needs fetched, but Home's (its sections are the state's:
 /// [`State::needs`]).
-pub fn needs(route: &Route) -> Vec<DataKey> {
+pub(crate) fn needs(route: &Route) -> Vec<DataKey> {
     use DataKey as K;
     let header = |repo: &RepoId| K::Repo(repo.clone());
     let list = route.search().map(|(kind, query)| K::Search(kind, query));
     match route {
-        Route::Home | Route::NewGist | Route::Offline => Vec::new(),
+        Route::App(_) | Route::NewGist | Route::Site(_) | Route::Housekeeping(_) => Vec::new(),
         Route::Repo(repo) => vec![
             header(repo),
             K::Readme(repo.clone()),
@@ -291,8 +294,7 @@ pub fn needs(route: &Route) -> Vec<DataKey> {
                 .chain(paged(route))
                 .collect()
         }
-        Route::Site(page) => page.needs(),
-        Route::Labels(_) | Route::Housekeeping(_) => crate::housekeeping::needs(route),
+        Route::Labels(repo) => crate::housekeeping::needs(repo),
     }
 }
 
@@ -300,6 +302,93 @@ pub fn needs(route: &Route) -> Vec<DataKey> {
 /// (fetched only when missing).
 pub fn is_header(route: &Route, key: &DataKey) -> bool {
     matches!(key, DataKey::Repo(_)) && !matches!(route, Route::Repo(_))
+}
+
+/// How wide a page gets: reading stays narrow enough to follow, lists
+/// get room for their columns, and output and tables take the whole
+/// width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Width {
+    Reading,
+    Lists,
+    Full,
+    /// Reading, with a sidebar.
+    ReadingAside,
+    /// Lists, with a sidebar.
+    ListsAside,
+}
+
+/// How wide `route`'s page gets.
+fn width_of(route: &Route) -> Width {
+    match route {
+        Route::Issue { .. }
+        | Route::Pr {
+            tab: PrTab::Conversation,
+            ..
+        } => Width::ReadingAside,
+        Route::Repo(_) => Width::ListsAside,
+        Route::Blob { path, .. } if pages::is_markdown(path) => Width::Reading,
+        Route::Wiki { .. }
+        | Route::Discussion { .. }
+        | Route::Release { .. }
+        | Route::Advisory { .. }
+        | Route::Alert { .. }
+        | Route::NewIssue(_)
+        | Route::NewPr(_)
+        | Route::NewRelease(_)
+        | Route::EditRelease { .. }
+        | Route::NewGist
+        | Route::EditGist { .. }
+        | Route::WikiEdit { .. }
+        | Route::Dispatch { .. }
+        | Route::ProjectItem { .. }
+        | Route::Pr {
+            tab: PrTab::Review | PrTab::Reviewed(_),
+            ..
+        } => Width::Reading,
+        Route::Pr {
+            tab: PrTab::Checks, ..
+        }
+        | Route::CommitChecks { .. }
+        | Route::Actions { .. }
+        | Route::WorkflowRun { .. }
+        | Route::Job { .. }
+        | Route::Workflow { .. }
+        | Route::Blob { .. }
+        | Route::Blame { .. }
+        | Route::Branches(_)
+        | Route::Tags(_)
+        | Route::Project { .. }
+        | Route::Deployments { .. } => Width::Full,
+        Route::App(p) => p.width(),
+        Route::Site(p) => p.width(),
+        Route::Housekeeping(p) => p.width(),
+        _ => Width::Lists,
+    }
+}
+
+/// What a page is built from: the state, and what every page builder
+/// needs.
+#[derive(Clone, Copy)]
+pub struct Build<'a> {
+    pub state: &'a State,
+    pub cx: pages::PageCtx<'a>,
+    /// The key that tries again.
+    pub retry: &'a str,
+}
+
+impl<'a> Build<'a> {
+    /// `key`'s data, as the page shows it: loading, failed (and why) or
+    /// ready.
+    pub fn get<T: Picked + ?Sized>(&self, key: &DataKey) -> Fetched<'a, T> {
+        Remote::fetched(self.state.remote(key), self.retry).pick(T::pick)
+    }
+
+    /// The list the page loads more of.
+    pub fn list<T: Picked + ?Sized>(&self, key: Option<DataKey>) -> Fetched<'a, T> {
+        let remote = key.and_then(|key| self.state.remote(&key));
+        Remote::fetched(remote, self.retry).pick(T::pick)
+    }
 }
 
 /// A page's needs as the page shows them, failing with the key that
@@ -315,19 +404,26 @@ impl<'a> Needs<'a> {
     }
 
     fn get<T: Picked + ?Sized>(&self, key: &DataKey) -> Fetched<'a, T> {
-        self.of(self.state.data.get(key)).pick(T::pick)
+        self.of(self.state.remote(key)).pick(T::pick)
     }
 
     /// The list the route loads more of.
     fn paged<T: Picked + ?Sized>(&self, route: &Route) -> Fetched<'a, T> {
-        let remote = paged(route).and_then(|key| self.state.data.get(&key));
+        let remote = paged(route).and_then(|key| self.state.remote(&key));
         self.of(remote).pick(T::pick)
     }
 }
 
 impl State {
+    /// How fetching `key` is going, once it's started.
+    pub fn remote(&self, key: &DataKey) -> Option<&Remote<Data>> {
+        #[cfg(test)]
+        reads::record(key);
+        self.data.get(key)
+    }
+
     pub fn get(&self, key: &DataKey) -> Option<&Data> {
-        self.data.get(key).and_then(|r| r.data.as_ref())
+        self.remote(key).and_then(|r| r.data.as_ref())
     }
 
     /// `key`'s data, if it's there: for what isn't a page.
@@ -380,7 +476,7 @@ impl State {
 
     /// How fetching pull request `pr` is going.
     pub fn pr_remote(&self, pr: &PrRef) -> Option<&Remote<Data>> {
-        self.data.get(&DataKey::Pr(pr.clone()))
+        self.remote(&DataKey::Pr(pr.clone()))
     }
 
     pub fn activity(&self, pr: &PrRef) -> Option<&PrActivity> {
@@ -451,49 +547,12 @@ impl State {
         // Reading stays narrow enough to follow, lists get room for their
         // columns, and output and tables take the whole width.
         let (reading, lists) = (width.min(READING), width.min(LISTS));
-        let mut page = match route {
-            Route::Issue { .. }
-            | Route::Pr {
-                tab: PrTab::Conversation,
-                ..
-            } => Page::with_aside(reading),
-            Route::Repo(_) => Page::with_aside(lists),
-            Route::Blob { path, .. } if pages::is_markdown(path) => Page::new(reading),
-            Route::Wiki { .. }
-            | Route::Discussion { .. }
-            | Route::Release { .. }
-            | Route::Advisory { .. }
-            | Route::Alert { .. }
-            | Route::NewIssue(_)
-            | Route::NewPr(_)
-            | Route::NewRelease(_)
-            | Route::EditRelease { .. }
-            | Route::NewGist
-            | Route::EditGist { .. }
-            | Route::WikiEdit { .. }
-            | Route::Housekeeping(_)
-            | Route::Offline
-            | Route::Dispatch { .. }
-            | Route::ProjectItem { .. }
-            | Route::Pr {
-                tab: PrTab::Review | PrTab::Reviewed(_),
-                ..
-            } => Page::new(reading),
-            Route::Pr {
-                tab: PrTab::Checks, ..
-            }
-            | Route::CommitChecks { .. }
-            | Route::Actions { .. }
-            | Route::WorkflowRun { .. }
-            | Route::Job { .. }
-            | Route::Workflow { .. }
-            | Route::Blob { .. }
-            | Route::Blame { .. }
-            | Route::Branches(_)
-            | Route::Tags(_)
-            | Route::Project { .. }
-            | Route::Deployments { .. } => Page::new(width),
-            _ => Page::new(lists),
+        let mut page = match width_of(route) {
+            Width::Reading => Page::new(reading),
+            Width::Lists => Page::new(lists),
+            Width::Full => Page::new(width),
+            Width::ReadingAside => Page::with_aside(reading),
+            Width::ListsAside => Page::with_aside(lists),
         };
         page.compact = self.compact();
         if let Some(err) = self.stale_errors(route) {
@@ -521,23 +580,13 @@ impl State {
             retry: &retry,
         };
         let title = route.title();
+        let b = Build {
+            state: self,
+            cx,
+            retry: &retry,
+        };
         match route {
-            Route::Home => {
-                let sections: Vec<pages::HomeSection<'_>> = self
-                    .home
-                    .iter()
-                    .map(|s| pages::HomeSection {
-                        title: &s.title,
-                        search: s.search.as_ref().map(|q| pages::SectionSearch {
-                            kind: q.kind,
-                            query: &q.query,
-                            rows: q.rows,
-                            results: f.get(&q.key()),
-                        }),
-                    })
-                    .collect();
-                pages::home(&mut page, &sections, icons, now);
-            }
+            Route::App(p) => p.build(b, &mut page),
             Route::Repo(repo) => {
                 let overview = f.get(&DataKey::Repo(repo.clone()));
                 #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
@@ -660,7 +709,7 @@ impl State {
             }
             Route::Pr { pr, tab } => {
                 let activity = f.get(&DataKey::PrActivity(pr.clone()));
-                let reviews = f.get(&DataKey::Reviews(pr.clone()));
+                let reviews = || f.get(&DataKey::Reviews(pr.clone()));
                 let lines = crate::talk::lines_at(self, pr);
                 let marks = crate::talk::marks(self, Some(pr), &lines);
                 let detail = f.get::<PrDetail>(&DataKey::Pr(pr.clone()));
@@ -685,12 +734,13 @@ impl State {
                                     .filter(|i| i.review_loaded)
                                     .map(|i| i.review.pending.as_slice()),
                                 fresh: marks.threads,
-                                reviews,
+                                reviews: reviews(),
                                 new_reviews: marks.reviews,
                             };
                             pages::pr_review(&mut page, pr, d, activity, glance, cx);
                         }
                         PrTab::Reviewed(id) => {
+                            let reviews = reviews();
                             pages::pr_reviewed(&mut page, pr, d, *id, activity, reviews, marks, cx);
                         }
                     }
@@ -927,16 +977,42 @@ impl State {
                     pages::profile(&mut page, p, *tab, list, now);
                 }
             }
-            Route::Site(p) => crate::site::build(self, &mut page, p, &retry, cx),
-            Route::Labels(_) | Route::Housekeeping(_) => {
-                crate::housekeeping::build(self, &mut page, route, now);
-            }
-            Route::Offline => crate::offline::build(self, &mut page, now),
+            Route::Site(p) => p.build(b, &mut page),
+            Route::Housekeeping(p) => p.build(b, &mut page),
+            Route::Labels(repo) => crate::housekeeping::build(self, &mut page, repo, now),
         }
         // The sidebar starts beside the page, below the banner.
         if let Some(a) = page.aside.as_mut().filter(|a| !a.lines.is_empty()) {
             a.lines.splice(0..0, vec![PageLine::default(); banner]);
         }
         page
+    }
+}
+
+/// What building a page reads, recorded in tests to check a page reads
+/// only what it needs.
+#[cfg(test)]
+pub(crate) mod reads {
+    use std::cell::RefCell;
+
+    use crate::data::DataKey;
+
+    thread_local! {
+        static READS: RefCell<Option<Vec<DataKey>>> = const { RefCell::new(None) };
+    }
+
+    pub(crate) fn record(key: &DataKey) {
+        READS.with_borrow_mut(|reads| {
+            if let Some(reads) = reads {
+                reads.push(key.clone());
+            }
+        });
+    }
+
+    /// What `f` reads.
+    pub(crate) fn during<R>(f: impl FnOnce() -> R) -> (R, Vec<DataKey>) {
+        READS.set(Some(Vec::new()));
+        let out = f();
+        (out, READS.take().unwrap_or_default())
     }
 }

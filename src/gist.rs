@@ -11,6 +11,7 @@
 use crate::api::GitHub;
 use crate::api::browse::Gist;
 use crate::api::gist::{FileChange, GistChange, MadeGist, NewGist};
+use crate::route::app;
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{Link, Page, WriteLink};
 use crate::ui::pages::{FormRow, Mark, TextBox, WriteFormView};
@@ -727,7 +728,7 @@ pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
     }
     if matches!(
         route,
-        Route::Gist { .. } | Route::Gists(_) | Route::User { .. } | Route::Home
+        Route::Gist { .. } | Route::Gists(_) | Route::User { .. } | Route::App(app::Home)
     ) {
         out.push(row("New", Action::NewGist, "New gist", "", None));
     }

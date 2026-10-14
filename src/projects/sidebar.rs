@@ -59,7 +59,7 @@ fn changeable(state: &State) -> Result<(Subject, Vec<&InProject>), String> {
         return Err(Action::SetField.not_here());
     };
     let Some(list) = state.picked::<Capped<InProject>>(&key) else {
-        let failed = state.data.get(&key).and_then(|r| r.error.clone());
+        let failed = state.remote(&key).and_then(|r| r.error.clone());
         return Err(failed.unwrap_or_else(|| "Its projects haven't loaded yet".into()));
     };
     if list.is_empty() {

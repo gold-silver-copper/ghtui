@@ -198,7 +198,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
             };
             let key = DataKey::Refs(repo);
             let Some(refs) = state.picked::<Refs>(&key) else {
-                let failed = state.data.get(&key).and_then(|r| r.error.clone());
+                let failed = state.remote(&key).and_then(|r| r.error.clone());
                 return note(failed.map_or_else(
                     || "Loading branches…".to_owned(),
                     |e| format!("Couldn't load the branches: {e}"),
@@ -405,7 +405,7 @@ fn inputs_of(state: &State) -> Result<Vec<Input>, String> {
         return Err("Loading…".into());
     };
     let Some(blob) = state.picked::<Blob>(&key) else {
-        let failed = state.data.get(&key).and_then(|r| r.error.clone());
+        let failed = state.remote(&key).and_then(|r| r.error.clone());
         return Err(failed.map_or_else(
             || "Reading the workflow file…".to_owned(),
             |e| format!("Couldn't read the workflow file: {e}"),

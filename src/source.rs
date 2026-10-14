@@ -24,7 +24,7 @@ use crate::diff_job::GitContext;
 use crate::git::read::{self, Grep, ReadError, RemoteRefs};
 use crate::git::repo::Repo;
 use crate::git::{GitError, Oid};
-use crate::route::Route;
+use crate::route::{Family, Route};
 
 /// How long what GitHub says its branches and tags are is taken as true.
 const REFS_FRESH: Duration = Duration::from_secs(30);
@@ -143,10 +143,7 @@ pub fn shown(route: &Route) -> Option<DataKey> {
         Route::Commit { repo, oid, .. } => DataKey::Commit(repo.clone(), oid.clone()),
         Route::Compare { repo, spec } => DataKey::Compare(repo.clone(), spec.clone()),
         Route::Tags(repo) => DataKey::Tags(repo.clone()),
-        Route::Site(crate::site::Page::Insights {
-            repo,
-            tab: crate::site::InsightsTab::Contributors | crate::site::InsightsTab::Commits,
-        }) => DataKey::Activity(repo.clone()),
+        Route::Site(p) => return p.shown_source(),
         Route::Search {
             kind: SearchKind::Code,
             query,

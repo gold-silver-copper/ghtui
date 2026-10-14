@@ -137,7 +137,7 @@ fn choices(of: &Watched) -> [(SubscriptionState, &'static str, &'static str); 3]
 pub fn rows(state: &State, of: &Watched, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
     let key = DataKey::Subscription(of.clone());
     #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
-    let fetched = Remote::fetched(state.data.get(&key), "")
+    let fetched = Remote::fetched(state.remote(&key), "")
         .pick(<Subscription as crate::data::Picked>::pick)
         .text("your subscription");
     let s = match fetched {

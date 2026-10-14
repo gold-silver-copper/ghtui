@@ -425,7 +425,7 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         }
         Subject::Issue(repo, number) => {
             let key = DataKey::Issue(repo.clone(), *number);
-            let Some(data) = loaded(state.data.get(&key), &name)? else {
+            let Some(data) = loaded(state.remote(&key), &name)? else {
                 return Ok(Plan::Load(subject.need()));
             };
             // A number that's a pull request is one.
@@ -480,7 +480,7 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         }
         Subject::Run(repo, run, attempt) => {
             let key = DataKey::Run(repo.clone(), *run, *attempt);
-            if loaded(state.data.get(&key), &name)?.is_none() {
+            if loaded(state.remote(&key), &name)?.is_none() {
                 return Ok(Plan::Load(subject.need()));
             }
             let run = state
@@ -495,7 +495,7 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         }
         Subject::Job(repo, _, job) => {
             let key = DataKey::Job(repo.clone(), *job);
-            if loaded(state.data.get(&key), &name)?.is_none() {
+            if loaded(state.remote(&key), &name)?.is_none() {
                 return Ok(Plan::Load(subject.need()));
             }
             let job = state
@@ -512,7 +512,7 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         }
         Subject::Thread { id, query } => {
             let key = DataKey::Notifications(query.clone());
-            if loaded(state.data.get(&key), &name)?.is_none() {
+            if loaded(state.remote(&key), &name)?.is_none() {
                 return Ok(Plan::Load(subject.need()));
             }
             let n = state
@@ -529,13 +529,13 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         }
         Subject::Inbox { query } => {
             let key = DataKey::Notifications(query.clone());
-            let Some(data) = loaded(state.data.get(&key), &name)? else {
+            let Some(data) = loaded(state.remote(&key), &name)? else {
                 return Ok(Plan::Load(subject.need()));
             };
             let crate::data::Data::Notifications(list) = data else {
                 return Err("GitHub sent something else for your notifications".into());
             };
-            let fetched = (state.data.get(&key)).and_then(|r| r.cached_at.or(r.asked_at));
+            let fetched = (state.remote(&key)).and_then(|r| r.cached_at.or(r.asked_at));
             inbox::plan(query, list, fetched, action)
         }
         Subject::Alert(a) => Ok(match crate::security::plan(state, a)? {

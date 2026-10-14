@@ -100,3 +100,26 @@ fn every_screen_draws_at_every_size_in_both_schemes() {
         }
     }
 }
+
+/// Building a page reads only what the page says it needs, so a page
+/// whose needs haven't changed shows the same thing.
+#[test]
+fn every_page_reads_only_what_it_needs() {
+    let keys = super::keys::screens().map(|(name, make)| (name, make()));
+    let mut wrong = Vec::new();
+    for (name, s) in pages().into_iter().chain(keys).chain(more()) {
+        let Screen::Page(p) = s.screen() else {
+            continue;
+        };
+        let route = &p.route;
+        let (_, reads) = crate::browse::reads::during(|| s.build_page(route, 100, NOW));
+        let needs = s.needs(route);
+        for key in reads {
+            if !needs.contains(&key) && !route.also_reads(&key) {
+                wrong.push(format!("{name} ({route:?}) reads {key:?}"));
+            }
+        }
+    }
+    wrong.dedup();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

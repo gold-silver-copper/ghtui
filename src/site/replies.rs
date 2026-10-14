@@ -31,7 +31,7 @@ struct Row {
 fn rows(state: &State, query: &str) -> Vec<Row> {
     let key = DataKey::SavedReplies;
     #[expect(clippy::disallowed_methods, reason = "said as the list's row")]
-    let fetched = Remote::fetched(state.data.get(&key), "")
+    let fetched = Remote::fetched(state.remote(&key), "")
         .pick(<Capped<SavedReply> as Picked>::pick)
         .text("your saved replies");
     let note = |label: String| Row {

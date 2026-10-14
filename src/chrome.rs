@@ -9,6 +9,7 @@ use crate::api::browse::{
 use crate::api::model::{PrRef, RepoId};
 use crate::api::project::{self, Project, ProjectOwner, ProjectRef, ProjectsOf};
 use crate::git::Oid;
+use crate::route::app;
 use crate::ui::chrome::{Crumb, PageTab};
 use crate::ui::pages::{PrTab, ProfileTab};
 use ratatui::layout::Rect;
@@ -16,7 +17,7 @@ use ratatui::layout::Rect;
 use crate::browse::paged;
 use crate::data::{Data, DataKey};
 use crate::diff_screen::DiffOf;
-use crate::route::{OPEN, Route, Target};
+use crate::route::{Family, OPEN, Route, Target};
 use crate::state::{Screen, State};
 
 /// What the chrome shows.
@@ -60,7 +61,8 @@ impl State {
         // Right: offline (and what waits for GitHub), review requests,
         // your unread notifications and you.
         for offline in crate::offline::header(self) {
-            c.right.push((offline, Target::Page(Route::Offline)));
+            c.right
+                .push((offline, Target::Page(Route::App(app::Offline))));
         }
         // Review requests, once their search (Home's first section, unless
         // you changed it) is in.
@@ -142,9 +144,9 @@ impl State {
 
     fn page_chrome(&self, route: &Route, c: &mut Chrome) {
         match route {
-            Route::Home => c.crumb("Home", None),
+            Route::App(p) => p.chrome(self, c),
+            Route::Housekeeping(p) => p.chrome(self, c),
             Route::Notifications { .. } => c.crumb("Notifications", None),
-            Route::Offline => c.crumb("Offline", None),
             Route::Pr { pr, tab } => {
                 repo_crumbs(&pr.repo, c);
                 self.pr_tabs(pr, c);
@@ -224,7 +226,7 @@ impl State {
             Route::Project { project, view } | Route::ProjectItem { project, view, .. } => {
                 self.project_chrome(project, *view, c);
             }
-            Route::Site(page) if page.repo().is_none() => self.site_chrome(route, page, c),
+            Route::Site(p) => p.chrome(self, c),
             Route::Search { kind, query } => {
                 c.crumb("Search", None);
                 let results = paged(route).and_then(|key| self.picked::<SearchResults>(&key));
@@ -255,18 +257,22 @@ impl State {
             }
             // The rest are a repository's pages, under its tabs.
             _ => {
-                let Some(repo) = route.repo() else {
-                    return;
-                };
-                repo_crumbs(repo, c);
-                self.repo_tabs(repo, c);
-                let here = section(route);
-                c.active = c.tabs.iter().position(|(_, t)| match t {
-                    Target::Page(r) => section(r) == here,
-                    _ => false,
-                });
+                if let Some(repo) = route.repo() {
+                    self.repo_chrome(repo, section(route), c);
+                }
             }
         }
+    }
+
+    /// A repository's page's chrome: under its repository's tabs, `here`
+    /// active.
+    pub(crate) fn repo_chrome(&self, repo: &RepoId, here: Section, c: &mut Chrome) {
+        repo_crumbs(repo, c);
+        self.repo_tabs(repo, c);
+        c.active = c.tabs.iter().position(|(_, t)| match t {
+            Target::Page(r) => section(r) == here,
+            _ => false,
+        });
     }
 
     /// With more than one tab open, the header shows them where the crumbs
@@ -337,7 +343,7 @@ impl State {
 
     /// A profile's tabs, with `tab` active (none: its projects). Whether
     /// it's an organization's is the profile's to say, else `org`'s.
-    fn profile_tabs(
+    pub(crate) fn profile_tabs(
         &self,
         login: &str,
         tab: Option<ProfileTab>,
@@ -413,54 +419,6 @@ impl State {
         c.active = tabs.iter().position(|(.., t)| Some(t) == active.as_ref());
         for (icon, label, count, target) in tabs {
             c.tabs.push((new_tab(icon, label, count), target));
-        }
-    }
-
-    /// Explore's, a topic's, a starred list's, and an owner's packages'
-    /// chrome.
-    fn site_chrome(&self, route: &Route, page: &crate::site::Page, c: &mut Chrome) {
-        use crate::site::Page as Site;
-        let explore = || {
-            Target::Page(Route::Site(Site::Explore {
-                language: None,
-                since: crate::api::explore::Since::default(),
-            }))
-        };
-        let user = |login: &str| Some(Target::Page(Route::user(login)));
-        match page {
-            Site::Explore { .. } => c.crumb("Explore", None),
-            Site::Topic(name) => {
-                c.crumb("Explore", Some(explore()));
-                c.crumb(&format!("#{name}"), None);
-            }
-            Site::StarList { login, .. } => {
-                c.crumb(login, user(login));
-                let stars = Route::User {
-                    login: login.clone(),
-                    tab: ProfileTab::Stars,
-                };
-                c.crumb("Stars", Some(Target::Page(stars)));
-                let list = paged(route)
-                    .and_then(|k| self.picked::<crate::api::lists::ListPage>(&k))
-                    .map_or_else(|| "List".to_owned(), |l| l.list.name.clone());
-                c.crumb(&list, None);
-            }
-            Site::Packages(of) => {
-                let login = of.owner();
-                c.crumb(login, None);
-                self.profile_tabs(login, None, None, c);
-                let here = Target::Page(route.clone());
-                c.active = c.tabs.iter().position(|(_, t)| *t == here);
-            }
-            Site::Package { at, .. } => {
-                c.crumb(&at.owner, user(&at.owner));
-                let list = Route::Site(Site::Packages(crate::api::packages::PackagesOf::Owner(
-                    at.owner.clone(),
-                )));
-                c.crumb("Packages", Some(Target::Page(list)));
-                c.crumb(&at.name, None);
-            }
-            Site::Insights { .. } => {}
         }
     }
 
@@ -680,8 +638,8 @@ impl State {
 }
 
 /// Which of a repository's tabs a page is under, as on GitHub.
-#[derive(PartialEq, Eq)]
-enum Section {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
     Code,
     Issues,
     Pulls,
@@ -701,10 +659,6 @@ fn section(route: &Route) -> Section {
         | Route::Milestones { .. }
         | Route::Milestone { .. }
         | Route::Labels(_)
-        | Route::Housekeeping(
-            crate::housekeeping::FormOf::Label { .. }
-            | crate::housekeeping::FormOf::Milestone { .. },
-        )
         | Route::NewIssue(_) => Section::Issues,
         Route::Pulls { .. } | Route::Pr { .. } | Route::NewPr(_) => Section::Pulls,
         Route::Discussions { .. } | Route::Discussion { .. } => Section::Discussions,
@@ -719,7 +673,9 @@ fn section(route: &Route) -> Section {
         | Route::Advisory { .. }
         | Route::Alerts { .. }
         | Route::Alert { .. } => Section::Security,
-        Route::Site(crate::site::Page::Insights { .. }) => Section::Insights,
+        Route::App(p) => p.section(),
+        Route::Site(p) => p.section(),
+        Route::Housekeeping(p) => p.section(),
         Route::Settings { .. } => Section::Settings,
         _ => Section::Code,
     }
@@ -762,7 +718,7 @@ fn repo_crumbs(repo: &RepoId, c: &mut Chrome) {
 
 impl Chrome {
     /// Adds a crumb; the last one added is where you are.
-    fn crumb(&mut self, text: &str, target: Option<Target>) {
+    pub(crate) fn crumb(&mut self, text: &str, target: Option<Target>) {
         if let Some((last, _)) = self.crumbs.last_mut() {
             last.current = false;
         }

@@ -1,6 +1,7 @@
 //! Data from GitHub: what's fetched, when, and what's still running.
 
 use super::*;
+use crate::route::{Family, app};
 
 /// Data that comes from GitHub: what we have (possibly cached), whether a
 /// refresh is in flight, and the last refresh error.
@@ -130,7 +131,9 @@ impl State {
     /// What a page needs fetched: Home's are its sections'.
     pub fn needs(&self, route: &Route) -> Vec<DataKey> {
         match route {
-            Route::Home => self.home_needs(),
+            Route::App(p) => p.needs(self),
+            Route::Site(p) => p.needs(self),
+            Route::Housekeeping(p) => p.needs(self),
             _ => browse::needs(route),
         }
     }
@@ -143,7 +146,7 @@ impl State {
         let mut cmds = Vec::new();
         for key in self.needs(route) {
             let header = browse::is_header(route, &key);
-            let aged = *route == Route::Home && self.aged(&key);
+            let aged = *route == Route::App(app::Home) && self.aged(&key);
             cmds.extend(self.ensure(key, (force || aged) && !header));
         }
         cmds

@@ -27,10 +27,12 @@ use crate::git::local::Clone;
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{Link, Page, WriteLink};
 
+use crate::browse::{Build, Width};
+use crate::chrome::Section;
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::route::Route;
+use crate::route::{Family, Route, Target, Url};
 use crate::state::{Cmd, Screen, State};
 use crate::writes::{Expected as Expects, Work as Writes, row};
 
@@ -80,8 +82,8 @@ pub enum FileChange {
     Delete,
 }
 
-impl FormOf {
-    pub fn url(&self) -> String {
+impl Family for FormOf {
+    fn url(&self) -> String {
         use crate::ui::pages::url as links;
         match self {
             FormOf::Label { repo, .. } => format!("{}/labels", links::repo(repo)),
@@ -112,7 +114,7 @@ impl FormOf {
         }
     }
 
-    pub fn title(&self) -> String {
+    fn title(&self) -> String {
         match self {
             FormOf::Label { repo, name: None } => format!("{repo} · New label"),
             FormOf::Label {
@@ -137,7 +139,7 @@ impl FormOf {
         }
     }
 
-    pub fn repo(&self) -> Option<&RepoId> {
+    fn repo(&self) -> Option<&RepoId> {
         match self {
             FormOf::Label { repo, .. }
             | FormOf::Milestone { repo, .. }
@@ -147,8 +149,8 @@ impl FormOf {
         }
     }
 
-    /// The page a level up: what the form is of.
-    pub fn up(&self) -> Option<Route> {
+    /// What the form is of.
+    fn up(&self, _: &State) -> Option<Route> {
         Some(match self {
             FormOf::Label { repo, .. } => Route::Labels(repo.clone()),
             FormOf::Milestone { repo, .. } => Route::Milestones {
@@ -173,9 +175,51 @@ impl FormOf {
         })
     }
 
+    fn needs(&self, _: &State) -> Vec<DataKey> {
+        let header = self.repo().map(|repo| DataKey::Repo(repo.clone()));
+        let own = match self {
+            FormOf::Label { repo, .. } => vec![DataKey::Labels(repo.clone())],
+            FormOf::Milestone {
+                repo,
+                number: Some(n),
+            } => vec![DataKey::Milestone(repo.clone(), *n)],
+            FormOf::Fork(_) => vec![DataKey::Owners],
+            FormOf::NewRepo => vec![DataKey::Owners, DataKey::Templates],
+            FormOf::Milestone { number: None, .. } | FormOf::File { .. } => Vec::new(),
+        };
+        header.into_iter().chain(own).collect()
+    }
+
+    fn width(&self) -> Width {
+        Width::Reading
+    }
+
+    fn section(&self) -> Section {
+        match self {
+            FormOf::Label { .. } | FormOf::Milestone { .. } => Section::Issues,
+            _ => Section::Code,
+        }
+    }
+
+    fn build(&self, b: Build<'_>, page: &mut Page) {
+        let route = Route::Housekeeping(self.clone());
+        // What the form is filled from loads first, or says why not.
+        if !loaded(b, page, self) {
+            return;
+        }
+        match self {
+            FormOf::Label { .. } => labels::build(b.state, page, &route),
+            FormOf::Milestone { .. } => milestones::build(b.state, page, &route),
+            FormOf::Fork(_) | FormOf::NewRepo => repos::build(b.state, page, &route, self),
+            FormOf::File { .. } => files::build(b.state, page, &route, self),
+        }
+    }
+}
+
+impl FormOf {
     /// The form at a URL's path after `/<owner>/<repo>` (`fork`,
     /// `milestones/new`, `edit/main/README.md`), if it's one.
-    pub fn parse(repo: &RepoId, rest: &[&str]) -> Option<FormOf> {
+    fn parse(repo: &RepoId, rest: &[&str]) -> Option<FormOf> {
         let repo = repo.clone();
         Some(match rest {
             ["fork"] => FormOf::Fork(repo),
@@ -206,6 +250,16 @@ impl FormOf {
             _ => return None,
         })
     }
+}
+
+/// A new repository's form, at the top of GitHub's paths.
+pub(crate) fn parse(url: &Url<'_>) -> Option<Target> {
+    (url.segments == ["new"]).then_some(Target::Page(Route::Housekeeping(FormOf::NewRepo)))
+}
+
+/// A repository's form.
+pub(crate) fn parse_repo(repo: &RepoId, rest: &[&str], _: &Url<'_>) -> Option<Target> {
+    FormOf::parse(repo, rest).map(|of| Target::Page(Route::Housekeeping(of)))
 }
 
 /// A row of a form, set in a picker (or, for yes-or-no, toggled).
@@ -862,74 +916,29 @@ fn expect(state: &mut State, route: Route, what: Expected) {
 
 // ---- data -----------------------------------------------------------------------------------
 
-/// The list a page of housekeeping's loads more of.
-pub fn paged(route: &Route) -> Option<DataKey> {
-    match route {
-        Route::Labels(repo) => Some(DataKey::Labels(repo.clone())),
-        _ => None,
-    }
+/// What the labels page needs fetched.
+pub fn needs(repo: &RepoId) -> Vec<DataKey> {
+    vec![DataKey::Repo(repo.clone()), DataKey::Labels(repo.clone())]
 }
 
-/// What housekeeping's pages need fetched.
-pub fn needs(route: &Route) -> Vec<DataKey> {
-    let header = |repo: &RepoId| DataKey::Repo(repo.clone());
-    match route {
-        Route::Labels(repo) => vec![header(repo), DataKey::Labels(repo.clone())],
-        Route::Housekeeping(of) => {
-            let mut needs: Vec<DataKey> = of.repo().map(header).into_iter().collect();
-            match of {
-                FormOf::Label { repo, .. } => {
-                    needs.push(DataKey::Labels(repo.clone()));
-                }
-                FormOf::Milestone {
-                    repo,
-                    number: Some(n),
-                } => needs.push(DataKey::Milestone(repo.clone(), *n)),
-                FormOf::Fork(_) => needs.push(DataKey::Owners),
-                FormOf::NewRepo => {
-                    needs.push(DataKey::Owners);
-                    needs.push(DataKey::Templates);
-                }
-                FormOf::Milestone { number: None, .. } | FormOf::File { .. } => {}
-            }
-            needs
-        }
-        _ => Vec::new(),
-    }
-}
-
-/// Builds housekeeping's pages.
-pub fn build(state: &State, page: &mut Page, route: &Route, now: u64) {
-    match route {
-        Route::Labels(repo) => {
-            let retry = state.first_key(Action::Refresh);
-            let key = DataKey::Labels(repo.clone());
-            let list = crate::state::Remote::fetched(state.data.get(&key), &retry)
-                .pick(<Results<LabelInfo> as crate::data::Picked>::pick);
-            let keys = crate::ui::pages::LabelKeys {
-                new: state.first_key(Action::NewHere),
-                edit: state.first_key(Action::EditComment),
-                delete: state.first_key(Action::DeleteComment),
-            };
-            crate::ui::pages::labels_page(page, repo, list, &keys, now);
-        }
-        Route::Housekeeping(of) => match of {
-            // What the form is filled from loads first, or says why not.
-            _ if !loaded(state, page, route) => {}
-            FormOf::Label { .. } => labels::build(state, page, route),
-            FormOf::Milestone { .. } => milestones::build(state, page, route),
-            FormOf::Fork(_) | FormOf::NewRepo => repos::build(state, page, route, of),
-            FormOf::File { .. } => files::build(state, page, route, of),
-        },
-        _ => {}
-    }
+/// Builds the labels page.
+pub fn build(state: &State, page: &mut Page, repo: &RepoId, now: u64) {
+    let retry = state.first_key(Action::Refresh);
+    let key = DataKey::Labels(repo.clone());
+    let list = crate::state::Remote::fetched(state.remote(&key), &retry)
+        .pick(<Results<LabelInfo> as crate::data::Picked>::pick);
+    let keys = crate::ui::pages::LabelKeys {
+        new: state.first_key(Action::NewHere),
+        edit: state.first_key(Action::EditComment),
+        delete: state.first_key(Action::DeleteComment),
+    };
+    crate::ui::pages::labels_page(page, repo, list, &keys, now);
 }
 
 /// Whether a form's data (but its repository's header) is in; else the
 /// page says it's loading, or why it couldn't.
-fn loaded(state: &State, page: &mut Page, route: &Route) -> bool {
-    let retry = state.first_key(Action::Refresh);
-    for key in needs(route) {
+fn loaded(b: Build<'_>, page: &mut Page, of: &FormOf) -> bool {
+    for key in of.needs(b.state) {
         let what = match &key {
             DataKey::Labels(_) => "the labels",
             DataKey::Owners => "your account",
@@ -937,7 +946,7 @@ fn loaded(state: &State, page: &mut Page, route: &Route) -> bool {
             DataKey::Milestone(..) => "the milestone",
             _ => continue,
         };
-        let fetched = crate::state::Remote::fetched(state.data.get(&key), &retry);
+        let fetched = crate::state::Remote::fetched(b.state.remote(&key), b.retry);
         if fetched.show(page, what).is_none() {
             return false;
         }

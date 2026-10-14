@@ -1,6 +1,7 @@
 //! The mouse.
 
 use super::*;
+use crate::route::app;
 
 #[must_use]
 pub fn on_mouse(state: &mut State, ev: MouseEvent) -> Vec<Cmd> {
@@ -82,7 +83,7 @@ pub(super) fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> V
             return state.open_search(true);
         }
         if inside(h.logo) {
-            return state.push(Route::Home);
+            return state.push(Route::App(app::Home));
         }
         let hit = |rects: &[Rect]| rects.iter().position(|r| inside(*r));
         // In the tab strip, a tab (or a hidden-tabs marker) switches to it.

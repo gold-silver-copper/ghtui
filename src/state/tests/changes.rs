@@ -2,6 +2,7 @@ use crate::api::browse::CheckOutcome;
 use crate::api::change::MergeMethod;
 use crate::api::model::MergeState;
 use crate::api::notifications::ThreadAt;
+use crate::route::app;
 use crate::store::DraftSide;
 
 use super::*;
@@ -130,7 +131,7 @@ fn acting_on_a_homes_row_is_about_that_row() {
     let w = s.awaiting.clone().unwrap();
     assert_eq!(
         (w.route, w.about),
-        (Route::Home, crate::act::Subject::Pr(pr()))
+        (Route::App(app::Home), crate::act::Subject::Pr(pr()))
     );
     // Home asked again at once; GitHub's search may not show it yet.
     for i in 0..2 {

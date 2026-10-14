@@ -8,6 +8,7 @@
 //! its count, its order and the list its last row opens can't disagree:
 //! they're one fetch.
 
+use crate::route::app;
 use std::path::{Path, PathBuf};
 
 use crate::api::browse::SearchKind;
@@ -406,7 +407,7 @@ impl State {
     /// on screen asks again.
     pub(crate) fn aged(&self, key: &DataKey) -> bool {
         let now = (self.clock)();
-        (self.data.get(key))
+        (self.remote(key))
             .and_then(|r| r.asked_at)
             .is_some_and(|at| now.saturating_sub(at) >= FRESH_SECS)
     }
@@ -416,7 +417,7 @@ impl State {
         let Screen::Page(p) = self.screen() else {
             return None;
         };
-        if p.route != Route::Home {
+        if p.route != Route::App(app::Home) {
             return None;
         }
         let page = p.page();
@@ -480,12 +481,12 @@ fn plan(state: &State, action: Action) -> Result<(&Path, Plan<'_>), String> {
             };
             Plan::Title(Titling::New { kind, query }, name)
         }
-        Action::Delete | Action::UndoDelete if state.route() != Some(&Route::Home) => {
+        Action::Delete | Action::UndoDelete if state.route() != Some(&Route::App(app::Home)) => {
             return Err(
                 "Deleting works on a draft comment in Files changed, or on a Home section".into(),
             );
         }
-        _ if state.route() != Some(&Route::Home) => {
+        _ if state.route() != Some(&Route::App(app::Home)) => {
             return Err("That works on Home's sections".into());
         }
         Action::UndoDelete => {
@@ -603,8 +604,8 @@ impl State {
             }
         }
         self.data_gen += 1;
-        if self.route() == Some(&Route::Home) {
-            self.ensure_route(&Route::Home, false)
+        if self.route() == Some(&Route::App(app::Home)) {
+            self.ensure_route(&Route::App(app::Home), false)
         } else {
             Vec::new()
         }

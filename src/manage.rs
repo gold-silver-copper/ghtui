@@ -828,8 +828,8 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
 fn base_rows(state: &State, pr: &PrRef, id: &NodeId, from: &str, head: &str, q: &str) -> Rows {
     let key = DataKey::Refs(pr.repo.clone());
     let Some(refs) = state.picked::<crate::api::browse::Refs>(&key) else {
-        let loading = state.data.get(&key).is_none_or(|r| r.loading);
-        let why = match state.data.get(&key).and_then(|r| r.error.as_deref()) {
+        let loading = state.remote(&key).is_none_or(|r| r.loading);
+        let why = match state.remote(&key).and_then(|r| r.error.as_deref()) {
             Some(err) if !loading => format!("Couldn't load the branches: {err}"),
             _ => "Loading the branches…".into(),
         };

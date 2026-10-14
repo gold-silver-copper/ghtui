@@ -1,6 +1,7 @@
 //! Messages and keys: what each one does to the state.
 
 use super::*;
+use crate::route::app;
 
 /// Handles a message and settles the screen.
 #[cfg(test)]
@@ -109,7 +110,7 @@ pub fn timers(state: &mut State) -> Vec<Cmd> {
     }
     cmds.extend(crate::live::schedule(state));
     // Home keeps itself fresh while it's on screen, and only then.
-    if !state.home_timer && state.route() == Some(&Route::Home) {
+    if !state.home_timer && state.route() == Some(&Route::App(app::Home)) {
         state.home_timer = true;
         cmds.push(Cmd::Timer(Timer::Home, crate::home::FRESH_SECS * 1000));
     }
@@ -220,8 +221,8 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         }
         Msg::Timer(Timer::Home) => {
             state.home_timer = false;
-            if state.route() == Some(&Route::Home) {
-                return state.ensure_route(&Route::Home, false);
+            if state.route() == Some(&Route::App(app::Home)) {
+                return state.ensure_route(&Route::App(app::Home), false);
             }
         }
         Msg::Timer(Timer::Minute) => {
@@ -443,8 +444,10 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
             let n = Action::OPEN_TABS.iter().position(|a| *a == action);
             return state.switch_to_tab(n.unwrap_or(0));
         }
-        Action::GoHome if state.route() == Some(&Route::Home) => state.info("Already home"),
-        Action::GoHome => return state.push(Route::Home),
+        Action::GoHome if state.route() == Some(&Route::App(app::Home)) => {
+            state.info("Already home");
+        }
+        Action::GoHome => return state.push(Route::App(app::Home)),
         Action::Search | Action::SearchBack if diff.is_some() || !nav::searches_itself(state) => {
             state.backwards = action == Action::SearchBack;
             let input = nav::new_input(&state.theme, Bg::Container);

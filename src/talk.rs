@@ -40,10 +40,10 @@ pub fn marks<'a>(state: &'a State, pr: Option<&PrRef>, lines: &'a LinesAt<'a>) -
 /// The lines git has read for the threads of `pr`'s conversation.
 pub fn lines_at<'a>(state: &'a State, pr: &PrRef) -> LinesAt<'a> {
     let mut at = LinesAt::new();
-    for (key, remote) in &state.data {
+    for key in state.data.keys() {
         if let DataKey::Lines(repo, commit, path) = key
             && *repo == pr.repo
-            && let Some(crate::data::Data::Lines(lines)) = &remote.data
+            && let Some(crate::data::Data::Lines(lines)) = state.get(key)
         {
             at.insert((commit.clone(), path.clone()), lines.as_slice());
         }

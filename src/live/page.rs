@@ -202,7 +202,7 @@ pub fn watches(key: &DataKey) -> bool {
 /// fetched fresh (a cached copy may be old: what's new waits for GitHub's).
 fn seen_now(state: &State, what: &Watched) -> Option<HashSet<u64>> {
     let k = key(what);
-    let remote = state.data.get(&k)?;
+    let remote = state.remote(&k)?;
     if remote.cached_at.is_some() || remote.loading && remote.data.is_none() {
         return None;
     }
@@ -400,7 +400,7 @@ pub fn on_watched(
                 .is_ok_and(|j| j.outcome() != CheckOutcome::Pending)
     });
     let k = key(what);
-    let busy = state.data.get(&k).and_then(|r| r.data.as_ref());
+    let busy = state.remote(&k).and_then(|r| r.data.as_ref());
     let running = busy.is_some_and(crate::data::Data::running);
     let extended = state
         .data

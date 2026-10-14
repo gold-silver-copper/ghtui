@@ -44,7 +44,7 @@ fn a_failed_blame_says_why_instead_of_loading() {
     };
     let _ = state.push(route.clone());
     fetched(&mut state, blob, Data::Blob(Box::new(fixtures::blob())));
-    let Some(key) = needs(&route).pop() else {
+    let Some(key) = state.needs(&route).pop() else {
         panic!("a blame fetches its blame");
     };
     failed(&mut state, key);

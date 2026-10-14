@@ -16,14 +16,18 @@ pub mod replies;
 
 use crate::api::GitHub;
 use crate::api::browse::SearchKind;
-use crate::api::explore::{Since, Topic, Topics};
-use crate::api::insights::{Activity, Dependencies, Traffic};
+use crate::api::explore::{Since, Topic};
 use crate::api::lists::ListPage;
 use crate::api::model::RepoId;
-use crate::api::packages::{Kind, PackageDetail, PackageList, PackageRef, PackagesOf};
+use crate::api::packages::{Kind, PackageRef, PackagesOf};
 use crate::ui::pages::url as links;
 
-use crate::data::{DataKey, Picked};
+use crate::browse::{Build, Width};
+use crate::chrome::{Chrome, Section};
+use crate::data::DataKey;
+use crate::route::{Family, Route, Target, app};
+use crate::state::State;
+use crate::ui::pages::ProfileTab;
 
 /// One of these pages.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -86,8 +90,8 @@ impl InsightsTab {
     }
 }
 
-impl Page {
-    pub fn url(&self) -> String {
+impl Family for Page {
+    fn url(&self) -> String {
         match self {
             Page::Insights { repo, tab } => format!("{}/{}", links::repo(repo), tab.path()),
             Page::Explore { language, since } => {
@@ -133,7 +137,7 @@ impl Page {
         }
     }
 
-    pub fn title(&self) -> String {
+    fn title(&self) -> String {
         match self {
             Page::Insights { repo, tab } => format!("{repo} · {}", tab.name()),
             Page::Explore { language: None, .. } => "Explore".to_owned(),
@@ -148,22 +152,19 @@ impl Page {
         }
     }
 
-    /// The repository it's a page of.
-    pub fn repo(&self) -> Option<&RepoId> {
+    fn repo(&self) -> Option<&RepoId> {
         match self {
             Page::Insights { repo, .. } | Page::Packages(PackagesOf::Repo(repo)) => Some(repo),
             _ => None,
         }
     }
 
-    /// One level up.
-    pub fn up(&self) -> crate::route::Route {
-        use crate::route::Route;
-        match self {
+    fn up(&self, _: &State) -> Option<Route> {
+        Some(match self {
             Page::Insights { repo, .. } | Page::Packages(PackagesOf::Repo(repo)) => {
                 Route::Repo(repo.clone())
             }
-            Page::Explore { .. } | Page::Topic(_) => Route::Home,
+            Page::Explore { .. } | Page::Topic(_) => Route::App(app::Home),
             Page::StarList { login, .. } => Route::User {
                 login: login.clone(),
                 tab: crate::ui::pages::ProfileTab::Stars,
@@ -176,11 +177,11 @@ impl Page {
                 at: at.clone(),
                 version: None,
             }),
-        }
+        })
     }
 
-    /// The list it loads more of. Explore's search is from a day, today.
-    pub fn paged(&self) -> Option<DataKey> {
+    /// Explore's search is from a day, today.
+    fn paged(&self) -> Option<DataKey> {
         Some(match self {
             Page::Explore { language, since } => DataKey::Search(
                 SearchKind::Repos,
@@ -199,8 +200,7 @@ impl Page {
         })
     }
 
-    /// What it needs fetched.
-    pub fn needs(&self) -> Vec<DataKey> {
+    fn needs(&self, _: &State) -> Vec<DataKey> {
         let data = |key| key;
         let header = |repo: &RepoId| DataKey::Repo(repo.clone());
         let paged = self.paged();
@@ -233,6 +233,144 @@ impl Page {
                 }
             }
             Page::Package { .. } => paged.into_iter().collect(),
+        }
+    }
+
+    fn width(&self) -> Width {
+        Width::Lists
+    }
+
+    fn shown_source(&self) -> Option<DataKey> {
+        match self {
+            Page::Insights {
+                repo,
+                tab: InsightsTab::Contributors | InsightsTab::Commits,
+            } => Some(DataKey::Activity(repo.clone())),
+            _ => None,
+        }
+    }
+
+    fn section(&self) -> Section {
+        match self {
+            Page::Insights { .. } => Section::Insights,
+            _ => Section::Code,
+        }
+    }
+
+    fn chrome(&self, state: &State, c: &mut Chrome) {
+        let explore = || {
+            Target::Page(Route::Site(Page::Explore {
+                language: None,
+                since: crate::api::explore::Since::default(),
+            }))
+        };
+        let user = |login: &str| Some(Target::Page(Route::user(login)));
+        match self {
+            Page::Explore { .. } => c.crumb("Explore", None),
+            Page::Topic(name) => {
+                c.crumb("Explore", Some(explore()));
+                c.crumb(&format!("#{name}"), None);
+            }
+            Page::StarList { login, .. } => {
+                c.crumb(login, user(login));
+                let stars = Route::User {
+                    login: login.clone(),
+                    tab: ProfileTab::Stars,
+                };
+                c.crumb("Stars", Some(Target::Page(stars)));
+                let list = (self.paged())
+                    .and_then(|k| state.picked::<ListPage>(&k))
+                    .map_or_else(|| "List".to_owned(), |l| l.list.name.clone());
+                c.crumb(&list, None);
+            }
+            Page::Packages(PackagesOf::Repo(repo)) => state.repo_chrome(repo, Section::Code, c),
+            Page::Packages(of) => {
+                let login = of.owner();
+                c.crumb(login, None);
+                state.profile_tabs(login, None, None, c);
+                let here = Target::Page(Route::Site(self.clone()));
+                c.active = c.tabs.iter().position(|(_, t)| *t == here);
+            }
+            Page::Package { at, .. } => {
+                c.crumb(&at.owner, user(&at.owner));
+                let list = Route::Site(Page::Packages(PackagesOf::Owner(at.owner.clone())));
+                c.crumb("Packages", Some(Target::Page(list)));
+                c.crumb(&at.name, None);
+            }
+            Page::Insights { repo, .. } => state.repo_chrome(repo, Section::Insights, c),
+        }
+    }
+
+    fn build(&self, b: Build<'_>, page: &mut crate::ui::page::Page) {
+        use crate::ui::pages;
+        let now = b.cx.now;
+        match self {
+            Page::Insights { repo, tab } => {
+                pages::insights_nav(page, repo, *tab);
+                match tab {
+                    InsightsTab::Contributors | InsightsTab::Commits => {
+                        let key = DataKey::Activity(repo.clone());
+                        let f = b.get(&key);
+                        if let Some(a) = f.show(page, "the commits") {
+                            if *tab == InsightsTab::Contributors {
+                                pages::contributors(page, repo, a);
+                            } else {
+                                pages::commit_activity(page, a);
+                            }
+                        }
+                    }
+                    InsightsTab::Traffic => {
+                        let key = DataKey::Traffic(repo.clone());
+                        let f = b.get(&key);
+                        if let Some(t) = f.show(page, "the traffic") {
+                            pages::traffic(page, t);
+                        }
+                    }
+                    InsightsTab::Dependencies => {
+                        pages::dependents_note(page, repo);
+                        let key = DataKey::Dependencies(repo.clone());
+                        let f = b.get(&key);
+                        if let Some(d) = f.show(page, "the dependency graph") {
+                            pages::dependencies(page, d);
+                        }
+                    }
+                }
+            }
+            Page::Explore { language, since } => {
+                let topics = b.get(&DataKey::Featured);
+                if let Some(key) = self.paged() {
+                    let repos = b.get(&key);
+                    pages::explore(page, language.as_deref(), *since, repos, topics, b.cx);
+                }
+            }
+            Page::Topic(name) => {
+                let topic = b.get::<Topic>(&DataKey::Topic(name.to_lowercase()));
+                if let (Some(t), Some(key)) = (topic.show(page, "the topic"), self.paged()) {
+                    let repos = b.get(&key);
+                    pages::topic(page, t, repos, now);
+                }
+            }
+            Page::StarList { login, .. } => {
+                let Some(key) = self.paged() else {
+                    return;
+                };
+                if let Some(l) = b.get(&key).show(page, "the list") {
+                    pages::star_list(page, login, l, now);
+                }
+            }
+            Page::Packages(of) => {
+                let f = b.get(&DataKey::Packages(of.clone()));
+                if let Some(list) = f.show(page, "the packages") {
+                    pages::packages(page, of, list, now);
+                }
+            }
+            Page::Package { at, version } => {
+                let f = b.get(&DataKey::Package(at.clone()));
+                if let Some(d) = f.show(page, "the package") {
+                    let delete = b.state.first_key(crate::keymap::Action::DeleteComment);
+                    pages::package(page, d, *version, &delete, now);
+                }
+            }
         }
     }
 }
@@ -337,6 +475,35 @@ fn valid_topic(name: &str) -> bool {
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '+' || c == '#')
+}
+
+#[cfg(test)]
+pub(crate) fn arb() -> impl proptest::strategy::Strategy<Value = Route> {
+    use crate::route::arb::{login, repo};
+    use proptest::prelude::*;
+    let package = (
+        login(),
+        prop::sample::select(Kind::ALL.to_vec()),
+        "[a-z0-9][a-z0-9._-]{0,11}",
+    )
+        .prop_map(|(owner, kind, name)| PackageRef { owner, kind, name });
+    let page = prop_oneof![
+        (repo(), prop::sample::select(InsightsTab::ALL.to_vec()))
+            .prop_map(|(repo, tab)| Page::Insights { repo, tab }),
+        (
+            prop::option::of("[a-z0-9+#]{1,10}"),
+            prop::sample::select(Since::ALL.to_vec())
+        )
+            .prop_map(|(language, since)| Page::Explore { language, since }),
+        "[a-z0-9][a-z0-9-]{0,15}".prop_map(Page::Topic),
+        (login(), "[a-z0-9][a-z0-9-]{0,15}")
+            .prop_map(|(login, slug)| Page::StarList { login, slug }),
+        login().prop_map(|l| Page::Packages(PackagesOf::Owner(l))),
+        repo().prop_map(|r| Page::Packages(PackagesOf::Repo(r))),
+        (package, prop::option::of(1..u64::MAX))
+            .prop_map(|(at, version)| Page::Package { at, version }),
+    ];
+    page.prop_map(Route::Site)
 }
 
 // ---- writes ---------------------------------------------------------------------------
@@ -541,101 +708,5 @@ pub fn ask_delete(state: &mut crate::state::State) -> Vec<crate::state::Cmd> {
     match state.route() {
         Some(crate::route::Route::Site(Page::StarList { .. })) => lists::ask_delete(state),
         _ => packages::ask_delete(state),
-    }
-}
-
-// ---- pages ----------------------------------------------------------------------------
-
-/// Builds page `p` from what's loaded; `retry` is the key that tries
-/// again.
-pub fn build(
-    state: &crate::state::State,
-    page: &mut crate::ui::page::Page,
-    p: &Page,
-    retry: &str,
-    cx: crate::ui::pages::PageCtx<'_>,
-) {
-    use crate::api::browse::SearchResults;
-    use crate::state::Remote;
-    use crate::ui::pages;
-    let get = |key: &DataKey| Remote::fetched(state.data.get(key), retry);
-    let now = cx.now;
-    match p {
-        Page::Insights { repo, tab } => {
-            pages::insights_nav(page, repo, *tab);
-            match tab {
-                InsightsTab::Contributors | InsightsTab::Commits => {
-                    let key = DataKey::Activity(repo.clone());
-                    let f = get(&key).pick(<Activity as Picked>::pick);
-                    if let Some(a) = f.show(page, "the commits") {
-                        if *tab == InsightsTab::Contributors {
-                            pages::contributors(page, repo, a);
-                        } else {
-                            pages::commit_activity(page, a);
-                        }
-                    }
-                }
-                InsightsTab::Traffic => {
-                    let key = DataKey::Traffic(repo.clone());
-                    let f = get(&key).pick(<Traffic as Picked>::pick);
-                    if let Some(t) = f.show(page, "the traffic") {
-                        pages::traffic(page, t);
-                    }
-                }
-                InsightsTab::Dependencies => {
-                    pages::dependents_note(page, repo);
-                    let key = DataKey::Dependencies(repo.clone());
-                    let f = get(&key).pick(<Dependencies as Picked>::pick);
-                    if let Some(d) = f.show(page, "the dependency graph") {
-                        pages::dependencies(page, d);
-                    }
-                }
-            }
-        }
-        Page::Explore { language, since } => {
-            let topics = get(&DataKey::Featured).pick(<Topics as Picked>::pick);
-            if let Some(key) = p.paged() {
-                let repos = get(&key).pick(<SearchResults as Picked>::pick);
-                pages::explore(page, language.as_deref(), *since, repos, topics, cx);
-            }
-        }
-        Page::Topic(name) => {
-            let topic = get(&DataKey::Topic(name.to_lowercase()));
-            let topic = topic.pick(<Topic as Picked>::pick);
-            if let (Some(t), Some(key)) = (topic.show(page, "the topic"), p.paged()) {
-                let repos = get(&key).pick(<SearchResults as Picked>::pick);
-                pages::topic(page, t, repos, now);
-            }
-        }
-        Page::StarList { login, .. } => {
-            let Some(key) = p.paged() else {
-                return;
-            };
-            if let Some(l) = get(&key)
-                .pick(<ListPage as Picked>::pick)
-                .show(page, "the list")
-            {
-                pages::star_list(page, login, l, now);
-            }
-        }
-        Page::Packages(of) => {
-            let f = get(&DataKey::Packages(of.clone()));
-            if let Some(list) = f
-                .pick(<PackageList as Picked>::pick)
-                .show(page, "the packages")
-            {
-                pages::packages(page, of, list, now);
-            }
-        }
-        Page::Package { at, version } => {
-            let f = get(&DataKey::Package(at.clone()));
-            if let Some(d) = f
-                .pick(<PackageDetail as Picked>::pick)
-                .show(page, "the package")
-            {
-                let delete = state.first_key(crate::keymap::Action::DeleteComment);
-                pages::package(page, d, *version, &delete, now);
-            }
-        }
     }
 }

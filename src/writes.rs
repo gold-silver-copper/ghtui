@@ -739,11 +739,11 @@ pub enum Expected {
 
 impl Expected {
     /// What's fetched again to see it.
-    fn needs(&self, route: &Route) -> Vec<DataKey> {
+    fn needs(&self, state: &State, route: &Route) -> Vec<DataKey> {
         match self {
             Expected::Subscription(w, _) => vec![DataKey::Subscription(w.clone())],
             Expected::Site(e) => e.needs(),
-            _ => crate::browse::needs(route),
+            _ => state.needs(route),
         }
     }
 
@@ -855,7 +855,7 @@ pub fn waiting(state: &State) -> Option<String> {
 /// What the live refresh fetches again for the change the page waits to
 /// see. Past [`POLLS`], it stops waiting.
 pub fn poll(state: &mut State) -> Vec<DataKey> {
-    let Some(needs) = expect_here(state).map(|e| e.what.needs(&e.route)) else {
+    let Some(needs) = expect_here(state).map(|e| e.what.needs(state, &e.route)) else {
         return Vec::new();
     };
     if let Some(e) = &mut state.writing.expect {

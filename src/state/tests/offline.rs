@@ -5,6 +5,7 @@
 use super::*;
 use crate::offline::queue::{Entry, Op, Status, Told, Write};
 use crate::offline::{Cmd as Off, Msg as OffMsg};
+use crate::route::app;
 
 fn offline(state: &mut State, msg: OffMsg) -> Vec<Cmd> {
     update(state, Msg::Offline(msg))
@@ -113,7 +114,7 @@ fn a_refused_write_is_sent_again_copied_or_thrown_away_from_its_row() {
     assert_eq!(crate::offline::header(&state), ["⚠ 1 not sent"]);
     assert!(page_text(&state).contains("GitHub said: the conversation is locked"));
     let _ = act(&mut state, Action::Offline);
-    assert_eq!(route(&state), Route::Offline);
+    assert_eq!(route(&state), Route::App(app::Offline));
     while page(&state).selected_link() != Some(&crate::ui::page::Link::Queued(3)) {
         press(&mut state, "j");
     }

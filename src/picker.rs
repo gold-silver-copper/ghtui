@@ -398,7 +398,7 @@ impl State {
     /// (opening the picker again tries again).
     fn listed(&self, key: &DataKey, what: &str) -> Result<&Data, Rows> {
         #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
-        let listed = Remote::fetched(self.data.get(key), "").text(what);
+        let listed = Remote::fetched(self.remote(key), "").text(what);
         listed.map_err(|why| vec![(item(why, ""), None)])
     }
 

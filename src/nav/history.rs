@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::api::project::ProjectsOf;
+use crate::route::{Family, app};
 
 /// A page you visited, for "jump to" suggestions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,7 +26,7 @@ impl State {
     #[must_use]
     pub(crate) fn record_visit(&mut self, route: &Route) -> Vec<Cmd> {
         // An unsplit page is recorded as the page it turns out to be.
-        if matches!(route, Route::Home | Route::Unsplit { .. }) {
+        if matches!(route, Route::App(app::Home) | Route::Unsplit { .. }) {
             return Vec::new();
         }
         let url = route.url();
@@ -197,7 +198,7 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
         }
     };
     Some(match route {
-        Route::Home => return None,
+        Route::App(p) => return p.up(state),
         Route::Repo(repo) => Route::user(&repo.owner),
         Route::Tree { repo, path, .. } if path.is_empty() => Route::Repo(repo.clone()),
         Route::Tree { repo, rev, path }
@@ -264,7 +265,7 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             repo: repo.clone(),
             closed: false,
         },
-        Route::Housekeeping(of) => of.up()?,
+        Route::Housekeeping(p) => return p.up(state),
         Route::WorkflowRun { repo, .. }
         | Route::Workflow { repo, .. }
         | Route::Job {
@@ -307,10 +308,9 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             repo: pr.repo.clone(),
             query: crate::route::OPEN.into(),
         },
-        Route::User { .. }
-        | Route::Search { .. }
-        | Route::Notifications { .. }
-        | Route::Offline => Route::Home,
+        Route::User { .. } | Route::Search { .. } | Route::Notifications { .. } => {
+            Route::App(app::Home)
+        }
         Route::Gist { owner, .. } => Route::Gists(owner.clone()?),
         Route::NewGist => Route::Gists(state.viewer.clone()?),
         Route::EditGist { owner, id } => Route::Gist {
@@ -337,14 +337,14 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             query: crate::route::OPEN.into(),
         },
         Route::Alerts { repo, .. } => Route::Advisories(Some(repo.clone())),
-        Route::Advisories(repo) => repo.clone().map_or(Route::Home, Route::Repo),
+        Route::Advisories(repo) => repo.clone().map_or(Route::App(app::Home), Route::Repo),
         Route::Projects(ProjectsOf::Owner(owner)) => Route::user(owner.login()),
         Route::Project { project, .. } => Route::Projects(ProjectsOf::Owner(project.owner.clone())),
         Route::ProjectItem { project, view, .. } => Route::Project {
             project: project.clone(),
             view: *view,
         },
-        Route::Site(page) => page.up(),
+        Route::Site(p) => return p.up(state),
     })
 }
 

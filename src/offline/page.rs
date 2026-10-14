@@ -3,6 +3,7 @@
 
 use crate::keymap::Action;
 use crate::route::Route;
+use crate::route::app;
 use crate::state::State;
 use crate::theme::Bg;
 use crate::ui::page::{Frame, Link, Page, Role, Seg};
@@ -85,7 +86,7 @@ pub fn build(state: &State, page: &mut Page, now: u64) {
 
 /// The writes queued on `route`'s page, in a box at its top.
 pub fn queued_here(state: &State, route: &Route, page: &mut Page, now: u64) {
-    if *route == Route::Offline {
+    if *route == Route::App(app::Offline) {
         return;
     }
     let url = route.url();

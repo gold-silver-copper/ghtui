@@ -2,6 +2,7 @@
 //! the status bar.
 
 use super::*;
+use crate::route::app;
 
 /// Something you can do here.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -379,7 +380,7 @@ impl State {
             save.unavailable = crate::home::unavailable(self, Action::SaveSection);
             out.push(save);
         }
-        if *route == Route::Home {
+        if *route == Route::App(app::Home) {
             let title = match self.section_here() {
                 Some((_, s)) => format!("“{}”", s.title),
                 None => "the section".to_owned(),

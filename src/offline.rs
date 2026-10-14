@@ -19,6 +19,7 @@ use crate::api::ApiError;
 use crate::api::change::Change;
 use crate::api::model::PrRef;
 use crate::keymap::Action;
+use crate::route::app;
 use crate::route::{Dest, Route};
 use crate::state::{Cmd as Do, Overlay, Screen, State, Timer};
 use crate::ui::page::Link;
@@ -268,7 +269,7 @@ pub fn claims(state: &State, action: Action) -> bool {
         // Home section's.
         Action::UndoDelete => state.offline.discarded.as_ref().is_some_and(|e| {
             let here = state.route();
-            here == Some(&Route::Offline) || here.is_some_and(|r| r.url() == e.page)
+            here == Some(&Route::App(app::Offline)) || here.is_some_and(|r| r.url() == e.page)
         }),
         Action::Rerun | Action::Delete | Action::Copy => selected(state).is_some(),
         _ => false,
@@ -278,11 +279,11 @@ pub fn claims(state: &State, action: Action) -> bool {
 #[must_use]
 pub fn act(state: &mut State, action: Action) -> Vec<Do> {
     match action {
-        Action::Offline if state.route() == Some(&Route::Offline) => {
+        Action::Offline if state.route() == Some(&Route::App(app::Offline)) => {
             state.info("This is the Offline page");
             Vec::new()
         }
-        Action::Offline => state.push(Route::Offline),
+        Action::Offline => state.push(Route::App(app::Offline)),
         Action::KeepOffline => keep(state),
         // Asked now, besides fetching again.
         Action::Refresh => {
@@ -417,7 +418,7 @@ pub fn doables(state: &State, out: &mut Vec<crate::nav::Doable>) {
         out.push(row(Action::KeepOffline, label));
     }
     // First of the menu's Go rows, which follow.
-    if state.route() != Some(&Route::Offline) {
+    if state.route() != Some(&Route::App(app::Offline)) {
         out.push(Doable {
             section: "Go",
             ..row(

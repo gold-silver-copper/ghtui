@@ -1,4 +1,11 @@
 //! Routes: the pages ghtui shows, addressed by their GitHub URLs.
+//!
+//! Pages come in families, each one enum in its own file that says, in
+//! one place, what each of its pages is: its URL and title, the page above
+//! it, what it needs fetched, and how it's built ([`Family`]). [`Route`]
+//! is one of them, and asks the family.
+
+pub mod app;
 
 use crate::api::browse::{DiscussionsOf, RepoSort, SearchKind};
 use crate::api::model::{PrRef, RepoId};
@@ -9,14 +16,19 @@ use crate::ui::pages::url as links;
 use crate::ui::pages::{PrTab, ProfileTab};
 use crate::ui::text::short_sha;
 
+use crate::browse::{Build, Width};
+use crate::chrome::{Chrome, Section};
+use crate::data::DataKey;
 use crate::diff_screen::DiffOf;
+use crate::state::State;
 
 /// The default filter of a repository's issue and pull request lists.
 pub const OPEN: &str = "is:open";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Route {
-    Home,
+    /// Home, and the Offline page.
+    App(app::Page),
     /// The Code tab at the repository root.
     Repo(RepoId),
     Tree {
@@ -257,10 +269,6 @@ pub enum Route {
     /// One of housekeeping's forms: a label, a milestone, a fork, a new
     /// repository, a file.
     Housekeeping(crate::housekeeping::FormOf),
-    // ---- offline ([`crate::offline`]) ----
-    /// The writes queued for GitHub and the repositories kept offline:
-    /// ghtui's own page, with none on GitHub.
-    Offline,
 }
 
 /// The pages at a revision.
@@ -337,7 +345,78 @@ impl From<Target> for Dest {
     }
 }
 
+/// What a family of pages says about each of its pages.
+pub trait Family {
+    fn url(&self) -> String;
+    /// The short name shown in the top bar.
+    fn title(&self) -> String;
+    /// The repository the page belongs to.
+    fn repo(&self) -> Option<&RepoId> {
+        None
+    }
+    /// The page above this one, like GitHub's breadcrumbs.
+    fn up(&self, state: &State) -> Option<Route>;
+    /// What the page needs fetched: everything [`Family::build`] reads.
+    fn needs(&self, state: &State) -> Vec<DataKey>;
+    /// What the page reads besides its needs, already fetched for it by
+    /// something else.
+    fn also_reads(&self, _key: &DataKey) -> bool {
+        false
+    }
+    /// The list the page loads more of.
+    fn paged(&self) -> Option<DataKey> {
+        None
+    }
+    /// How wide the page gets.
+    fn width(&self) -> Width {
+        Width::Lists
+    }
+    /// Whether the page opens with its first row selected: lists do;
+    /// reading pages start with nothing selected.
+    fn starts_on_row(&self) -> bool {
+        true
+    }
+    /// The data the page shows that git can answer, whose source it says.
+    fn shown_source(&self) -> Option<DataKey> {
+        None
+    }
+    /// A list's filter.
+    fn query(&self) -> Option<&str> {
+        None
+    }
+    /// The same list with another filter.
+    fn with_query(&self, _query: String) -> Option<Route> {
+        None
+    }
+    /// Which of its repository's tabs the page is under.
+    fn section(&self) -> Section {
+        Section::Code
+    }
+    /// The chrome around the page: its crumbs, and its tabs. A
+    /// repository's page is under its repository's tabs.
+    fn chrome(&self, state: &State, c: &mut Chrome) {
+        if let Some(repo) = self.repo() {
+            state.repo_chrome(repo, self.section(), c);
+        }
+    }
+    /// Builds the page from what's loaded.
+    fn build(&self, b: Build<'_>, page: &mut crate::ui::page::Page);
+}
+
 impl Route {
+    /// What the page reads besides its needs, already fetched for it by
+    /// something else.
+    pub fn also_reads(&self, key: &DataKey) -> bool {
+        match self {
+            // The lines its threads are on, read from the clone.
+            Route::Pr { pr, .. } => matches!(key, DataKey::Lines(repo, ..) if *repo == pr.repo),
+            Route::App(p) => p.also_reads(key),
+            Route::Site(p) => p.also_reads(key),
+            Route::Housekeeping(p) => p.also_reads(key),
+            _ => false,
+        }
+    }
+
     /// A pull request's conversation.
     pub fn pr(pr: PrRef) -> Route {
         Route::Pr {
@@ -409,8 +488,7 @@ impl Route {
 
     pub fn url(&self) -> String {
         match self {
-            // The Offline page has none on GitHub: its link is Home's.
-            Route::Home | Route::Offline => format!("{}/", links::base()),
+            Route::App(p) => p.url(),
             Route::Repo(repo) => links::repo(repo),
             Route::Tree { repo, rev, path } => links::tree(repo, rev, path),
             Route::Blob {
@@ -635,7 +713,7 @@ impl Route {
     /// The short name shown in the top bar.
     pub fn title(&self) -> String {
         match self {
-            Route::Home => "Home".to_owned(),
+            Route::App(p) => p.title(),
             Route::Repo(repo) => repo.to_string(),
             Route::Tree { repo, path, .. } if path.is_empty() => repo.to_string(),
             Route::Tree { repo, path, .. } | Route::Blob { repo, path, .. } => {
@@ -720,7 +798,6 @@ impl Route {
             ),
             Route::Labels(repo) => format!("{repo} · Labels"),
             Route::Housekeeping(of) => of.title(),
-            Route::Offline => "Offline".to_owned(),
         }
     }
 
@@ -783,8 +860,7 @@ impl Route {
             Route::Projects(ProjectsOf::Owner(_))
             | Route::Project { .. }
             | Route::ProjectItem { .. }
-            | Route::Home
-            | Route::Offline
+            | Route::App(_)
             | Route::User { .. }
             | Route::Search { .. }
             | Route::Notifications { .. }
@@ -925,6 +1001,35 @@ fn has_host_prefix(s: &str) -> bool {
         .is_some_and(|(host, _)| crate::host::current().serves(host))
 }
 
+/// A URL being parsed: its path's segments, decoded, and its query and
+/// fragment.
+pub struct Url<'a> {
+    pub segments: &'a [&'a str],
+    url: &'a url::Url,
+}
+
+impl Url<'_> {
+    /// A query parameter's value.
+    pub fn param(&self, name: &str) -> Option<String> {
+        param(self.url, name)
+    }
+
+    pub fn fragment(&self) -> Option<&str> {
+        self.url.fragment()
+    }
+}
+
+/// What a family makes of the path after `/<owner>/<repo>`.
+type RepoParse = fn(&RepoId, &[&str], &Url<'_>) -> Option<Target>;
+
+/// What the families make of a URL's path, asked in this order (after
+/// [`crate::site::parse`]); the first to know the page says.
+const TOP: &[fn(&Url<'_>) -> Option<Target>] = &[app::parse, crate::housekeeping::parse, top];
+
+/// What they make of the path after `/<owner>/<repo>`, asked in this
+/// order: housekeeping's forms (`milestones/new`) before the milestones.
+const REPO: &[RepoParse] = &[crate::housekeeping::parse_repo, repo_page];
+
 /// What a URL opens in ghtui, or `None` for the browser.
 fn parse(parsed: &url::Url) -> Option<Target> {
     if !matches!(parsed.scheme(), "https" | "http") {
@@ -945,7 +1050,41 @@ fn parse(parsed: &url::Url) -> Option<Target> {
     {
         return gist(segments).map(Target::Page);
     }
-    let param = |name: &str| param(parsed, name);
+    let segments: Vec<String> = parsed
+        .path_segments()
+        .map(|s| s.filter(|p| !p.is_empty()).map(decode).collect())
+        .unwrap_or_default();
+    let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
+    let url = Url {
+        segments: &segments,
+        url: parsed,
+    };
+    if let Some(page) = crate::site::parse(&segments, |name| url.param(name)) {
+        return Some(Target::Page(Route::Site(page)));
+    }
+    // Names that can't be GitHub's are pages GitHub doesn't have.
+    if let ["stars" | "orgs" | "users", login, ..] = segments.as_slice()
+        && !valid_login(login)
+    {
+        return None;
+    }
+    if let Some(target) = TOP.iter().find_map(|parse| parse(&url)) {
+        return Some(target);
+    }
+    // GitHub's own pages: settings, apps, the marketplace…
+    let [owner, name, rest @ ..] = segments.as_slice() else {
+        return None;
+    };
+    if is_reserved(owner) {
+        return None;
+    }
+    let repo = RepoId::parse(&format!("{owner}/{name}"))?;
+    REPO.iter().find_map(|parse| parse(&repo, rest, &url))
+}
+
+/// The pages at the top of GitHub's paths.
+fn top(url: &Url<'_>) -> Option<Target> {
+    let param = |name: &str| url.param(name);
     let (query, kind, tab) = (param("q"), param("type"), param("tab"));
     let repos = || {
         ProfileTab::Repositories(match param("sort").as_deref() {
@@ -954,16 +1093,7 @@ fn parse(parsed: &url::Url) -> Option<Target> {
             _ => RepoSort::Updated,
         })
     };
-    let segments: Vec<String> = parsed
-        .path_segments()
-        .map(|s| s.filter(|p| !p.is_empty()).map(decode).collect())
-        .unwrap_or_default();
-    let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
-    if let Some(page) = crate::site::parse(&segments, param) {
-        return Some(Target::Page(Route::Site(page)));
-    }
-    let route = match segments.as_slice() {
-        [] | ["dashboard"] => Route::Home,
+    let route = match url.segments {
         ["search"] => Route::Search {
             kind: match kind.as_deref().map(str::to_ascii_lowercase).as_deref() {
                 None | Some("repositories") => SearchKind::Repos,
@@ -1011,15 +1141,13 @@ fn parse(parsed: &url::Url) -> Option<Target> {
                 query: query.unwrap_or_else(|| format!("is:open is:{is} {whose} archived:false")),
             }
         }
-        // Names that can't be GitHub's are pages GitHub doesn't have.
-        ["stars" | "orgs" | "users", login, ..] if !valid_login(login) => return None,
         [kind @ ("orgs" | "users"), login, "projects", rest @ ..] => {
             let owner = if *kind == "orgs" {
                 ProjectOwner::Org((*login).to_owned())
             } else {
                 ProjectOwner::User((*login).to_owned())
             };
-            project(owner, rest, parsed)?
+            project(owner, rest, url)?
         }
         ["stars", login] => Route::User {
             login: (*login).to_owned(),
@@ -1075,10 +1203,6 @@ fn parse(parsed: &url::Url) -> Option<Target> {
                 Some(_) => return None,
             },
         },
-        ["new"] => Route::Housekeeping(crate::housekeeping::FormOf::NewRepo),
-        // GitHub's own pages: settings, apps, the marketplace…
-        [first, ..] if RESERVED.contains(first) => return None,
-        [o, r, rest @ ..] => return repo_page(RepoId::parse(&format!("{o}/{r}"))?, rest, parsed),
         _ => return None,
     };
     Some(Target::Page(route))
@@ -1135,8 +1259,9 @@ fn rev_page(repo: RepoId, view: &str, rest: &[&str], fragment: Option<&str>) -> 
 }
 
 /// A repository's page, from what follows `/<owner>/<repo>` in its URL.
-fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
-    let param = |name: &str| param(url, name);
+fn repo_page(repo: &RepoId, rest: &[&str], url: &Url<'_>) -> Option<Target> {
+    let repo = repo.clone();
+    let param = |name: &str| url.param(name);
     let fragment = url.fragment();
     let route = match rest {
         [] => Route::Repo(repo),
@@ -1188,10 +1313,6 @@ fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
             repo,
             tag: tag.join("/"),
         },
-        // Housekeeping's forms: a fork, a milestone, a file.
-        rest if crate::housekeeping::FormOf::parse(&repo, rest).is_some() => {
-            Route::Housekeeping(crate::housekeeping::FormOf::parse(&repo, rest)?)
-        }
         ["wiki", "_new"] => Route::WikiEdit { repo, page: None },
         ["wiki", page, "_edit"] if !page.contains(char::is_control) => Route::WikiEdit {
             repo,
@@ -1490,7 +1611,7 @@ fn discussions(of: DiscussionsOf, rest: &[&str]) -> Option<Route> {
 /// An owner's projects page, from what follows `/projects` in its URL: the
 /// list, a project, one of its views, or an item in a view's side pane.
 /// Its settings, insights and workflows are on GitHub.
-fn project(owner: ProjectOwner, rest: &[&str], url: &url::Url) -> Option<Route> {
+fn project(owner: ProjectOwner, rest: &[&str], url: &Url<'_>) -> Option<Route> {
     let [number, rest @ ..] = rest else {
         return Some(Route::Projects(ProjectsOf::Owner(owner)));
     };
@@ -1503,7 +1624,7 @@ fn project(owner: ProjectOwner, rest: &[&str], url: &url::Url) -> Option<Route> 
         ["views", n] => Some(n.parse().ok()?),
         _ => return None,
     };
-    Some(match param(url, "itemId") {
+    Some(match url.param("itemId") {
         Some(item) => Route::ProjectItem {
             project,
             view,
@@ -1722,6 +1843,58 @@ fn valid_slug(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
+/// Strategies for the parts of routes, for the families' own.
+#[cfg(test)]
+pub(crate) mod arb {
+    use crate::api::model::RepoId;
+    use proptest::prelude::*;
+
+    pub(crate) fn segment() -> impl Strategy<Value = String> {
+        "[A-Za-z0-9][A-Za-z0-9_.-]{0,15}".prop_filter("not . or .. or .git", |s| {
+            s != "." && s != ".." && !s.ends_with(".git")
+        })
+    }
+
+    /// A user's or organization's name, as GitHub allows them.
+    pub(crate) fn login() -> impl Strategy<Value = String> {
+        "[A-Za-z0-9][A-Za-z0-9-]{0,15}"
+    }
+
+    pub(crate) fn repo() -> impl Strategy<Value = RepoId> {
+        (segment(), segment()).prop_map(|(o, r)| RepoId::new(o, r))
+    }
+
+    /// Any text a path segment can hold, spaces and non-ASCII included
+    /// (git has no `.` or `..` segments).
+    pub(crate) fn path() -> impl Strategy<Value = String> {
+        let part = "[^/\\x00-\\x1f]{1,12}".prop_filter("not . or ..", |p| p != "." && p != "..");
+        prop::collection::vec(part, 0..4).prop_map(|parts| parts.join("/"))
+    }
+
+    /// Filter words (an `is:` word would be dropped by design).
+    pub(crate) fn query() -> impl Strategy<Value = String> {
+        prop::collection::vec("[a-z0-9:#&+%\"]{1,8}", 1..4)
+            .prop_map(|words| words.join(" "))
+            .prop_filter("no is: words", |q| {
+                !q.split(' ').any(|w| w.starts_with("is:"))
+            })
+    }
+
+    /// A valid git ref name, of one to three segments (`feature/x`), with
+    /// characters a URL must escape (`fix#1`, `50%`, `é`).
+    pub(crate) fn rev() -> impl Strategy<Value = String> + Clone {
+        prop::collection::vec("[A-Za-z0-9_#%+@&;é-][A-Za-z0-9._#%+@&;é-]{0,7}", 1..=3)
+            .prop_map(|s| s.join("/"))
+            .prop_filter("valid ref name", |r| {
+                // git's rules, written apart from `valid_rev` so the round
+                // trip catches it rejecting a legal name.
+                !r.contains("..")
+                    && !r.ends_with('.')
+                    && !r.split('/').any(|c| c.ends_with(".lock"))
+            })
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -1877,7 +2050,7 @@ pub(crate) mod tests {
     #[test]
     fn parses_github_urls() {
         let repo = RepoId::new("o", "r");
-        assert_eq!(page("https://github.com/"), Route::Home);
+        assert_eq!(page("https://github.com/"), Route::App(app::Home));
         assert_eq!(page("https://github.com/octocat"), Route::user("octocat"));
         assert_eq!(page("https://github.com/o/r"), Route::Repo(repo.clone()));
         assert_eq!(
@@ -2208,14 +2381,17 @@ pub(crate) mod tests {
     pub(crate) fn variant(route: &Route) -> String {
         // An unsplit page opens its view's page.
         let route = route.split(None).unwrap_or_else(|| route.clone());
-        // One of `crate::site`'s pages by its own name.
         let named = format!("{route:?}");
-        let named = named.strip_prefix("Site(").unwrap_or(&named);
-        named
-            .split(|c: char| !c.is_alphanumeric())
-            .next()
-            .unwrap_or_default()
-            .to_owned()
+        let word = |s: &str| {
+            let word = s.split(|c: char| !c.is_alphanumeric()).next();
+            word.unwrap_or_default().to_owned()
+        };
+        // A family's page by its own name.
+        let family = word(&named);
+        match named.strip_prefix(&format!("{family}(")) {
+            Some(page) if ["App", "Site"].contains(&family.as_str()) => word(page),
+            _ => family,
+        }
     }
 
     /// Whether `target` is what the corpus says (`todo` pages aren't built
@@ -2269,7 +2445,7 @@ pub(crate) mod tests {
     fn routes_round_trip_through_urls() {
         let repo = RepoId::new("o", "r");
         for route in [
-            Route::Home,
+            Route::App(app::Home),
             Route::Repo(repo.clone()),
             Route::Tree {
                 repo: repo.clone(),
@@ -2652,67 +2828,8 @@ pub(crate) mod tests {
 
     mod props {
         use super::*;
+        use crate::route::arb::*;
         use proptest::prelude::*;
-
-        fn segment() -> impl Strategy<Value = String> {
-            "[A-Za-z0-9][A-Za-z0-9_.-]{0,15}".prop_filter("not . or .. or .git", |s| {
-                s != "." && s != ".." && !s.ends_with(".git")
-            })
-        }
-
-        /// A user's or organization's name, as GitHub allows them.
-        fn login() -> impl Strategy<Value = String> {
-            "[A-Za-z0-9][A-Za-z0-9-]{0,15}"
-        }
-
-        fn repo() -> impl Strategy<Value = RepoId> {
-            (segment(), segment()).prop_map(|(o, r)| RepoId::new(o, r))
-        }
-
-        /// Any text a path segment can hold, spaces and non-ASCII included
-        /// (git has no `.` or `..` segments).
-        fn path() -> impl Strategy<Value = String> {
-            let part =
-                "[^/\\x00-\\x1f]{1,12}".prop_filter("not . or ..", |p| p != "." && p != "..");
-            prop::collection::vec(part, 0..4).prop_map(|parts| parts.join("/"))
-        }
-
-        /// Filter words (an `is:` word would be dropped by design).
-        fn query() -> impl Strategy<Value = String> {
-            prop::collection::vec("[a-z0-9:#&+%\"]{1,8}", 1..4)
-                .prop_map(|words| words.join(" "))
-                .prop_filter("no is: words", |q| {
-                    !q.split(' ').any(|w| w.starts_with("is:"))
-                })
-        }
-
-        fn site() -> impl Strategy<Value = crate::site::Page> {
-            use crate::api::explore::Since;
-            use crate::api::packages::{Kind, PackageRef, PackagesOf};
-            use crate::site::{InsightsTab, Page};
-            let package = (
-                login(),
-                prop::sample::select(Kind::ALL.to_vec()),
-                "[a-z0-9][a-z0-9._-]{0,11}",
-            )
-                .prop_map(|(owner, kind, name)| PackageRef { owner, kind, name });
-            prop_oneof![
-                (repo(), prop::sample::select(InsightsTab::ALL.to_vec()))
-                    .prop_map(|(repo, tab)| Page::Insights { repo, tab }),
-                (
-                    prop::option::of("[a-z0-9+#]{1,10}"),
-                    prop::sample::select(Since::ALL.to_vec())
-                )
-                    .prop_map(|(language, since)| Page::Explore { language, since }),
-                "[a-z0-9][a-z0-9-]{0,15}".prop_map(Page::Topic),
-                (login(), "[a-z0-9][a-z0-9-]{0,15}")
-                    .prop_map(|(login, slug)| Page::StarList { login, slug }),
-                login().prop_map(|l| Page::Packages(PackagesOf::Owner(l))),
-                repo().prop_map(|r| Page::Packages(PackagesOf::Repo(r))),
-                (package, prop::option::of(1..u64::MAX))
-                    .prop_map(|(at, version)| Page::Package { at, version }),
-            ]
-        }
 
         fn discussions_of() -> impl Strategy<Value = DiscussionsOf> {
             prop_oneof![
@@ -2722,20 +2839,9 @@ pub(crate) mod tests {
         }
 
         fn route() -> impl Strategy<Value = Route> {
-            // A valid git ref name, of one to three segments (`feature/x`),
-            // with characters a URL must escape (`fix#1`, `50%`, `é`).
-            let rev =
-                prop::collection::vec("[A-Za-z0-9_#%+@&;é-][A-Za-z0-9._#%+@&;é-]{0,7}", 1..=3)
-                    .prop_map(|s| s.join("/"))
-                    .prop_filter("valid ref name", |r| {
-                        // git's rules, written apart from `valid_rev` so
-                        // the round trip catches it rejecting a legal name.
-                        !r.contains("..")
-                            && !r.ends_with('.')
-                            && !r.split('/').any(|c| c.ends_with(".lock"))
-                    });
+            let rev = rev();
             prop_oneof![
-                Just(Route::Home),
+                app::arb(),
                 prop_oneof![Just(String::new()), query()]
                     .prop_map(|query| Route::Notifications { query }),
                 (repo(), query()).prop_map(|(repo, query)| Route::Actions { repo, query }),
@@ -2788,7 +2894,7 @@ pub(crate) mod tests {
                     })
                     .prop_map(|(repo, page)| Route::Wiki { repo, page }),
                 prop::option::of(repo()).prop_map(Route::Advisories),
-                site().prop_map(Route::Site),
+                crate::site::arb(),
                 (
                     repo(),
                     prop::sample::select(AlertKind::ALL.to_vec()),

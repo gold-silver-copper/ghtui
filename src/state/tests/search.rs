@@ -1,6 +1,7 @@
 //! The palette, the search box and pickers.
 
 use super::*;
+use crate::route::app;
 
 #[test]
 fn palette_goes_places_and_runs_actions() {
@@ -350,7 +351,7 @@ fn search_box_jumps_searches_and_loads_more() {
 fn visited_pages_come_back_as_suggestions() {
     let mut state = with_repo();
     let _ = state.push(Route::user("octocat"));
-    let _ = state.push(Route::Home);
+    let _ = state.push(Route::App(app::Home));
     press(&mut state, "g/");
     let sb = overlay!(state, Search);
     let labels: Vec<String> = state
@@ -370,7 +371,7 @@ fn visited_pages_come_back_as_suggestions() {
     assert_eq!(route(&state), Route::user("octocat"));
     // Its letters scattered in a visited page's title aren't that page:
     // ↵ searches for what's typed.
-    let _ = state.push(Route::Home);
+    let _ = state.push(Route::App(app::Home));
     press(&mut state, "g/occat<Enter>");
     assert!(route(&state).search().is_some(), "{:?}", route(&state));
 }

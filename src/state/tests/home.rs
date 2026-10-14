@@ -1,11 +1,12 @@
 //! Home.
 
 use super::*;
+use crate::route::app;
 
 #[test]
 fn home_selects_the_first_row_and_opens_it() {
     let mut state = with_prs(3);
-    assert_eq!(route(&state), Route::Home);
+    assert_eq!(route(&state), Route::App(app::Home));
     assert!(
         selected_text(&state).contains("PR 1"),
         "a fresh page selects its first row"
@@ -36,7 +37,7 @@ fn home_selects_the_first_row_and_opens_it() {
     );
 
     press(&mut state, "<C-o>");
-    assert_eq!(route(&state), Route::Home);
+    assert_eq!(route(&state), Route::App(app::Home));
     assert!(
         selected_text(&state).contains("PR 1"),
         "the selection survives"

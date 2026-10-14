@@ -2,6 +2,7 @@
 //! results arrive as [`Msg`]s; [`update`] mutates [`State`] and returns
 //! [`Cmd`]s for the runtime to execute in the background.
 
+use crate::route::app;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -529,7 +530,10 @@ pub struct State {
 impl State {
     pub fn new(theme: Theme, icons: Icons, keymap: Keymap, size: (u16, u16)) -> Self {
         let mut state = Self {
-            screens: Screens::new(Screen::Page(Box::new(PageScreen::new(Route::Home, None)))),
+            screens: Screens::new(Screen::Page(Box::new(PageScreen::new(
+                Route::App(app::Home),
+                None,
+            )))),
             forward: Vec::new(),
             before: Vec::new(),
             after: Vec::new(),

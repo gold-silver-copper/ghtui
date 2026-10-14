@@ -613,7 +613,7 @@ fn sidebar<'a>(state: &'a State, c: &Choosing) -> Result<&'a Sidebar, Rows> {
         return Err(Vec::new());
     };
     #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
-    let listed = Remote::fetched(state.data.get(&key), "")
+    let listed = Remote::fetched(state.remote(&key), "")
         .pick(<Sidebar as crate::data::Picked>::pick)
         .text("the sidebar");
     listed.map_err(|why| vec![row(why, "", None)])

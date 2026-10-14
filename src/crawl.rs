@@ -26,7 +26,6 @@ use crate::store::Store;
 use crate::theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
 use crate::ui::Icons;
 
-use crate::browse::needs;
 use crate::data::DataKey;
 use crate::diff_job::GitContext;
 use crate::keymap::Keymap;
@@ -102,7 +101,7 @@ fn is_github(url: &str) -> bool {
 /// Fetches what `route` needs into `state`, from git where it can, as
 /// the app does; false if the page couldn't load.
 async fn load(gh: &GitHub, local: &Arc<Local>, state: &mut State, route: &Route) -> bool {
-    for key in needs(route) {
+    for key in state.needs(route) {
         match crate::data::load::load(gh, local, &key, None, None).await.0 {
             Ok(data) => {
                 let remote: &mut Remote<_> = state.data.entry(key).or_default();
