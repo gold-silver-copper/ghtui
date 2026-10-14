@@ -1134,6 +1134,28 @@ variant in its family's file, its arms in that file's methods, and, if
 it shows new data, a `DataKey` with its fetch; a new family is one more
 file, a `Route` variant and its place in the order URLs are read.
 
+**A write is a job.** Everything ghtui writes, to GitHub or to git in
+your clone, is a job (`src/work.rs`): a struct that says how it runs and
+what its answer does, listed once in `jobs!`. A change to an issue, a pull
+request, a discussion, a run, a notification, a project or a repository's
+settings is one job, a `Change` (`act::Changing`), and what the offline
+queue keeps is made of them. What an action does where you are is planned
+once by the feature that owns it, as a step (`act::Step`: send it, ask
+first, choose in a picker, or write in the composer), and the key, the
+menu and the palette all ask that plan, so they can't disagree. After a
+write, the page follows GitHub until it shows it (`src/follow.rs`): the
+feature says what the page should show (an `Expectation`), and one place
+polls, says it's waiting and gives up. Forms (a new issue or pull
+request, a release, a gist, a wiki page, housekeeping's, running a
+workflow) are kept in one map by their page, with what was sent from them
+(`src/forms.rs`), and text is typed in one composer (`src/compose.rs`).
+What each feature adds is one table (`src/features.rs`): the actions it
+owns or takes on its pages, what it does with them, the menu's rows it
+offers, and what it follows as data arrives. Adding a write is a job
+(a struct, its `impl Job` and its line in `jobs!`), an `Expectation` if
+the page shows it, and, for a new key, an action in its feature's
+`owns` with an arm in its plan.
+
 **Colors from one seed.** Light and dark schemes are generated with
 Material 3's tonal palettes. Every foreground and background pair the UI
 uses is tested for contrast in both schemes, in truecolor and 256 colors.
@@ -1166,7 +1188,10 @@ The tests come at GitHub's data from several sides:
 - git is the oracle for diffs, on real repositories over `file://`;
 - behaviour is tested through `update` (`src/state/tests`): keys
   pressed and replies delivered, then the commands sent and what the
-  page or status line says;
+  page or status line says. A test opens a page with the fixtures'
+  data, presses keys (`press`), hands in data (`fetched`) and a job's
+  answer (`done`), and checks what was sent (`sent`, `asked`) and said
+  (`says`, `warns`); `src/state/tests/watch.rs` is a short example;
 - every screen the fixtures reach is drawn in light and dark at a few
   sizes, tiny ones among them, to check nothing panics and every color
   pair drawn is declared;
