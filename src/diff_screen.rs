@@ -275,11 +275,14 @@ impl DiffInputs {
         }
     }
 
-    /// Marks thread `id` resolved or not.
+    /// Marks thread `id` resolved or not. GitHub says only whether you may
+    /// do what applies now; who may resolve a thread may unresolve it.
     pub fn set_resolved(&mut self, id: &NodeId, resolved: bool) {
         let mut threads = self.threads.data.iter_mut().flatten();
         if let Some(t) = threads.find(|t| t.id == *id) {
+            let may = t.can_resolve || t.can_unresolve;
             t.resolved = resolved;
+            (t.can_resolve, t.can_unresolve) = (may, may);
         }
     }
 

@@ -92,6 +92,14 @@ impl Family for Page {
         }
     }
 
+    /// What GitHub has of the tag a release's form chose.
+    fn also_reads(&self, key: &DataKey) -> bool {
+        match (self, key) {
+            (NewRelease(repo) | EditRelease { repo, .. }, DataKey::TagLook(of, _)) => of == repo,
+            _ => false,
+        }
+    }
+
     fn paged(&self) -> Option<DataKey> {
         match self {
             Releases(repo) => Some(DataKey::Releases(repo.clone())),

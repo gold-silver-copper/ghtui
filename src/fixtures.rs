@@ -279,8 +279,9 @@ pub(crate) fn thread(id: &str, line: Option<u32>, resolved: bool, outdated: bool
         resolved,
         file_level: false,
         can_reply: true,
-        can_resolve: true,
-        can_unresolve: true,
+        // As GitHub says: only what applies now.
+        can_resolve: !resolved,
+        can_unresolve: resolved,
         comments: vec![ReviewComment {
             id: NodeId::new(format!("{id}-c")),
             author: "alice".into(),

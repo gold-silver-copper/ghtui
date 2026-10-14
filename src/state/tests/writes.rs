@@ -57,9 +57,12 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
         release: None,
     };
     fixtures::fetched(&mut s, look, Data::TagLook(Box::new(new_tag)));
+    assert!(
+        page_text(&s).contains("v9.0 is a new tag"),
+        "the form behind the composer says what GitHub found"
+    );
     write(&mut s, "Nine\n\nWhat changed.");
     press(&mut s, "<Esc>");
-    assert!(page_text(&s).contains("v9.0 is a new tag"));
 
     press(&mut s, ",s");
     assert_eq!(overlay!(s, Ask).choices.len(), 2, "publish or save a draft");

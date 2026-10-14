@@ -48,6 +48,14 @@ fn threads_show_navigate_and_resolve() {
     fixtures::done(&mut s, job, Err(fixtures::failure("down")));
     assert!(!s.diffs[&DiffOf::Pr(pr.clone())].inputs().thread_list()[1].resolved);
     warns(&s, "");
+
+    // Resolved, it can be unresolved straight away.
+    press(&mut s, "gg");
+    act(&mut s, Action::NextThread);
+    let job = fixtures::sent::<crate::review::Resolve>(&act(&mut s, Action::ResolveThread));
+    fixtures::done(&mut s, job, Ok(()));
+    let open = &s.diffs[&DiffOf::Pr(pr.clone())].inputs().thread_list()[1];
+    assert!(open.resolved && open.can_unresolve);
 }
 
 #[test]

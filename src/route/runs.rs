@@ -159,6 +159,16 @@ impl Family for Page {
         std::iter::once(K::Repo(repo.clone())).chain(own).collect()
     }
 
+    /// The workflow's file on the branch the form chose.
+    fn also_reads(&self, key: &DataKey) -> bool {
+        match (self, key) {
+            (Dispatch { repo, file }, DataKey::Blob(of, _, path)) => {
+                of == repo && *path == crate::workflows::workflow_path(file)
+            }
+            _ => false,
+        }
+    }
+
     fn paged(&self) -> Option<DataKey> {
         Some(match self {
             Actions { repo, query } => DataKey::Runs(repo.clone(), query.clone()),

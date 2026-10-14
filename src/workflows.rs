@@ -278,7 +278,7 @@ fn form_route((repo, file): (RepoId, String)) -> Route {
 }
 
 /// The workflow's path in its repository.
-fn workflow_path(file: &str) -> String {
+pub(crate) fn workflow_path(file: &str) -> String {
     format!(".github/workflows/{file}")
 }
 
