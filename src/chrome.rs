@@ -11,15 +11,17 @@ use crate::api::project::{self, Project, ProjectOwner, ProjectRef, ProjectsOf};
 use crate::git::Oid;
 use crate::route::app;
 use crate::route::code;
+use crate::route::discussions;
 use crate::route::issues;
 use crate::route::people;
 use crate::route::pulls;
+use crate::route::wiki;
 use crate::ui::chrome::{Crumb, PageTab};
 use crate::ui::pages::{PrTab, ProfileTab};
 use ratatui::layout::Rect;
 
 use crate::browse::paged;
-use crate::data::{Data, DataKey};
+use crate::data::DataKey;
 use crate::diff_screen::DiffOf;
 use crate::route::{Family, OPEN, Route, Target};
 use crate::state::{Screen, State};
@@ -150,6 +152,9 @@ impl State {
         match route {
             Route::App(p) => p.chrome(self, c),
             Route::Code(p) => p.chrome(self, c),
+            Route::Wiki(p) => p.chrome(self, c),
+            Route::Discussions(p) => p.chrome(self, c),
+            Route::Gists(p) => p.chrome(self, c),
             Route::People(p) => p.chrome(self, c),
             Route::Releases(p) => p.chrome(self, c),
             Route::Runs(p) => p.chrome(self, c),
@@ -157,38 +162,10 @@ impl State {
             Route::Pulls(p) => p.chrome(self, c),
             Route::Housekeeping(p) => p.chrome(self, c),
             Route::Notifications { .. } => c.crumb("Notifications", None),
-            Route::Gist { owner, id } => {
-                // Its owner, from the gist when the URL doesn't say.
-                let gist = match self.get(&DataKey::Gist(id.clone())) {
-                    Some(Data::Gist(g)) => g.owner.clone(),
-                    _ => None,
-                };
-                let owner = owner.clone().or(gist);
-                if let Some(owner) = owner {
-                    c.crumb(&owner, Some(Target::Page(Route::user(&owner))));
-                    c.crumb("Gists", Some(Target::Page(Route::Gists(owner.clone()))));
-                }
-                c.crumb("Gist", None);
-            }
             Route::Advisories(None) => c.crumb("Advisories", None),
             Route::Advisory { repo: None, ghsa } => {
                 c.crumb("Advisories", Some(Target::Page(Route::Advisories(None))));
                 c.crumb(ghsa, None);
-            }
-            Route::Gists(login) => {
-                c.crumb(login, Some(Target::Page(Route::user(login))));
-                c.crumb("Gists", None);
-            }
-            Route::Discussions {
-                of: DiscussionsOf::Org(org),
-                ..
-            }
-            | Route::Discussion {
-                of: DiscussionsOf::Org(org),
-                ..
-            } => {
-                c.crumb(org, Some(Target::Page(Route::user(org))));
-                c.crumb("Discussions", None);
             }
             Route::Projects(ProjectsOf::Owner(owner)) => {
                 let login = owner.login();
@@ -480,10 +457,10 @@ impl State {
         if o.is_some_and(|o| o.has_discussions) {
             c.tabs.push((
                 new_tab("◈", "Discussions", None),
-                Target::Page(Route::Discussions {
+                Target::Page(Route::Discussions(discussions::Discussions {
                     of: DiscussionsOf::Repo(repo.clone()),
                     category: None,
-                }),
+                })),
             ));
         }
         c.tabs.push((
@@ -497,10 +474,10 @@ impl State {
         if o.is_some_and(|o| o.has_wiki) {
             c.tabs.push((
                 new_tab("▤", "Wiki", None),
-                Target::Page(Route::Wiki {
+                Target::Page(Route::Wiki(wiki::Wiki {
                     repo: repo.clone(),
                     page: None,
-                }),
+                })),
             ));
         }
         c.tabs.push((
@@ -614,15 +591,16 @@ pub enum Section {
 
 fn section(route: &Route) -> Section {
     match route {
-        Route::Discussions { .. } | Route::Discussion { .. } => Section::Discussions,
         Route::Projects(_) => Section::Projects,
-        Route::Wiki { .. } | Route::WikiEdit { .. } => Section::Wiki,
         Route::Advisories(_)
         | Route::Advisory { .. }
         | Route::Alerts { .. }
         | Route::Alert { .. } => Section::Security,
         Route::App(p) => p.section(),
         Route::Code(p) => p.section(),
+        Route::Wiki(p) => p.section(),
+        Route::Discussions(p) => p.section(),
+        Route::Gists(p) => p.section(),
         Route::People(p) => p.section(),
         Route::Releases(p) => p.section(),
         Route::Runs(p) => p.section(),
@@ -690,17 +668,17 @@ impl Chrome {
 
 #[cfg(test)]
 mod tests {
-    use crate::route::Route;
+    use crate::route::{Route, gists};
     use crate::state::tests::state;
 
     /// A page without tabs (a gist) keeps no rows for them.
     #[test]
     fn rows_are_kept_only_for_the_chrome_there_is() {
         let mut s = state();
-        let _ = s.push(Route::Gist {
+        let _ = s.push(Route::Gists(gists::Gist {
             owner: None,
             id: "6cad326836d38bd3a7ae".into(),
-        });
+        }));
         assert!(s.chrome().tabs.is_empty());
         let lay = s.layout();
         assert_eq!((lay.title, lay.tabs, lay.content.y), (None, None, 1));

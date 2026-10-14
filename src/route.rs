@@ -7,13 +7,16 @@
 
 pub mod app;
 pub mod code;
+pub mod discussions;
+pub mod gists;
 pub mod issues;
 pub mod people;
 pub mod pulls;
 pub mod releases;
 pub mod runs;
+pub mod wiki;
 
-use crate::api::browse::{DiscussionsOf, SearchKind};
+use crate::api::browse::SearchKind;
 use crate::api::model::{PrRef, RepoId};
 use crate::api::project::{ProjectOwner, ProjectRef, ProjectsOf};
 use crate::api::security::AlertKind;
@@ -39,26 +42,18 @@ pub enum Route {
     Issues(issues::Page),
     /// Its pull requests.
     Pulls(pulls::Page),
+    /// A repository's wiki.
+    Wiki(wiki::Page),
+    /// Discussions, a repository's or an organization's.
+    Discussions(discussions::Page),
+    /// Gists.
+    Gists(gists::Page),
     /// Profiles, teams, and a repository's stargazers, watchers and forks.
     People(people::Page),
     /// Its releases.
     Releases(releases::Page),
     /// Its Actions: runs, jobs, workflows and deployments.
     Runs(runs::Page),
-    /// Discussions, in a category (by its slug) if given.
-    Discussions {
-        of: DiscussionsOf,
-        category: Option<String>,
-    },
-    Discussion {
-        of: DiscussionsOf,
-        number: u64,
-    },
-    /// A wiki page (its Home without one; its pages for `_pages`).
-    Wiki {
-        repo: RepoId,
-        page: Option<String>,
-    },
     /// A repository's security advisories, or GitHub's newest.
     Advisories(Option<RepoId>),
     /// A security advisory: a repository's, or from GitHub's database.
@@ -84,13 +79,6 @@ pub enum Route {
         repo: RepoId,
         page: crate::api::settings::SettingsPage,
     },
-    /// A gist, by its ID (its owner, when the URL names them).
-    Gist {
-        owner: Option<String>,
-        id: String,
-    },
-    /// Someone's gists.
-    Gists(String),
     Search {
         kind: SearchKind,
         query: String,
@@ -112,18 +100,6 @@ pub enum Route {
         project: ProjectRef,
         view: Option<u64>,
         item: u64,
-    },
-    /// A new gist's form.
-    NewGist,
-    /// The form changing one of your gists.
-    EditGist {
-        owner: String,
-        id: String,
-    },
-    /// The form writing a wiki page (a new one without `page`).
-    WikiEdit {
-        repo: RepoId,
-        page: Option<String>,
     },
     /// Insights, Explore and topics, starred lists, packages
     /// ([`crate::site`]).
@@ -225,6 +201,9 @@ impl Route {
         match self {
             Route::App(p) => p.also_reads(key),
             Route::Code(p) => p.also_reads(key),
+            Route::Wiki(p) => p.also_reads(key),
+            Route::Discussions(p) => p.also_reads(key),
+            Route::Gists(p) => p.also_reads(key),
             Route::People(p) => p.also_reads(key),
             Route::Releases(p) => p.also_reads(key),
             Route::Runs(p) => p.also_reads(key),
@@ -242,6 +221,9 @@ impl Route {
         match self {
             Route::App(p) => p.needs(),
             Route::Code(p) => p.needs(),
+            Route::Wiki(p) => p.needs(),
+            Route::Discussions(p) => p.needs(),
+            Route::Gists(p) => p.needs(),
             Route::People(p) => p.needs(),
             Route::Releases(p) => p.needs(),
             Route::Runs(p) => p.needs(),
@@ -258,6 +240,9 @@ impl Route {
         match self {
             Route::App(p) => p.starts_on_row(),
             Route::Code(p) => p.starts_on_row(),
+            Route::Wiki(p) => p.starts_on_row(),
+            Route::Discussions(p) => p.starts_on_row(),
+            Route::Gists(p) => p.starts_on_row(),
             Route::People(p) => p.starts_on_row(),
             Route::Releases(p) => p.starts_on_row(),
             Route::Runs(p) => p.starts_on_row(),
@@ -323,24 +308,14 @@ impl Route {
         match self {
             Route::App(p) => p.url(),
             Route::Code(p) => p.url(),
+            Route::Wiki(p) => p.url(),
+            Route::Discussions(p) => p.url(),
+            Route::Gists(p) => p.url(),
             Route::People(p) => p.url(),
             Route::Releases(p) => p.url(),
             Route::Runs(p) => p.url(),
             Route::Issues(p) => p.url(),
             Route::Pulls(p) => p.url(),
-            Route::Discussions { of, category } => match category {
-                Some(slug) => format!(
-                    "{}/categories/{}",
-                    discussions_url(of),
-                    links::encode_path(slug)
-                ),
-                None => discussions_url(of),
-            },
-            Route::Discussion { of, number } => format!("{}/{number}", discussions_url(of)),
-            Route::Wiki { repo, page } => match page {
-                Some(page) => format!("{}/wiki/{}", links::repo(repo), links::encode_path(page)),
-                None => format!("{}/wiki", links::repo(repo)),
-            },
             Route::Advisories(repo) => match repo {
                 Some(repo) => format!("{}/security/advisories", links::repo(repo)),
                 None => format!("{}/advisories", links::base()),
@@ -363,21 +338,6 @@ impl Route {
             Route::Settings { repo, page } => {
                 format!("{}/settings{}", links::repo(repo), page.slug())
             }
-            Route::Gist { owner, id } => match owner {
-                Some(owner) => format!("{}/{owner}/{id}", links::gists()),
-                None => format!("{}/{id}", links::gists()),
-            },
-            Route::Gists(login) => format!("{}/{login}", links::gists()),
-            Route::NewGist => format!("{}/", links::gists()),
-            Route::EditGist { owner, id } => format!("{}/{owner}/{id}/edit", links::gists()),
-            Route::WikiEdit { repo, page } => match page {
-                Some(page) => format!(
-                    "{}/wiki/{}/_edit",
-                    links::repo(repo),
-                    links::encode_path(page)
-                ),
-                None => format!("{}/wiki/_new", links::repo(repo)),
-            },
             Route::Site(page) => page.url(),
             Route::Search { kind, query } => links::search(*kind, query),
             Route::Notifications { query } if query.is_empty() => {
@@ -407,17 +367,14 @@ impl Route {
         match self {
             Route::App(p) => p.title(),
             Route::Code(p) => p.title(),
+            Route::Wiki(p) => p.title(),
+            Route::Discussions(p) => p.title(),
+            Route::Gists(p) => p.title(),
             Route::People(p) => p.title(),
             Route::Releases(p) => p.title(),
             Route::Runs(p) => p.title(),
             Route::Issues(p) => p.title(),
             Route::Pulls(p) => p.title(),
-            Route::Discussions { of, .. } => format!("{} · Discussions", of_title(of)),
-            Route::Discussion { of, number } => format!("{} · Discussion {number}", of_title(of)),
-            Route::Wiki { repo, page } => match page {
-                Some(page) => format!("{repo} · {}", page.replace('-', " ")),
-                None => format!("{repo} · Wiki"),
-            },
             Route::Advisories(Some(repo)) => format!("{repo} · Security"),
             Route::Advisories(None) => "Advisories".to_owned(),
             Route::Advisory { ghsa, .. } => ghsa.clone(),
@@ -430,15 +387,6 @@ impl Route {
                 page: crate::api::settings::SettingsPage::Hook(id),
             } => format!("{repo} · Webhook {id}"),
             Route::Settings { repo, page } => format!("{repo} · Settings · {}", page.name()),
-            Route::Gist { id, .. } => format!("Gist {}", id.get(..7).unwrap_or(id)),
-            Route::Gists(login) => format!("@{login} · Gists"),
-            Route::NewGist => "New gist".to_owned(),
-            Route::EditGist { id, .. } => format!("Editing gist {}", id.get(..7).unwrap_or(id)),
-            Route::WikiEdit { repo, page: None } => format!("{repo} · New wiki page"),
-            Route::WikiEdit {
-                repo,
-                page: Some(page),
-            } => format!("{repo} · Editing {page}"),
             Route::Site(page) => page.title(),
             Route::Search { query, .. } => format!("Search “{query}”"),
             Route::Notifications { .. } => "Notifications".to_owned(),
@@ -459,25 +407,18 @@ impl Route {
     /// The repository the page belongs to.
     pub fn repo(&self) -> Option<&RepoId> {
         match self {
-            Route::Discussions {
-                of: DiscussionsOf::Repo(repo),
-                ..
-            }
-            | Route::Discussion {
-                of: DiscussionsOf::Repo(repo),
-                ..
-            }
-            | Route::Wiki { repo, .. }
-            | Route::Advisories(Some(repo))
+            Route::Advisories(Some(repo))
             | Route::Advisory {
                 repo: Some(repo), ..
             }
             | Route::Alerts { repo, .. }
             | Route::Alert { repo, .. }
             | Route::Settings { repo, .. }
-            | Route::WikiEdit { repo, .. }
             | Route::Projects(ProjectsOf::Repo(repo)) => Some(repo),
             Route::Code(p) => p.repo(),
+            Route::Wiki(p) => p.repo(),
+            Route::Discussions(p) => p.repo(),
+            Route::Gists(p) => p.repo(),
             Route::People(p) => p.repo(),
             Route::Releases(p) => p.repo(),
             Route::Runs(p) => p.repo(),
@@ -491,20 +432,8 @@ impl Route {
             | Route::App(_)
             | Route::Search { .. }
             | Route::Notifications { .. }
-            | Route::Gist { .. }
-            | Route::Gists(_)
-            | Route::NewGist
-            | Route::EditGist { .. }
             | Route::Advisories(None)
-            | Route::Advisory { repo: None, .. }
-            | Route::Discussions {
-                of: DiscussionsOf::Org(_),
-                ..
-            }
-            | Route::Discussion {
-                of: DiscussionsOf::Org(_),
-                ..
-            } => None,
+            | Route::Advisory { repo: None, .. } => None,
         }
     }
 
@@ -513,6 +442,9 @@ impl Route {
     pub fn list_query(&self) -> Option<&str> {
         match self {
             Route::Issues(p) => p.query(),
+            Route::Wiki(p) => p.query(),
+            Route::Discussions(p) => p.query(),
+            Route::Gists(p) => p.query(),
             Route::People(p) => p.query(),
             Route::Releases(p) => p.query(),
             Route::Runs(p) => p.query(),
@@ -528,6 +460,9 @@ impl Route {
     pub fn with_query(&self, query: String) -> Option<Route> {
         Some(match self {
             Route::Issues(p) => return p.with_query(query),
+            Route::Wiki(p) => return p.with_query(query),
+            Route::Discussions(p) => return p.with_query(query),
+            Route::Gists(p) => return p.with_query(query),
             Route::People(p) => return p.with_query(query),
             Route::Releases(p) => return p.with_query(query),
             Route::Runs(p) => return p.with_query(query),
@@ -613,6 +548,7 @@ type RepoParse = fn(&RepoId, &[&str], &Url<'_>) -> Option<Target>;
 const TOP: &[fn(&Url<'_>) -> Option<Target>] = &[
     app::parse,
     crate::housekeeping::parse,
+    discussions::parse,
     top,
     // A profile is any name GitHub hasn't taken.
     people::parse,
@@ -627,6 +563,8 @@ const REPO: &[RepoParse] = &[
     pulls::parse_repo,
     runs::parse_repo,
     releases::parse_repo,
+    discussions::parse_repo,
+    wiki::parse_repo,
     people::parse_repo,
     repo_page,
 ];
@@ -639,7 +577,7 @@ fn parse(parsed: &url::Url) -> Option<Target> {
     let host = crate::host::current();
     let name = crate::host::url_host(parsed)?;
     if host.serves_gists(&name) {
-        return gist(parsed.path_segments()?).map(Target::Page);
+        return gists::parse(parsed.path_segments()?);
     }
     if !host.serves(&name) {
         return None;
@@ -649,7 +587,7 @@ fn parse(parsed: &url::Url) -> Option<Target> {
         && let Some(mut segments) = parsed.path_segments()
         && segments.next() == Some("gist")
     {
-        return gist(segments).map(Target::Page);
+        return gists::parse(segments);
     }
     let segments: Vec<String> = parsed
         .path_segments()
@@ -753,9 +691,6 @@ fn top(url: &Url<'_>) -> Option<Target> {
             repo: None,
             ghsa: (*ghsa).to_owned(),
         },
-        ["orgs", org, "discussions", rest @ ..] => {
-            discussions(DiscussionsOf::Org((*org).to_owned()), rest)?
-        }
         // A profile's projects are an organization's at `/orgs/…/projects`.
         [login]
             if tab.as_deref() == Some("projects")
@@ -783,19 +718,12 @@ fn repo_page(repo: &RepoId, rest: &[&str], url: &Url<'_>) -> Option<Target> {
     let route = match rest {
         // Its linked projects; a classic project (`projects/1`) is gone.
         ["projects"] => Route::Projects(ProjectsOf::Repo(repo)),
-        ["wiki", "_new"] => Route::WikiEdit { repo, page: None },
-        ["wiki", page, "_edit"] if !page.contains(char::is_control) => Route::WikiEdit {
-            repo,
-            page: Some((*page).to_owned()),
-        },
         // The network graph is a picture. Assets are downloads; a wiki's
         // comparisons, and the form for a new advisory, are on GitHub.
         ["network"]
         | ["releases", "download", ..]
         | ["wiki", .., "_compare"]
         | ["security", "advisories", "new"] => return None,
-        // A wiki's own pages but its list (history, comparisons).
-        ["wiki", special, ..] if special.starts_with('_') && *special != "_pages" => return None,
         // The security overview's part ghtui can show: advisories.
         ["security"] | ["security", "advisories"] => Route::Advisories(Some(repo)),
         ["security", "advisories", ghsa] if valid_ghsa(ghsa) => Route::Advisory {
@@ -831,86 +759,12 @@ fn repo_page(repo: &RepoId, rest: &[&str], url: &Url<'_>) -> Option<Target> {
             kind: AlertKind::from_slug(slug)?,
             number: n.parse().ok().filter(|&n| n > 0)?,
         },
-        // A page's revisions and history: the page.
-        ["wiki", rest @ ..] if !rest.iter().any(|p| p.contains(char::is_control)) => Route::Wiki {
-            repo,
-            page: rest.first().map(|p| (*p).to_owned()),
-        },
-        ["discussions", rest @ ..] => discussions(DiscussionsOf::Repo(repo), rest)?,
         _ => return None,
     };
     Some(Target::Page(route))
 }
 
-/// The gist website's own pages, not people's gists.
-const GIST_PAGES: &[&str] = &[
-    "discover", "starred", "search", "auth", "login", "join", "mine",
-];
-
-/// Whether a gist path segment after an owner is a gist's ID
-/// (numbers for old gists, 20 or 32 hex digits for newer).
-fn is_gist_id(s: &str) -> bool {
-    s.bytes().all(|b| b.is_ascii_digit())
-        || (matches!(s.len(), 20 | 32) && s.bytes().all(|b| b.is_ascii_hexdigit()))
-}
-
-/// Whether a lone gist segment is a gist rather than someone's
-/// gists. GitHub tries a login first; ghtui can't ask, so it takes short
-/// numbers for logins (`/1`, `/2000`) and long ones for old gists
-/// (`/1162032`, which GitHub redirects to its owner's).
-fn is_lone_gist_id(s: &str) -> bool {
-    is_gist_id(s) && !(s.len() < 5 && s.bytes().all(|b| b.is_ascii_digit()))
-}
-
-/// A gist website's page, from its path: a gist (`/<id>`, `/<owner>/<id>`)
-/// or someone's gists (`/<owner>`). Raw files and embeds are downloads.
-fn gist<'a>(segments: impl Iterator<Item = &'a str>) -> Option<Route> {
-    let segments: Vec<&str> = segments.filter(|s| !s.is_empty()).collect();
-    Some(match segments.as_slice() {
-        // The gist website's front page is the form for a new gist.
-        [] => Route::NewGist,
-        [first, ..] if GIST_PAGES.contains(first) => return None,
-        [owner, id, "edit"] if is_gist_id(id) && valid_login(owner) => Route::EditGist {
-            owner: (*owner).to_owned(),
-            id: (*id).to_owned(),
-        },
-        [id] if is_lone_gist_id(id) => Route::Gist {
-            owner: None,
-            id: (*id).to_owned(),
-        },
-        [login] if valid_login(login) => Route::Gists((*login).to_owned()),
-        [owner, id] if is_gist_id(id) && valid_login(owner) => Route::Gist {
-            owner: Some((*owner).to_owned()),
-            id: (*id).to_owned(),
-        },
-        // Revisions, forks, stars: the gist.
-        [owner, id, "revisions" | "forks" | "stargazers"]
-            if is_gist_id(id) && valid_login(owner) =>
-        {
-            Route::Gist {
-                owner: Some((*owner).to_owned()),
-                id: (*id).to_owned(),
-            }
-        }
-        _ => return None,
-    })
-}
 /// A discussions page from what follows `/discussions` in its URL.
-fn discussions(of: DiscussionsOf, rest: &[&str]) -> Option<Route> {
-    Some(match rest {
-        [] => Route::Discussions { of, category: None },
-        ["categories", slug] if valid_slug(slug) => Route::Discussions {
-            of,
-            category: Some((*slug).to_owned()),
-        },
-        [n] => Route::Discussion {
-            of,
-            number: n.parse().ok()?,
-        },
-        _ => return None,
-    })
-}
-
 /// An owner's projects page, from what follows `/projects` in its URL: the
 /// list, a project, one of its views, or an item in a view's side pane.
 /// Its settings, insights and workflows are on GitHub.
@@ -942,20 +796,6 @@ fn view_url(project: &ProjectRef, view: Option<u64>) -> String {
     match view {
         Some(n) => format!("{}/views/{n}", project.url()),
         None => project.url(),
-    }
-}
-
-fn discussions_url(of: &DiscussionsOf) -> String {
-    match of {
-        DiscussionsOf::Repo(repo) => format!("{}/discussions", links::repo(repo)),
-        DiscussionsOf::Org(org) => format!("{}/orgs/{org}/discussions", links::base()),
-    }
-}
-
-fn of_title(of: &DiscussionsOf) -> String {
-    match of {
-        DiscussionsOf::Repo(repo) => repo.to_string(),
-        DiscussionsOf::Org(org) => format!("@{org}"),
     }
 }
 
@@ -1592,14 +1432,14 @@ pub(crate) mod tests {
         // A short number alone is someone's gists; a long one, an old gist.
         assert_eq!(
             page("https://gist.github.com/2000"),
-            Route::Gists("2000".into())
+            Route::Gists(gists::Gists("2000".into()))
         );
         assert_eq!(
             page("https://gist.github.com/1162032"),
-            Route::Gist {
+            Route::Gists(gists::Gist {
                 owner: None,
                 id: "1162032".into()
-            }
+            })
         );
         // A repository (or owner) named `blob` keeps its blame.
         let blame = Route::Code(code::Blame {
@@ -1673,7 +1513,17 @@ pub(crate) mod tests {
         match named.strip_prefix(&format!("{family}(")) {
             Some(page)
                 if [
-                    "App", "Code", "People", "Releases", "Runs", "Issues", "Pulls", "Site",
+                    "App",
+                    "Code",
+                    "People",
+                    "Releases",
+                    "Runs",
+                    "Issues",
+                    "Pulls",
+                    "Site",
+                    "Gists",
+                    "Discussions",
+                    "Wiki",
                 ]
                 .contains(&family.as_str()) =>
             {
@@ -1805,10 +1655,10 @@ pub(crate) mod tests {
 
         let repo = Route::Code(code::Repo(RepoId::new("o", "r")));
         assert_eq!(repo.url(), "https://ghe.example.com/o/r");
-        let gist = Route::Gist {
+        let gist = Route::Gists(gists::Gist {
             owner: Some("o".into()),
             id: "1162032".into(),
-        };
+        });
         assert_eq!(gist.url(), "https://ghe.example.com/gist/o/1162032");
         assert_eq!(reopened(&gist), Target::Page(gist));
         assert_eq!(
@@ -2125,38 +1975,11 @@ pub(crate) mod tests {
         use crate::route::arb::*;
         use proptest::prelude::*;
 
-        fn discussions_of() -> impl Strategy<Value = DiscussionsOf> {
-            prop_oneof![
-                repo().prop_map(DiscussionsOf::Repo),
-                login().prop_map(DiscussionsOf::Org),
-            ]
-        }
-
         fn route() -> impl Strategy<Value = Route> {
             prop_oneof![
                 app::arb(),
                 prop_oneof![Just(String::new()), query()]
                     .prop_map(|query| Route::Notifications { query }),
-                Just(Route::NewGist),
-                (login(), "[0-9a-f]{20}")
-                    .prop_filter("an owner isn't a gist ID or a gist page", |(o, _)| {
-                        !is_gist_id(o) && !GIST_PAGES.contains(&o.as_str())
-                    })
-                    .prop_map(|(owner, id)| Route::EditGist { owner, id }),
-                (repo(), prop::option::of("[A-Za-z0-9][A-Za-z0-9 _-]{0,15}"))
-                    .prop_map(|(repo, page)| Route::WikiEdit { repo, page }),
-                (
-                    discussions_of(),
-                    prop::option::of("[a-z0-9][a-z0-9-]{0,11}")
-                )
-                    .prop_map(|(of, category)| Route::Discussions { of, category }),
-                (discussions_of(), 1..u64::MAX)
-                    .prop_map(|(of, number)| Route::Discussion { of, number }),
-                (repo(), prop::option::of("[A-Za-z0-9][A-Za-z0-9 _-]{0,15}"))
-                    .prop_filter("not a writing page", |(_, p)| {
-                        !matches!(p.as_deref(), Some("_new" | "_edit" | "_compare"))
-                    })
-                    .prop_map(|(repo, page)| Route::Wiki { repo, page }),
                 prop::option::of(repo()).prop_map(Route::Advisories),
                 crate::site::arb(),
                 (
@@ -2193,20 +2016,6 @@ pub(crate) mod tests {
                     .prop_map(|(repo, page)| Route::Settings { repo, page }),
                 (prop::option::of(repo()), "GHSA(-[2-9a-z]{4}){3}")
                     .prop_map(|(repo, ghsa)| Route::Advisory { repo, ghsa }),
-                (prop::option::of(login()), "[0-9a-f]{20}|[0-9]{1,8}")
-                    .prop_filter("an owner isn't a gist ID or a gist page", |(o, _)| {
-                        o.as_deref()
-                            .is_none_or(|o| !is_gist_id(o) && !GIST_PAGES.contains(&o))
-                    })
-                    .prop_filter("a lone ID is a gist's", |(o, id)| {
-                        o.is_some() || is_lone_gist_id(id)
-                    })
-                    .prop_map(|(owner, id)| Route::Gist { owner, id }),
-                login()
-                    .prop_filter("not a gist ID or a gist page", |l| {
-                        !is_lone_gist_id(l) && !GIST_PAGES.contains(&l.as_str())
-                    })
-                    .prop_map(Route::Gists),
                 repo().prop_map(|repo| Route::Projects(ProjectsOf::Repo(repo))),
                 (
                     login(),
@@ -2257,6 +2066,9 @@ pub(crate) mod tests {
                 runs::arb(),
                 releases::arb(),
                 people::arb(),
+                gists::arb(),
+                discussions::arb(),
+                wiki::arb(),
             ]
         }
 

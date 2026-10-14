@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::route::code;
+use crate::route::discussions;
 use crate::route::issues;
 use crate::route::pulls;
 
@@ -82,7 +83,9 @@ pub(super) fn comment_with(state: &mut State, text: &str, quoting: Option<String
         Some(Route::Issues(issues::NewIssue(_)) | Route::Pulls(pulls::NewPr(_))) => {
             return crate::create::compose(state);
         }
-        Some(Route::Discussion { .. }) => return crate::discuss::act(state, Action::Comment),
+        Some(Route::Discussions(discussions::Discussion { .. })) => {
+            return crate::discuss::act(state, Action::Comment);
+        }
         Some(route) if crate::writes::is_form(route) => return crate::writes::compose(state),
         // A commit's comments.
         Some(Route::Code(code::Commit { repo, oid, .. })) => {

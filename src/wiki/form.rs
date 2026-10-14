@@ -8,6 +8,7 @@
 use crate::api::browse::WikiPage;
 use crate::api::model::RepoId;
 use crate::create::templates;
+use crate::route::wiki;
 use crate::ui::page::{Link, Page, WriteLink};
 use crate::ui::pages::{Mark, TextBox, WriteFormView};
 
@@ -37,7 +38,7 @@ pub struct Form {
 fn here(state: &State) -> Option<(Route, RepoId, Option<String>, &Form)> {
     static BLANK: std::sync::LazyLock<Form> = std::sync::LazyLock::new(Form::default);
     let route = state.route()?;
-    let Route::WikiEdit { repo, page } = route else {
+    let Route::Wiki(wiki::WikiEdit { repo, page }) = route else {
         return None;
     };
     let form = state.writing.wikis.get(route).unwrap_or(&BLANK);
@@ -56,7 +57,7 @@ fn form_mut<'a>(state: &'a mut State, route: &Route) -> &'a mut Form {
 
 /// The wiki page on screen, as read.
 fn shown(state: &State) -> Option<(RepoId, &WikiPage)> {
-    let Some(Route::Wiki { repo, page }) = state.route() else {
+    let Some(Route::Wiki(wiki::Wiki { repo, page })) = state.route() else {
         return None;
     };
     let w = state.picked::<WikiPage>(&DataKey::Wiki(repo.clone(), page.clone()))?;
@@ -85,7 +86,7 @@ pub fn open_edit(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     };
     let page = w.title.as_deref().map(crate::wiki::slug);
-    let route = Route::WikiEdit { repo, page };
+    let route = Route::Wiki(wiki::WikiEdit { repo, page });
     // Started again from what's read now.
     state.writing.wikis.remove(&route);
     let mut cmds = state.push(route);
@@ -97,7 +98,7 @@ pub fn open_edit(state: &mut State) -> Vec<Cmd> {
 #[must_use]
 pub fn open_new(state: &mut State) -> Vec<Cmd> {
     let repo = match state.route() {
-        Some(Route::WikiEdit { page: None, .. }) => return compose(state),
+        Some(Route::Wiki(wiki::WikiEdit { page: None, .. })) => return compose(state),
         Some(route) => route.repo().cloned(),
         None => None,
     };
@@ -109,7 +110,7 @@ pub fn open_new(state: &mut State) -> Vec<Cmd> {
         state.info(format!("{repo} has its wiki turned off"));
         return Vec::new();
     }
-    let mut cmds = state.push(Route::WikiEdit { repo, page: None });
+    let mut cmds = state.push(Route::Wiki(wiki::WikiEdit { repo, page: None }));
     cmds.extend(follow(state));
     cmds
 }
@@ -245,7 +246,7 @@ pub fn submit(state: &mut State) -> Vec<Cmd> {
 /// follows GitHub until it shows the text saved.
 #[must_use]
 pub fn on_saved(state: &mut State, route: &Route, result: Result<String, String>) -> Vec<Cmd> {
-    let Route::WikiEdit { repo, .. } = route else {
+    let Route::Wiki(wiki::WikiEdit { repo, .. }) = route else {
         return Vec::new();
     };
     match result {
@@ -266,7 +267,7 @@ pub fn on_saved(state: &mut State, route: &Route, result: Result<String, String>
             // Back on the page it was opened from, if it's that one.
             let below = state.screens.below().and_then(|s| match s {
                 crate::state::Screen::Page(p) => match &p.route {
-                    Route::Wiki { repo: r, page } if r == repo => {
+                    Route::Wiki(wiki::Wiki { repo: r, page }) if r == repo => {
                         let title = (state
                             .picked::<WikiPage>(&DataKey::Wiki(r.clone(), page.clone())))
                         .and_then(|w| w.title.as_deref().map(crate::wiki::slug));
@@ -276,11 +277,13 @@ pub fn on_saved(state: &mut State, route: &Route, result: Result<String, String>
                 },
                 crate::state::Screen::Diff(_) => None,
             });
-            let page = below.clone().unwrap_or_else(|| Route::Wiki {
-                repo: repo.clone(),
-                page: Some(slug),
+            let page = below.clone().unwrap_or_else(|| {
+                Route::Wiki(wiki::Wiki {
+                    repo: repo.clone(),
+                    page: Some(slug),
+                })
             });
-            let Route::Wiki { page: name, .. } = &page else {
+            let Route::Wiki(wiki::Wiki { page: name, .. }) = &page else {
                 return Vec::new();
             };
             let shows = Expected::Wiki(DataKey::Wiki(repo.clone(), name.clone()), text);
@@ -327,7 +330,7 @@ pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
         ));
         return;
     }
-    if let Route::Wiki { .. } = route {
+    if let Route::Wiki(wiki::Wiki { .. }) = route {
         out.push(row(
             "Edit",
             Action::EditComment,
@@ -341,7 +344,7 @@ pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
 
 /// The form's page.
 pub fn build(state: &State, page: &mut Page, route: &Route) {
-    let Route::WikiEdit { repo, .. } = route else {
+    let Route::Wiki(wiki::WikiEdit { repo, .. }) = route else {
         return;
     };
     let blank = Form::default();

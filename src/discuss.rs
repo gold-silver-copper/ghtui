@@ -11,6 +11,7 @@ use crate::api::change::Change;
 use crate::api::discussion::Discuss;
 use crate::api::edit::{Edit, Editable};
 use crate::api::model::NodeId;
+use crate::route::discussions;
 
 use crate::act::{By, Confirm, Subject};
 use crate::data::DataKey;
@@ -112,7 +113,7 @@ fn here(state: &State) -> Option<Here<'_>> {
     let Screen::Page(p) = state.screen() else {
         return None;
     };
-    let Route::Discussion { of, number } = &p.route else {
+    let Route::Discussions(discussions::Discussion { of, number }) = &p.route else {
         return None;
     };
     let d = state.picked::<DiscussionDetail>(&DataKey::Discussion(of.clone(), *number));

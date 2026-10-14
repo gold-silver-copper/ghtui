@@ -2,9 +2,11 @@
 
 use super::*;
 use crate::route::code;
+use crate::route::discussions;
 use crate::route::issues;
 use crate::route::pulls;
 use crate::route::runs;
+use crate::route::wiki;
 
 /// An empty repository says what it's about, in its sidebar on a
 /// wide screen and above its note on a narrow one.
@@ -43,10 +45,10 @@ fn a_repositorys_pages_are_under_their_tabs() {
             "Issues",
         ),
         (
-            Route::Discussions {
+            Route::Discussions(discussions::Discussions {
                 of: crate::api::browse::DiscussionsOf::Repo(ghtui()),
                 category: None,
-            },
+            }),
             "Discussions",
         ),
         (Route::Advisories(Some(ghtui())), "Security"),
@@ -64,10 +66,10 @@ fn a_repositorys_pages_are_under_their_tabs() {
             "Code",
         ),
         (
-            Route::Wiki {
+            Route::Wiki(wiki::Wiki {
                 repo: ghtui(),
                 page: None,
-            },
+            }),
             "Wiki",
         ),
         (Route::Code(code::Branches(ghtui())), "Code"),

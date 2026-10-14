@@ -7,7 +7,9 @@
 //! until the page shows what changed, as [`crate::act`] does for its
 //! changes.
 
+use crate::route::gists;
 use crate::route::releases;
+use crate::route::wiki;
 use std::collections::HashMap;
 
 use crate::api::GitHub;
@@ -154,9 +156,9 @@ pub fn is_form(route: &Route) -> bool {
         route,
         Route::Releases(releases::NewRelease(_))
             | Route::Releases(releases::EditRelease { .. })
-            | Route::NewGist
-            | Route::EditGist { .. }
-            | Route::WikiEdit { .. }
+            | Route::Gists(gists::NewGist)
+            | Route::Gists(gists::EditGist { .. })
+            | Route::Wiki(wiki::WikiEdit { .. })
             | Route::Housekeeping(_)
     )
 }
@@ -170,15 +172,18 @@ pub fn claims(state: &State, action: Action) -> bool {
             Action::EditComment => matches!(
                 route,
                 Some(
-                    Route::Wiki { .. }
-                        | Route::Gist { .. }
+                    Route::Wiki(wiki::Wiki { .. })
+                        | Route::Gists(gists::Gist { .. })
                         | Route::Releases(releases::Release { .. })
                 )
             ),
             Action::DeleteComment => {
                 matches!(
                     route,
-                    Some(Route::Gist { .. } | Route::Releases(releases::Release { .. }))
+                    Some(
+                        Route::Gists(gists::Gist { .. })
+                            | Route::Releases(releases::Release { .. })
+                    )
                 ) || crate::site::deletes_here(route)
             }
             Action::Create => route.is_some_and(is_form),
@@ -202,9 +207,15 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         (Action::NewGist, _) => crate::gist::open_new(state),
         (Action::NewWikiPage, _) => crate::wiki::form::open_new(state),
-        (Action::EditComment, Some(Route::Wiki { .. })) => crate::wiki::form::open_edit(state),
-        (Action::EditComment, Some(Route::Gist { .. })) => crate::gist::open_edit(state),
-        (Action::DeleteComment, Some(Route::Gist { .. })) => crate::gist::ask_delete(state),
+        (Action::EditComment, Some(Route::Wiki(wiki::Wiki { .. }))) => {
+            crate::wiki::form::open_edit(state)
+        }
+        (Action::EditComment, Some(Route::Gists(gists::Gist { .. }))) => {
+            crate::gist::open_edit(state)
+        }
+        (Action::DeleteComment, Some(Route::Gists(gists::Gist { .. }))) => {
+            crate::gist::ask_delete(state)
+        }
         (Action::Lists, _) => crate::site::lists::open(state),
         (Action::DeleteComment, Some(Route::Site(_))) => crate::site::ask_delete(state),
         (
@@ -214,10 +225,13 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
                 | Route::Releases(releases::EditRelease { .. }),
             ),
         ) => crate::release::submit(state),
-        (Action::Create, Some(Route::NewGist | Route::EditGist { .. })) => {
-            crate::gist::submit(state)
+        (
+            Action::Create,
+            Some(Route::Gists(gists::NewGist) | Route::Gists(gists::EditGist { .. })),
+        ) => crate::gist::submit(state),
+        (Action::Create, Some(Route::Wiki(wiki::WikiEdit { .. }))) => {
+            crate::wiki::form::submit(state)
         }
-        (Action::Create, Some(Route::WikiEdit { .. })) => crate::wiki::form::submit(state),
         (Action::Create, Some(Route::Housekeeping(_))) => crate::housekeeping::act(state, action),
         _ => {
             state.info(action.not_here());
@@ -296,7 +310,7 @@ impl Text {
         match self {
             Text::Release(Route::Releases(releases::EditRelease { .. })) => "save…",
             Text::Release(_) => "publish…",
-            Text::GistFile(Route::NewGist, _) => "create gist…",
+            Text::GistFile(Route::Gists(gists::NewGist), _) => "create gist…",
             Text::GistFile(..) => "save gist",
             Text::Wiki(_) => "save page",
             Text::Housekeeping(route) => crate::housekeeping::compose_save(route),
@@ -329,7 +343,7 @@ pub fn compose(state: &mut State) -> Vec<Cmd> {
             Route::Releases(releases::NewRelease(_))
             | Route::Releases(releases::EditRelease { .. }),
         ) => crate::release::compose(state),
-        Some(Route::NewGist | Route::EditGist { .. }) => {
+        Some(Route::Gists(gists::NewGist) | Route::Gists(gists::EditGist { .. })) => {
             let selected = match state.screen() {
                 crate::state::Screen::Page(p) => p.selected_link().cloned(),
                 crate::state::Screen::Diff(_) => None,
@@ -340,7 +354,7 @@ pub fn compose(state: &mut State) -> Vec<Cmd> {
             };
             crate::gist::compose(state, file)
         }
-        Some(Route::WikiEdit { .. }) => crate::wiki::form::compose(state),
+        Some(Route::Wiki(wiki::WikiEdit { .. })) => crate::wiki::form::compose(state),
         Some(Route::Housekeeping(_)) => crate::housekeeping::compose(state),
         _ => Vec::new(),
     }
@@ -387,8 +401,10 @@ pub fn follow_link(state: &mut State, link: &WriteLink) -> Vec<Cmd> {
             WriteLink::Asset(name) => crate::release::assets::open(state, name),
             _ => Vec::new(),
         },
-        Some(Route::NewGist | Route::EditGist { .. }) => crate::gist::follow_link(state, link),
-        Some(Route::WikiEdit { .. }) => crate::wiki::form::submit(state),
+        Some(Route::Gists(gists::NewGist) | Route::Gists(gists::EditGist { .. })) => {
+            crate::gist::follow_link(state, link)
+        }
+        Some(Route::Wiki(wiki::WikiEdit { .. })) => crate::wiki::form::submit(state),
         Some(Route::Housekeeping(_)) => crate::housekeeping::act(state, Action::Create),
         _ => Vec::new(),
     }

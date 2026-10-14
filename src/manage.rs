@@ -10,6 +10,7 @@
 //! (a revert, a transfer, a discussion) is [`Work`], whose answer opens
 //! what it made.
 
+use crate::route::discussions;
 use crate::route::issues;
 use crate::route::pulls;
 use std::collections::HashMap;
@@ -69,7 +70,9 @@ fn here(state: &State) -> Option<Subject> {
                 Some(Subject::Issue(repo.clone(), *number))
             }
             Route::Pulls(pulls::Pr { pr, .. }) => Some(Subject::Pr(pr.clone())),
-            Route::Discussion { of, number } => Some(Subject::Discussion(of.clone(), *number)),
+            Route::Discussions(discussions::Discussion { of, number }) => {
+                Some(Subject::Discussion(of.clone(), *number))
+            }
             _ => None,
         },
     }
@@ -97,14 +100,14 @@ const LOADING: &str = "It's still loading";
 /// discussions, or one of them.
 fn discussions_repo(state: &State) -> Option<RepoId> {
     match state.route()? {
-        Route::Discussions {
+        Route::Discussions(discussions::Discussions {
             of: DiscussionsOf::Repo(repo),
             ..
-        }
-        | Route::Discussion {
+        })
+        | Route::Discussions(discussions::Discussion {
             of: DiscussionsOf::Repo(repo),
             ..
-        } => Some(repo.clone()),
+        }) => Some(repo.clone()),
         _ => None,
     }
 }
@@ -1495,10 +1498,10 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
                     state.overlay = None;
                 }
                 state.info(format!("Started discussion #{number}"));
-                state.push(Route::Discussion {
+                state.push(Route::Discussions(discussions::Discussion {
                     of: DiscussionsOf::Repo(repo),
                     number,
-                })
+                }))
             }
             Err(why) => {
                 let text = format!("GitHub didn't start the discussion: {why}");

@@ -11,6 +11,7 @@
 //! What another author wrote since you started looking is marked New and
 //! said in the status bar; what you wrote isn't.
 
+use crate::route::discussions;
 use crate::route::issues;
 use crate::route::runs;
 use std::collections::HashSet;
@@ -167,7 +168,7 @@ fn watched(state: &State) -> Option<Watched> {
                 number: *number,
             }
         }
-        Route::Discussion { of, number } => Watched::Discussion {
+        Route::Discussions(discussions::Discussion { of, number }) => Watched::Discussion {
             of: of.clone(),
             number: *number,
         },
@@ -537,7 +538,7 @@ fn same_text(a: &str, b: Option<&str>) -> bool {
 /// The discussion on screen, as loaded.
 fn discussion_here(state: &State) -> Option<&DiscussionDetail> {
     match state.route()? {
-        Route::Discussion { of, number } => {
+        Route::Discussions(discussions::Discussion { of, number }) => {
             state.picked::<DiscussionDetail>(&DataKey::Discussion(of.clone(), *number))
         }
         _ => None,
@@ -644,9 +645,10 @@ pub fn fresh<'a>(state: &'a State, route: &Route) -> Option<&'a HashSet<u64>> {
         (Watched::Issue { repo, number }, Route::Issues(issues::Issue { repo: r, number: n })) => {
             repo == r && number == n
         }
-        (Watched::Discussion { of, number }, Route::Discussion { of: o, number: n }) => {
-            of == o && number == n
-        }
+        (
+            Watched::Discussion { of, number },
+            Route::Discussions(discussions::Discussion { of: o, number: n }),
+        ) => of == o && number == n,
         _ => false,
     };
     here.then_some(&w.new)

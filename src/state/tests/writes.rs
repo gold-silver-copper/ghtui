@@ -5,7 +5,9 @@
 use crate::api::gist::{FileChange, MadeGist};
 use crate::api::release::{Made, NewRelease, TagLook};
 use crate::api::watch::{Subscription, SubscriptionState, Watched};
+use crate::route::gists;
 use crate::route::releases;
+use crate::route::wiki;
 use ratatui_textarea::CursorMove;
 
 use super::*;
@@ -186,10 +188,10 @@ fn a_thread_is_unsubscribed_and_followed() {
 fn your_gist_is_edited_and_its_page_follows() {
     let mut s = with_gist();
     press(&mut s, ",e");
-    let route = Route::EditGist {
+    let route = Route::Gists(gists::EditGist {
         owner: "octocat".into(),
         id: "6cad326836d38bd3a7ae".into(),
-    };
+    });
     assert_eq!(s.route(), Some(&route));
     let text = page_text(&s);
     assert!(
@@ -216,10 +218,10 @@ fn your_gist_is_edited_and_its_page_follows() {
     assert!(change.added.is_empty());
     let done = crate::gist::Done::Updated(route, change.clone(), Ok(()));
     update(&mut s, Msg::Write(Done::Gist(done)));
-    let page = Route::Gist {
+    let page = Route::Gists(gists::Gist {
         owner: Some("octocat".into()),
         id: "6cad326836d38bd3a7ae".into(),
-    };
+    });
     assert_eq!(s.route(), Some(&page), "back on the gist");
     assert_eq!(s.screens.len(), 2, "the form isn't left behind");
     assert!(s.writing.expect.is_some());
@@ -241,7 +243,7 @@ fn someone_elses_gist_says_why_it_cant_be_changed() {
 fn a_gist_is_made_then_deleted() {
     let mut s = with_gist();
     press(&mut s, ",G");
-    assert_eq!(s.route(), Some(&Route::NewGist));
+    assert_eq!(s.route(), Some(&Route::Gists(gists::NewGist)));
     write(&mut s, "hi");
     press(&mut s, "<C-s>");
     let labels: Vec<&str> = asked(&s).choices.iter().map(|(l, _)| l.as_str()).collect();
@@ -252,7 +254,7 @@ fn a_gist_is_made_then_deleted() {
         public: true,
         files: vec![("gistfile1.txt".into(), "hi".into())],
     };
-    let create = crate::gist::Work::Create(Route::NewGist, new);
+    let create = crate::gist::Work::Create(Route::Gists(gists::NewGist), new);
     assert_eq!(sent, [Cmd::Write(Work::Gist(create))]);
     let made = MadeGist {
         id: "aa5a315d61ae9438b18d".into(),
@@ -261,16 +263,16 @@ fn a_gist_is_made_then_deleted() {
     update(
         &mut s,
         Msg::Write(Done::Gist(crate::gist::Done::Created(
-            Route::NewGist,
+            Route::Gists(gists::NewGist),
             Ok(made),
         ))),
     );
     assert_eq!(
         s.route(),
-        Some(&Route::Gist {
+        Some(&Route::Gists(gists::Gist {
             owner: Some("octocat".into()),
             id: "aa5a315d61ae9438b18d".into(),
-        })
+        }))
     );
 
     let mut s = with_gist();
@@ -288,7 +290,10 @@ fn a_gist_is_made_then_deleted() {
         result: Ok(()),
     };
     update(&mut s, Msg::Write(Done::Gist(deleted)));
-    assert_eq!(s.route(), Some(&Route::Gists("octocat".into())));
+    assert_eq!(
+        s.route(),
+        Some(&Route::Gists(gists::Gists("octocat".into())))
+    );
 }
 
 /// `,e` on a wiki page opens it in the composer; saving commits it on
@@ -298,10 +303,10 @@ fn a_gist_is_made_then_deleted() {
 fn a_wiki_page_is_edited_never_over_a_newer_one() {
     let mut s = with_wiki();
     let cmds = press(&mut s, ",e");
-    let route = Route::WikiEdit {
+    let route = Route::Wiki(wiki::WikiEdit {
         repo: ghtui(),
         page: Some("Home".into()),
-    };
+    });
     assert_eq!(s.route(), Some(&route));
     let key = DataKey::Wiki(ghtui(), Some("Home".into()));
     assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
@@ -330,10 +335,10 @@ fn a_wiki_page_is_edited_never_over_a_newer_one() {
     assert_eq!(c.text(), "Welcome, all.");
 
     update(&mut s, Msg::Write(Done::Wiki(route, Ok("Home".into()))));
-    let home = Route::Wiki {
+    let home = Route::Wiki(wiki::Wiki {
         repo: ghtui(),
         page: None,
-    };
+    });
     assert_eq!(s.route(), Some(&home), "back on the page");
     says(&s, "Saved Home");
     assert!(s.writing.expect.is_some(), "until GitHub shows the text");

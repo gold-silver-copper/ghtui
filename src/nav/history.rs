@@ -191,6 +191,9 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
     Some(match route {
         Route::App(p) => return p.up(state),
         Route::Code(p) => return p.up(state),
+        Route::Wiki(p) => return p.up(state),
+        Route::Discussions(p) => return p.up(state),
+        Route::Gists(p) => return p.up(state),
         Route::People(p) => return p.up(state),
         Route::Releases(p) => return p.up(state),
         Route::Runs(p) => return p.up(state),
@@ -203,41 +206,11 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
             repo: repo.clone(),
             page: crate::api::settings::SettingsPage::Hooks,
         },
-        Route::Settings { repo, .. }
-        | Route::Discussions {
-            of: DiscussionsOf::Repo(repo),
-            ..
+        Route::Settings { repo, .. } | Route::Projects(ProjectsOf::Repo(repo)) => {
+            Route::Code(code::Repo(repo.clone()))
         }
-        | Route::Wiki { repo, page: None }
-        | Route::Projects(ProjectsOf::Repo(repo)) => Route::Code(code::Repo(repo.clone())),
-        Route::Discussion { of, .. } => Route::Discussions {
-            of: of.clone(),
-            category: None,
-        },
-        Route::Discussions {
-            of: DiscussionsOf::Org(org),
-            ..
-        } => Route::user(org),
         Route::Housekeeping(p) => return p.up(state),
         Route::Search { .. } | Route::Notifications { .. } => Route::App(app::Home),
-        Route::Gist { owner, .. } => Route::Gists(owner.clone()?),
-        Route::NewGist => Route::Gists(state.viewer.clone()?),
-        Route::EditGist { owner, id } => Route::Gist {
-            owner: Some(owner.clone()),
-            id: id.clone(),
-        },
-        Route::WikiEdit { repo, page } => Route::Wiki {
-            repo: repo.clone(),
-            page: page.clone(),
-        },
-        Route::Gists(login) => Route::user(login),
-        Route::Wiki {
-            repo,
-            page: Some(_),
-        } => Route::Wiki {
-            repo: repo.clone(),
-            page: None,
-        },
         Route::Advisory { repo, .. } => Route::Advisories(repo.clone()),
         Route::Alert { repo, kind, .. } => Route::Alerts {
             repo: repo.clone(),

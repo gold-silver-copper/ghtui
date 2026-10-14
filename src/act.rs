@@ -15,6 +15,7 @@ use crate::api::model::{
 };
 use crate::api::notifications::Inbox;
 use crate::api::project::ProjectRef;
+use crate::route::discussions;
 use crate::route::issues;
 use crate::route::pulls;
 use crate::route::runs;
@@ -229,7 +230,9 @@ impl Subject {
                 kind: *kind,
                 number: *number,
             }),
-            Route::Discussion { of, number } => Subject::Discussion(of.clone(), *number),
+            Route::Discussions(discussions::Discussion { of, number }) => {
+                Subject::Discussion(of.clone(), *number)
+            }
             _ => return None,
         })
     }
@@ -266,10 +269,10 @@ impl Subject {
                 kind: a.kind,
                 number: a.number,
             },
-            Subject::Discussion(of, number) => Route::Discussion {
+            Subject::Discussion(of, number) => Route::Discussions(discussions::Discussion {
                 of: of.clone(),
                 number: *number,
-            },
+            }),
             Subject::Settings(repo, page) => Route::Settings {
                 repo: repo.clone(),
                 page: *page,

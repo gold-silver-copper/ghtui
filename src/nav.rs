@@ -6,7 +6,7 @@
 use std::mem;
 use std::sync::Arc;
 
-use crate::api::browse::{DiscussionsOf, RepoSummary, SearchKind};
+use crate::api::browse::{RepoSummary, SearchKind};
 use crate::api::change::Change;
 use crate::api::model::RepoId;
 use crate::diff::anchor::Side;

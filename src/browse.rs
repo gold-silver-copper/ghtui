@@ -2,11 +2,10 @@
 
 use crate::route::Family;
 use crate::route::code;
-use std::collections::HashSet;
 
 use std::collections::BTreeSet;
 
-use crate::api::browse::{CommitInfo, DiscussionsOf, Gist, PrActivity, RepoOverview, WikiPage};
+use crate::api::browse::{CommitInfo, PrActivity, RepoOverview};
 use crate::api::model::{PrDetail, PrRef, RepoId};
 use crate::api::project::{Project, ProjectsOf};
 use crate::api::security::AlertRef;
@@ -30,10 +29,6 @@ const LISTS: u16 = 200;
 /// The list a page loads more of.
 pub fn paged(route: &Route) -> Option<DataKey> {
     match route {
-        Route::Discussions { of, category } => {
-            Some(DataKey::Discussions(of.clone(), category.clone()))
-        }
-        Route::Gists(login) => Some(DataKey::Gists(login.to_lowercase())),
         Route::Advisories(repo) => Some(DataKey::Advisories(repo.clone())),
         Route::Notifications { query } => Some(DataKey::Notifications(query.clone())),
         Route::Projects(of) => Some(DataKey::Projects(of.clone())),
@@ -45,6 +40,9 @@ pub fn paged(route: &Route) -> Option<DataKey> {
         }
         Route::App(p) => p.paged(),
         Route::Code(p) => p.paged(),
+        Route::Wiki(p) => p.paged(),
+        Route::Discussions(p) => p.paged(),
+        Route::Gists(p) => p.paged(),
         Route::People(p) => p.paged(),
         Route::Releases(p) => p.paged(),
         Route::Runs(p) => p.paged(),
@@ -78,14 +76,15 @@ pub(crate) fn needs(route: &Route) -> Vec<DataKey> {
         | Route::Code(_)
         | Route::Issues(_)
         | Route::Pulls(_)
+        | Route::Gists(_)
+        | Route::Discussions(_)
+        | Route::Wiki(_)
         | Route::People(_)
         | Route::Releases(_)
         | Route::Runs(_)
-        | Route::NewGist
         | Route::Site(_)
         | Route::Housekeeping(_) => Vec::new(),
         Route::Search { .. } => list.into_iter().collect(),
-        Route::Wiki { repo, page } => vec![header(repo), K::Wiki(repo.clone(), page.clone())],
         Route::Advisories(repo) | Route::Advisory { repo, .. } => {
             let own = match route {
                 Route::Advisory { ghsa, .. } => K::Advisory(repo.clone(), ghsa.clone()),
@@ -93,28 +92,10 @@ pub(crate) fn needs(route: &Route) -> Vec<DataKey> {
             };
             repo.iter().map(header).chain([own]).collect()
         }
-        Route::Gists(_)
-        | Route::Notifications { .. }
+        Route::Notifications { .. }
         | Route::Project { .. }
         | Route::ProjectItem { .. }
         | Route::Projects(ProjectsOf::Owner(_)) => paged(route).into_iter().collect(),
-        Route::Gist { id, .. } | Route::EditGist { id, .. } => {
-            vec![K::Gist(id.clone())]
-        }
-        Route::WikiEdit { repo, page } => {
-            vec![header(repo), crate::wiki::form::key(repo, page.as_ref())]
-        }
-        Route::Discussions { of, .. } | Route::Discussion { of, .. } => {
-            let header = match of {
-                DiscussionsOf::Repo(repo) => Some(header(repo)),
-                DiscussionsOf::Org(_) => None,
-            };
-            let own = match route {
-                Route::Discussion { number, .. } => Some(K::Discussion(of.clone(), *number)),
-                _ => paged(route),
-            };
-            header.into_iter().chain(own).collect()
-        }
         Route::Alerts { repo, .. } | Route::Projects(ProjectsOf::Repo(repo)) => {
             std::iter::once(header(repo)).chain(paged(route)).collect()
         }
@@ -155,17 +136,13 @@ pub enum Width {
 /// How wide `route`'s page gets.
 fn width_of(route: &Route) -> Width {
     match route {
-        Route::Wiki { .. }
-        | Route::Discussion { .. }
-        | Route::Advisory { .. }
-        | Route::Alert { .. }
-        | Route::NewGist
-        | Route::EditGist { .. }
-        | Route::WikiEdit { .. }
-        | Route::ProjectItem { .. } => Width::Reading,
+        Route::Advisory { .. } | Route::Alert { .. } | Route::ProjectItem { .. } => Width::Reading,
         Route::Project { .. } => Width::Full,
         Route::App(p) => p.width(),
         Route::Code(p) => p.width(),
+        Route::Wiki(p) => p.width(),
+        Route::Discussions(p) => p.width(),
+        Route::Gists(p) => p.width(),
         Route::People(p) => p.width(),
         Route::Releases(p) => p.width(),
         Route::Runs(p) => p.width(),
@@ -398,6 +375,9 @@ impl State {
         match route {
             Route::App(p) => p.build(b, &mut page),
             Route::Code(p) => p.build(b, &mut page),
+            Route::Wiki(p) => p.build(b, &mut page),
+            Route::Discussions(p) => p.build(b, &mut page),
+            Route::Gists(p) => p.build(b, &mut page),
             Route::People(p) => p.build(b, &mut page),
             Route::Releases(p) => p.build(b, &mut page),
             Route::Runs(p) => p.build(b, &mut page),
@@ -406,27 +386,6 @@ impl State {
             Route::Search { kind, query } => {
                 let results = f.paged(route);
                 pages::search(&mut page, *kind, query, results, icons, keys, now);
-            }
-            Route::NewGist => crate::gist::build(self, &mut page, route),
-            Route::EditGist { id, .. } => {
-                if f.get::<Gist>(&DataKey::Gist(id.clone()))
-                    .show(&mut page, &title)
-                    .is_some()
-                {
-                    crate::gist::build(self, &mut page, route);
-                }
-            }
-            Route::WikiEdit { repo, page: name } => {
-                let key = crate::wiki::form::key(repo, name.as_ref());
-                if f.get::<WikiPage>(&key).show(&mut page, &title).is_some() {
-                    crate::wiki::form::build(self, &mut page, route);
-                }
-            }
-            Route::Wiki { repo, page: name } => {
-                let key = DataKey::Wiki(repo.clone(), name.clone());
-                if let Some(w) = f.get(&key).show(&mut page, &title) {
-                    pages::wiki(&mut page, repo, w);
-                }
             }
             Route::Advisories(repo) => {
                 if let Some(repo) = repo {
@@ -456,28 +415,6 @@ impl State {
                 let key = DataKey::Advisory(repo.clone(), ghsa.clone());
                 if let Some(a) = f.get(&key).show(&mut page, ghsa) {
                     pages::advisory(&mut page, a, now);
-                }
-            }
-            Route::Gist { id, .. } => {
-                if let Some(g) = f.get(&DataKey::Gist(id.clone())).show(&mut page, &title) {
-                    pages::gist(&mut page, g, now);
-                }
-            }
-            Route::Gists(login) => pages::gists(&mut page, login, f.paged(route), now),
-            Route::Discussions { of, category } => {
-                let list = f.paged(route);
-                let base = Route::Discussions {
-                    of: of.clone(),
-                    category: None,
-                };
-                pages::discussions(&mut page, &base.url(), list, category.as_deref(), now);
-            }
-            Route::Discussion { of, number } => {
-                let key = DataKey::Discussion(of.clone(), *number);
-                let none = HashSet::new();
-                let fresh = crate::live::page::fresh(self, route).unwrap_or(&none);
-                if let Some(d) = f.get(&key).show(&mut page, &title) {
-                    pages::discussion(&mut page, d, fresh, &self.talk.unfolded, cx);
                 }
             }
             Route::Notifications { query } => {

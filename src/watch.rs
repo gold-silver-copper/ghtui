@@ -7,6 +7,7 @@
 use crate::api::GitHub;
 use crate::api::model::NodeId;
 use crate::api::watch::{Subscription, SubscriptionState, Watched};
+use crate::route::discussions;
 use crate::route::issues;
 use crate::route::pulls;
 use crate::ui::overlays::PaletteItem;
@@ -52,13 +53,14 @@ fn of_route(route: &Route) -> Option<Watched> {
     Some(match route {
         Route::Issues(issues::Issue { repo, number }) => Watched::Thread(repo.clone(), *number),
         Route::Pulls(pulls::Pr { pr, .. }) => Watched::Thread(pr.repo.clone(), pr.number),
-        Route::Discussion {
+        Route::Discussions(discussions::Discussion {
             of: crate::api::browse::DiscussionsOf::Repo(repo),
             number,
-        } => Watched::Discussion(repo.clone(), *number),
+        }) => Watched::Discussion(repo.clone(), *number),
         // An organization's discussion is in a repository its page
         // doesn't name.
-        Route::Discussion { .. } | Route::Discussions { .. } => return None,
+        Route::Discussions(discussions::Discussion { .. })
+        | Route::Discussions(discussions::Discussions { .. }) => return None,
         route => Watched::Repo(route.repo()?.clone()),
     })
 }
@@ -77,7 +79,7 @@ pub fn subject(state: &State) -> Option<Watched> {
                 Target::Page(
                     route @ (Route::Issues(issues::Issue { .. })
                     | Route::Pulls(pulls::Pr { .. })
-                    | Route::Discussion { .. }),
+                    | Route::Discussions(discussions::Discussion { .. })),
                 ) => of_route(&route),
                 // A row that opens a pull request's files is about it too.
                 Target::Files(crate::diff_screen::DiffOf::Pr(pr)) => {

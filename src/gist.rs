@@ -12,6 +12,7 @@ use crate::api::GitHub;
 use crate::api::browse::Gist;
 use crate::api::gist::{FileChange, GistChange, MadeGist, NewGist};
 use crate::route::app;
+use crate::route::gists;
 use crate::route::people;
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{Link, Page, WriteLink};
@@ -115,9 +116,12 @@ impl Work {
 /// The gist form on screen (blank until it's started), and its page.
 fn here(state: &State) -> Option<(Route, &Form)> {
     static BLANK: std::sync::LazyLock<Form> = std::sync::LazyLock::new(Form::default);
-    let route = state
-        .route()
-        .filter(|r| matches!(r, Route::NewGist | Route::EditGist { .. }))?;
+    let route = state.route().filter(|r| {
+        matches!(
+            r,
+            Route::Gists(gists::NewGist) | Route::Gists(gists::EditGist { .. })
+        )
+    })?;
     let form = state.writing.gists.get(route).unwrap_or(&BLANK);
     Some((route.clone(), form))
 }
@@ -128,7 +132,7 @@ fn form_mut<'a>(state: &'a mut State, route: &Route) -> &'a mut Form {
 
 /// The gist on screen, as loaded.
 fn shown(state: &State) -> Option<&Gist> {
-    let Some(Route::Gist { id, .. }) = state.route() else {
+    let Some(Route::Gists(gists::Gist { id, .. })) = state.route() else {
         return None;
     };
     state.picked::<Gist>(&DataKey::Gist(id.clone()))
@@ -146,10 +150,10 @@ fn not_yours(state: &State, g: &Gist) -> Option<String> {
 /// `,G`: a new gist's page, with what was written there before.
 #[must_use]
 pub fn open_new(state: &mut State) -> Vec<Cmd> {
-    if state.route() == Some(&Route::NewGist) {
+    if state.route() == Some(&Route::Gists(gists::NewGist)) {
         return compose(state, 0);
     }
-    let mut cmds = state.push(Route::NewGist);
+    let mut cmds = state.push(Route::Gists(gists::NewGist));
     cmds.extend(follow(state));
     cmds
 }
@@ -165,10 +169,10 @@ pub fn open_edit(state: &mut State) -> Vec<Cmd> {
         state.info(why);
         return Vec::new();
     }
-    let route = Route::EditGist {
+    let route = Route::Gists(gists::EditGist {
         owner: g.owner.clone().unwrap_or_default(),
         id: g.id.clone(),
-    };
+    });
     // Started again from what GitHub has now.
     state.writing.gists.remove(&route);
     let mut cmds = state.push(route);
@@ -187,7 +191,7 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     }
     match &route {
-        Route::EditGist { id, .. } => {
+        Route::Gists(gists::EditGist { id, .. }) => {
             let Some(g) = state.picked::<Gist>(&DataKey::Gist(id.clone())).cloned() else {
                 return Vec::new();
             };
@@ -477,7 +481,7 @@ pub fn submit(state: &mut State) -> Vec<Cmd> {
             return Vec::new();
         }
     };
-    if let Route::EditGist { .. } = route {
+    if let Route::Gists(gists::EditGist { .. }) = route {
         let Some((id, _)) = form.gist.clone() else {
             crate::writes::say(state, "The gist hasn't loaded yet".into());
             return Vec::new();
@@ -567,7 +571,7 @@ pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
 /// Deletes the gist on `route`'s page.
 #[must_use]
 pub fn delete(state: &mut State, route: &Route) -> Vec<Cmd> {
-    let Route::Gist { id, .. } = route else {
+    let Route::Gists(gists::Gist { id, .. }) = route else {
         return Vec::new();
     };
     let Some(g) = state.picked::<Gist>(&DataKey::Gist(id.clone())) else {
@@ -604,10 +608,10 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
                 return Vec::new();
             }
             let files = named(&form).unwrap_or_default();
-            let page = Route::Gist {
+            let page = Route::Gists(gists::Gist {
                 owner,
                 id: made.id.clone(),
-            };
+            });
             crate::writes::expect(
                 state,
                 page.clone(),
@@ -619,16 +623,16 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
             let form = state.writing.gists.remove(&route).unwrap_or_default();
             crate::writes::close_sender(state, &route);
             state.info("Saved the gist");
-            let Route::EditGist { owner, id } = &route else {
+            let Route::Gists(gists::EditGist { owner, id }) = &route else {
                 return Vec::new();
             };
             if state.route() != Some(&route) {
                 return Vec::new();
             }
-            let page = Route::Gist {
+            let page = Route::Gists(gists::Gist {
                 owner: Some(owner.clone()),
                 id: id.clone(),
-            };
+            });
             let files = named(&form).unwrap_or_default();
             crate::writes::expect(
                 state,
@@ -644,12 +648,11 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
         } => {
             state.overlay = None;
             state.info("Deleted the gist");
-            let on_it =
-                matches!(state.route(), Some(Route::Gist { id: shown, .. }) if *shown == id);
+            let on_it = matches!(state.route(), Some(Route::Gists(gists::Gist { id: shown, .. })) if *shown == id);
             if !on_it {
                 return Vec::new();
             }
-            let page = Route::Gists(owner.clone());
+            let page = Route::Gists(gists::Gists(owner.clone()));
             crate::writes::expect(state, page.clone(), Expected::GistGone(owner, id));
             state.replace(page, true, None)
         }
@@ -700,14 +703,14 @@ pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
             busy.clone(),
         ));
         let (label, short) = match route {
-            Route::NewGist => ("Create the gist (secret or public)", "create"),
+            Route::Gists(gists::NewGist) => ("Create the gist (secret or public)", "create"),
             _ => ("Save the gist", "save"),
         };
         let why = busy.or_else(|| named(form).err());
         out.push(row("This page", Action::Create, label, short, why));
         return;
     }
-    if let Route::Gist { .. } = route {
+    if let Route::Gists(gists::Gist { .. }) = route {
         let why = match shown(state) {
             Some(g) => not_yours(state, g),
             None => Some("it hasn't loaded yet".into()),
@@ -729,8 +732,8 @@ pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
     }
     if matches!(
         route,
-        Route::Gist { .. }
-            | Route::Gists(_)
+        Route::Gists(gists::Gist { .. })
+            | Route::Gists(gists::Gists(_))
             | Route::People(people::User { .. })
             | Route::App(app::Home)
     ) {
@@ -749,7 +752,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
         },
         _ => None,
     };
-    let editing = matches!(route, Route::EditGist { .. });
+    let editing = matches!(route, Route::Gists(gists::EditGist { .. }));
     let mut rows = vec![FormRow {
         name: "Description",
         value: if form.description.is_empty() {

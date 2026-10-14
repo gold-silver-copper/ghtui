@@ -10,6 +10,7 @@
 //! updated since it was kept, and the lists.
 
 use crate::route::code;
+use crate::route::discussions;
 use crate::route::issues;
 use crate::route::pulls;
 use std::collections::BTreeMap;
@@ -251,10 +252,10 @@ async fn refresh(
             repo: repo.clone(),
             query: crate::route::OPEN.into(),
         }),
-        Route::Discussions {
+        Route::Discussions(discussions::Discussions {
             of: DiscussionsOf::Repo(repo.clone()),
             category: None,
-        },
+        }),
     ];
     let pages = tabs.iter().flat_map(Route::needs);
     tracing::info!(%repo, "keeping offline: its tabs");
@@ -370,10 +371,10 @@ async fn recent(
                 };
                 let page: Vec<_> = (list.results.items.into_iter())
                     .map(|d| {
-                        let route = Route::Discussion {
+                        let route = Route::Discussions(discussions::Discussion {
                             of: of.clone(),
                             number: d.number,
-                        };
+                        });
                         (format!("d{}", d.number), d.updated_at, route)
                     })
                     .collect();

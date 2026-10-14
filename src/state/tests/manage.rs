@@ -5,6 +5,7 @@ use crate::api::manage::{
 };
 use crate::api::model::Capped;
 use crate::api::timeline::{Linked, LinkedState};
+use crate::route::discussions;
 use crate::route::issues;
 
 use super::*;
@@ -569,5 +570,11 @@ fn a_new_discussion_starts_from_its_categorys_form() {
     done(&mut s, Done::Started(ghtui(), Ok(7)));
     assert!(s.overlay.is_none());
     let of = DiscussionsOf::Repo(ghtui());
-    assert_eq!(s.route(), Some(&Route::Discussion { of, number: 7 }));
+    assert_eq!(
+        s.route(),
+        Some(&Route::Discussions(discussions::Discussion {
+            of,
+            number: 7
+        }))
+    );
 }

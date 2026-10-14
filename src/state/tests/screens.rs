@@ -3,11 +3,14 @@
 
 use super::*;
 use crate::route::code;
+use crate::route::discussions;
+use crate::route::gists;
 use crate::route::issues;
 use crate::route::people;
 use crate::route::pulls;
 use crate::route::releases;
 use crate::route::runs;
+use crate::route::wiki;
 
 /// A pull request as Home's sections list it.
 pub(crate) fn row(
@@ -186,10 +189,10 @@ pub(crate) fn with_blame() -> State {
 /// A gist.
 pub(crate) fn with_gist() -> State {
     let mut state = state();
-    let route = Route::Gist {
+    let route = Route::Gists(gists::Gist {
         owner: Some("octocat".into()),
         id: "6cad326836d38bd3a7ae".into(),
-    };
+    });
     open(&mut state, route, Data::Gist(Box::new(fixtures::gist())));
     state
 }
@@ -197,7 +200,7 @@ pub(crate) fn with_gist() -> State {
 /// Someone's gists.
 pub(crate) fn with_gists() -> State {
     let mut state = state();
-    let route = Route::Gists("octocat".into());
+    let route = Route::Gists(gists::Gists("octocat".into()));
     open(&mut state, route, Data::Gists(Box::new(fixtures::gists())));
     state
 }
@@ -249,10 +252,10 @@ pub(crate) fn with_advisory() -> State {
 /// A wiki's Home.
 pub(crate) fn with_wiki() -> State {
     let mut state = with_repo();
-    let route = Route::Wiki {
+    let route = Route::Wiki(wiki::Wiki {
         repo: ghtui(),
         page: None,
-    };
+    });
     open(&mut state, route, Data::Wiki(Box::new(fixtures::wiki())));
     state
 }
@@ -414,7 +417,7 @@ pub(crate) fn with_org() -> State {
 pub(crate) fn with_discussions() -> State {
     let mut state = with_repo();
     let of = crate::api::browse::DiscussionsOf::Repo(ghtui());
-    let route = Route::Discussions { of, category: None };
+    let route = Route::Discussions(discussions::Discussions { of, category: None });
     open(
         &mut state,
         route,
@@ -427,7 +430,7 @@ pub(crate) fn with_discussions() -> State {
 pub(crate) fn with_discussion() -> State {
     let mut state = with_repo();
     let of = crate::api::browse::DiscussionsOf::Repo(ghtui());
-    let route = Route::Discussion { of, number: 14603 };
+    let route = Route::Discussions(discussions::Discussion { of, number: 14603 });
     open(
         &mut state,
         route,
