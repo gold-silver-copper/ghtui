@@ -1,5 +1,4 @@
 use crate::act::{By, Subject};
-use crate::api::browse::IssueDetail;
 use crate::api::edit::{Edit, Named, Reaction, ReactionContent, Written};
 
 use super::*;
@@ -8,25 +7,6 @@ use crate::ui::page::Link;
 
 fn issue() -> Subject {
     Subject::Issue(ghtui(), 14)
-}
-
-fn pr() -> PrRef {
-    PrRef::parse("gold-silver-copper/ghtui#12").unwrap()
-}
-
-/// The issue as GitHub has it, changed by `f`.
-fn deliver(s: &mut State, f: impl FnOnce(&mut IssueDetail)) -> Vec<Cmd> {
-    let mut d = fixtures::issue();
-    f(&mut d);
-    let key = DataKey::Issue(ghtui(), 14);
-    fetched(s, key, Data::Issue(Some(Box::new(d))))
-}
-
-/// The issue, as GitHub has it changed by `f`, in a tall terminal.
-fn issue_with(f: impl FnOnce(&mut IssueDetail)) -> State {
-    let mut s = sized(with_issue(), 100, 40);
-    deliver(&mut s, f);
-    s
 }
 
 /// Selects hubot's comment.
@@ -99,11 +79,11 @@ fn a_comment_is_edited_in_place_and_followed() {
     assert!(s.overlay.is_none());
     says(&s, "Saved");
     // GitHub hasn't shown it: the page waits, and says so.
-    deliver(&mut s, |_| {});
+    issue_shows(&mut s, |_| {});
     assert!(s.following.is_some());
     press(&mut s, ",e");
     says(&s, "hasn't shown the last change");
-    deliver(&mut s, |d| {
+    issue_shows(&mut s, |d| {
         d.first_comment().unwrap().body = "Agreed. 120 columns, centered?!".into();
     });
     assert!(s.following.is_none());
@@ -164,7 +144,7 @@ fn deleting_a_comment_asks_first() {
     };
     assert!(c.title.starts_with("Delete hubot's comment"), "{}", c.title);
     // Data arriving doesn't close or change it.
-    deliver(&mut s, |_| {});
+    issue_shows(&mut s, |_| {});
     assert!(matches!(s.overlay, Some(Overlay::Ask(_))));
     let cmds = press(&mut s, "<Enter>");
     let delete = Edit::Delete {
@@ -175,14 +155,14 @@ fn deleting_a_comment_asks_first() {
     answer(&mut s, &cmds, Ok(()));
     assert!(s.overlay.is_none());
     says(&s, "Deleted");
-    deliver(&mut s, |_| {});
+    issue_shows(&mut s, |_| {});
     assert!(s.following.is_some());
     // Meanwhile, another edit waits too, and says so.
     on_hubot(&mut s);
     assert!(press(&mut s, ",D").is_empty());
     assert!(s.overlay.is_none());
     says(&s, "GitHub hasn't shown the last change yet");
-    deliver(&mut s, |d| {
+    issue_shows(&mut s, |d| {
         d.timeline
             .items
             .retain(|i| !matches!(i, crate::api::timeline::Item::Comment(_)));
@@ -245,7 +225,7 @@ fn reacting_toggles_yours() {
     assert_eq!(sent(&cmds), (&Change::Edit(take_back), &By::Edit(issue())));
     assert!(s.overlay.is_none());
     answer(&mut s, &cmds, Ok(()));
-    deliver(&mut s, |d| d.editable.reactions = vec![hooray(1, false)]);
+    issue_shows(&mut s, |d| d.editable.reactions = vec![hooray(1, false)]);
     assert!(s.following.is_none());
 
     on_hubot(&mut s);
@@ -301,15 +281,15 @@ fn labels_are_checked_then_applied() {
     assert_eq!(sent(&cmds), (&Change::Edit(labels), &By::Edit(issue())));
     says(&s, "Changing the labels");
     answer(&mut s, &cmds, Ok(()));
-    deliver(&mut s, |_| {});
+    issue_shows(&mut s, |_| {});
     assert!(s.following.is_some());
     let label = |name: &str| crate::api::model::Label {
         name: name.into(),
         color: "0075ca".into(),
     };
-    deliver(&mut s, |d| d.labels = vec![label("bug")].into());
+    issue_shows(&mut s, |d| d.labels = vec![label("bug")].into());
     assert!(s.following.is_some(), "documentation isn't there yet");
-    deliver(&mut s, |d| {
+    issue_shows(&mut s, |d| {
         d.labels = vec![label("bug"), label("documentation")].into();
     });
     assert!(s.following.is_none());
@@ -379,7 +359,7 @@ fn milestone_and_title() {
     };
     assert_eq!(milestone.as_ref().map(|m| m.id.as_str()), Some("M_4"));
     answer(&mut s, &cmds, Ok(()));
-    deliver(&mut s, |d| {
+    issue_shows(&mut s, |d| {
         if let Some(m) = &mut d.milestone {
             m.title = "1.0".into();
         }

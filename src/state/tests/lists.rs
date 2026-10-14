@@ -262,14 +262,8 @@ fn advisories_load_more() {
 /// it left out, as every other cut-short list does.
 #[test]
 fn org_people_say_how_many_are_left_out() {
-    let mut state = state();
-    let _ = state.push(Route::user("ratatui"));
     // 3 of 14 members.
-    fetched(
-        &mut state,
-        DataKey::Profile("ratatui".into()),
-        Data::Profile(Box::new(crate::fixtures::org_profile())),
-    );
+    let state = with_org();
     let lines: Vec<String> = page(&state)
         .page()
         .lines

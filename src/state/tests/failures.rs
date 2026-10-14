@@ -1,7 +1,7 @@
 //! What pages say when their data fails or is still on its way.
 
 use super::*;
-use crate::route::{code, pulls, runs, search};
+use crate::route::{code, pulls, search};
 
 /// Delivers a failed fetch of `key`.
 fn failed(state: &mut State, key: DataKey) {
@@ -30,47 +30,6 @@ fn a_failed_readme_says_why_under_the_files() {
     let why = "Couldn't load the README: network error: timed out. r tries again.";
     assert!(text.contains(why), "{text}");
     assert!(state.overview(&ghtui()).is_some());
-}
-
-/// A blame whose query fails says so, under the file that loaded.
-#[test]
-fn a_failed_blame_says_why_instead_of_loading() {
-    let mut state = with_repo();
-    let (repo, rev, path) = (ghtui(), "main".to_owned(), "src/main.rs".to_owned());
-    let blob = DataKey::Blob(repo.clone(), rev.clone(), path.clone());
-    let route = Route::Code(code::Blame {
-        repo,
-        rev,
-        path,
-        lines: None,
-    });
-    let _ = state.push(route.clone());
-    fetched(&mut state, blob, Data::Blob(Box::new(fixtures::blob())));
-    let Some(key) = state.needs(&route).pop() else {
-        panic!("a blame fetches its blame");
-    };
-    failed(&mut state, key);
-    let text = page_text(&state);
-    assert!(!text.contains("Loading the blame…"), "{text}");
-    assert!(text.contains("timed out"), "{text}");
-}
-
-/// A pull request whose checks fail to load says so on its Checks tab.
-#[test]
-fn failed_pr_checks_say_why_instead_of_loading() {
-    let mut state = with_pr();
-    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
-    let _ = state.push(Route::Pulls(pulls::Pr {
-        pr: pr.clone(),
-        tab: PrTab::Checks,
-    }));
-    crate::fixtures::pr_fetched(&mut state, &pr, Ok(pr_detail()));
-    let activity = Data::PrActivity(Box::new(fixtures::activity()));
-    fetched(&mut state, DataKey::PrActivity(pr.clone()), activity);
-    failed(&mut state, DataKey::PrChecks(pr));
-    let text = page_text(&state);
-    assert!(!text.contains("Loading checks…"), "{text}");
-    assert!(text.contains("timed out"), "{text}");
 }
 
 /// While a pull request's conversation loads, the timeline under its
@@ -108,23 +67,6 @@ fn a_search_in_flight_says_searching() {
         .map(crate::ui::page::PageLine::text)
         .collect();
     assert!(text.iter().any(|l| l.contains("Searching…")), "{text:#?}");
-}
-
-/// A workflow whose runs fail to load says so under the workflow.
-#[test]
-fn failed_workflow_runs_say_why_instead_of_loading() {
-    let mut state = with_repo();
-    let _ = state.push(Route::Runs(runs::Workflow {
-        repo: ghtui(),
-        file: "ci.yml".into(),
-    }));
-    let (workflow, _) = fixtures::workflow_runs();
-    let key = DataKey::Workflow(ghtui(), "ci.yml".into());
-    fetched(&mut state, key, Data::Workflow(Box::new(workflow)));
-    failed(&mut state, DataKey::Runs(ghtui(), "workflow:ci.yml".into()));
-    let text = page_text(&state);
-    assert!(!text.contains("Loading runs…"), "{text}");
-    assert!(text.contains("timed out"), "{text}");
 }
 
 /// On every page, each need that fails while the others load says why

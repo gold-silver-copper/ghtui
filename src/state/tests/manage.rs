@@ -1,5 +1,5 @@
 use crate::act::{By, Subject};
-use crate::api::browse::{DiscussionsOf, IssueDetail};
+use crate::api::browse::DiscussionsOf;
 use crate::api::manage::{
     Categories, Category, DiscussionReason, HideReason, IssueAt, LockReason, Manage, Target,
 };
@@ -16,45 +16,11 @@ fn issue() -> Subject {
     Subject::Issue(ghtui(), 14)
 }
 
-fn pr() -> PrRef {
-    PrRef::parse("gold-silver-copper/ghtui#12").unwrap()
-}
-
 fn at(number: u64) -> IssueAt {
     IssueAt {
         repo: ghtui(),
         number,
     }
-}
-
-/// The issue as GitHub has it, changed by `f`.
-fn deliver(s: &mut State, f: impl FnOnce(&mut IssueDetail)) -> Vec<Cmd> {
-    let mut d = fixtures::issue();
-    f(&mut d);
-    fetched(
-        s,
-        DataKey::Issue(ghtui(), 14),
-        Data::Issue(Some(Box::new(d))),
-    )
-}
-
-fn issue_with(f: impl FnOnce(&mut IssueDetail)) -> State {
-    let mut s = sized(with_issue(), 100, 40);
-    deliver(&mut s, f);
-    s
-}
-
-/// The pull request as GitHub has it, changed by `f`.
-fn pr_with(f: impl FnOnce(&mut PrDetail)) -> State {
-    let mut s = with_pr();
-    deliver_pr(&mut s, f);
-    s
-}
-
-fn deliver_pr(s: &mut State, f: impl FnOnce(&mut PrDetail)) -> Vec<Cmd> {
-    let mut d = pr_detail();
-    f(&mut d);
-    crate::fixtures::pr_fetched(s, &pr(), Ok(d))
 }
 
 fn linked(number: u64, title: &str) -> Linked {
@@ -122,7 +88,7 @@ fn a_conversation_is_locked_with_a_reason_and_unlocked_after_asking() {
     assert_eq!(sent(&cmds), (&lock, &By::Act(issue())));
     answer(&mut s, &cmds, Ok(()));
     assert!(s.following.is_some(), "it waits for GitHub to show it");
-    deliver(&mut s, |d| {
+    issue_shows(&mut s, |d| {
         d.locked = Some(crate::api::manage::Locked {
             reason: Some(LockReason::TooHeated),
         });
@@ -168,7 +134,7 @@ fn a_merged_pull_requests_branch_is_deleted_and_restored() {
     });
     assert_eq!(sent(&cmds).0, &delete);
     answer(&mut s, &cmds, Ok(()));
-    deliver_pr(&mut s, |d| {
+    pr_shows(&mut s, |d| {
         same(d);
         d.state = PrState::Merged;
         d.head_gone = true;
@@ -201,7 +167,7 @@ fn a_pull_request_converts_back_to_a_draft_after_asking() {
     });
     assert_eq!(sent(&cmds), (&draft, &By::Confirm(Subject::Pr(pr()))));
     answer(&mut s, &cmds, Ok(()));
-    deliver_pr(&mut s, |d| d.state = PrState::Draft);
+    pr_shows(&mut s, |d| d.state = PrState::Draft);
     assert!(s.following.is_none());
 }
 
@@ -209,7 +175,7 @@ fn a_pull_request_converts_back_to_a_draft_after_asking() {
 #[test]
 fn a_new_base_is_picked_from_the_branches() {
     let mut s = pr_with(|_| {});
-    from_menu(&mut s, "base");
+    from_menu(&mut s, "change the base");
     assert!(matches!(pick(&s), Pick::Base { .. }));
     let refs = crate::api::browse::Refs {
         branches: vec!["main".into(), "next".into(), "syntax-palette".into()].into(),
@@ -277,7 +243,7 @@ fn an_issue_closes_as_a_duplicate_of_one_chosen() {
     });
     assert_eq!(sent(&cmds), (&close, &By::Act(issue())));
     answer(&mut s, &cmds, Ok(()));
-    deliver(&mut s, |d| d.state = IssueState::NotPlanned);
+    issue_shows(&mut s, |d| d.state = IssueState::NotPlanned);
     assert!(s.following.is_none());
 }
 
@@ -299,7 +265,7 @@ fn a_comment_is_hidden_with_a_reason_and_shows_folded() {
     });
     assert_eq!(sent(&cmds), (&hide, &By::Act(issue())));
     answer(&mut s, &cmds, Ok(()));
-    deliver(&mut s, |d| {
+    issue_shows(&mut s, |d| {
         if let Some(c) = d.first_comment() {
             c.hiding.reason = Some("off-topic".into());
         }
@@ -338,7 +304,7 @@ fn sub_issues_and_what_blocks_an_issue_change_in_their_pickers() {
     assert_eq!(sent(&cmds).0, &moved);
     assert!(matches!(pick(&s), Pick::SubIssues { .. }), "it stays open");
     answer(&mut s, &cmds, Ok(()));
-    deliver(&mut s, |d| {
+    issue_shows(&mut s, |d| {
         d.sub_issues = vec![linked(3, "Second"), linked(2, "First")].into();
     });
     assert!(s.following.is_none());
@@ -350,7 +316,7 @@ fn sub_issues_and_what_blocks_an_issue_change_in_their_pickers() {
     });
     assert_eq!(sent(&cmds).0, &add);
     answer(&mut s, &cmds, Ok(()));
-    deliver(&mut s, |d| {
+    issue_shows(&mut s, |d| {
         d.sub_issues = vec![linked(3, "Second"), linked(2, "First"), linked(5, "Third")].into();
     });
     assert!(s.following.is_none());
@@ -374,7 +340,7 @@ fn sub_issues_and_what_blocks_an_issue_change_in_their_pickers() {
     });
     assert_eq!(sent(&cmds).0, &blocked);
     answer(&mut s, &cmds, Ok(()));
-    deliver(&mut s, |d| d.blocked_by = vec![linked(4, "Blocker")].into());
+    issue_shows(&mut s, |d| d.blocked_by = vec![linked(4, "Blocker")].into());
     assert!(s.following.is_none());
     assert!(screen_text(&s).contains("Blocked by"));
 }
@@ -405,7 +371,7 @@ fn a_branch_for_an_issue_is_made_then_checked_out() {
             track: Some(branch),
         }
     );
-    deliver(&mut s, |d| {
+    issue_shows(&mut s, |d| {
         d.branches = vec!["14-pages-wrap-at-the-terminal-width".to_owned()].into();
     });
     assert!(s.following.is_none());
@@ -423,7 +389,7 @@ fn an_issue_is_pinned_and_transferred() {
     });
     assert_eq!(sent(&cmds).0, &pin);
     answer(&mut s, &cmds, Ok(()));
-    deliver(&mut s, |d| d.pinned = true);
+    issue_shows(&mut s, |d| d.pinned = true);
     assert!(s.following.is_none());
     assert!(screen_text(&s).contains("Pinned"));
 

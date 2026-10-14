@@ -8,30 +8,9 @@ use super::*;
 use crate::act::{By, Subject};
 use crate::forms::{About, Answer};
 
-fn pr() -> PrRef {
-    PrRef::parse("gold-silver-copper/ghtui#12").unwrap()
-}
-
 /// A pull request whose state is `state`.
 fn pr_in(state: PrState) -> State {
     pr_with(|d| d.state = state)
-}
-
-/// The pull request, changed by `f`.
-fn pr_with(f: impl FnOnce(&mut crate::api::model::PrDetail)) -> State {
-    let mut s = with_pr();
-    crate::fixtures::pr_fetched(&mut s, &pr(), Ok(mergeable(f)));
-    s
-}
-
-/// The pull request without its conflicts (GitHub would merge it),
-/// changed by `f`.
-fn mergeable(f: impl FnOnce(&mut crate::api::model::PrDetail)) -> crate::api::model::PrDetail {
-    let mut detail = pr_detail();
-    detail.mergeable = crate::api::model::Mergeable::Yes;
-    detail.merge_state = MergeState::Unstable;
-    f(&mut detail);
-    detail
 }
 
 /// Merging asks first, saying what stands in the way; a refusal stays
@@ -106,7 +85,7 @@ fn acting_on_a_homes_row_is_about_that_row() {
     let cmds = press(&mut s, ",m");
     assert_eq!(cmds, vec![crate::fixtures::fetch_pr(&pr())]);
     says(&s, "Loading gold-silver-copper/ghtui#12");
-    crate::fixtures::pr_fetched(&mut s, &pr(), Ok(mergeable(|_| {})));
+    pr_shows(&mut s, |_| {});
     assert_eq!(
         overlay!(s, Ask).about,
         About::Act(Action::Merge, Subject::Pr(pr()))
@@ -178,7 +157,7 @@ fn after_updating_the_branch_merging_waits_for_the_new_head() {
     let sent = press(&mut s, "<Enter>");
     answer(&mut s, &sent, Ok(()));
     // GitHub still shows the old head.
-    crate::fixtures::pr_fetched(&mut s, &pr(), Ok(mergeable(|_| {})));
+    pr_shows(&mut s, |_| {});
     press(&mut s, ",m");
     says(&s, "hasn't shown the last change");
     let cmds = timers(&mut s);

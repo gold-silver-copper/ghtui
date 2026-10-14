@@ -100,9 +100,53 @@ pub(crate) fn with_home() -> State {
     state
 }
 
+/// gold-silver-copper/ghtui#12, the fixture pull request.
+pub(crate) fn pr() -> PrRef {
+    PrRef::parse("gold-silver-copper/ghtui#12").unwrap()
+}
+
+/// [`pr_detail`] without its conflicts (GitHub would merge it), changed
+/// by `f`.
+pub(crate) fn mergeable(f: impl FnOnce(&mut PrDetail)) -> PrDetail {
+    let mut d = pr_detail();
+    d.mergeable = crate::api::model::Mergeable::Yes;
+    d.merge_state = crate::api::model::MergeState::Unstable;
+    f(&mut d);
+    d
+}
+
+/// GitHub's answer for [`pr`]: [`mergeable`], changed by `f`.
+pub(crate) fn pr_shows(s: &mut State, f: impl FnOnce(&mut PrDetail)) -> Vec<Cmd> {
+    fixtures::pr_fetched(s, &pr(), Ok(mergeable(f)))
+}
+
+/// [`with_pr`], then GitHub's answer changed by `f`.
+pub(crate) fn pr_with(f: impl FnOnce(&mut PrDetail)) -> State {
+    let mut s = with_pr();
+    pr_shows(&mut s, f);
+    s
+}
+
+/// GitHub's answer for the fixture issue, changed by `f`.
+pub(crate) fn issue_shows(
+    s: &mut State,
+    f: impl FnOnce(&mut crate::api::browse::IssueDetail),
+) -> Vec<Cmd> {
+    let mut d = fixtures::issue();
+    f(&mut d);
+    let key = DataKey::Issue(ghtui(), 14);
+    fetched(s, key, Data::Issue(Some(Box::new(d))))
+}
+
+/// [`with_issue`] in a tall terminal, then GitHub's answer changed by `f`.
+pub(crate) fn issue_with(f: impl FnOnce(&mut crate::api::browse::IssueDetail)) -> State {
+    let mut s = sized(with_issue(), 100, 40);
+    issue_shows(&mut s, f);
+    s
+}
+
 pub(crate) fn with_pr() -> State {
-    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
-    at(with_home(), Route::pr(pr))
+    at(with_home(), Route::pr(pr()))
 }
 
 /// Pushes `route` and delivers `data` for its page's own fetch (its last).

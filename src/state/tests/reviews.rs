@@ -12,10 +12,6 @@ use super::*;
 use crate::fixtures::{self};
 use crate::ui::page::{Link, ReviewLink};
 
-fn pr() -> PrRef {
-    PrRef::parse("gold-silver-copper/ghtui#12").unwrap()
-}
-
 /// The page on screen, as text.
 fn text(s: &State) -> String {
     let Screen::Page(p) = s.screen() else {

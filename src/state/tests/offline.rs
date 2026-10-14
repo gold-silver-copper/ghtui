@@ -11,17 +11,9 @@ fn offline(state: &mut State, msg: OffMsg) -> Vec<Cmd> {
     update(state, Msg::Offline(msg))
 }
 
-fn on_issue() -> State {
-    let mut state = state();
-    let _ = state.push(issue(14));
-    let data = Data::Issue(Some(Box::new(crate::fixtures::issue())));
-    fetched(&mut state, DataKey::Issue(ghtui(), 14), data);
-    state
-}
-
 #[test]
 fn a_comment_github_can_t_be_reached_for_waits_on_its_page_and_goes_when_it_s_back() {
-    let mut state = on_issue();
+    let mut state = with_issue();
     let cmds = offline(&mut state, OffMsg::Reach(Some(100)));
     assert_eq!(cmds, [Cmd::Timer(Timer::Probe, 2_000)]);
     assert_eq!(crate::offline::header(&state), ["⚠ Offline"]);
@@ -80,7 +72,7 @@ fn a_comment_github_can_t_be_reached_for_waits_on_its_page_and_goes_when_it_s_ba
 
 #[test]
 fn what_can_t_wait_isn_t_queued() {
-    let mut state = on_issue();
+    let mut state = with_issue();
     let merge = Change::Merge {
         pr: NodeId::new("PR_1"),
         method: crate::api::change::MergeMethod::Squash,
@@ -98,7 +90,7 @@ fn what_can_t_wait_isn_t_queued() {
 
 #[test]
 fn a_refused_write_is_sent_again_copied_or_thrown_away_from_its_row() {
-    let mut state = on_issue();
+    let mut state = with_issue();
     let refused = Entry {
         id: 3,
         at: 0,
@@ -134,7 +126,7 @@ fn a_refused_write_is_sent_again_copied_or_thrown_away_from_its_row() {
 
 #[test]
 fn refreshing_while_github_is_away_asks_whether_it_s_back() {
-    let mut state = on_issue();
+    let mut state = with_issue();
     offline(&mut state, OffMsg::Reach(Some(100)));
     let cmds = press(&mut state, "r");
     assert!(cmds.contains(&Cmd::Offline(Off::Probe)), "{cmds:?}");

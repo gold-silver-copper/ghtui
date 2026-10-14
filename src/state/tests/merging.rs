@@ -1,33 +1,9 @@
 use crate::api::change::MergeMethod;
-use crate::api::model::{AutoMerge, MergeState, Mergeable, QueueState, Queued};
+use crate::api::model::{AutoMerge, MergeState, QueueState, Queued};
 
 use super::*;
 use crate::act::{By, Subject};
 use crate::forms::Answer;
-
-fn pr() -> PrRef {
-    PrRef::parse("gold-silver-copper/ghtui#12").unwrap()
-}
-
-/// The pull request without its conflicts, changed by `f`.
-fn detail(f: impl FnOnce(&mut PrDetail)) -> PrDetail {
-    let mut d = pr_detail();
-    d.mergeable = Mergeable::Yes;
-    d.merge_state = MergeState::Unstable;
-    f(&mut d);
-    d
-}
-
-fn pr_with(f: impl FnOnce(&mut PrDetail)) -> State {
-    let mut s = with_pr();
-    crate::fixtures::pr_fetched(&mut s, &pr(), Ok(detail(f)));
-    s
-}
-
-/// GitHub says it's `d` now.
-fn github_shows(s: &mut State, f: impl FnOnce(&mut PrDetail)) {
-    crate::fixtures::pr_fetched(s, &pr(), Ok(detail(f)));
-}
 
 fn choices(s: &State) -> Vec<(&str, &Change)> {
     match &s.overlay {
@@ -131,12 +107,12 @@ fn merging_while_checks_run_offers_merge_when_ready() {
     answer(&mut s, &sent, Ok(()));
     says(&s, "Auto-merge enabled");
     // GitHub doesn't show it yet: the page waits.
-    github_shows(&mut s, |d| {
+    pr_shows(&mut s, |d| {
         checks_running(d);
         d.may.enable_auto_merge = true;
     });
     assert!(s.following.is_some());
-    github_shows(&mut s, |d| {
+    pr_shows(&mut s, |d| {
         checks_running(d);
         d.auto_merge = alice_squashes();
         d.may.disable_auto_merge = true;
@@ -151,7 +127,7 @@ fn merging_while_checks_run_offers_merge_when_ready() {
     assert_eq!(choices(&s), [("Disable auto-merge", &disable)]);
     let sent = press(&mut s, "<Enter>");
     answer(&mut s, &sent, Ok(()));
-    github_shows(&mut s, checks_running);
+    pr_shows(&mut s, checks_running);
     assert!(s.following.is_none());
 
     // Mergeable now, with checks that aren't required still running:
@@ -191,7 +167,7 @@ fn a_merge_queue_takes_it_in_and_lets_it_go() {
             state: QueueState::Queued,
         });
     };
-    github_shows(&mut s, queued);
+    pr_shows(&mut s, queued);
     assert!(s.following.is_none());
 
     assert_eq!(
@@ -205,9 +181,9 @@ fn a_merge_queue_takes_it_in_and_lets_it_go() {
     assert_eq!(choices(&s), [("Remove from the queue", &dequeue)]);
     let sent = press(&mut s, "<Enter>");
     answer(&mut s, &sent, Ok(()));
-    github_shows(&mut s, queued);
+    pr_shows(&mut s, queued);
     assert!(s.following.is_some());
-    github_shows(&mut s, queue);
+    pr_shows(&mut s, queue);
     assert!(s.following.is_none());
 
     // Taking it out takes write access, and the menu says so.

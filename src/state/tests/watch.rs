@@ -2,7 +2,6 @@
 //! Actions tab, an issue.
 
 use super::*;
-use crate::route::runs;
 use std::collections::HashSet;
 
 use crate::api::Polled;
@@ -52,13 +51,7 @@ fn rest_issue(comments: u64) -> String {
 }
 
 fn on_issue() -> (State, DataKey) {
-    let mut s = with_repo();
-    s.viewer = Some("octocat".into());
-    let _ = s.push(issue(14));
-    let key = DataKey::Issue(ghtui(), 14);
-    let detail = Some(Box::new(crate::fixtures::issue()));
-    fetched(&mut s, key.clone(), Data::Issue(detail));
-    (s, key)
+    (at(with_repo(), issue(14)), DataKey::Issue(ghtui(), 14))
 }
 
 /// An issue on screen is asked about with ETags: the first answers are
@@ -154,14 +147,7 @@ fn a_first_answer_newer_than_the_issue_is_fetched() {
 /// failure and says how it ended. Then the asking stops.
 #[test]
 fn a_running_job_is_followed_to_its_end() {
-    let mut s = with_repo();
-    let _ = s.push(Route::Runs(runs::Job {
-        repo: ghtui(),
-        run: Some(7),
-        job: 2,
-        step: None,
-        query: String::new(),
-    }));
+    let mut s = with_job(None);
     let (done, log) = crate::fixtures::job();
     let mut running = done.clone();
     running.outcome = CheckOutcome::Pending;
@@ -225,16 +211,10 @@ fn a_running_job_is_followed_to_its_end() {
 /// The Actions tab is asked about, and a run that wasn't there is said.
 #[test]
 fn new_runs_on_the_actions_tab_are_said() {
-    let mut s = with_repo();
-    s.viewer = Some("octocat".into());
+    let mut s = at(with_repo(), Route::actions(ghtui()));
     let query = String::new();
-    let _ = s.push(Route::Runs(runs::Actions {
-        repo: ghtui(),
-        query: query.clone(),
-    }));
     let key = DataKey::Runs(ghtui(), query.clone());
     let (_, runs) = crate::fixtures::workflow_runs();
-    fetched(&mut s, key.clone(), Data::Runs(Box::new(runs.clone())));
     let (asks, _) = next_ask(&mut s);
     assert_eq!(asks[0].probe, Probe::Runs(ghtui(), query));
     let wire = serde_json::json!({ "total_count": 1, "workflow_runs": [{

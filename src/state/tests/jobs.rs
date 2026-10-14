@@ -39,23 +39,9 @@ fn output_takes_the_screen_and_reading_stays_narrow() {
 /// on the same page as it was.
 #[test]
 fn a_jobs_log_search_goes_through_its_matches() {
-    let mut s = with_repo();
-    let job_route = Route::Runs(runs::Job {
-        repo: ghtui(),
-        run: Some(7),
-        job: 2,
-        step: Some((1, 1)),
-        query: String::new(),
-    });
-    let _ = s.push(job_route.clone());
+    let mut s = with_job(Some((1, 1)));
+    let job_route = route(&s);
     let depth = s.screens.len();
-    let (job, log) = crate::fixtures::job();
-    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::Job(Box::new(job)));
-    fetched(
-        &mut s,
-        DataKey::JobLog(ghtui(), 2),
-        Data::Log(Arc::new(log)),
-    );
     press(&mut s, "/");
     press(&mut s, "TEST");
     press(&mut s, "<Enter>");
@@ -104,21 +90,7 @@ fn a_jobs_log_search_goes_through_its_matches() {
 /// selected.
 #[test]
 fn a_failed_job_opens_at_its_first_error() {
-    let mut s = with_repo();
-    let _ = s.push(Route::Runs(runs::Job {
-        repo: ghtui(),
-        run: Some(7),
-        job: 2,
-        step: None,
-        query: String::new(),
-    }));
-    let (job, log) = crate::fixtures::job();
-    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::Job(Box::new(job)));
-    fetched(
-        &mut s,
-        DataKey::JobLog(ghtui(), 2),
-        Data::Log(Arc::new(log)),
-    );
+    let s = with_job(None);
     let Screen::Page(p) = s.screen() else {
         panic!()
     };
@@ -141,15 +113,7 @@ fn a_failed_job_opens_at_its_first_error() {
 /// job ends), are fetched again when their page is back on screen.
 #[test]
 fn a_running_jobs_log_is_checked_again() {
-    let mut s = with_repo();
-    let job_route = Route::Runs(runs::Job {
-        repo: ghtui(),
-        run: Some(7),
-        job: 2,
-        step: None,
-        query: String::new(),
-    });
-    let _ = s.push(job_route);
+    let mut s = with_job(None);
     let (mut job, _) = crate::fixtures::job();
     job.outcome = crate::api::browse::CheckOutcome::Pending;
     let running = crate::api::browse::JobLog {
@@ -168,13 +132,7 @@ fn a_running_jobs_log_is_checked_again() {
     assert!(keys.contains(&DataKey::JobLog(ghtui(), 2)), "{keys:?}");
     assert!(keys.contains(&DataKey::Job(ghtui(), 2)), "{keys:?}");
     // A finished one isn't.
-    let (job, log) = crate::fixtures::job();
-    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::Job(Box::new(job)));
-    fetched(
-        &mut s,
-        DataKey::JobLog(ghtui(), 2),
-        Data::Log(Arc::new(log)),
-    );
+    crate::fixtures::served(&mut s, &cmds);
     let _ = s.push(Route::Code(code::Repo(ghtui())));
     assert_eq!(crate::fixtures::asked(&s.back()), Vec::new());
 }
