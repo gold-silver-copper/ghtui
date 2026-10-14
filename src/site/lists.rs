@@ -118,10 +118,8 @@ pub fn open(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     };
     let mut cmds = state.ensure(DataKey::MyLists(repo.clone()), true);
-    cmds.extend(crate::writes::open_picker(
-        state,
-        Pick::Site(super::Pick::Lists(repo)),
-    ));
+    let pick = Pick::Site(super::Pick::Lists(repo));
+    cmds.extend(state.open_picker(crate::picker::Kind::Write(pick)));
     cmds
 }
 

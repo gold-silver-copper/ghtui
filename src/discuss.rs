@@ -13,13 +13,13 @@ use crate::api::edit::{Edit, Editable};
 use crate::api::model::NodeId;
 use crate::route::{Route, discussions};
 
-use crate::act::{By, Confirm, Subject};
+use crate::act::{By, Confirm, Step, Subject};
 use crate::compose;
 use crate::data::DataKey;
 use crate::edit::Choosing;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::state::{Cmd, Overlay, Screen, State};
+use crate::state::{Cmd, Screen, State};
 use crate::ui::page::Link;
 
 /// The actions a discussion's page takes as its own.
@@ -195,31 +195,28 @@ impl Spot<'_> {
     }
 }
 
-/// What an action does here.
-enum Plan {
-    Write(Writing, String),
-    React(Editable),
-    Send(Discuss),
-    Delete(Box<Confirm>),
-}
-
 fn editable(c: &Comment) -> Result<&Editable, String> {
     c.editable
         .as_ref()
         .ok_or_else(|| "GitHub didn't say what you may do with it".to_owned())
 }
 
-fn plan(state: &State, h: &Here<'_>, action: Action) -> Result<Plan, String> {
+fn plan(state: &State, h: &Here<'_>, action: Action) -> Result<Step, String> {
     let d = h.d.ok_or("The discussion hasn't loaded yet")?;
+    let about = Subject::Discussion(h.of.clone(), h.number);
+    let send = |d| Ok(Step::Send(Change::Discussion(d), about.clone()));
     let selected = h.selected.and_then(|s| spot(d, s));
     let next = state.first_key(Action::NextItem);
     let select = || format!("Select a comment first: {next} goes comment by comment");
-    let write = |writes, title: String, at: Option<String>| Writing {
-        of: h.of.clone(),
-        number: h.number,
-        writes,
-        title,
-        at,
+    let write = |writes, title: String, at: Option<String>, text| {
+        let writing = Writing {
+            of: h.of.clone(),
+            number: h.number,
+            writes,
+            title,
+            at,
+        };
+        Step::Compose(compose::Target::Discussion(writing), text)
     };
     match action {
         Action::Comment | Action::QuoteReply => {
@@ -246,7 +243,7 @@ fn plan(state: &State, h: &Here<'_>, action: Action) -> Result<Plan, String> {
                             discussion: d.id.clone(),
                             reply_to: Some(id),
                         };
-                        Plan::Write(write(writes, format!("Reply to {replied}"), at), quoted)
+                        write(writes, format!("Reply to {replied}"), at, quoted)
                     }
                     None => {
                         let writes = Writes::Comment {
@@ -254,7 +251,7 @@ fn plan(state: &State, h: &Here<'_>, action: Action) -> Result<Plan, String> {
                             reply_to: None,
                         };
                         let title = format!("{what} on “{}”", d.title);
-                        Plan::Write(write(writes, title, None), quoted)
+                        write(writes, title, None, quoted)
                     }
                 },
             )
@@ -267,7 +264,11 @@ fn plan(state: &State, h: &Here<'_>, action: Action) -> Result<Plan, String> {
             if !target.can_react {
                 return Err("GitHub doesn't let you react to it".into());
             }
-            Ok(Plan::React(target.clone()))
+            let choosing = Choosing::React {
+                about,
+                target: target.clone(),
+            };
+            Ok(Step::Pick(crate::picker::Kind::Edit(choosing)))
         }
         Action::MarkAnswer => {
             let s = selected.ok_or_else(select)?;
@@ -288,12 +289,12 @@ fn plan(state: &State, h: &Here<'_>, action: Action) -> Result<Plan, String> {
             }
             let comment = editable(&c.comment)?.id.clone();
             match (c.answer, c.can_unmark, c.can_mark) {
-                (true, true, _) => Ok(Plan::Send(Discuss::Answer { comment, on: false })),
+                (true, true, _) => send(Discuss::Answer { comment, on: false }),
                 (true, false, _) => Err(
                     "GitHub doesn't let you unmark the answer: that takes the discussion's author or triage access"
                         .into(),
                 ),
-                (false, _, true) => Ok(Plan::Send(Discuss::Answer { comment, on: true })),
+                (false, _, true) => send(Discuss::Answer { comment, on: true }),
                 (false, _, false) => Err(
                     "GitHub doesn't let you mark the answer: that takes the discussion's author or triage access"
                         .into(),
@@ -322,8 +323,10 @@ fn plan(state: &State, h: &Here<'_>, action: Action) -> Result<Plan, String> {
                 ));
             }
             let writes = Writes::Edit { id, post };
-            Ok(Plan::Write(
-                write(writes, format!("Edit {name}"), Some(at.clone())),
+            Ok(write(
+                writes,
+                format!("Edit {name}"),
+                Some(at.clone()),
                 body.clone(),
             ))
         }
@@ -353,9 +356,9 @@ fn plan(state: &State, h: &Here<'_>, action: Action) -> Result<Plan, String> {
             }
             facts.push(("Deleting it can't be undone".to_owned(), true));
             let delete = Change::Discussion(Discuss::Delete { id: e.id.clone() });
-            Ok(Plan::Delete(Box::new(Confirm::new(
+            Ok(Step::Ask(Box::new(Confirm::new(
                 action,
-                Subject::Discussion(h.of.clone(), h.number),
+                about,
                 format!("Delete {name}?"),
                 facts,
                 vec![("Delete".into(), delete)],
@@ -372,30 +375,9 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
         state.info(action.not_here());
         return Vec::new();
     };
-    let about = Subject::Discussion(h.of.clone(), h.number);
-    let planned = plan(state, &h, action).and_then(|plan| match crate::act::awaiting_here(state) {
-        Some(_) => Err("GitHub hasn't shown the last change yet: wait a moment".to_owned()),
-        None => Ok(plan),
-    });
-    match planned {
-        Err(why) => {
-            state.info(why);
-            Vec::new()
-        }
-        Ok(Plan::Write(w, text)) => state.compose(compose::Target::Discussion(w), &text),
-        Ok(Plan::React(target)) => {
-            let choosing = Choosing::React { about, target };
-            state.open_picker(crate::picker::Kind::Edit(choosing))
-        }
-        Ok(Plan::Send(change)) => {
-            state.info(format!("{}…", doing(&change)));
-            vec![crate::act::send(Change::Discussion(change), By::Act(about))]
-        }
-        Ok(Plan::Delete(confirm)) => {
-            state.overlay = Some(Overlay::Confirm(confirm));
-            Vec::new()
-        }
-    }
+    let planned =
+        plan(state, &h, action).and_then(|step| crate::act::settled(state).map(|()| step));
+    crate::act::take(state, planned)
 }
 
 /// The menu's rows on a discussion's page.

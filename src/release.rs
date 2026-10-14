@@ -381,7 +381,7 @@ fn follow(state: &mut State) -> Vec<Cmd> {
     let new = matches!(route, Route::Releases(releases::NewRelease(_)));
     if new && loaded && !started && state.overlay.is_none() && refused(state, &repo).is_none() {
         state.forms.edit::<Form>(&route).started = true;
-        cmds.extend(crate::writes::open_picker(state, Pick::Tag(route)));
+        cmds.extend(state.open_picker(crate::picker::Kind::Write(Pick::Tag(route))));
     }
     cmds
 }
@@ -411,9 +411,9 @@ fn on_row(state: &mut State, link: &Row) -> Vec<Cmd> {
         return Vec::new();
     };
     match link {
-        Row::Tag => crate::writes::open_picker(state, Pick::Tag(route)),
+        Row::Tag => state.open_picker(crate::picker::Kind::Write(Pick::Tag(route))),
         Row::Target if form.new_tag(state, &repo) => {
-            crate::writes::open_picker(state, Pick::Target(route))
+            state.open_picker(crate::picker::Kind::Write(Pick::Target(route)))
         }
         Row::Target => {
             state.info("The tag is GitHub's already: it's where it is");

@@ -22,7 +22,7 @@ use crate::api::model::{Capped, NodeId, PrDetail, PrRef, RepoId};
 use crate::ui::overlays::PaletteItem;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::act::{By, Confirm, Subject};
+use crate::act::{Confirm, Step, Subject};
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
@@ -171,14 +171,6 @@ fn selected_comment(state: &State, about: &Subject) -> Result<Said, String> {
 
 // ---- what a key does --------------------------------------------------------------
 
-/// What an action does here.
-enum Plan {
-    /// Send it now.
-    Do(Change, Subject),
-    Ask(Box<Confirm>),
-    Pick(Pick),
-}
-
 fn ask(action: Action, about: Subject, title: String, facts: Vec<(String, bool)>) -> Confirm {
     Confirm::new(action, about, title, facts, Vec::new())
 }
@@ -198,31 +190,29 @@ fn elsewhere(action: Action) -> String {
     }
 }
 
-fn plan(state: &State, action: Action) -> Result<Plan, String> {
+fn plan(state: &State, action: Action) -> Result<Step, String> {
     if action == Action::NewDiscussion {
         let repo = discussions_repo(state).ok_or_else(|| elsewhere(action))?;
         if state.overview(&repo).is_some_and(|o| !o.has_discussions) {
             return Err(format!("{repo} has discussions turned off"));
         }
-        return Ok(Plan::Pick(Pick::Category { repo }));
+        return pick(Pick::Category { repo });
     }
     let about = here(state).ok_or_else(|| elsewhere(action))?;
-    if crate::act::awaiting_here(state).is_some() {
-        return Err("GitHub hasn't shown the last change yet: wait a moment".into());
-    }
+    crate::act::settled(state)?;
     if action == Action::HideComment {
         let said = selected_comment(state, &about)?;
         return match (said.hidden, said.can_hide, said.can_unhide) {
-            (true, _, true) => Ok(Plan::Do(
+            (true, _, true) => Ok(Step::Send(
                 Change::Manage(Manage::Unhide { comment: said.id }),
                 about,
             )),
             (true, _, false) => Err(format!("GitHub doesn't let you unhide {}", said.name)),
-            (false, true, _) => Ok(Plan::Pick(Pick::Hide {
+            (false, true, _) => pick(Pick::Hide {
                 about,
                 comment: said.id,
                 name: said.name,
-            })),
+            }),
             (false, false, _) => Err(format!(
                 "GitHub doesn't let you hide {}: that takes its repository's triage access",
                 said.name
@@ -253,7 +243,7 @@ fn lock_plan(
     id: &NodeId,
     about: Subject,
     what: &str,
-) -> Result<Plan, String> {
+) -> Result<Step, String> {
     if !may {
         let verb = if locked.is_some() { "unlock" } else { "lock" };
         return Err(format!(
@@ -261,10 +251,10 @@ fn lock_plan(
         ));
     }
     if locked.is_none() {
-        return Ok(Plan::Pick(Pick::Lock {
+        return pick(Pick::Lock {
             about,
             id: id.clone(),
-        }));
+        });
     }
     let mut confirm = ask(
         Action::Lock,
@@ -276,10 +266,10 @@ fn lock_plan(
         subject: id.clone(),
     });
     confirm.choices = vec![("Unlock conversation".into(), unlock)];
-    Ok(Plan::Ask(Box::new(confirm)))
+    Ok(Step::Ask(Box::new(confirm)))
 }
 
-fn pr_plan(state: &State, r: &PrRef, action: Action, about: Subject) -> Result<Plan, String> {
+fn pr_plan(state: &State, r: &PrRef, action: Action, about: Subject) -> Result<Step, String> {
     let d = pr(state, r).ok_or(LOADING)?;
     let same_repo =
         (d.head_repo.as_deref()).is_some_and(|h| h.eq_ignore_ascii_case(&r.repo.to_string()));
@@ -297,7 +287,7 @@ fn pr_plan(state: &State, r: &PrRef, action: Action, about: Subject) -> Result<P
             "Restoring {} takes write access to {}",
             d.head_ref, r.repo
         )),
-        Action::DeleteBranch if d.head_gone => Ok(Plan::Do(
+        Action::DeleteBranch if d.head_gone => Ok(Step::Send(
             Change::Manage(Manage::RestoreBranch {
                 repo: r.repo.clone(),
                 branch: d.head_ref.clone(),
@@ -309,7 +299,7 @@ fn pr_plan(state: &State, r: &PrRef, action: Action, about: Subject) -> Result<P
             "GitHub doesn't let you delete {}: it takes write access, and it may be protected or another pull request's",
             d.head_ref
         )),
-        Action::DeleteBranch => Ok(Plan::Do(
+        Action::DeleteBranch => Ok(Step::Send(
             Change::Manage(Manage::DeleteBranch {
                 repo: r.repo.clone(),
                 branch: d.head_ref.clone(),
@@ -322,12 +312,12 @@ fn pr_plan(state: &State, r: &PrRef, action: Action, about: Subject) -> Result<P
         Action::ChangeBase if !d.may.edit => {
             Err("Changing its base takes its author or write access".into())
         }
-        Action::ChangeBase => Ok(Plan::Pick(Pick::Base {
+        Action::ChangeBase => pick(Pick::Base {
             pr: r.clone(),
             id: d.id.clone(),
             from: d.base_ref.clone(),
             head: d.head_ref.clone(),
-        })),
+        }),
         Action::Revert if d.state != PrState::Merged => {
             Err("Only a merged pull request can be reverted".into())
         }
@@ -352,13 +342,13 @@ fn pr_plan(state: &State, r: &PrRef, action: Action, about: Subject) -> Result<P
             );
             let revert = Change::Manage(Manage::Revert { pr: d.id.clone() });
             confirm.choices = vec![("Revert".into(), revert)];
-            Ok(Plan::Ask(Box::new(confirm)))
+            Ok(Step::Ask(Box::new(confirm)))
         }
         _ => Err(elsewhere(action)),
     }
 }
 
-fn issue_plan(d: &IssueDetail, action: Action, about: Subject) -> Result<Plan, String> {
+fn issue_plan(d: &IssueDetail, action: Action, about: Subject) -> Result<Step, String> {
     let at = IssueAt {
         repo: d.repo.clone(),
         number: d.number,
@@ -369,7 +359,7 @@ fn issue_plan(d: &IssueDetail, action: Action, about: Subject) -> Result<Plan, S
         Action::Pin if !d.can_write => {
             Err(format!("Pinning an issue takes write access to {}", d.repo))
         }
-        Action::Pin => Ok(Plan::Do(
+        Action::Pin => Ok(Step::Send(
             Change::Manage(Manage::Pin {
                 issue: d.id.clone(),
                 on: !d.pinned,
@@ -379,29 +369,29 @@ fn issue_plan(d: &IssueDetail, action: Action, about: Subject) -> Result<Plan, S
         Action::Transfer if !d.can_write => {
             Err(format!("Transferring takes write access to {}", d.repo))
         }
-        Action::Transfer => Ok(Plan::Pick(Pick::Transfer {
+        Action::Transfer => pick(Pick::Transfer {
             issue: at,
             id: d.id.clone(),
-        })),
+        }),
         Action::SubIssues | Action::BlockedBy if !triage => {
             Err("GitHub doesn't let you change it: that takes triage access".into())
         }
-        Action::SubIssues => Ok(Plan::Pick(Pick::SubIssues {
+        Action::SubIssues => pick(Pick::SubIssues {
             issue: at,
             id: d.id.clone(),
-        })),
-        Action::BlockedBy => Ok(Plan::Pick(Pick::BlockedBy {
+        }),
+        Action::BlockedBy => pick(Pick::BlockedBy {
             issue: at,
             id: d.id.clone(),
-        })),
+        }),
         Action::Checkout if !d.can_write => {
             Err(format!("Making a branch takes write access to {}", d.repo))
         }
-        Action::Checkout => Ok(Plan::Pick(Pick::Branch {
+        Action::Checkout => pick(Pick::Branch {
             issue: at,
             id: d.id.clone(),
             title: d.title.clone(),
-        })),
+        }),
         _ => Err(elsewhere(action)),
     }
 }
@@ -423,26 +413,18 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
 /// Runs one of its actions, or a branch's checkout for the issue on screen.
 #[must_use]
 pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
-    match plan(state, action) {
-        Err(why) => {
-            state.info(why);
-            Vec::new()
-        }
-        Ok(Plan::Do(change, about)) => send(state, change, about),
-        Ok(Plan::Ask(confirm)) => {
-            state.overlay = Some(Overlay::Confirm(confirm));
-            Vec::new()
-        }
-        Ok(Plan::Pick(pick)) => open(state, pick),
-    }
+    crate::act::take(state, plan(state, action))
+}
+
+/// Choosing in one of this module's pickers.
+#[expect(clippy::unnecessary_wraps, reason = "a plan's step")]
+fn pick(pick: Pick) -> Result<Step, String> {
+    Ok(Step::Pick(crate::picker::Kind::Manage(pick)))
 }
 
 #[must_use]
 fn send(state: &mut State, change: Change, about: Subject) -> Vec<Cmd> {
-    if let Change::Manage(m) = &change {
-        state.info(format!("{}…", doing(m)));
-    }
-    vec![crate::act::send(change, By::Act(about))]
+    crate::act::take(state, Ok(Step::Send(change, about)))
 }
 
 /// The menu's rows where they apply.
@@ -607,7 +589,7 @@ impl Pick {
     }
 
     /// The text the field starts with.
-    fn start(&self) -> Option<String> {
+    pub fn start(&self) -> Option<String> {
         match self {
             Pick::Branch { issue, title, .. } => Some(branch_name(issue.number, title)),
             _ => None,
@@ -650,16 +632,6 @@ pub enum Chosen {
     Checkout(crate::create::Checkout),
     /// Write the new discussion in the composer, starting with this.
     Write(Starting, String),
-}
-
-#[must_use]
-fn open(state: &mut State, pick: Pick) -> Vec<Cmd> {
-    let start = pick.start();
-    let cmds = state.open_picker(crate::picker::Kind::Manage(pick));
-    if let (Some(start), Some(Overlay::Picker(p))) = (start, &mut state.overlay) {
-        p.input.insert_str(start);
-    }
-    cmds
 }
 
 type Rows = Vec<(PaletteItem, Option<Chosen>)>;
@@ -1200,7 +1172,7 @@ pub fn confirmed(state: &mut State, change: &Change, about: &Subject) -> Option<
                 },
                 id: issue.clone(),
             };
-            return Some(open(state, pick));
+            return Some(state.open_picker(crate::picker::Kind::Manage(pick)));
         }
         (Manage::Revert { pr: id }, Subject::Pr(pr)) => Revert {
             pr: pr.clone(),
@@ -1238,13 +1210,11 @@ pub fn after(state: &mut State, change: &Change) -> Vec<Cmd> {
         ));
         return Vec::new();
     }
-    open(
-        state,
-        Pick::Checkout {
-            repo: repo.clone(),
-            branch: name.clone(),
-        },
-    )
+    let pick = Pick::Checkout {
+        repo: repo.clone(),
+        branch: name.clone(),
+    };
+    state.open_picker(crate::picker::Kind::Manage(pick))
 }
 
 // ---- a new discussion --------------------------------------------------------------

@@ -270,9 +270,11 @@ fn on_row(state: &mut State, link: &Row) -> Vec<Cmd> {
         return Vec::new();
     };
     match link {
-        Row::Description => crate::writes::open_picker(state, Pick::Description(route)),
-        Row::Rename(i) => crate::writes::open_picker(state, Pick::FileName(route, Some(*i))),
-        Row::AddFile => crate::writes::open_picker(state, Pick::FileName(route, None)),
+        Row::Description => state.open_picker(crate::picker::Kind::Write(Pick::Description(route))),
+        Row::Rename(i) => {
+            state.open_picker(crate::picker::Kind::Write(Pick::FileName(route, Some(*i))))
+        }
+        Row::AddFile => state.open_picker(crate::picker::Kind::Write(Pick::FileName(route, None))),
         Row::Remove(i) => {
             remove(state, &route, *i);
             Vec::new()

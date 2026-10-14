@@ -84,7 +84,7 @@ impl Pick {
     }
 
     /// The text the field starts with.
-    fn start(&self, state: &State) -> Option<String> {
+    pub fn start(&self, state: &State) -> Option<String> {
         match self {
             Pick::Description(route) => crate::gist::description(state, route),
             Pick::FileName(route, Some(i)) => crate::gist::file_name(state, route, *i),
@@ -113,17 +113,6 @@ pub enum Chosen {
     FileName(Route, Option<usize>, String),
     Site(crate::site::Chosen),
     Housekeeping(crate::housekeeping::Chosen),
-}
-
-/// Opens one of these pickers, its field holding what's set now.
-#[must_use]
-pub fn open_picker(state: &mut State, pick: Pick) -> Vec<Cmd> {
-    let start = pick.start(state);
-    let cmds = state.open_picker(crate::picker::Kind::Write(pick));
-    if let (Some(start), Some(Overlay::Picker(p))) = (start, &mut state.overlay) {
-        p.input.insert_str(start);
-    }
-    cmds
 }
 
 /// A picker's rows: what each says, and what choosing it does.

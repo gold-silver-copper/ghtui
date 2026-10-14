@@ -8,9 +8,8 @@ use crate::api::change::Change;
 use crate::api::security::{Alert, AlertChange, AlertKind, AlertRef};
 use crate::ui::overlays::PaletteItem;
 
-use crate::act::{By, Subject};
+use crate::act::{By, Plan, Subject};
 use crate::data::DataKey;
-use crate::picker::Kind;
 use crate::state::{Cmd, State};
 
 /// An alert whose dismissal is being chosen.
@@ -30,18 +29,8 @@ impl Dismissing {
     }
 }
 
-/// What `,x` does on an alert.
-pub enum Plan {
-    /// It has to load first.
-    Load(DataKey),
-    /// Ask first: what, what's worth knowing, and the ways to make it.
-    Ask(String, Vec<(String, bool)>, Vec<(String, Change)>),
-    /// Choose why to dismiss it.
-    Dismiss(Dismissing),
-}
-
 /// What `,x` does on alert `a`, or why it can't.
-pub fn plan(state: &State, a: &AlertRef) -> Result<Plan, String> {
+pub(crate) fn plan(state: &State, a: &AlertRef) -> Result<Plan, String> {
     let key = DataKey::Alert(a.clone());
     let Some(remote) = state
         .data
@@ -85,12 +74,6 @@ pub fn plan(state: &State, a: &AlertRef) -> Result<Plan, String> {
             ))
         }
     }
-}
-
-/// Opens the picker of reasons to dismiss an alert.
-#[must_use]
-pub fn open_dismiss(state: &mut State, d: Dismissing) -> Vec<Cmd> {
-    state.open_picker(Kind::Alert(d))
 }
 
 /// The picker's rows: GitHub's reasons, each dismissing the alert with

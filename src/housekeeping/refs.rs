@@ -64,7 +64,7 @@ pub(super) fn start(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec<Cmd>
         return Vec::new();
     }
     let pick = crate::writes::Pick::Housekeeping(Pick::RefName(repo.clone(), kind));
-    crate::writes::open_picker(state, pick)
+    state.open_picker(crate::picker::Kind::Write(pick))
 }
 
 /// Why `name` can't name a branch or tag, as git's `check-ref-format`
@@ -111,7 +111,7 @@ pub(super) fn name_rows(
 #[must_use]
 pub(super) fn named(state: &mut State, repo: RepoId, kind: RefKind, name: String) -> Vec<Cmd> {
     let pick = crate::writes::Pick::Housekeeping(Pick::RefFrom(repo, kind, name));
-    crate::writes::open_picker(state, pick)
+    state.open_picker(crate::picker::Kind::Write(pick))
 }
 
 /// Where it starts: a commit typed, then the branches (the one selected,

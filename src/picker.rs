@@ -211,9 +211,17 @@ impl State {
                 .map(|r| DataKey::Refs(r.clone())),
             _ => None,
         };
+        // The field holds what's set now, to change.
+        let start = match &kind {
+            Kind::Edit(crate::edit::Choosing::Title { was, .. }) => Some(was.clone()),
+            Kind::Write(pick) => pick.start(self),
+            Kind::Manage(pick) => pick.start(),
+            _ => None,
+        };
         let mut input = new_input(&self.theme, Bg::ContainerHigh);
         input.set_placeholder_text(placeholder);
         input.set_placeholder_style(self.theme.meta(Bg::ContainerHigh));
+        input.insert_str(start.unwrap_or_default());
         self.overlay = Some(Overlay::Picker(Box::new(Picker {
             kind,
             input,

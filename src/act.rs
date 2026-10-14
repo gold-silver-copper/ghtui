@@ -130,7 +130,7 @@ pub struct Pending {
 
 /// What an action does here.
 #[derive(Debug)]
-enum Plan {
+pub(crate) enum Plan {
     /// Ask first: what, what's worth knowing (each with whether it's a
     /// problem), and the ways to make it.
     Ask(String, Vec<(String, bool)>, Vec<(String, Change)>),
@@ -140,6 +140,52 @@ enum Plan {
     Load(DataKey),
     /// Choose why to dismiss a security alert.
     Dismiss(crate::security::Dismissing),
+}
+
+/// What an action on what's on screen does, once its feature has planned
+/// it: what [`take`] goes ahead with.
+pub enum Step {
+    /// Say what's being done, and send it.
+    Send(Change, Subject),
+    /// Ask first.
+    Ask(Box<Confirm>),
+    /// Choose in a picker.
+    Pick(crate::picker::Kind),
+    /// Write it in the composer, starting with this text.
+    Compose(crate::compose::Target, String),
+}
+
+/// Goes ahead with a planned step, or says why it can't.
+#[must_use]
+pub fn take(state: &mut State, planned: Result<Step, String>) -> Vec<Cmd> {
+    match planned {
+        Err(why) => {
+            state.info(why);
+            Vec::new()
+        }
+        Ok(Step::Send(change, about)) => {
+            state.info(format!("{}…", doing(&change)));
+            vec![send(change, By::Act(about))]
+        }
+        Ok(Step::Ask(confirm)) => {
+            state.overlay = Some(Overlay::Confirm(confirm));
+            Vec::new()
+        }
+        Ok(Step::Pick(kind)) => state.open_picker(kind),
+        Ok(Step::Compose(target, text)) => state.compose(target, &text),
+    }
+}
+
+/// Why what's on screen can't be acted on yet: GitHub hasn't shown the
+/// last change, so it's old.
+pub fn settled(state: &State) -> Result<(), String> {
+    match awaiting_here(state) {
+        Some(waiting) => Err(format!(
+            "GitHub hasn't shown the last change yet ({}): wait a moment",
+            doing(&waiting.change).to_lowercase()
+        )),
+        None => Ok(()),
+    }
 }
 
 /// Runs one of [`ACTIONS`] on what's on screen, or on the selected row
@@ -164,22 +210,14 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
 
 #[must_use]
 fn act_on(state: &mut State, subject: Subject, action: Action) -> Vec<Cmd> {
-    match plan_for(state, &subject, action) {
-        Err(why) => {
-            state.info(why);
-            Vec::new()
-        }
-        Ok(Plan::Ask(title, facts, choices)) => {
-            let confirm = Confirm::new(action, subject, title, facts, choices);
-            state.overlay = Some(Overlay::Confirm(Box::new(confirm)));
-            Vec::new()
-        }
-        Ok(Plan::Do(change)) => {
-            state.info(format!("{}…", doing(&change)));
-            vec![send(change, By::Act(subject))]
-        }
-        Ok(Plan::Approve(pr)) => crate::review::open_approve(state, pr),
-        Ok(Plan::Dismiss(d)) => crate::security::open_dismiss(state, d),
+    let step = match plan_for(state, &subject, action) {
+        Err(why) => Err(why),
+        Ok(Plan::Ask(title, facts, choices)) => Ok(Step::Ask(Box::new(Confirm::new(
+            action, subject, title, facts, choices,
+        )))),
+        Ok(Plan::Do(change)) => Ok(Step::Send(change, subject)),
+        Ok(Plan::Dismiss(d)) => Ok(Step::Pick(crate::picker::Kind::Alert(d))),
+        Ok(Plan::Approve(pr)) => return crate::review::open_approve(state, pr),
         Ok(Plan::Load(need)) => {
             state.info(format!("Loading {}…", subject.name()));
             let route = state.route().cloned();
@@ -188,9 +226,10 @@ fn act_on(state: &mut State, subject: Subject, action: Action) -> Vec<Cmd> {
                 subject,
                 route,
             });
-            state.ensure(need, false)
+            return state.ensure(need, false);
         }
-    }
+    };
+    take(state, step)
 }
 
 /// What an action changes: a pull request, an issue, a run, a job, a
@@ -403,13 +442,7 @@ fn elsewhere(action: Action) -> &'static str {
 
 fn plan_for(state: &State, subject: &Subject, action: Action) -> Result<Plan, String> {
     let plan = plan_here(state, subject, action)?;
-    // GitHub hasn't shown the last change yet: what's on screen is old.
-    if let Some(waiting) = awaiting_here(state) {
-        return Err(format!(
-            "GitHub hasn't shown the last change yet ({}): wait a moment",
-            doing(&waiting.change).to_lowercase()
-        ));
-    }
+    settled(state)?;
     Ok(plan)
 }
 
@@ -556,11 +589,7 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
             let fetched = (state.remote(&key)).and_then(|r| r.cached_at.or(r.asked_at));
             inbox::plan(query, list, fetched, action)
         }
-        Subject::Alert(a) => Ok(match crate::security::plan(state, a)? {
-            crate::security::Plan::Load(need) => Plan::Load(need),
-            crate::security::Plan::Ask(title, facts, choices) => Plan::Ask(title, facts, choices),
-            crate::security::Plan::Dismiss(d) => Plan::Dismiss(d),
-        }),
+        Subject::Alert(a) => crate::security::plan(state, a),
         Subject::Discussion(of, number) => {
             match crate::manage::discussion_close(state, of, *number)? {
                 Some((title, facts, choices)) => Ok(Plan::Ask(title, facts, choices)),

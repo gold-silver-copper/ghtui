@@ -1095,10 +1095,8 @@ pub fn open_field(state: &mut State, route: &Route, field: Field) -> Vec<Cmd> {
         form_mut(state, route).toggle(field);
         return Vec::new();
     }
-    crate::writes::open_picker(
-        state,
-        crate::writes::Pick::Housekeeping(Pick::Field(route.clone(), field)),
-    )
+    let pick = crate::writes::Pick::Housekeeping(Pick::Field(route.clone(), field));
+    state.open_picker(crate::picker::Kind::Write(pick))
 }
 
 #[must_use]

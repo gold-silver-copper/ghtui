@@ -19,7 +19,7 @@ use crate::route::{Route, settings};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::pages::{SettingKeys, SettingLink};
 
-use crate::act::{Confirm, Subject};
+use crate::act::{Confirm, Step, Subject};
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
@@ -64,21 +64,14 @@ const LOADING: &str = "It's still loading";
 
 // ---- what a key does --------------------------------------------------------------
 
-/// What an action does here.
-enum Plan {
-    Ask(Box<Confirm>),
-    Pick(Pick),
-    Write(Form, String),
-}
-
 fn ask(
     action: Action,
     at: (&RepoId, SettingsPage),
     title: String,
     facts: Vec<(String, bool)>,
     choice: (&str, SettingsChange),
-) -> Plan {
-    Plan::Ask(asking(action, at, title, facts, choice))
+) -> Step {
+    Step::Ask(asking(action, at, title, facts, choice))
 }
 
 /// A confirmation of one change.
@@ -105,16 +98,14 @@ fn elsewhere(action: Action) -> String {
     }
 }
 
-fn plan(state: &State, action: Action) -> Result<Plan, String> {
+fn plan(state: &State, action: Action) -> Result<Step, String> {
     let (repo, page) = here(state).ok_or_else(|| elsewhere(action))?;
     if state.overview(&repo).is_some_and(|o| !o.can_admin) {
         return Err(format!(
             "Changing {repo}'s settings takes admin access, which GitHub doesn't give you"
         ));
     }
-    if crate::act::awaiting_here(state).is_some() {
-        return Err("GitHub hasn't shown the last change yet: wait a moment".into());
-    }
+    crate::act::settled(state)?;
     let settings = data(state, &repo, page).ok_or(LOADING)?;
     let at = (&repo, page);
     let row = selected(state);
@@ -129,17 +120,17 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
                 repo_id: b.repo_id.clone(),
                 rule: None,
             };
-            Ok(Plan::Write(form, rule_text(&RuleForm::default())))
+            write(form, rule_text(&RuleForm::default()))
         }
-        (Action::AddSetting, Settings::Access(_)) => Ok(Plan::Pick(Pick::Invite { repo })),
+        (Action::AddSetting, Settings::Access(_)) => pick(Pick::Invite { repo }),
         (Action::AddSetting, Settings::Hooks(_) | Settings::Hook(_)) => {
             let form = Form::Hook { repo, hook: None };
-            Ok(Plan::Write(form, hook_text(&HookForm::default())))
+            write(form, hook_text(&HookForm::default()))
         }
-        (Action::AddSetting, Settings::Keys(_)) => Ok(Plan::Write(
+        (Action::AddSetting, Settings::Keys(_)) => write(
             Form::Key { repo },
             key_text("", "", false),
-        )),
+        ),
         (Action::AddSetting, Settings::General(_)) => Err(
             "Adding works on Collaborators, Branches, Webhooks and Deploy keys: the menu above goes there"
                 .into(),
@@ -164,7 +155,7 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
                                     rule.apps.clone(),
                                 ))),
                             };
-                            Ok(Plan::Write(form, rule_text(&rule.form)))
+                            write(form, rule_text(&rule.form))
                         }
                         Action::DeleteSetting => {
                             let pattern = &rule.form.pattern;
@@ -265,14 +256,14 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
             }
             .ok_or("They're gone from the list")?;
             match (action, invitation) {
-                (Action::EditSetting, _) => Ok(Plan::Pick(Pick::Role {
+                (Action::EditSetting, _) => pick(Pick::Role {
                     repo,
                     who: match invitation {
                         Some(id) => Who::Invitation(id, login),
                         None => Who::Person(login),
                     },
                     now: Some(now),
-                })),
+                }),
                 (_, Some(id)) => Ok(ask(
                     action,
                     at,
@@ -317,13 +308,13 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
             };
             let url = hook.form.url.clone();
             match action {
-                Action::EditSetting => Ok(Plan::Write(
+                Action::EditSetting => write(
                     Form::Hook {
                         repo,
                         hook: Some(Box::new((hook.id, hook.form.clone()))),
                     },
                     hook_text(&hook.form),
-                )),
+                ),
                 Action::DeleteSetting => Ok(ask(
                     action,
                     // From its own page, the list follows it.
@@ -430,10 +421,10 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
         (Action::ToggleSetting, Settings::General(g)) if !g.admin => Err(format!(
             "Archiving {repo} takes admin access, which GitHub doesn't give you"
         )),
-        (Action::ToggleSetting, Settings::General(g)) => Ok(Plan::Pick(Pick::Archive {
+        (Action::ToggleSetting, Settings::General(g)) => pick(Pick::Archive {
             repo,
             archived: !g.archived,
-        })),
+        }),
         (Action::ToggleSetting, _) => Err(
             "That turns a ruleset or a webhook on or off, and on General, archives the repository"
                 .into(),
@@ -454,21 +445,19 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
 /// Runs one of [`ACTIONS`].
 #[must_use]
 pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
-    match plan(state, action) {
-        Err(why) => {
-            state.info(why);
-            Vec::new()
-        }
-        Ok(Plan::Ask(confirm)) => {
-            state.overlay = Some(Overlay::Confirm(confirm));
-            Vec::new()
-        }
-        Ok(Plan::Pick(pick)) => state.open_picker(crate::picker::Kind::Settings(pick)),
-        Ok(Plan::Write(form, text)) => {
-            let target = crate::compose::Target::Setting(form);
-            state.compose(target, &text)
-        }
-    }
+    crate::act::take(state, plan(state, action))
+}
+
+/// Choosing in one of this module's pickers.
+#[expect(clippy::unnecessary_wraps, reason = "a plan's step")]
+fn pick(pick: Pick) -> Result<Step, String> {
+    Ok(Step::Pick(crate::picker::Kind::Settings(pick)))
+}
+
+/// Writing a form's text in the composer.
+#[expect(clippy::unnecessary_wraps, reason = "a plan's step")]
+fn write(form: Form, text: String) -> Result<Step, String> {
+    Ok(Step::Compose(crate::compose::Target::Setting(form), text))
 }
 
 /// The menu's rows on a settings page.

@@ -145,7 +145,7 @@ pub fn open(state: &mut State) -> Vec<Cmd> {
     };
     // What GitHub has now, not what was read before.
     let mut cmds = state.ensure(DataKey::Subscription(of.clone()), true);
-    cmds.extend(crate::writes::open_picker(state, Pick::Watch(of)));
+    cmds.extend(state.open_picker(crate::picker::Kind::Write(Pick::Watch(of))));
     cmds
 }
 

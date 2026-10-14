@@ -151,7 +151,7 @@ pub fn open(state: &mut State, name: &str) -> Vec<Cmd> {
         state.info("The release hasn't loaded yet");
         return Vec::new();
     };
-    crate::writes::open_picker(state, Pick::SaveAsset(of))
+    state.open_picker(crate::picker::Kind::Write(Pick::SaveAsset(of)))
 }
 
 /// `,U`: a file to upload.
@@ -171,7 +171,7 @@ pub fn open_upload(state: &mut State) -> Vec<Cmd> {
     let Some(of) = of(state, "") else {
         return Vec::new();
     };
-    crate::writes::open_picker(state, Pick::Upload(of))
+    state.open_picker(crate::picker::Kind::Write(Pick::Upload(of)))
 }
 
 /// Where an asset `name` is saved for what's typed: in the current

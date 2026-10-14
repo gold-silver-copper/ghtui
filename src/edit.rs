@@ -15,7 +15,7 @@ use crate::api::edit::{Edit, Editable, Named, ReactionContent, Sidebar, Written}
 use crate::api::model::{Capped, NodeId, PrRef, RepoId};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::act::{By, Confirm, Subject};
+use crate::act::{By, Confirm, Step, Subject};
 use crate::compose;
 use crate::data::{Data, DataKey};
 use crate::keymap::Action;
@@ -150,15 +150,6 @@ fn numbered(about: &Subject) -> Option<(RepoId, u64)> {
         Subject::Issue(repo, number) => Some((repo.clone(), *number)),
         _ => None,
     }
-}
-
-/// What an action does here.
-enum Plan {
-    /// Open the composer on it, with its text.
-    Edit(Editing, String),
-    /// Ask before deleting it.
-    Delete(Box<Confirm>),
-    Choose(Choosing),
 }
 
 /// A comment or description on screen.
@@ -375,7 +366,7 @@ fn elsewhere(action: Action) -> String {
     }
 }
 
-fn plan(state: &State, action: Action) -> Result<Plan, String> {
+fn plan(state: &State, action: Action) -> Result<Step, String> {
     let about = subject_here(state).ok_or_else(|| elsewhere(action))?;
     let diff = matches!(state.screen(), Screen::Diff(_));
     match action {
@@ -394,7 +385,7 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
                 at: spot.at.clone(),
                 name: spot.name(),
             };
-            Ok(Plan::Edit(editing, spot.body))
+            Ok(Step::Compose(compose::Target::Edit(editing), spot.body))
         }
         Action::DeleteComment => {
             let spot = spot(state, &about, false)?;
@@ -420,7 +411,7 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
                 of: spot.of,
                 id: spot.editable.id.clone(),
             });
-            Ok(Plan::Delete(Box::new(Confirm::new(
+            Ok(Step::Ask(Box::new(Confirm::new(
                 action,
                 spot.about,
                 title,
@@ -433,10 +424,10 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
             if !spot.editable.can_react {
                 return Err(format!("GitHub doesn't let you react to {}", spot.name()));
             }
-            Ok(Plan::Choose(Choosing::React {
+            choose(Choosing::React {
                 about: spot.about,
                 target: spot.editable,
-            }))
+            })
         }
         _ if diff => Err(format!("{}: on the conversation", action.description())),
         Action::EditTitle => {
@@ -454,11 +445,11 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
                 Subject::Pr(pr) => pr_detail(state, pr).map(|d| d.title.clone()),
                 _ => None,
             };
-            Ok(Plan::Choose(Choosing::Title {
+            choose(Choosing::Title {
                 about,
                 id: spot.editable.id,
                 was: was.unwrap_or_default(),
-            }))
+            })
         }
         Action::EditLabels
         | Action::EditAssignees
@@ -495,18 +486,18 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
                 Action::RequestReviews if !may.reviewers => {
                     Err(format!("GitHub doesn't let you ask for reviews: {triage}"))
                 }
-                Action::EditMilestone => Ok(Plan::Choose(Choosing::Milestone { about })),
+                Action::EditMilestone => choose(Choosing::Milestone { about }),
                 _ => {
                     let field = match action {
                         Action::EditLabels => Field::Labels,
                         Action::EditAssignees => Field::Assignees,
                         _ => Field::Reviewers,
                     };
-                    Ok(Plan::Choose(Choosing::Many {
+                    choose(Choosing::Many {
                         field,
                         about,
                         chosen: None,
-                    }))
+                    })
                 }
             }
         }
@@ -525,35 +516,14 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
 /// Runs one of [`ACTIONS`] on what's on screen.
 #[must_use]
 pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
-    let planned = plan(state, action).and_then(|plan| {
-        // GitHub hasn't shown the last change yet: what's on screen is old.
-        match crate::act::awaiting_here(state) {
-            Some(_) => Err("GitHub hasn't shown the last change yet: wait a moment".to_owned()),
-            None => Ok(plan),
-        }
-    });
-    match planned {
-        Err(why) => {
-            state.info(why);
-            Vec::new()
-        }
-        Ok(Plan::Edit(editing, body)) => state.compose(compose::Target::Edit(editing), &body),
-        Ok(Plan::Delete(confirm)) => {
-            state.overlay = Some(Overlay::Confirm(confirm));
-            Vec::new()
-        }
-        Ok(Plan::Choose(choosing)) => {
-            let title = match &choosing {
-                Choosing::Title { was, .. } => Some(was.clone()),
-                _ => None,
-            };
-            let cmds = state.open_picker(picker::Kind::Edit(choosing));
-            if let (Some(title), Some(Overlay::Picker(p))) = (title, &mut state.overlay) {
-                p.input.insert_str(title);
-            }
-            cmds
-        }
-    }
+    let planned = plan(state, action).and_then(|step| crate::act::settled(state).map(|()| step));
+    crate::act::take(state, planned)
+}
+
+/// Choosing in the picker.
+#[expect(clippy::unnecessary_wraps, reason = "a plan's step")]
+fn choose(choosing: Choosing) -> Result<Step, String> {
+    Ok(Step::Pick(picker::Kind::Edit(choosing)))
 }
 
 /// The edits the menu offers here: each action, its label, and why it
