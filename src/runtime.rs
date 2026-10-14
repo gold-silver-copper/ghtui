@@ -11,7 +11,7 @@ use crate::store::{DraftComment, ReviewState, Reviews};
 use crate::ui::bars::Notice;
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind, MouseEventKind};
-use futures::{FutureExt, StreamExt};
+use futures::StreamExt;
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
 
@@ -136,11 +136,14 @@ async fn drive(
         let mut cmds = apply_msg(&mut state, msg);
         // Every key, scroll or resize that's ready is drawn once; each is
         // settled first, as the next may act on the page it opened. They
-        // wait while the editor is to open, or ghtui to quit.
+        // wait while the editor is to open, or ghtui to quit. The stream
+        // is polled with this task's waker: crossterm wakes the waker of
+        // the poll that found nothing, so one that wakes nobody would
+        // leave the next key unread until something else arrives.
         let editing = |cmds: &[Cmd]| cmds.iter().any(|c| matches!(c, Cmd::Edit { .. }));
         while !state.quit
             && !editing(&cmds)
-            && let Some(event) = events.next().now_or_never()
+            && let std::task::Poll::Ready(event) = futures::poll!(events.next())
         {
             // Ended: the loop sees it next.
             let Some(event) = event.transpose()? else {
