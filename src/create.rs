@@ -433,7 +433,7 @@ fn head_spec(repo: &RepoId, head: &str, local: Option<&Branch>) -> String {
 fn head_problem(state: &State, repo: &RepoId, form: &Form) -> Result<HeadState, String> {
     let push = state.first_key(Action::PushBranch);
     let (Some(base), Some(head)) = (&form.base, &form.head) else {
-        return Err("Choose the branch with the changes: Enter on “compare”".into());
+        return Err("Choose the branch with the changes: Enter on “Compare”".into());
     };
     if base == head {
         return Err(format!(

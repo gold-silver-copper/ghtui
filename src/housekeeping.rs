@@ -1249,6 +1249,7 @@ fn form_row(f: &Form, field: Field, unset: &str) -> crate::ui::pages::FormRow {
         name: field.name(),
         value,
         unset,
+        chips: Vec::new(),
         link: Some(Row::Field(field)),
     }
 }

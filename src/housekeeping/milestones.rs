@@ -433,7 +433,7 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route) {
     };
     let mut status = Vec::new();
     if f.get(Field::Due).is_empty() {
-        status.push(("No due date: it's sorted last".to_owned(), Mark::Fine));
+        status.push(("No due date: it's sorted last".to_owned(), Mark::Fine, None));
     }
     let write = state.first_key(Action::Comment);
     let save_key = state.first_key(Action::Create);

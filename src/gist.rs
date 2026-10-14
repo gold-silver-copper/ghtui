@@ -779,6 +779,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
             form.description.clone()
         },
         unset: form.description.is_empty(),
+        chips: Vec::new(),
         link: Some(Row::Description),
     }];
     let mut status = Vec::new();
@@ -795,11 +796,12 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
             name: "Visibility",
             value: format!("{visibility} · {why}"),
             unset: true,
+            chips: Vec::new(),
             link: None,
         });
         if !form.removed.is_empty() {
             let text = format!("Saving removes {}", form.removed.join(", "));
-            status.push((text, Mark::Waiting));
+            status.push((text, Mark::Waiting, None));
         }
     }
     let boxes: Vec<TextBox<'_>> = (form.files.iter().enumerate())
@@ -828,6 +830,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
         name: "",
         value: "+ Add file".into(),
         unset: false,
+        chips: Vec::new(),
         link: Some(Row::AddFile),
     }];
     let write = state.first_key(Action::Comment);

@@ -3,7 +3,7 @@
 use super::*;
 use crate::route::pulls;
 use crate::ui::page::{Link, Page};
-use crate::ui::pages::{self, Field, FormView, Mark, Starter};
+use crate::ui::pages::{self, FormRow, Mark, Starter, TextBox, WriteFormView};
 
 /// The page for `route`, a form's, once what it can have has loaded.
 pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
@@ -77,7 +77,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
                 };
                 status.push((text, Mark::Fine, None));
             }
-            let listed = (hs.commits.iter().rev())
+            let listed: Vec<_> = (hs.commits.iter().rev())
                 .map(|c| {
                     (
                         crate::ui::text::short_sha(&c.oid).to_owned(),
@@ -88,41 +88,69 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
             commits = Some((listed, hs.commits.left_out()));
         }
     }
-    let names = |ids: &[NodeId], from: &Capped<crate::api::create::Choice>, labels: bool| {
-        (from.iter())
-            .filter(|c| ids.contains(&c.id))
-            .map(|c| (c.name.clone(), c.color.clone().filter(|_| labels)))
-            .collect()
-    };
-    let none = |text: &str| {
-        if d.can_triage {
-            text.to_owned()
+    let mut rows = Vec::new();
+    if let Some(name) = template {
+        rows.push(row("Template", name, Row::Templates));
+    }
+    if pr {
+        rows.push(row(
+            "Base",
+            form.base.as_deref().unwrap_or_default(),
+            Row::Base,
+        ));
+        rows.push(row(
+            "Compare",
+            form.head.as_deref().unwrap_or_default(),
+            Row::Head,
+        ));
+    }
+    let set = |name: &'static str,
+               ids: &[NodeId],
+               from: &Capped<crate::api::create::Choice>,
+               none: &str,
+               link| {
+        let chosen = (from.iter()).filter(|c| ids.contains(&c.id));
+        let (chips, names): (Vec<_>, Vec<_>) = chosen.partition(|c| c.color.is_some());
+        let names: Vec<&str> = names.iter().map(|c| c.name.as_str()).collect();
+        let unset = names.is_empty() && chips.is_empty();
+        let none = if d.can_triage {
+            none
         } else {
-            "Setting it takes triage access".to_owned()
+            "Setting it takes triage access"
+        };
+        FormRow {
+            name,
+            value: if unset {
+                none.to_owned()
+            } else {
+                names.join(" ")
+            },
+            unset,
+            chips: (chips.iter())
+                .map(|c| (c.name.clone(), c.color.clone().unwrap_or_default()))
+                .collect(),
+            link: Some(link),
         }
     };
-    let fields = if pr {
+    let after = if pr {
         Vec::new()
     } else {
         vec![
-            Field {
-                name: "Labels",
-                values: names(&form.labels, &d.labels, true),
-                none: none("None yet"),
-                link: Row::Labels,
-            },
-            Field {
-                name: "Assignees",
-                values: names(&form.assignees, &d.assignees, false),
-                none: none("No one"),
-                link: Row::Assignees,
-            },
-            Field {
-                name: "Milestone",
-                values: names(form.milestone.as_slice(), &d.milestones, false),
-                none: none("No milestone"),
-                link: Row::Milestone,
-            },
+            set("Labels", &form.labels, &d.labels, "None yet", Row::Labels),
+            set(
+                "Assignees",
+                &form.assignees,
+                &d.assignees,
+                "No one",
+                Row::Assignees,
+            ),
+            set(
+                "Milestone",
+                form.milestone.as_slice(),
+                &d.milestones,
+                "No milestone",
+                Row::Milestone,
+            ),
         ]
     };
     // What the branches lack shows beside them, once one is chosen.
@@ -133,36 +161,64 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
             .is_empty()
             .then(|| "It needs a title first".to_owned())
     });
-    let (write, create_key) = (
+    let (write, save_key) = (
         state.first_key(Action::Comment),
         state.first_key(Action::Create),
     );
-    let view = FormView {
-        repo,
-        heading: if pr {
-            "Open a pull request"
-        } else {
-            "New issue"
-        },
-        template,
-        branches: pr.then(|| {
-            let (base, head) = (form.base.as_deref(), form.head.as_deref());
-            (base.unwrap_or_default(), head.unwrap_or_default())
-        }),
-        status,
-        // While the composer has it, its box is only the place it opens in.
-        text: if composing { "" } else { &form.text },
-        write: &write,
-        create_key: &create_key,
-        fields,
-        create: if pr {
-            "Create pull request…"
-        } else {
-            "Create issue"
-        },
-        why_not: why_not.as_deref(),
-        error: state.forms.sent(route).error.as_deref(),
-        commits,
+    // While the composer has it, its box is only the place it opens in.
+    let text = if composing { "" } else { form.text.as_str() };
+    let (title, description) = match text.split_once('\n') {
+        Some((title, rest)) => (title.trim(), rest.trim()),
+        None => (text.trim(), ""),
     };
-    pages::new_form(page, &view);
+    let heading = if pr {
+        "Open a pull request"
+    } else {
+        "New issue"
+    };
+    let view = WriteFormView {
+        heading: format!("{heading} in {repo}"),
+        base: Some(crate::ui::markdown::LinkBase::new(repo, "HEAD", "")),
+        rows,
+        status,
+        boxes: vec![TextBox {
+            title: title.to_owned(),
+            untitled: "Add a title",
+            body: description,
+            markdown: true,
+            empty: "No description yet.",
+            hint: "The first line is the title; then the description, in Markdown (ctrl-e for $EDITOR)",
+            link: Link::Form(Row::Text(0)),
+            actions: Vec::new(),
+        }],
+        after,
+        write: &write,
+        save_key: &save_key,
+        button: if pr {
+            "Create pull request…".into()
+        } else {
+            "Create issue".into()
+        },
+        why_not,
+        error: state.forms.sent(route).error.as_deref(),
+    };
+    pages::write_form(page, &view);
+    if let Some((commits, more)) = commits {
+        pages::commits_box(page, &commits, more);
+    }
+}
+
+/// A row naming what's chosen (a template, a branch), which Enter changes.
+fn row(name: &'static str, chosen: &str, link: Row) -> FormRow {
+    FormRow {
+        name,
+        value: if chosen.is_empty() {
+            "choose a branch ▾".to_owned()
+        } else {
+            format!("{chosen} ▾")
+        },
+        unset: chosen.is_empty(),
+        chips: Vec::new(),
+        link: Some(link),
+    }
 }

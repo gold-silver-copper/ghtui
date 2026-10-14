@@ -1058,6 +1058,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
             .as_ref()
             .map_or_else(|| "Choose a tag ▾".into(), |t| format!("{t} ▾")),
         unset: form.tag.is_none(),
+        chips: Vec::new(),
         link: Some(Row::Tag),
     }];
     let mut status = Vec::new();
@@ -1080,7 +1081,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
                 Mark::Fine,
             ),
         };
-        status.push((text, mark));
+        status.push((text, mark, None));
     }
     if form.new_tag(state, repo) {
         let target = (form.target.clone())
@@ -1089,6 +1090,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
             name: "Target",
             value: format!("{target} ▾"),
             unset: false,
+            chips: Vec::new(),
             link: Some(Row::Target),
         });
     }
@@ -1103,12 +1105,14 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
             name: "Notes",
             value: format!("Generate release notes · {notes}"),
             unset: false,
+            chips: Vec::new(),
             link: Some(Row::Notes),
         },
         FormRow {
             name: "Pre-release",
             value: format!("{} Set as a pre-release", check(form.prerelease)),
             unset: false,
+            chips: Vec::new(),
             link: Some(Row::Prerelease),
         },
         FormRow {
@@ -1119,6 +1123,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
                 format!("{} Set as the latest release", check(form.latest))
             },
             unset: form.prerelease,
+            chips: Vec::new(),
             link: Some(Row::Latest),
         },
     ];

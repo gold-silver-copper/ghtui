@@ -603,9 +603,9 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
     let mut status = Vec::new();
     match looked(state, of) {
         None => {
-            status.push((format!("Reading {rev} from GitHub…"), Mark::Waiting));
+            status.push((format!("Reading {rev} from GitHub…"), Mark::Waiting, None));
         }
-        Some(Err(why)) => status.push((format!("Couldn't read it: {why}"), Mark::Problem)),
+        Some(Err(why)) => status.push((format!("Couldn't read it: {why}"), Mark::Problem, None)),
         Some(Ok(look)) => {
             let at = crate::ui::text::short_sha(&look.commit);
             let what = if change == FileChange::New {
@@ -615,7 +615,7 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
                     "As GitHub had it on {rev} at {at}: if it changes meanwhile, committing says so"
                 )
             };
-            status.push((what, Mark::Fine));
+            status.push((what, Mark::Fine, None));
         }
     }
     match state.clone_of(repo) {
@@ -625,9 +625,14 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
                 c.top.display()
             ),
             Mark::Fine,
+            None,
         )),
-        None => status.push(("Looking for your clone…".into(), Mark::Waiting)),
-        _ => status.push(("Will be committed on GitHub, as you".into(), Mark::Fine)),
+        None => status.push(("Looking for your clone…".into(), Mark::Waiting, None)),
+        _ => status.push((
+            "Will be committed on GitHub, as you".into(),
+            Mark::Fine,
+            None,
+        )),
     }
     let composing = crate::forms::composing(state, route, 0);
     let now = path(&f).to_owned();

@@ -387,6 +387,7 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
             vec![(
                 "A fork is a copy of the repository, under the owner you choose".to_owned(),
                 Mark::Fine,
+                None,
             )],
         ),
         _ => (
@@ -406,7 +407,7 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
     let owner = f.get(Field::Owner);
     let name = f.get(Field::Name).trim();
     if !owner.is_empty() && !name.is_empty() {
-        status.push((format!("It will be {owner}/{name}"), Mark::Fine));
+        status.push((format!("It will be {owner}/{name}"), Mark::Fine, None));
     }
     let save_key = state.first_key(Action::Create);
     let view = WriteFormView {

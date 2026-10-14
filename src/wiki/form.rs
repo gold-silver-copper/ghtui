@@ -391,6 +391,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
         status.push((
             format!("As the wiki had it at {at}: if it changes meanwhile, saving says so"),
             Mark::Fine,
+            None,
         ));
     }
     let write = state.first_key(Action::Comment);

@@ -331,7 +331,11 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route) {
     };
     let mut status = Vec::new();
     if let Ok(c) = change(&f) {
-        status.push((format!("Shows as  {}  (#{})", c.name, c.color), Mark::Fine));
+        status.push((
+            format!("Shows as  {}  (#{})", c.name, c.color),
+            Mark::Fine,
+            None,
+        ));
     }
     let save_key = state.first_key(Action::Create);
     let view = WriteFormView {
