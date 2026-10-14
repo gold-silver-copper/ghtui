@@ -372,8 +372,7 @@ fn plan(state: &State, h: &Here<'_>, action: Action) -> Result<Step, String> {
 #[must_use]
 pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
     let Some(h) = here(state) else {
-        state.info(action.not_here());
-        return Vec::new();
+        return state.just_say(action.not_here());
     };
     let planned =
         plan(state, &h, action).and_then(|step| crate::act::settled(state).map(|()| step));

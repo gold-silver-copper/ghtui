@@ -6,12 +6,10 @@ use crate::route::{code, discussions, issues, pulls};
 #[must_use]
 pub fn star(state: &mut State) -> Vec<Cmd> {
     let Some(repo) = state.route().and_then(Route::repo).cloned() else {
-        state.info("Open a repository to star it");
-        return Vec::new();
+        return state.just_say("Open a repository to star it");
     };
     let Some(overview) = state.overview(&repo) else {
-        state.info("The repository hasn't loaded yet");
-        return Vec::new();
+        return state.just_say("The repository hasn't loaded yet");
     };
     let (id, starred) = (overview.id.clone(), !overview.starred);
     set_starred(state, &repo, starred);
@@ -86,13 +84,11 @@ pub(super) fn comment_with(state: &mut State, text: &str, quoting: Option<String
             return state.compose(target, text);
         }
         _ => {
-            state.info("Comments go on issues and pull requests");
-            return Vec::new();
+            return state.just_say("Comments go on issues and pull requests");
         }
     };
     let Some((subject_id, name)) = target else {
-        state.info("Still loading");
-        return Vec::new();
+        return state.just_say("Still loading");
     };
     let target = compose::Target::Conversation {
         subject_id,

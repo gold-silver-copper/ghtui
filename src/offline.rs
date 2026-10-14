@@ -293,8 +293,7 @@ fn takes(state: &State, action: Action) -> bool {
 pub fn act(state: &mut State, action: Action) -> Vec<Do> {
     match action {
         Action::Offline if state.route() == Some(&Route::App(app::Offline)) => {
-            state.info("This is the Offline page");
-            Vec::new()
+            state.just_say("This is the Offline page")
         }
         Action::Offline => state.push(Route::App(app::Offline)),
         Action::KeepOffline => keep(state),
@@ -330,10 +329,7 @@ fn on_entry(state: &mut State, action: Action, entry: queue::Entry) -> Vec<Do> {
                 state.info(format!("Copied the text of {}", what.to_lowercase()));
                 vec![Do::Copy(text)]
             }
-            None => {
-                state.info(format!("{what} has no text to copy"));
-                Vec::new()
-            }
+            None => state.just_say(format!("{what} has no text to copy")),
         },
         Action::Rerun => match entry.status {
             queue::Status::Refused(_) | queue::Status::Unsure(_) => {
@@ -341,13 +337,11 @@ fn on_entry(state: &mut State, action: Action, entry: queue::Entry) -> Vec<Do> {
                 vec![Do::Offline(Cmd::Queue(queue::Op::Retry(entry.id)))]
             }
             queue::Status::Queued | queue::Status::Sending => {
-                state.info(format!("{what} is queued already"));
-                Vec::new()
+                state.just_say(format!("{what} is queued already"))
             }
         },
         Action::Delete if entry.status == queue::Status::Sending => {
-            state.info(format!("{what} is on its way to GitHub"));
-            Vec::new()
+            state.just_say(format!("{what} is on its way to GitHub"))
         }
         Action::Delete => {
             let undo = state.first_key(Action::UndoDelete);
@@ -363,8 +357,7 @@ fn on_entry(state: &mut State, action: Action, entry: queue::Entry) -> Vec<Do> {
 /// Keeps the repository on screen to read offline, or stops.
 fn keep(state: &mut State) -> Vec<Do> {
     let Some(repo) = state.route().and_then(Route::repo).cloned() else {
-        state.info("Keep offline works on a repository's pages");
-        return Vec::new();
+        return state.just_say("Keep offline works on a repository's pages");
     };
     if state.offline.keeps(&repo).is_some() {
         state.offline.kept.retain(|k| k.repo != repo);
@@ -389,11 +382,10 @@ pub fn follow(state: &mut State, id: u64) -> Vec<Do> {
             state.first_key(Action::Rerun),
             state.first_key(Action::Copy),
         );
-        state.info(format!(
+        return state.just_say(format!(
             "{} · {retry} sends a refused one again · {copy} copies its text",
             entry.write.what()
         ));
-        return Vec::new();
     }
     let page = entry.page.clone();
     state.go(Dest::from_url(&page))

@@ -314,8 +314,7 @@ impl State {
                 (repo.clone(), rev, String::new(), false)
             }
             _ => {
-                self.info("Open a repository first");
-                return Vec::new();
+                return self.just_say("Open a repository first");
             }
         };
         self.open_picker(if branches {

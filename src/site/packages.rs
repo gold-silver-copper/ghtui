@@ -51,16 +51,13 @@ fn detail<'a>(state: &'a State, at: &PackageRef) -> Option<&'a PackageDetail> {
 #[must_use]
 pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
     let Some((at, id)) = chosen(state) else {
-        state.info("Select a version to delete");
-        return Vec::new();
+        return state.just_say("Select a version to delete");
     };
     let Some(d) = detail(state, &at) else {
-        state.info("The package hasn't loaded yet");
-        return Vec::new();
+        return state.just_say("The package hasn't loaded yet");
     };
     let Some(v) = d.versions.items.iter().find(|v| v.id == id) else {
-        state.info("That version isn't among those loaded");
-        return Vec::new();
+        return state.just_say("That version isn't among those loaded");
     };
     let mut facts = vec![(
         "It can't be brought back: pulling it by name or digest fails".to_owned(),

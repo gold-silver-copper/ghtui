@@ -149,8 +149,7 @@ pub fn selected(state: &State) -> Option<String> {
 #[must_use]
 pub fn open(state: &mut State, name: &str) -> Vec<Cmd> {
     let Some(of) = of(state, name) else {
-        state.info("The release hasn't loaded yet");
-        return Vec::new();
+        return state.just_say("The release hasn't loaded yet");
     };
     state.open_picker(crate::picker::Kind::SaveAsset(of))
 }
@@ -162,12 +161,10 @@ pub fn open_upload(state: &mut State) -> Vec<Cmd> {
         state.route(),
         Some(Route::Releases(releases::Release { .. }))
     ) {
-        state.info("Assets are uploaded to a release: open its page");
-        return Vec::new();
+        return state.just_say("Assets are uploaded to a release: open its page");
     }
     if let Some(why) = super::unchangeable(state) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let Some(of) = of(state, "") else {
         return Vec::new();

@@ -413,12 +413,10 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
         if action == Action::SetField && sidebar::here(state).is_some() {
             return sidebar::act(state);
         }
-        state.info(action.not_here());
-        return Vec::new();
+        return state.just_say(action.not_here());
     };
     if let Some(why) = why_not(state, &h, action) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let (project, view) = (h.project.clone(), h.view);
     let item = h.item.map(|it| it.id.clone());

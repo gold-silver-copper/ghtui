@@ -507,10 +507,7 @@ fn act(state: &mut State, action: Action) -> Vec<Cmd> {
             };
             files::open(state, repo, rev, path, change)
         }
-        _ => {
-            state.info(action.not_here());
-            Vec::new()
-        }
+        _ => state.just_say(action.not_here()),
     }
 }
 
@@ -534,8 +531,7 @@ fn new_here(state: &mut State, route: Route) -> Vec<Cmd> {
         }
         Route::Code(code::Repo(repo)) => {
             let Some(branch) = state.overview(&repo).and_then(|o| o.default_branch.clone()) else {
-                state.info("The repository hasn't loaded yet");
-                return Vec::new();
+                return state.just_say("The repository hasn't loaded yet");
             };
             files::open(state, repo, branch, String::new(), FileChange::New)
         }
@@ -929,8 +925,7 @@ fn compose(state: &mut State) -> Vec<Cmd> {
         FormOf::Milestone { .. } => {}
         FormOf::File { change, .. } if change != FileChange::Delete => {
             if !form(state, &route).started {
-                state.info("The file hasn't loaded yet");
-                return Vec::new();
+                return state.just_say("The file hasn't loaded yet");
             }
         }
         _ => {

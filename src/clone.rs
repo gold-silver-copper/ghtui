@@ -91,12 +91,10 @@ impl Job for Checkout {
 #[must_use]
 fn checkout(state: &mut State) -> Vec<Cmd> {
     let Some(crate::act::Subject::Pr(pr)) = crate::act::subject(state, Action::Checkout) else {
-        state.info("Checking out works on a pull request (or its row in a list)");
-        return Vec::new();
+        return state.just_say("Checking out works on a pull request (or its row in a list)");
     };
     if let Some(None) = state.clone_of(&pr.repo) {
-        state.info(format!("ghtui isn't running in a clone of {}", pr.repo));
-        return Vec::new();
+        return state.just_say(format!("ghtui isn't running in a clone of {}", pr.repo));
     }
     match state.pr(&pr) {
         Some(d) => start_checkout(state, pr.clone(), &d.clone()),

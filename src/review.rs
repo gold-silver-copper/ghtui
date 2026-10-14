@@ -519,8 +519,7 @@ pub(crate) fn on_edited(
                 .map(str::to_owned)
                 .collect();
             if suggested == original {
-                state.info("No change suggested");
-                return Vec::new();
+                return state.just_say("No change suggested");
             }
             let body = suggestion_body(&suggested.join("\n"));
             let target = Target::Review(Comment::Line { path, start, end });
@@ -548,12 +547,10 @@ pub(crate) fn all_changes(state: &State) -> String {
 pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
     let viewer = state.viewer.clone();
     let Some((screen, diff)) = state.diff_parts() else {
-        state.info("The diff hasn't loaded yet");
-        return Vec::new();
+        return state.just_say("The diff hasn't loaded yet");
     };
     let Some(pr) = screen.of.pr().cloned() else {
-        state.info(format!("{}: on pull requests", action.description()));
-        return Vec::new();
+        return state.just_say(format!("{}: on pull requests", action.description()));
     };
     let (cursor, half) = (screen.cursor, screen.half);
     // The thread or draft under the cursor.
@@ -616,12 +613,11 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             };
             let active = !diff.doc.since_active();
             if diff_screen::preserving_position(screen, diff, |d| d.doc.show_since(active)) {
-                state.info(if active {
+                return state.just_say(if active {
                     "Showing changes since your last review"
                 } else {
                     "Showing all changes"
                 });
-                return Vec::new();
             }
             diff.since_requested = true;
             match (&diff.inputs().last_review, viewer) {

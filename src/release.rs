@@ -305,12 +305,10 @@ pub(crate) fn refused(state: &State, repo: &RepoId) -> Option<String> {
 #[must_use]
 pub fn open(state: &mut State) -> Vec<Cmd> {
     let Some(repo) = state.route().and_then(Route::repo).cloned() else {
-        state.info("Open a repository first: a release is of one");
-        return Vec::new();
+        return state.just_say("Open a repository first: a release is of one");
     };
     if let Some(why) = refused(state, &repo) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let route = Route::Releases(releases::NewRelease(repo));
     if state.route() == Some(&route) {
@@ -346,8 +344,7 @@ pub(crate) fn unchangeable(state: &State) -> Option<String> {
 #[must_use]
 pub fn open_edit(state: &mut State) -> Vec<Cmd> {
     if let Some(why) = unchangeable(state) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let Some((repo, tag, _)) = shown(state) else {
         return Vec::new();
@@ -416,10 +413,7 @@ fn on_row(state: &mut State, link: &Row) -> Vec<Cmd> {
         Row::Target if form.new_tag(state, &repo) => {
             state.open_picker(crate::picker::Kind::Target(route))
         }
-        Row::Target => {
-            state.info("The tag is GitHub's already: it's where it is");
-            Vec::new()
-        }
+        Row::Target => state.just_say("The tag is GitHub's already: it's where it is"),
         Row::Notes => generate(state),
         Row::Prerelease => {
             let form = state.forms.edit::<Form>(&route);
@@ -427,8 +421,7 @@ fn on_row(state: &mut State, link: &Row) -> Vec<Cmd> {
             Vec::new()
         }
         Row::Latest if form.prerelease => {
-            state.info("A pre-release is never the latest release");
-            Vec::new()
+            state.just_say("A pre-release is never the latest release")
         }
         Row::Latest => {
             let form = state.forms.edit::<Form>(&route);
@@ -446,8 +439,8 @@ fn generate(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     };
     let Some(tag) = form.tag.clone() else {
-        state.info("Choose a tag first: GitHub writes the notes since the release before it");
-        return Vec::new();
+        return state
+            .just_say("Choose a tag first: GitHub writes the notes since the release before it");
     };
     if form.generating {
         return Vec::new();
@@ -740,8 +733,7 @@ pub fn create(state: &mut State, route: &Route, draft: bool) -> Vec<Cmd> {
 #[must_use]
 pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
     if let Some(why) = unchangeable(state) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     if let Some(name) = assets::selected(state) {
         return assets::ask_delete(state, &name);

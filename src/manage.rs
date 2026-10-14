@@ -1107,8 +1107,7 @@ fn move_sub_issue(
         .collect();
     let Some((selected, child)) = child.and_then(|c| Some((subs.iter().position(|s| *s == c)?, c)))
     else {
-        state.info("Choose one of its sub-issues (✓) to move");
-        return Vec::new();
+        return state.just_say("Choose one of its sub-issues (✓) to move");
     };
     let sibling = if up {
         selected.checked_sub(1).and_then(|i| subs.get(i))
@@ -1116,12 +1115,11 @@ fn move_sub_issue(
         subs.get(selected + 1)
     };
     let Some(sibling) = sibling.cloned() else {
-        state.info(if up {
+        return state.just_say(if up {
             "It's the first already"
         } else {
             "It's the last already"
         });
-        return Vec::new();
     };
     if let Some(Overlay::Picker(p)) = &mut state.overlay {
         p.selected = if up {

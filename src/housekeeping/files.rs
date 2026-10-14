@@ -49,8 +49,7 @@ pub(super) fn open(
     change: FileChange,
 ) -> Vec<Cmd> {
     if let Some(why) = why_not(state, &repo) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     super::open(
         state,

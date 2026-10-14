@@ -553,6 +553,14 @@ impl State {
         self.notices.info(text);
     }
 
+    /// Says `text` in the status bar, and does nothing else: why an
+    /// action can't go ahead, mostly.
+    #[must_use]
+    pub fn just_say(&mut self, text: impl Into<String>) -> Vec<Cmd> {
+        self.info(text);
+        Vec::new()
+    }
+
     /// Says what went wrong, in the status bar (and the messages list).
     pub fn error(&mut self, text: impl Into<String>) {
         self.notices.error(text);

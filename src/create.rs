@@ -232,12 +232,10 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
 #[must_use]
 fn open(state: &mut State, pr: bool) -> Vec<Cmd> {
     let Some(repo) = state.route().and_then(Route::repo).cloned() else {
-        state.info("Open a repository first: a new issue or pull request goes in one");
-        return Vec::new();
+        return state.just_say("Open a repository first: a new issue or pull request goes in one");
     };
     if let Some(why) = refused(state, &repo, pr) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let route = if pr {
         Route::Pulls(pulls::NewPr(repo.clone()))
@@ -316,8 +314,7 @@ fn compose(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     };
     if matches!(route, Route::Issues(issues::NewIssue(_))) && form.template.is_none() {
-        state.info("Choose a template first");
-        return Vec::new();
+        return state.just_say("Choose a template first");
     }
     state.forms.edit::<Form>(&route).opened = true;
     // The title first, as on GitHub.
@@ -527,8 +524,7 @@ fn ask_push(state: &mut State) -> Vec<Cmd> {
     let Some((route, form)) =
         here(state).filter(|(r, _)| matches!(r, Route::Pulls(pulls::NewPr(_))))
     else {
-        state.info("Pushing works on a new pull request's branch (,p)");
-        return Vec::new();
+        return state.just_say("Pushing works on a new pull request's branch (,p)");
     };
     let Some(repo) = form_repo(&route).cloned() else {
         return Vec::new();
@@ -552,8 +548,7 @@ fn ask_push(state: &mut State) -> Vec<Cmd> {
         _ => Some("Still comparing the branch with GitHub's".to_owned()),
     };
     if let Some(why) = why {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let Some(Ok(HeadState { local: Some(b), .. })) = form.head_state(state, &repo) else {
         return Vec::new();
@@ -829,10 +824,9 @@ fn open_pick(state: &mut State, pick: Pick) -> Vec<Cmd> {
     };
     let triage = form_data(&state.data, &repo).map(|d| d.can_triage);
     if !what.is_empty() && triage == Some(false) {
-        state.info(format!(
+        return state.just_say(format!(
             "Setting {what} takes triage access to {repo}: GitHub would leave them out"
         ));
-        return Vec::new();
     }
     state.open_picker(crate::picker::Kind::Form(pick))
 }

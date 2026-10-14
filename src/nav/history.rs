@@ -88,10 +88,7 @@ impl State {
                 self.screens.push(screen);
                 self.load_visible(false)
             }
-            None => {
-                self.info("Nothing to go forward to");
-                Vec::new()
-            }
+            None => self.just_say("Nothing to go forward to"),
         }
     }
 
@@ -177,10 +174,7 @@ pub fn up_level(state: &mut State) -> Vec<Cmd> {
     };
     match route.family().up(state) {
         Some(parent) => state.push(parent),
-        None => {
-            state.info("Already at the top");
-            Vec::new()
-        }
+        None => state.just_say("Already at the top"),
     }
 }
 
@@ -189,12 +183,10 @@ pub fn up_level(state: &mut State) -> Vec<Cmd> {
 pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
     let chrome = state.chrome();
     let Some((tab, target)) = n.checked_sub(1).and_then(|i| chrome.tabs.get(i)).cloned() else {
-        state.info(format!("No tab {n} here"));
-        return Vec::new();
+        return state.just_say(format!("No tab {n} here"));
     };
     if chrome.active == Some(n - 1) {
-        state.info(format!("Already on {}", tab.label));
-        return Vec::new();
+        return state.just_say(format!("Already on {}", tab.label));
     }
     // A page's tabs aren't history: the tab replaces the screen, and the
     // one left is kept to come back to as it was.
@@ -224,10 +216,7 @@ pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
 pub fn review_glance(state: &mut State) -> Vec<Cmd> {
     match state.review_tab() {
         Some(n) => switch_tab(state, n),
-        None => {
-            state.info("A review at a glance is a pull request's");
-            Vec::new()
-        }
+        None => state.just_say("A review at a glance is a pull request's"),
     }
 }
 
@@ -270,8 +259,7 @@ pub fn step_tab(state: &mut State, forward: bool) -> Vec<Cmd> {
     let chrome = state.chrome();
     let n = chrome.tabs.len();
     let Some(active) = chrome.active.filter(|_| n > 1) else {
-        state.info("No other tabs here");
-        return Vec::new();
+        return state.just_say("No other tabs here");
     };
     let next = if forward {
         Some(active + 1).filter(|&i| i < n)

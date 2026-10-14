@@ -140,8 +140,9 @@ pub fn subject(state: &State) -> Option<Watched> {
 #[must_use]
 pub fn open(state: &mut State) -> Vec<Cmd> {
     let Some(of) = subject(state) else {
-        state.info("That works on an issue, a pull request, a discussion, or a repository's pages");
-        return Vec::new();
+        return state.just_say(
+            "That works on an issue, a pull request, a discussion, or a repository's pages",
+        );
     };
     // What GitHub has now, not what was read before.
     let mut cmds = state.ensure(DataKey::Subscription(of.clone()), true);

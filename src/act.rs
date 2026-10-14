@@ -159,10 +159,7 @@ pub enum Step {
 #[must_use]
 pub fn take(state: &mut State, planned: Result<Step, String>) -> Vec<Cmd> {
     match planned {
-        Err(why) => {
-            state.info(why);
-            Vec::new()
-        }
+        Err(why) => state.just_say(why),
         Ok(Step::Send(change, about)) => {
             state.info(format!("{}…", doing(&change)));
             vec![send(change, By::Act(about))]
@@ -193,8 +190,7 @@ pub fn settled(state: &State) -> Result<(), String> {
 #[must_use]
 pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
     let Some(subject) = subject(state, action) else {
-        state.info(elsewhere(action));
-        return Vec::new();
+        return state.just_say(elsewhere(action));
     };
     // A row's may be an old copy (from the cache, before a change); a
     // page keeps its own fresh.

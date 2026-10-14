@@ -113,8 +113,7 @@ fn uneditable(state: &State) -> Option<String> {
 #[must_use]
 pub fn open_edit(state: &mut State) -> Vec<Cmd> {
     if let Some(why) = uneditable(state) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let Some((repo, w)) = shown(state) else {
         return Vec::new();
@@ -137,12 +136,10 @@ pub fn open_new(state: &mut State) -> Vec<Cmd> {
         None => None,
     };
     let Some(repo) = repo else {
-        state.info("Open a repository's wiki first");
-        return Vec::new();
+        return state.just_say("Open a repository's wiki first");
     };
     if state.overview(&repo).is_some_and(|o| !o.has_wiki) {
-        state.info(format!("{repo} has its wiki turned off"));
-        return Vec::new();
+        return state.just_say(format!("{repo} has its wiki turned off"));
     }
     let mut cmds = state.push(Route::Wiki(wiki::WikiEdit { repo, page: None }));
     cmds.extend(follow(state));
@@ -186,8 +183,7 @@ fn compose(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     };
     if page.is_some() && form.page.is_none() {
-        state.info("The page hasn't loaded yet");
-        return Vec::new();
+        return state.just_say("The page hasn't loaded yet");
     }
     let top = [ratatui_textarea::CursorMove::Top];
     crate::forms::compose::<Form>(state, &route, 0, &top)

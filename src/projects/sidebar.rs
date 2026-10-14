@@ -104,8 +104,7 @@ pub fn act(state: &mut State) -> Vec<Cmd> {
     let (subject, projects) = match changeable(state) {
         Ok(found) => found,
         Err(why) => {
-            state.info(why);
-            return Vec::new();
+            return state.just_say(why);
         }
     };
     let pick = match projects.as_slice() {

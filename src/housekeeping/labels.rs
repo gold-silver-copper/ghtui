@@ -66,8 +66,7 @@ pub(super) fn picked(state: &State) -> Option<&LabelInfo> {
 #[must_use]
 pub(super) fn open(state: &mut State, repo: &RepoId, name: Option<String>) -> Vec<Cmd> {
     if let Some(why) = refused(state, repo, "Changing labels") {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     super::open(
         state,
@@ -82,8 +81,7 @@ pub(super) fn open(state: &mut State, repo: &RepoId, name: Option<String>) -> Ve
 #[must_use]
 pub(super) fn edit(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
     let Some(name) = picked(state).map(|l| l.name.clone()) else {
-        state.info("Select a label first");
-        return Vec::new();
+        return state.just_say("Select a label first");
     };
     open(state, repo, Some(name))
 }
@@ -232,12 +230,10 @@ pub(super) fn submit(
 #[must_use]
 pub(super) fn ask_delete(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
     if let Some(why) = refused(state, repo, "Changing labels") {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let Some(l) = picked(state).cloned() else {
-        state.info("Select a label first");
-        return Vec::new();
+        return state.just_say("Select a label first");
     };
     let on = match l.open {
         0 => "No open issue or pull request has it".to_owned(),

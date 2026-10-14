@@ -155,12 +155,10 @@ pub fn open_new(state: &mut State) -> Vec<Cmd> {
 #[must_use]
 pub fn open_edit(state: &mut State) -> Vec<Cmd> {
     let Some(g) = shown(state) else {
-        state.info("The gist hasn't loaded yet");
-        return Vec::new();
+        return state.just_say("The gist hasn't loaded yet");
     };
     if let Some(why) = not_yours(state, g) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let route = Route::Gists(gists::EditGist {
         owner: g.owner.clone().unwrap_or_default(),
@@ -237,8 +235,7 @@ fn compose(state: &mut State, i: usize) -> Vec<Cmd> {
         return Vec::new();
     };
     if let Some(why) = form.files.get(i).and_then(|f| f.locked.clone()) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     crate::forms::compose::<Form>(state, &route, i, &[])
 }
@@ -506,12 +503,10 @@ pub fn create(state: &mut State, route: &Route, public: bool) -> Vec<Cmd> {
 #[must_use]
 pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
     let Some(g) = shown(state) else {
-        state.info("The gist hasn't loaded yet");
-        return Vec::new();
+        return state.just_say("The gist hasn't loaded yet");
     };
     if let Some(why) = not_yours(state, g) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let n = g.files.len();
     let files = format!("{n} {}", crate::ui::text::noun(n as u64, "file"));

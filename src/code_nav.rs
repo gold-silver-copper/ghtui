@@ -233,10 +233,7 @@ fn name_here(state: &mut State, word: Option<String>) -> Option<String> {
 fn ask(state: &mut State, here: &Here, want: Want) -> Vec<Cmd> {
     match here.ask(want) {
         Some(ask) => vec![Cmd::Git(Git::Code(ask))],
-        None => {
-            state.info("The diff's head commit isn't known yet");
-            Vec::new()
-        }
+        None => state.just_say("The diff's head commit isn't known yet"),
     }
 }
 
@@ -265,10 +262,7 @@ pub fn symbols(state: &mut State) -> Vec<Cmd> {
 pub fn repo_symbols(state: &mut State) -> Vec<Cmd> {
     match here(state) {
         Ok(here) => ask(state, &here, Want::Symbols),
-        Err(why) => {
-            state.info(why);
-            Vec::new()
-        }
+        Err(why) => state.just_say(why),
     }
 }
 
@@ -279,8 +273,7 @@ pub fn references(state: &mut State) -> Vec<Cmd> {
     let here = match here(state) {
         Ok(here) => here,
         Err(why) => {
-            state.info(why);
-            return Vec::new();
+            return state.just_say(why);
         }
     };
     let Some(word) = name_here(state, here.word.clone()) else {
@@ -327,8 +320,7 @@ pub fn definition(state: &mut State) -> Vec<Cmd> {
     let here = match here(state) {
         Ok(here) => here,
         Err(why) => {
-            state.info(why);
-            return Vec::new();
+            return state.just_say(why);
         }
     };
     let Some(word) = name_here(state, here.word.clone()) else {
@@ -353,10 +345,9 @@ pub fn definition(state: &mut State) -> Vec<Cmd> {
         }
     }
     if family(&here.path).is_none() {
-        state.info(format!(
+        return state.just_say(format!(
             "Can't tell where “{word}” is defined: ghtui reads {LANGUAGES} only"
         ));
-        return Vec::new();
     }
     state.info(format!(
         "“{word}” isn't defined in this file: looking in {}",
@@ -411,8 +402,8 @@ pub fn answered(state: &mut State, ask: &Ask, answer: Result<Answer, String>) ->
     let note = answer.note.clone();
     let cmds = match (&ask.want, answer.places.as_slice()) {
         (_, []) => {
-            state.info(note.map_or(answer.none.clone(), |n| format!("{} · {n}", answer.none)));
-            return Vec::new();
+            return state
+                .just_say(note.map_or(answer.none.clone(), |n| format!("{} · {n}", answer.none)));
         }
         (Want::Definition(word), [one]) => {
             let cmds = match open(one) {

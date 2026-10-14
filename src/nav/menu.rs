@@ -184,8 +184,7 @@ pub(super) fn run_menu_row(state: &mut State, row: Option<Doable>) -> Vec<Cmd> {
         return Vec::new();
     };
     if let Some(why) = d.unavailable {
-        state.info(format!("Can't: {why}"));
-        return Vec::new();
+        return state.just_say(format!("Can't: {why}"));
     }
     state.overlay = None;
     apply(state, d.action)

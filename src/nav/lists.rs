@@ -75,19 +75,16 @@ pub(super) fn plain_search(route: &Route) -> Option<&'static str> {
 #[must_use]
 pub(super) fn cycle_state(state: &mut State) -> Vec<Cmd> {
     if let Some(what) = state.route().and_then(plain_search) {
-        state.info(format!("{what} aren't open or closed"));
-        return Vec::new();
+        return state.just_say(format!("{what} aren't open or closed"));
     }
     if let Some(Route::Runs(runs::Actions { .. })) = state.route() {
         let filter = state.first_key(Action::Search);
-        state.info(format!(
+        return state.just_say(format!(
             "Runs aren't open or closed · {filter} filters them: is:failure, is:success…"
         ));
-        return Vec::new();
     }
     let Some((route, query)) = list_query(state) else {
-        state.info("Only lists have open and closed");
-        return Vec::new();
+        return state.just_say("Only lists have open and closed");
     };
     set_list_state(state, next_list_state(&route, &query))
 }
@@ -109,24 +106,20 @@ pub(super) fn cycle_sort(state: &mut State) -> Vec<Cmd> {
         return state.replace(route, true, None);
     }
     if let Some(Route::Runs(runs::Actions { .. })) = state.route() {
-        state.info("Runs are newest first: GitHub doesn't sort them otherwise");
-        return Vec::new();
+        return state.just_say("Runs are newest first: GitHub doesn't sort them otherwise");
     }
     if let Some(Route::Search(search::Notifications { .. })) = state.route() {
-        state.info("Notifications are newest first: GitHub doesn't sort them otherwise");
-        return Vec::new();
+        return state
+            .just_say("Notifications are newest first: GitHub doesn't sort them otherwise");
     }
     if let Some(Route::Security(security::Alerts { .. })) = state.route() {
-        state.info("Alerts are newest first: ghtui doesn't sort them otherwise");
-        return Vec::new();
+        return state.just_say("Alerts are newest first: ghtui doesn't sort them otherwise");
     }
     if let Some(what) = state.route().and_then(plain_search) {
-        state.info(format!("{what} come in GitHub's best-match order"));
-        return Vec::new();
+        return state.just_say(format!("{what} come in GitHub's best-match order"));
     }
     let Some((route, query)) = list_query(state) else {
-        state.info("Only lists can be sorted");
-        return Vec::new();
+        return state.just_say("Only lists can be sorted");
     };
     let current = pages::sort_label(&query);
     let i = pages::SORTS

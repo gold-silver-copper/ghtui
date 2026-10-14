@@ -60,8 +60,7 @@ fn picked(state: &State, kind: RefKind) -> Option<(String, Option<&BranchInfo>)>
 #[must_use]
 pub(super) fn start(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec<Cmd> {
     if let Some(why) = refused(state, repo, what(kind)) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let pick = crate::picker::Kind::Housekeeping(Pick::RefName(repo.clone(), kind));
     state.open_picker(pick)
@@ -227,20 +226,17 @@ pub(super) fn in_clone(c: &Clone) -> String {
 #[must_use]
 pub(super) fn ask_delete(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec<Cmd> {
     if let Some(why) = refused(state, repo, what(kind)) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let Some((name, branch)) = picked(state, kind) else {
-        state.info(format!("Select a {} first", kind.noun()));
-        return Vec::new();
+        return state.just_say(format!("Select a {} first", kind.noun()));
     };
     let pr = branch.and_then(|b| b.pr);
     let open_pr = pr.filter(|(_, s)| *s == crate::api::browse::PrState::Open);
     if branch.is_some_and(|b| b.default) {
-        state.info(format!(
+        return state.just_say(format!(
             "{name} is the default branch: GitHub doesn't delete it (another must be the default first, in the repository's settings)"
         ));
-        return Vec::new();
     }
     let mut facts = Vec::new();
     if kind == RefKind::Branch {
@@ -265,18 +261,16 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec
             Some(Ok(BranchRules {
                 protected: true, ..
             })) => {
-                state.info(format!(
+                return state.just_say(format!(
                     "{name} is protected: GitHub's branch protection keeps it from being deleted"
                 ));
-                return Vec::new();
             }
             Some(Ok(BranchRules {
                 undeletable: true, ..
             })) => {
-                state.info(format!(
+                return state.just_say(format!(
                     "{name} is protected: a ruleset of the repository's keeps it from being deleted"
                 ));
-                return Vec::new();
             }
             Some(Ok(_)) => {}
         }

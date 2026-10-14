@@ -48,8 +48,7 @@ fn owners(state: &State) -> Option<&Owners> {
 #[must_use]
 pub(super) fn open_fork(state: &mut State) -> Vec<Cmd> {
     let Some(repo) = state.route().and_then(Route::repo).cloned() else {
-        state.info("Open a repository first: a fork is of one");
-        return Vec::new();
+        return state.just_say("Open a repository first: a fork is of one");
     };
     super::open(state, FormOf::Fork(repo))
 }

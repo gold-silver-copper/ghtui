@@ -851,8 +851,7 @@ fn send_pick(state: &mut State, pick: Pick) -> Vec<Cmd> {
             };
             if s.milestone.as_ref().map(|m| &m.name) == name.as_ref() {
                 state.overlay = None;
-                state.info("That's its milestone now");
-                return Vec::new();
+                return state.just_say("That's its milestone now");
             }
             let milestone = name.and_then(|name| {
                 (s.milestones.iter())
@@ -905,8 +904,7 @@ fn apply(state: &mut State) -> Vec<Cmd> {
     let now = chosen.clone().unwrap_or_else(|| was.clone());
     if now == was {
         state.overlay = None;
-        state.info("Nothing changed");
-        return Vec::new();
+        return state.just_say("Nothing changed");
     }
     // Each name once, what's set first.
     let mut all: Vec<&Named> = set.clone();
@@ -931,8 +929,8 @@ fn apply(state: &mut State) -> Vec<Cmd> {
         },
         Field::Reviewers => {
             if s.requested.left_out > 0 {
-                state.info("GitHub listed only some of its reviewers: change them on GitHub");
-                return Vec::new();
+                return state
+                    .just_say("GitHub listed only some of its reviewers: change them on GitHub");
             }
             // Asking replaces who's asked: everyone chosen, by kind.
             let r = &s.requested;

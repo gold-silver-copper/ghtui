@@ -401,7 +401,6 @@ fn param(url: &url::Url, name: &str) -> Option<String> {
         .map(|(_, v)| v.into_owned())
 }
 
-/// A discussions page from what follows `/discussions` in its URL.
 /// Top-level GitHub paths that aren't users.
 const RESERVED: &[&str] = &[
     "about",

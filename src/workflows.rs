@@ -299,8 +299,7 @@ pub fn save(state: &mut State, id: u64, name: &str) -> Vec<Cmd> {
         .and_then(|r| r.artifacts.iter().find(|a| a.id == id))
         .is_some_and(|a| a.expired);
     if expired {
-        state.info(format!("{name} has expired: GitHub no longer keeps it"));
-        return Vec::new();
+        return state.just_say(format!("{name} has expired: GitHub no longer keeps it"));
     }
     let pick = Pick::Save {
         repo,
@@ -439,12 +438,11 @@ pub fn action(state: &mut State) -> Vec<Cmd> {
         return run(state);
     }
     let Some((repo, file)) = workflow_here(state) else {
-        state.info("Running a workflow by hand works on a workflow's page or one of its runs");
-        return Vec::new();
+        return state
+            .just_say("Running a workflow by hand works on a workflow's page or one of its runs");
     };
     if let Some(why) = refused(state, &repo, &file) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     state.push(Route::Runs(runs::Dispatch { repo, file }))
 }
@@ -464,12 +462,10 @@ fn run(state: &mut State) -> Vec<Cmd> {
         (None, Ok(inputs)) => (None, inputs),
     };
     let Some(git_ref) = form_ref(state) else {
-        state.info("Still loading the repository's default branch");
-        return Vec::new();
+        return state.just_say("Still loading the repository's default branch");
     };
     if let Some(why) = why {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let form = state.forms.shown::<Form>(&route);
     let values: Vec<(String, String)> = (inputs.iter())
@@ -524,8 +520,7 @@ impl Job for Dispatch {
             Ok(run) => {
                 state.forms.take::<Form>(&route);
                 if !on_form {
-                    state.info(format!("Started {file}"));
-                    return Vec::new();
+                    return state.just_say(format!("Started {file}"));
                 }
                 let route = match run {
                     Some(run) => {

@@ -215,10 +215,9 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
             let forward = action == Action::WordNext;
             let Some((_, code, room)) = p.code_line() else {
                 let down = state.first_key(Action::Down);
-                state.info(format!(
+                return state.just_say(format!(
                     "Words are a line of code's: {down} moves to a line of a file or a log"
                 ));
-                return Vec::new();
             };
             match text::step_word(&code, p.word, forward) {
                 Some(word) => {
@@ -250,8 +249,7 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
                     lines,
                 }),
                 _ => {
-                    state.info(action.not_here());
-                    return Vec::new();
+                    return state.just_say(action.not_here());
                 }
             };
             return state.push(route);
@@ -272,10 +270,9 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 pr: Some(number),
             }) = p.route.clone()
             else {
-                state.info(
+                return state.just_say(
                     "Next and previous commits are a pull request's: open one from its Commits tab",
                 );
-                return Vec::new();
             };
             let at = state.pr_commit_at(&repo, number, &oid);
             let to = match &at {
@@ -293,10 +290,7 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
                     });
                     Vec::new()
                 }
-                (None, None) => {
-                    state.info("The pull request's commits haven't loaded yet");
-                    Vec::new()
-                }
+                (None, None) => state.just_say("The pull request's commits haven't loaded yet"),
             };
         }
         _ if crate::projects::ACTIONS.contains(&action) => {
@@ -405,10 +399,7 @@ pub fn go_to_line(state: &mut State, n: usize) -> Vec<Cmd> {
 pub fn open_link(state: &mut State) -> Vec<Cmd> {
     match state.link_under_cursor() {
         Some(url) => state.go(Target::External(url).into()),
-        None => {
-            state.info("No link under the cursor");
-            Vec::new()
-        }
+        None => state.just_say("No link under the cursor"),
     }
 }
 

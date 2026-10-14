@@ -72,10 +72,9 @@ pub fn search_word(state: &mut State, forward: bool) -> Vec<Cmd> {
     };
     let Some(word) = p.word_text().map(|w| text::whole_word(&w)) else {
         let down = state.first_key(Action::Down);
-        state.info(format!(
+        return state.just_say(format!(
             "No word under the cursor: {down} moves to a line of a file or a log"
         ));
-        return Vec::new();
     };
     // The selection stays on its line as the search rebuilds the page,
     // and the word cursor goes with the match.

@@ -65,8 +65,7 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
 #[must_use]
 pub fn submit(state: &mut State) -> Vec<Cmd> {
     let Some(kind) = here(state) else {
-        state.info("That makes or saves a form, on its page");
-        return Vec::new();
+        return state.just_say("That makes or saves a form, on its page");
     };
     if state.route().is_some_and(|r| state.forms.sent(r).sending) {
         say(state, "It's being sent".into());
@@ -340,8 +339,7 @@ pub(crate) fn compose<F: Fields + Default>(
     cursor: &[CursorMove],
 ) -> Vec<Cmd> {
     if state.forms.sent(route).sending {
-        state.info("It's being sent");
-        return Vec::new();
+        return state.just_say("It's being sent");
     }
     // Its box on the page makes way.
     let Some(text) = state.forms.edit::<F>(route).text(part).cloned() else {

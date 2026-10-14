@@ -114,8 +114,7 @@ fn subject(state: &State) -> Option<RepoId> {
 #[must_use]
 pub fn open(state: &mut State) -> Vec<Cmd> {
     let Some(repo) = subject(state) else {
-        state.info(Action::Lists.not_here());
-        return Vec::new();
+        return state.just_say(Action::Lists.not_here());
     };
     let mut cmds = state.ensure(DataKey::MyLists(repo.clone()), true);
     let pick = crate::picker::Kind::Site(super::Pick::Lists(repo));
@@ -303,8 +302,7 @@ pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
     let list = match yours(state, login) {
         Ok(l) => l.list.clone(),
         Err(why) => {
-            state.info(format!("Can't delete the list: {why}"));
-            return Vec::new();
+            return state.just_say(format!("Can't delete the list: {why}"));
         }
     };
     let n = list.count;

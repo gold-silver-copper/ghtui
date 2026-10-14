@@ -56,8 +56,7 @@ fn picked(state: &State) -> Option<MilestoneInfo> {
 #[must_use]
 pub(super) fn open(state: &mut State, repo: &RepoId, number: Option<u64>) -> Vec<Cmd> {
     if let Some(why) = refused(state, repo, WHAT) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     super::open(
         state,
@@ -71,8 +70,7 @@ pub(super) fn open(state: &mut State, repo: &RepoId, number: Option<u64>) -> Vec
 #[must_use]
 pub(super) fn edit(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
     let Some(m) = picked(state) else {
-        state.info("Select a milestone first");
-        return Vec::new();
+        return state.just_say("Select a milestone first");
     };
     open(state, repo, Some(m.number))
 }
@@ -206,12 +204,10 @@ pub(super) fn submit(
 #[must_use]
 pub(super) fn toggle(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
     if let Some(why) = refused(state, repo, WHAT) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let Some(m) = picked(state) else {
-        state.info("Select a milestone first");
-        return Vec::new();
+        return state.just_say("Select a milestone first");
     };
     let verb = if m.closed { "Reopening" } else { "Closing" };
     state.info(format!("{verb} {}…", m.title));
@@ -226,12 +222,10 @@ pub(super) fn toggle(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
 #[must_use]
 pub(super) fn ask_delete(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
     if let Some(why) = refused(state, repo, WHAT) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let Some(m) = picked(state) else {
-        state.info("Select a milestone first");
-        return Vec::new();
+        return state.just_say("Select a milestone first");
     };
     let all = m.open + m.done;
     let on = match all {

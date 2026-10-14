@@ -417,8 +417,7 @@ pub fn on_watched(
     // More pages loaded would go: say so instead.
     if extended {
         let refresh = state.first_key(crate::keymap::Action::Refresh);
-        state.info(format!("New on the list: {refresh} shows it"));
-        return Vec::new();
+        return state.just_say(format!("New on the list: {refresh} shows it"));
     }
     let mut cmds = state.ensure(k, true);
     if ended && let Watched::Job { repo, job } = what {

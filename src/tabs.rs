@@ -177,12 +177,10 @@ impl State {
     #[must_use]
     pub fn switch_to_tab(&mut self, i: usize) -> Vec<Cmd> {
         if i >= self.tab_count() {
-            self.info(format!("No tab {} open", i + 1));
-            return Vec::new();
+            return self.just_say(format!("No tab {} open", i + 1));
         }
         if i == self.active_tab() {
-            self.info(format!("Already on tab {}", i + 1));
-            return Vec::new();
+            return self.just_say(format!("Already on tab {}", i + 1));
         }
         self.move_to_tab(i);
         self.load_visible(false)
@@ -223,8 +221,7 @@ impl State {
         let n = self.tab_count();
         if n == 1 {
             let open = self.first_key(crate::keymap::Action::OpenInTab);
-            self.info(format!("Only one tab open: {open} opens another"));
-            return Vec::new();
+            return self.just_say(format!("Only one tab open: {open} opens another"));
         }
         let i = self.active_tab();
         let next = if forward {
@@ -245,8 +242,7 @@ impl State {
         };
         let Some(next) = next else {
             let quit = self.first_key(crate::keymap::Action::Quit);
-            self.info(format!("This is the last tab ({quit} quits)"));
-            return Vec::new();
+            return self.just_say(format!("This is the last tab ({quit} quits)"));
         };
         drop(self.swap_in(next));
         self.overlay = None;

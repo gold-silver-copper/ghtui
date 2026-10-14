@@ -527,8 +527,7 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
     let (path, plan) = match plan(state, action) {
         Ok((path, plan)) => (path.to_owned(), plan),
         Err(why) => {
-            state.info(why);
-            return Vec::new();
+            return state.just_say(why);
         }
     };
     let (edit, what) = match plan {
