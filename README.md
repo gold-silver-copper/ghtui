@@ -1107,61 +1107,92 @@ batches of a thousand, never one by one, within limits: 20,000 files,
 rust-lang/rust (39,000 Rust files), once cloned, that is about 5,000 files in 18
 seconds, using about 130 MB.
 
-**Fast from the cache.** The first paint comes from a local cache (redb),
-then everything is refreshed in the background. A page's data is kept
-under its own key, in one place (`data::load`), as GitHub's API answered
-it (a list's first page); what git answers isn't kept. REST requests
-revalidate with ETags (and `Last-Modified`), so unchanged data costs
-nothing against the rate limit. Offline is that same path with GitHub missing: one place
-(`api::reach`) knows whether GitHub can be reached (a request that can't
-connect says it can't; any answer says it can), so a request fails at
-once while it can't, the page keeps the cache's copy, and the header
-says so. A failed connect never left, so only a write that failed that
-way is queued (`offline::queue`): each is written down as being sent
-before it goes, and its answer settles it, so none is sent twice.
+**Where a page's data comes from.** Every piece of GitHub's data a page
+shows has one key, a `DataKey`, and is one kind of `Data`; both are in
+`src/data.rs`, where each line of the `data!` list is a kind of data and
+how a page picks it out. One loader (`src/data/load.rs`) gets a key's
+data: from git where git can answer (`src/source.rs` decides, and the
+page says which), else from GitHub's API. It keeps what the API answered
+in the cache under the same key (a list's first page), where
+`DataKey::kept` allows, and reads it back by that key. In the state, each
+key's data is a `Remote`: loading, failed and why, or there, with when it
+was fetched. Pages read it through `State::get`, never on their own.
 
-**A page says what it is in one place.** Pages come in families, one
-enum each in `src/route/` (code, issues, pull requests, Actions and so
-on; Insights and the like are `src/site.rs`'s, housekeeping's forms
-`src/housekeeping.rs`'s). A family says, for each of its pages, its URL
-and title, the page above it, what it needs fetched, what it loads more
-of, how wide it is, its crumbs and tabs, how it's built, and how its
-URLs read (`route::Family`). What a page needs is the one list of what
-building it reads: a test builds every page the fixtures reach and
-checks it reads nothing else. Data is fetched and cached by its key, not
-by the page, since pages share it (`data::load`). Adding a page is a
-variant in its family's file, its arms in that file's methods, and, if
-it shows new data, a `DataKey` with its fetch; a new family is one more
-file, a `Route` variant and its place in the order URLs are read.
+**Fast from the cache.** The first paint comes from a local cache (redb,
+`src/store.rs`), then everything is refreshed in the background. What's
+written to the cache is kept in memory, where reads see it, and committed
+together in the background, so no reply waits on the disk. REST requests
+revalidate with ETags (and `Last-Modified`), so unchanged data costs
+nothing against the rate limit. Offline is that same path with GitHub
+missing: one place (`api::reach`) knows whether GitHub can be reached (a
+request that can't connect says it can't; any answer says it can), so a
+request fails at once while it can't, the page keeps the cache's copy, and
+the header says so. A failed connect never left, so only a write that
+failed that way is queued (`offline::queue`): each is written down as
+being sent before it goes, and its answer settles it, so none is sent
+twice.
+
+**A page says what it is in one place.** Pages come in families, one enum
+each in `src/route/` (code, issues, pull requests, Actions' runs, releases,
+people and so on; Insights and the like are `src/site.rs`'s, housekeeping's
+forms `src/housekeeping.rs`'s). A family says, for each of its pages, its
+URL and title, the page above it, what it needs fetched, what it loads
+more of, how wide it is, its crumbs and tabs, how it's built, which form
+it is if it's one, and how its URLs read (the `route::Family` trait).
+`Route` is one variant per family, and only asks it. What a page needs is
+the one list of what building it reads: a test builds every page the
+fixtures reach and checks it reads nothing else. That is also what keeps
+pages from being built for nothing: a page is built again only when the
+data it needs changes, its form changes, or a time it shows relative to
+now ("3m ago") reads differently. The pages are drawn by `src/ui/pages/`,
+which, like `src/api/`, names no app module.
 
 **A write is a job.** Everything ghtui writes, to GitHub or to git in
 your clone, is a job (`src/work.rs`): a struct that says how it runs and
-what its answer does, listed once in `jobs!`. A change to an issue, a pull
-request, a discussion, a run, a notification, a project or a repository's
-settings is one job, a `Change` (`act::Changing`), and what the offline
-queue keeps is made of them. What an action does where you are is planned
-once by the feature that owns it, as a step (`act::Step`: send it, ask
-first, choose in a picker, or write in the composer), and the key, the
-menu and the palette all ask that plan, so they can't disagree. After a
-write, the page follows GitHub until it shows it (`src/follow.rs`): the
-feature says what the page should show (an `Expectation`), and one place
-polls, says it's waiting and gives up. Forms (a new issue or pull
-request, a release, a gist, a wiki page, housekeeping's, running a
-workflow) are kept in one map by their page, with what was sent from them
-(`src/forms.rs`), and text is typed in one composer (`src/compose.rs`).
-What each feature adds is one table (`src/features.rs`): the actions it
-owns or takes on its pages, what it does with them, the menu's rows it
-offers, and what it follows as data arrives. Adding a write is a job
-(a struct, its `impl Job` and its line in `jobs!`), an `Expectation` if
-the page shows it, and, for a new key, an action in its feature's
-`owns` with an arm in its plan.
+what its answer does (`impl Job`), listed once in `jobs!`, which makes the
+`Work` a command carries and the `Done` its answer comes back as. A job
+fails with one error type, `work::Failure`, which says GitHub's own words
+when GitHub refused. A change to an issue, a pull request, a discussion, a
+run, a notification, a project or a repository's settings is one job, a
+`Change` (`act::Changing`), and what the offline queue keeps is made of
+them. What an action does where you are is planned once by the feature
+that owns it, as a step (`act::Step`: send it, ask first, choose in a
+picker, or write in the composer), and the key, the menu and the palette
+all ask that plan, so they can't disagree.
+
+**After a write, the page follows GitHub until it shows it**
+(`src/follow.rs`). The feature that made the write says what the page
+should show once GitHub has it, as an `Expectation`; one place polls the
+page's data, says in the status bar that it's waiting, checks each answer
+and gives up after a while. One write is followed at a time.
+
+**Forms are kept in one map** (`src/forms.rs`), by their page, with what
+was sent from them (`Sent`: sending, and GitHub's refusal): a new issue or
+pull request, a release, a gist, a wiki page, housekeeping's, running a
+workflow. A form is its fields (`forms::Fields`) and what it does
+(`forms::Kind`: Enter on a row, writing its text, submitting it, filling
+itself in from data as it arrives, its menu rows), which its page's
+family names. Text is typed in one composer (`src/compose.rs`), for a
+form's text as for a comment or a review's; what it's for says its title,
+what ctrl-s does and where the text goes.
+
+**What each feature adds is one table** (`src/features.rs`): the actions
+it owns, the others it takes on its own pages, what it does with them,
+the menu's rows it offers, and what it follows as data arrives or a page
+opens. A key's action is done by the feature that takes it on the screen,
+else by the one that owns it; tests check that no two features own one
+action and that on no screen two take one, so the table's order is only
+the menu's.
 
 **Colors from one seed.** Light and dark schemes are generated with
 Material 3's tonal palettes. Every foreground and background pair the UI
 uses is tested for contrast in both schemes, in truecolor and 256 colors.
 
-It's one crate. The top of `src/` is the app (routes, state, keys, view,
-runtime) and the binary that runs it; the rest are its modules:
+It's one crate. The top of `src/` is the app and the binary that runs it:
+the state and `update` (`src/state/`), keys (`src/keymap.rs`), the view,
+the runtime that runs commands (`src/runtime.rs`), and the pieces above
+(`data`, `route`, `work`, `follow`, `forms`, `compose`, `features`), with
+a module for each feature beside them. The rest are its modules:
 
 | Module   | What it does                                                    |
 | -------- | --------------------------------------------------------------- |
@@ -1183,19 +1214,87 @@ scripts/check-tls-deps.sh
 ```
 
 The tests come at GitHub's data from several sides:
-- every query is checked against the schema;
-- recorded GitHub responses are replayed offline;
+- every query is checked against the schema (`src/api/query_check.rs`);
+- recorded GitHub responses are replayed offline (`tests/corpus.rs`);
+- the client is tested against a scripted GitHub (`tests/client.rs`):
+  `github(vec![Reply::new(200, body).on(path)])` answers each request in
+  turn, and the test checks what was asked and how the answer reads;
 - git is the oracle for diffs, on real repositories over `file://`;
-- behaviour is tested through `update` (`src/state/tests`): keys
-  pressed and replies delivered, then the commands sent and what the
-  page or status line says. A test opens a page with the fixtures'
-  data, presses keys (`press`), hands in data (`fetched`) and a job's
-  answer (`done`), and checks what was sent (`sent`, `asked`) and said
-  (`says`, `warns`); `src/state/tests/watch.rs` is a short example;
+- behaviour is tested through `update` (`src/state/tests/`), with no
+  network, runtime or terminal;
 - every screen the fixtures reach is drawn in light and dark at a few
   sizes, tiny ones among them, to check nothing panics and every color
-  pair drawn is declared;
-- property tests throw random keys, resizes and replies at the app.
+  pair drawn is declared (`src/state/tests/smoke.rs`);
+- property tests throw random keys, resizes and replies at the app, and
+  read every page's URL back as the page.
+
+Nothing compares a whole screen: how a page looks may change when it
+gets better. Where what a page says matters, a test looks for the text.
+
+### Writing a test
+
+A behaviour test starts from a builder in `src/state/tests/screens.rs`
+(`with_repo()`, `with_pr()`, …, or `open(state, route, data)` with
+`fixtures::sample(&key)`), presses keys (`press(&mut s, ",o")`), hands in
+data (`fetched`) and a job's answer (`done`), and checks what was sent
+(`sent::<Job>`, `asked`, `sent_change`) and what the page or status line
+says (`says`, `warns`, the page's text). From
+`src/state/tests/housekeeping.rs` (`with_labels` and `select` are that
+file's own):
+
+```rust
+let mut s = with_labels();
+select(&mut s, "good first issue");
+press(&mut s, ",e");
+let cmds = press(&mut s, ",s");
+let work = fixtures::sent::<labels::Save>(&cmds);
+assert_eq!(work.was.as_deref(), Some("good first issue"));
+fixtures::done(&mut s, work, Ok(()));
+says(&s, "Saved the label");
+```
+
+A write is tested once at each level: what it sends over HTTP in
+`tests/client.rs`, the job the keys start (as above), its query against
+the schema, and, for a new kind of write, one step of the live check
+below. A new page needs a fixture its builder opens, listed in
+`screens::pages()`, so the smoke test draws it and checks it reads only
+what it needs.
+
+### Adding a page
+
+1. In its family's file in `src/route/`, a variant of the family's
+   `Page`, and its arms in the family's `url`, `title`, `up`, `needs`
+   (the page's own key last) and `build`, and where the defaults don't
+   fit, `paged`, `width`, `chrome`. Its URLs are read in the family's
+   `parse`, and listed in `tests/github_urls.txt`.
+2. If it shows new data: a `DataKey`, its line in `data!`, whether it's
+   kept (`DataKey::kept`), its arm in `data/load.rs`, and the request in
+   `src/api/`.
+3. Its drawing in `src/ui/pages/`, from the data alone.
+4. A fixture for it (`fixtures::sample` for a new key), in
+   `screens::pages()`.
+
+A new family is one more file: its `Page` enum and `impl Family`, a
+`Route` variant and its arm in `Route::family`, its parser's place in
+`route.rs`'s `TOP` or `REPO` order, and its `arb()` for the property
+tests.
+
+### Adding a write or a form
+
+1. A job: a struct, its `impl Job` (`run` sends it, `done` says what
+   happened and what follows), and its line in `jobs!`. A change to an
+   issue, a pull request and the like is a `Change` variant instead, sent
+   with `act::send`.
+2. If the page should show it: an `Expectation`, started from `done` with
+   `follow::expect`.
+3. The key: an `Action` (`src/keymap.rs`) in its feature's `owns` in
+   `src/features.rs`, with an arm in the feature's `act` that plans a step
+   or starts the job.
+4. A form: its fields (`impl forms::Fields`), its `forms::Kind`, and its
+   page in a family whose `form` names it; the page draws it with
+   `ui::pages::write_form`.
+5. Tests: the request in `tests/client.rs`, the job the keys start in
+   `src/state/tests/`.
 
 A contract suite checks ghtui's assumptions against live GitHub, read-only
 (`cargo test --test contract -- --ignored contract`). Every
