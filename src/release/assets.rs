@@ -105,8 +105,7 @@ impl Job for Delete {
     fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
         let of = self.0;
         if let Err(why) = result {
-            crate::forms::say(state, format!("GitHub didn't delete {}: {why}", of.name));
-            return Vec::new();
+            return crate::forms::say(state, format!("GitHub didn't delete {}: {why}", of.name));
         }
         let route = Route::Releases(releases::Release {
             repo: of.repo.clone(),

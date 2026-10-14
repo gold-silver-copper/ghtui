@@ -181,14 +181,12 @@ pub(super) fn submit(
     number: Option<u64>,
 ) -> Vec<Cmd> {
     if let Some(why) = refused(state, repo, WHAT) {
-        crate::forms::say(state, why);
-        return Vec::new();
+        return crate::forms::say(state, why);
     }
     let change = match change(&form(state, route)) {
         Ok(c) => c,
         Err(why) => {
-            crate::forms::say(state, why);
-            return Vec::new();
+            return crate::forms::say(state, why);
         }
     };
     crate::forms::form_sending(state, route);
@@ -296,10 +294,9 @@ impl Job for Save {
             Err(why) => {
                 if matches!(write, MilestoneWrite::Close(_)) {
                     state.error(why.to_string());
-                } else {
-                    crate::forms::failed(state, &form, why.to_string());
+                    return Vec::new();
                 }
-                return Vec::new();
+                return crate::forms::failed(state, &form, why.to_string());
             }
         };
         let asked = state.route().cloned();

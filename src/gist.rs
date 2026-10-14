@@ -438,14 +438,12 @@ fn submit(state: &mut State) -> Vec<Cmd> {
     let files = match named(&form) {
         Ok(files) => files,
         Err(why) => {
-            say(state, why);
-            return Vec::new();
+            return say(state, why);
         }
     };
     if let Route::Gists(gists::EditGist { .. }) = route {
         let Some((id, _)) = form.gist.clone() else {
-            say(state, "The gist hasn't loaded yet".into());
-            return Vec::new();
+            return say(state, "The gist hasn't loaded yet".into());
         };
         let change = change(&form, &id, &files);
         crate::forms::form_sending(state, &route);
@@ -483,8 +481,7 @@ pub fn create(state: &mut State, route: &Route, public: bool) -> Vec<Cmd> {
     let files = match named(form) {
         Ok(files) => files,
         Err(why) => {
-            say(state, why);
-            return Vec::new();
+            return say(state, why);
         }
     };
     let new = NewGist {
@@ -684,8 +681,7 @@ impl Job for Delete {
     fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
         let Delete { id, owner } = self;
         if let Err(why) = result {
-            say(state, format!("GitHub didn't delete the gist: {why}"));
-            return Vec::new();
+            return say(state, format!("GitHub didn't delete the gist: {why}"));
         }
         state.overlay = None;
         state.info("Deleted the gist");
@@ -701,8 +697,7 @@ impl Job for Delete {
 
 /// GitHub didn't save the gist on the form at `route`, and why.
 fn unsaved(state: &mut State, route: &Route, why: &Failure) -> Vec<Cmd> {
-    crate::forms::failed(state, route, format!("GitHub didn't save the gist: {why}"));
-    Vec::new()
+    crate::forms::failed(state, route, format!("GitHub didn't save the gist: {why}"))
 }
 
 /// Back to `page` when it's the page before, else to it in place.

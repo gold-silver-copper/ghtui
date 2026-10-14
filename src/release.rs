@@ -624,12 +624,10 @@ fn submit(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     };
     let Some(tag) = form.tag.clone() else {
-        say(state, "Choose a tag first (Enter on Tag)".into());
-        return Vec::new();
+        return say(state, "Choose a tag first (Enter on Tag)".into());
     };
     if let Some(why) = problem(state, &repo, &form) {
-        say(state, why);
-        return Vec::new();
+        return say(state, why);
     }
     let (title, notes) = templates::split(&form.text);
     let mut facts = vec![(
@@ -856,10 +854,7 @@ impl Job for DeleteTag {
                 // The tags list, if it's shown, no longer has it.
                 state.ensure(DataKey::Tags(repo), true)
             }
-            Err(why) => {
-                say(state, format!("GitHub didn't delete the tag: {why}"));
-                Vec::new()
-            }
+            Err(why) => say(state, format!("GitHub didn't delete the tag: {why}")),
         }
     }
 }
@@ -923,8 +918,7 @@ impl Job for Save {
             }
             Err(why) => {
                 let why = format!("GitHub didn't save the release: {why}");
-                crate::forms::failed(state, route, why);
-                Vec::new()
+                crate::forms::failed(state, route, why)
             }
         }
     }
@@ -951,8 +945,7 @@ impl Job for Delete {
         let tagged = match result {
             Ok(tagged) => tagged,
             Err(why) => {
-                say(state, format!("GitHub didn't delete the release: {why}"));
-                return Vec::new();
+                return say(state, format!("GitHub didn't delete the release: {why}"));
             }
         };
         crate::forms::close_sender(state, &route);

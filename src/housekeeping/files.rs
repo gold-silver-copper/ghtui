@@ -256,8 +256,7 @@ pub(super) fn ask_commit(state: &mut State, route: &Route) -> Vec<Cmd> {
     };
     let repo = repo.clone();
     if let Some(why) = problem(state, route, of) {
-        crate::forms::say(state, why);
-        return Vec::new();
+        return crate::forms::say(state, why);
     }
     let clone = match clone_here(state, &repo) {
         Ok(clone) => clone,
@@ -328,8 +327,7 @@ pub(super) fn commit(state: &mut State, route: &Route) -> Vec<Cmd> {
         return Vec::new();
     };
     if let Some(why) = problem(state, route, of) {
-        crate::forms::say(state, why);
-        return Vec::new();
+        return crate::forms::say(state, why);
     }
     let f = form(state, route);
     let Some(Ok(look)) = looked(state, of) else {
@@ -480,8 +478,7 @@ impl Job for Commit {
         };
         let repo = repo.clone();
         if let Err(why) = result {
-            crate::forms::failed(state, route, why.to_string());
-            return Vec::new();
+            return crate::forms::failed(state, route, why.to_string());
         }
         crate::forms::done::<Form>(state, route);
         let FileWrite {

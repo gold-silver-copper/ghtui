@@ -513,8 +513,7 @@ impl Job for Dispatch {
         match result {
             Err(err) => {
                 let text = format!("Couldn't run {file}: {err}");
-                crate::forms::failed(state, &route, text);
-                Vec::new()
+                crate::forms::failed(state, &route, text)
             }
             // It's a new run: the form starts over next time.
             Ok(run) => {

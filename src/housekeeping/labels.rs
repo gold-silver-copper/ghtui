@@ -196,14 +196,12 @@ pub(super) fn submit(
     was: Option<&str>,
 ) -> Vec<Cmd> {
     if let Some(why) = refused(state, repo, "Changing labels") {
-        crate::forms::say(state, why);
-        return Vec::new();
+        return crate::forms::say(state, why);
     }
     let change = match change(&form(state, route)) {
         Ok(c) => c,
         Err(why) => {
-            crate::forms::say(state, why);
-            return Vec::new();
+            return crate::forms::say(state, why);
         }
     };
     let taken = list(state, repo).is_some_and(|l| {
@@ -211,11 +209,10 @@ pub(super) fn submit(
             .any(|l| l.name.eq_ignore_ascii_case(&change.name) && Some(l.name.as_str()) != was)
     });
     if taken {
-        crate::forms::say(
+        return crate::forms::say(
             state,
             format!("{repo} has a label named {} already", change.name),
         );
-        return Vec::new();
     }
     crate::forms::form_sending(state, route);
     state.info(format!("Saving the label {}…", change.name));
@@ -284,8 +281,7 @@ impl Job for Save {
         });
         let page = Route::Issues(issues::Labels(repo.clone()));
         if let Err(why) = result {
-            crate::forms::failed(state, &form, why.to_string());
-            return Vec::new();
+            return crate::forms::failed(state, &form, why.to_string());
         }
         crate::forms::close_sender(state, &page);
         crate::forms::done::<Form>(state, &form);

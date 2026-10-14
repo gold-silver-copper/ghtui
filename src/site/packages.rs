@@ -140,8 +140,7 @@ impl Job for DeleteVersion {
                 }
             }
             Err(why) => {
-                crate::forms::say(state, format!("GitHub didn't delete the version: {why}"));
-                Vec::new()
+                crate::forms::say(state, format!("GitHub didn't delete the version: {why}"))
             }
         }
     }

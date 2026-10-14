@@ -377,10 +377,7 @@ impl Job for DeleteList {
                 crate::follow::expect(state, stars.clone(), gone);
                 state.replace(stars, true, None)
             }
-            Err(why) => {
-                crate::forms::say(state, refused("delete the list", &why));
-                Vec::new()
-            }
+            Err(why) => crate::forms::say(state, refused("delete the list", &why)),
         }
     }
 }

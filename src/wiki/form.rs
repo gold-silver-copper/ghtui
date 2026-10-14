@@ -228,14 +228,12 @@ fn submit(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     };
     if page.is_some() && form.page.is_none() {
-        say(state, "The page hasn't loaded yet".into());
-        return Vec::new();
+        return say(state, "The page hasn't loaded yet".into());
     }
     let save = match to_save(state, &repo, &form) {
         Ok(save) => save,
         Err(why) => {
-            say(state, why);
-            return Vec::new();
+            return say(state, why);
         }
     };
     crate::forms::form_sending(state, &route);
@@ -321,10 +319,7 @@ impl Job for Save {
                     state.replace(page, true, None)
                 }
             }
-            Err(why) => {
-                crate::forms::failed(state, route, why.to_string());
-                Vec::new()
-            }
+            Err(why) => crate::forms::failed(state, route, why.to_string()),
         }
     }
 }

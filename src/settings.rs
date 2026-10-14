@@ -1069,10 +1069,9 @@ pub fn submit(state: &mut State, form: &Form, text: &str) -> Vec<Cmd> {
         Ok(mut confirm) => {
             let target = crate::compose::Target::Setting(form.clone());
             confirm.back = Some((target, text.to_owned()));
-            state.overlay = Some(Overlay::Confirm(Box::new(confirm)));
+            crate::act::take(state, Ok(crate::act::Step::Ask(Box::new(confirm))))
         }
     }
-    Vec::new()
 }
 
 /// After GitHub took a change: a webhook deleted from its own page goes

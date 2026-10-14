@@ -213,10 +213,7 @@ pub(crate) fn save(state: &mut State) -> Vec<Cmd> {
     match target {
         // A form says itself what it lacks.
         Target::Form(text) => text.save_form(state, body),
-        _ if body.trim().is_empty() => {
-            say(state, "Write something first".into());
-            Vec::new()
-        }
+        _ if body.trim().is_empty() => say(state, "Write something first".into()),
         Target::Review(c) => crate::review::save(state, c, body),
         Target::Conversation { subject_id, .. } => {
             let change = Change::Comment {
@@ -248,10 +245,7 @@ pub(crate) fn save(state: &mut State) -> Vec<Cmd> {
                 crate::forms::sending(state);
                 cmds
             }
-            Err(why) => {
-                say(state, why);
-                Vec::new()
-            }
+            Err(why) => say(state, why),
         },
         Target::Setting(f) => crate::settings::submit(state, &f, &body),
     }

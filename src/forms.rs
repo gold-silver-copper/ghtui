@@ -68,8 +68,7 @@ pub fn submit(state: &mut State) -> Vec<Cmd> {
         return state.just_say("That makes or saves a form, on its page");
     };
     if state.route().is_some_and(|r| state.forms.sent(r).sending) {
-        say(state, "It's being sent".into());
-        return Vec::new();
+        return say(state, "It's being sent".into());
     }
     (kind.submit)(state)
 }
@@ -383,12 +382,15 @@ impl Overlay {
 }
 
 /// Says `text` where it'll be seen: in what sent it when that's open
-/// (the composer, a question, a confirmation), else in the status bar.
-pub(crate) fn say(state: &mut State, text: String) {
+/// (the composer, a question, a confirmation), else in the status bar;
+/// and does nothing else.
+#[must_use]
+pub(crate) fn say(state: &mut State, text: String) -> Vec<Cmd> {
     match state.overlay.as_mut().and_then(Overlay::sent_mut) {
         Some(sent) => sent.fail(text),
         None => state.error(text),
     }
+    Vec::new()
 }
 
 /// Marks what sent something (the composer, a question, a
@@ -407,11 +409,12 @@ pub(crate) fn form_sending(state: &mut State, route: &Route) {
 
 /// GitHub refused what the form at `route` sent: the form says why, as
 /// does what sent it (else the status bar).
-pub(crate) fn failed(state: &mut State, route: &Route, why: String) {
+#[must_use]
+pub(crate) fn failed(state: &mut State, route: &Route, why: String) -> Vec<Cmd> {
     if state.forms.map.contains_key(route) {
         state.forms.sent_mut(route).fail(why.clone());
     }
-    say(state, why);
+    say(state, why)
 }
 
 /// Closes the composer or the question that sent something from

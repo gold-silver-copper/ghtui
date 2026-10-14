@@ -333,24 +333,20 @@ fn submit(state: &mut State) -> Vec<Cmd> {
     };
     let (title, body) = templates::split(&form.text);
     let Some(d) = form_data(&state.data, &repo) else {
-        say(state, "Still loading what it can have".into());
-        return Vec::new();
+        return say(state, "Still loading what it can have".into());
     };
     if let Some(why) = refused(state, &repo, matches!(route, Route::Pulls(pulls::NewPr(_)))) {
-        say(state, why);
-        return Vec::new();
+        return say(state, why);
     }
     if matches!(route, Route::Issues(issues::NewIssue(_))) && form.template.is_none() {
-        say(state, "Choose a template first".into());
-        return Vec::new();
+        return say(state, "Choose a template first".into());
     }
     if title.is_empty() {
         let key = state.first_key(Action::Comment);
-        say(
+        return say(
             state,
             format!("Write a title first: it's the first line ({key} writes)"),
         );
-        return Vec::new();
     }
     if let Route::Pulls(pulls::NewPr(_)) = route {
         return ask_create(state, &route);
@@ -483,8 +479,7 @@ fn ask_create(state: &mut State, route: &Route) -> Vec<Cmd> {
     let hs = match head_problem(state, repo, form) {
         Ok(hs) => hs,
         Err(why) => {
-            say(state, why);
-            return Vec::new();
+            return say(state, why);
         }
     };
     let (base, head) = (
@@ -602,8 +597,7 @@ pub fn answer(state: &mut State, route: &Route, draft: Option<bool>) -> Vec<Cmd>
             let hs = match head_problem(state, &repo, form) {
                 Ok(hs) => hs,
                 Err(why) => {
-                    say(state, why);
-                    return Vec::new();
+                    return say(state, why);
                 }
             };
             let Some(d) = form_data(&state.data, &repo) else {
@@ -657,8 +651,7 @@ impl Job for Push {
             }
             Err(err) => {
                 let text = format!("Couldn't push {branch}: {err}");
-                crate::forms::failed(state, &route, text);
-                Vec::new()
+                crate::forms::failed(state, &route, text)
             }
         }
     }
@@ -704,8 +697,7 @@ impl Job for Submit {
                     _ => "the issue",
                 };
                 let text = format!("GitHub didn't create {what}: {err}");
-                crate::forms::failed(state, route, text);
-                Vec::new()
+                crate::forms::failed(state, route, text)
             }
         }
     }

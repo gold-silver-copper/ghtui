@@ -417,8 +417,7 @@ impl Job for Save {
             ..
         } = work;
         if let Err(why) = result {
-            crate::forms::say(state, why.to_string());
-            return Vec::new();
+            return crate::forms::say(state, why.to_string());
         }
         let page = match kind {
             RefKind::Branch => Route::Code(code::Branches(repo.clone())),

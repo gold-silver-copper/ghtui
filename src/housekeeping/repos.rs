@@ -229,8 +229,7 @@ pub(super) fn template_rows(
 pub(super) fn fork(state: &mut State, route: &Route, repo: &RepoId) -> Vec<Cmd> {
     let f = form(state, route);
     if let Some(why) = fork_problem(state, repo, &f) {
-        crate::forms::say(state, why);
-        return Vec::new();
+        return crate::forms::say(state, why);
     }
     let new = NewFork {
         repo: repo.clone(),
@@ -251,8 +250,7 @@ pub(super) fn fork(state: &mut State, route: &Route, repo: &RepoId) -> Vec<Cmd> 
 pub(super) fn create(state: &mut State, route: &Route) -> Vec<Cmd> {
     let f = form(state, route);
     if let Some(why) = repo_problem(&f) {
-        crate::forms::say(state, why);
-        return Vec::new();
+        return crate::forms::say(state, why);
     }
     let template = |field| Some(f.get(field).to_owned()).filter(|v| !v.is_empty());
     let new = NewRepo {
@@ -304,10 +302,7 @@ impl Job for Fork {
                 ));
                 opened(state, route, &made).unwrap_or_default()
             }
-            Err(why) => {
-                crate::forms::failed(state, route, why.to_string());
-                Vec::new()
-            }
+            Err(why) => crate::forms::failed(state, route, why.to_string()),
         }
     }
 }
@@ -324,8 +319,7 @@ impl Job for Make {
         let made = match result {
             Ok(made) => made,
             Err(why) => {
-                crate::forms::failed(state, route, why.to_string());
-                return Vec::new();
+                return crate::forms::failed(state, route, why.to_string());
             }
         };
         state.info(format!("Created {}", made.full_name));
@@ -372,11 +366,10 @@ impl Job for CloneTo {
         match result {
             Ok(()) => {
                 state.overlay = None;
-                state.info(format!("Cloned into ./{}", dir.display()));
+                state.just_say(format!("Cloned into ./{}", dir.display()))
             }
             Err(why) => crate::forms::say(state, why.to_string()),
         }
-        Vec::new()
     }
 }
 

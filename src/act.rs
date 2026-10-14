@@ -944,7 +944,7 @@ fn on_changed(state: &mut State, change: &Change, by: By, result: Result<(), Fai
                 cmds = state.compose(target, &written);
             }
             if sender {
-                crate::forms::say(state, text);
+                cmds.extend(crate::forms::say(state, text));
             } else {
                 state.error(text);
             }
