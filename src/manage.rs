@@ -420,7 +420,7 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
     ..crate::features::Feature::NONE
 };
 
-/// Runs one of the actions [`claims`] says are this module's.
+/// Runs one of its actions, or a branch's checkout for the issue on screen.
 #[must_use]
 pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
     match plan(state, action) {
