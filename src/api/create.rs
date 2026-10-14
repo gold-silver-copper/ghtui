@@ -290,24 +290,19 @@ pub struct CreateIssueVariables {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "CreateIssueVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "CreateIssueVariables")]
 pub struct CreateIssue {
     #[arguments(input: { repositoryId: $repo, title: $title, body: $body, labelIds: $labels, assigneeIds: $assignees, milestoneId: $milestone })]
     pub create_issue: Option<CreateIssuePayload>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(schema_module = "schema")]
 pub struct CreateIssuePayload {
     pub issue: Option<Numbered>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Issue", schema_module = "schema")]
+#[cynic(graphql_type = "Issue")]
 pub struct Numbered {
     pub number: i32,
 }
@@ -323,24 +318,20 @@ pub struct CreatePrVariables {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "CreatePrVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "CreatePrVariables")]
 pub struct CreatePr {
     #[arguments(input: { repositoryId: $repo, baseRefName: $base, headRefName: $head, title: $title, body: $body, draft: $draft })]
     pub create_pull_request: Option<CreatePrPayload>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CreatePullRequestPayload", schema_module = "schema")]
+#[cynic(graphql_type = "CreatePullRequestPayload")]
 pub struct CreatePrPayload {
     pub pull_request: Option<NumberedPr>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequest", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequest")]
 pub struct NumberedPr {
     pub number: i32,
 }

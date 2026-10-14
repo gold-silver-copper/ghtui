@@ -10,7 +10,7 @@ use crate::schema::schema;
 
 /// How serious an annotation is.
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[cynic(graphql_type = "CheckAnnotationLevel", schema_module = "schema")]
+#[cynic(graphql_type = "CheckAnnotationLevel")]
 pub enum Level {
     Failure,
     Warning,
@@ -182,14 +182,14 @@ pub fn dispatch_inputs(file: &str) -> Option<Vec<Input>> {
 
 /// Annotations as GraphQL has them, on a check run.
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CheckAnnotationConnection", schema_module = "schema")]
+#[cynic(graphql_type = "CheckAnnotationConnection")]
 pub struct WireAnnotations {
     pub total_count: i32,
     pub nodes: Option<Vec<Option<WireAnnotation>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CheckAnnotation", schema_module = "schema")]
+#[cynic(graphql_type = "CheckAnnotation")]
 pub struct WireAnnotation {
     pub path: String,
     pub blob_url: crate::api::queries::Uri,
@@ -200,14 +200,14 @@ pub struct WireAnnotation {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CheckAnnotationSpan", schema_module = "schema")]
+#[cynic(graphql_type = "CheckAnnotationSpan")]
 pub struct WireSpan {
     pub start: WirePosition,
     pub end: WirePosition,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CheckAnnotationPosition", schema_module = "schema")]
+#[cynic(graphql_type = "CheckAnnotationPosition")]
 pub struct WirePosition {
     pub line: i32,
 }

@@ -318,7 +318,7 @@ pub struct Requested {
 macro_rules! bare_events {
     ($($name:ident = $graphql:literal),* $(,)?) => {$(
         #[derive(cynic::QueryFragment, Debug)]
-        #[cynic(graphql_type = $graphql, schema_module = "schema")]
+        #[cynic(graphql_type = $graphql)]
         pub struct $name {
             pub actor: Option<Actor>,
             pub created_at: DateTime,
@@ -344,7 +344,7 @@ bare_events! {
 
 /// An issue a timeline names.
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Issue", schema_module = "schema")]
+#[cynic(graphql_type = "Issue")]
 pub struct LinkedIssue {
     pub number: i32,
     pub title: String,
@@ -355,7 +355,7 @@ pub struct LinkedIssue {
 
 /// A pull request a timeline names.
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequest", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequest")]
 pub struct LinkedPr {
     pub number: i32,
     pub title: String,
@@ -365,7 +365,7 @@ pub struct LinkedPr {
 }
 
 #[derive(cynic::InlineFragments, Debug)]
-#[cynic(graphql_type = "ReferencedSubject", schema_module = "schema")]
+#[cynic(graphql_type = "ReferencedSubject")]
 pub enum Subject {
     Issue(LinkedIssue),
     PullRequest(LinkedPr),
@@ -374,7 +374,7 @@ pub enum Subject {
 }
 
 #[derive(cynic::InlineFragments, Debug)]
-#[cynic(graphql_type = "IssueOrPullRequest", schema_module = "schema")]
+#[cynic(graphql_type = "IssueOrPullRequest")]
 pub enum IssueOrPrLink {
     Issue(LinkedIssue),
     PullRequest(LinkedPr),
@@ -383,7 +383,7 @@ pub enum IssueOrPrLink {
 }
 
 #[derive(cynic::InlineFragments, Debug)]
-#[cynic(graphql_type = "Closer", schema_module = "schema")]
+#[cynic(graphql_type = "Closer")]
 pub enum WireCloser {
     Commit(CommitOid),
     PullRequest(LinkedPr),
@@ -392,7 +392,7 @@ pub enum WireCloser {
 }
 
 #[derive(cynic::InlineFragments, Debug)]
-#[cynic(graphql_type = "Assignee", schema_module = "schema")]
+#[cynic(graphql_type = "Assignee")]
 pub enum WireAssignee {
     User(UserLogin),
     Bot(BotLogin),
@@ -401,7 +401,6 @@ pub enum WireAssignee {
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cynic(graphql_type = "LockReason", schema_module = "schema")]
 pub enum LockReason {
     OffTopic,
     Resolved,
@@ -410,13 +409,13 @@ pub enum LockReason {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "IssueType", schema_module = "schema")]
+#[cynic(graphql_type = "IssueType")]
 pub struct TypeName {
     pub name: String,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ClosedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "ClosedEvent")]
 pub struct ClosedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -425,7 +424,7 @@ pub struct ClosedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "MergedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "MergedEvent")]
 pub struct MergedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -434,7 +433,7 @@ pub struct MergedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CrossReferencedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "CrossReferencedEvent")]
 pub struct CrossReferencedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -443,7 +442,7 @@ pub struct CrossReferencedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ReferencedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "ReferencedEvent")]
 pub struct ReferencedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -452,7 +451,7 @@ pub struct ReferencedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "LabeledEvent", schema_module = "schema")]
+#[cynic(graphql_type = "LabeledEvent")]
 pub struct LabeledEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -460,7 +459,7 @@ pub struct LabeledEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "UnlabeledEvent", schema_module = "schema")]
+#[cynic(graphql_type = "UnlabeledEvent")]
 pub struct UnlabeledEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -468,7 +467,7 @@ pub struct UnlabeledEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "AssignedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "AssignedEvent")]
 pub struct AssignedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -476,7 +475,7 @@ pub struct AssignedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "UnassignedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "UnassignedEvent")]
 pub struct UnassignedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -484,7 +483,7 @@ pub struct UnassignedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "MilestonedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "MilestonedEvent")]
 pub struct MilestonedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -492,7 +491,7 @@ pub struct MilestonedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "DemilestonedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "DemilestonedEvent")]
 pub struct DemilestonedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -500,10 +499,7 @@ pub struct DemilestonedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "ProjectV2ItemStatusChangedEvent",
-    schema_module = "schema"
-)]
+#[cynic(graphql_type = "ProjectV2ItemStatusChangedEvent")]
 pub struct StatusChangedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -512,7 +508,7 @@ pub struct StatusChangedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ReviewRequestedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "ReviewRequestedEvent")]
 pub struct ReviewRequestedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -520,7 +516,7 @@ pub struct ReviewRequestedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ReviewRequestRemovedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "ReviewRequestRemovedEvent")]
 pub struct ReviewUnrequestedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -528,13 +524,13 @@ pub struct ReviewUnrequestedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReview", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequestReview")]
 pub struct ReviewAuthor {
     pub author: Option<Actor>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ReviewDismissedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "ReviewDismissedEvent")]
 pub struct DismissedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -543,7 +539,7 @@ pub struct DismissedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "RenamedTitleEvent", schema_module = "schema")]
+#[cynic(graphql_type = "RenamedTitleEvent")]
 pub struct RenamedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -552,7 +548,7 @@ pub struct RenamedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "HeadRefForcePushedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "HeadRefForcePushedEvent")]
 pub struct HeadPushedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -561,7 +557,7 @@ pub struct HeadPushedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "BaseRefForcePushedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "BaseRefForcePushedEvent")]
 pub struct BasePushedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -570,7 +566,7 @@ pub struct BasePushedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "HeadRefDeletedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "HeadRefDeletedEvent")]
 pub struct DeletedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -578,7 +574,7 @@ pub struct DeletedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "BaseRefChangedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "BaseRefChangedEvent")]
 pub struct BaseChangedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -587,7 +583,7 @@ pub struct BaseChangedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "LockedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "LockedEvent")]
 pub struct LockedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -595,7 +591,7 @@ pub struct LockedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "TransferredEvent", schema_module = "schema")]
+#[cynic(graphql_type = "TransferredEvent")]
 pub struct TransferredEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -603,7 +599,7 @@ pub struct TransferredEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "MarkedAsDuplicateEvent", schema_module = "schema")]
+#[cynic(graphql_type = "MarkedAsDuplicateEvent")]
 pub struct DuplicateEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -611,7 +607,7 @@ pub struct DuplicateEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "UnmarkedAsDuplicateEvent", schema_module = "schema")]
+#[cynic(graphql_type = "UnmarkedAsDuplicateEvent")]
 pub struct NotDuplicateEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -619,7 +615,7 @@ pub struct NotDuplicateEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "RemovedFromMergeQueueEvent", schema_module = "schema")]
+#[cynic(graphql_type = "RemovedFromMergeQueueEvent")]
 pub struct DequeuedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -627,7 +623,7 @@ pub struct DequeuedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "SubIssueAddedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "SubIssueAddedEvent")]
 pub struct SubAddedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -635,7 +631,7 @@ pub struct SubAddedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "SubIssueRemovedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "SubIssueRemovedEvent")]
 pub struct SubRemovedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -643,7 +639,7 @@ pub struct SubRemovedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ParentIssueAddedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "ParentIssueAddedEvent")]
 pub struct ParentAddedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -651,7 +647,7 @@ pub struct ParentAddedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ParentIssueRemovedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "ParentIssueRemovedEvent")]
 pub struct ParentRemovedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -659,7 +655,7 @@ pub struct ParentRemovedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "IssueTypeAddedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "IssueTypeAddedEvent")]
 pub struct TypeAddedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -667,7 +663,7 @@ pub struct TypeAddedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "IssueTypeChangedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "IssueTypeChangedEvent")]
 pub struct TypeChangedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -676,7 +672,7 @@ pub struct TypeChangedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "IssueTypeRemovedEvent", schema_module = "schema")]
+#[cynic(graphql_type = "IssueTypeRemovedEvent")]
 pub struct TypeRemovedEv {
     pub actor: Option<Actor>,
     pub created_at: DateTime,
@@ -684,14 +680,14 @@ pub struct TypeRemovedEv {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestCommit", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequestCommit")]
 pub struct CommitEv {
     pub commit: CommitCard,
 }
 
 /// A review, as the timeline and the list of reviews have it.
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReview", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequestReview")]
 pub struct WireReview {
     pub id: cynic::Id,
     /// `databaseId` overflows GraphQL's `Int` on newer reviews.
@@ -711,7 +707,7 @@ pub struct WireReview {
 }
 
 #[derive(cynic::InlineFragments, Debug)]
-#[cynic(graphql_type = "PullRequestTimelineItems", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequestTimelineItems")]
 pub enum PrItem {
     IssueComment(Box<WireComment>),
     PullRequestReview(Box<WireReview>),
@@ -754,7 +750,7 @@ pub enum PrItem {
 }
 
 #[derive(cynic::InlineFragments, Debug)]
-#[cynic(graphql_type = "IssueTimelineItems", schema_module = "schema")]
+#[cynic(graphql_type = "IssueTimelineItems")]
 pub enum IssueItem {
     IssueComment(Box<WireComment>),
     ClosedEvent(ClosedEv),
@@ -804,27 +800,27 @@ fragments! {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "LinkedBranch", schema_module = "schema")]
+#[cynic(graphql_type = "LinkedBranch")]
 pub struct WireLinkedBranch {
     #[cynic(rename = "ref")]
     pub branch: Option<RefName>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Ref", schema_module = "schema")]
+#[cynic(graphql_type = "Ref")]
 pub struct RefName {
     pub name: String,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "SubIssuesSummary", schema_module = "schema")]
+#[cynic(graphql_type = "SubIssuesSummary")]
 pub struct WireProgress {
     pub completed: i32,
     pub total: i32,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Team", schema_module = "schema")]
+#[cynic(graphql_type = "Team")]
 pub struct TeamName {
     /// `org/slug`.
     pub combined_slug: String,
@@ -836,7 +832,7 @@ fragments! {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReview", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequestReview")]
 pub struct WireLatest {
     pub full_database_id: Option<BigInt>,
     pub author: Option<Actor>,
@@ -848,7 +844,7 @@ pub struct WireLatest {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReview", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequestReview")]
 pub struct Opinion {
     pub state: ReviewState,
 }
@@ -859,7 +855,6 @@ fragments! {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PinnedIssue", schema_module = "schema")]
 pub struct PinnedIssue {
     pub issue: LinkedIssue,
 }
@@ -882,7 +877,7 @@ pub(crate) fn approvals(o: Option<Opinions>) -> u64 {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ReviewRequest", schema_module = "schema")]
+#[cynic(graphql_type = "ReviewRequest")]
 pub struct WireRequest {
     pub as_code_owner: bool,
     pub requested_reviewer: Option<RequestedReviewer>,
@@ -1288,40 +1283,28 @@ pub(crate) fn requested(r: Option<Requests>) -> Capped<Requested> {
 
 /// A page of a pull request's reviews, oldest first.
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Query",
-    schema_module = "schema",
-    variables = "PageVariables"
-)]
+#[cynic(graphql_type = "Query", variables = "PageVariables")]
 pub struct ReviewsQuery {
     #[arguments(owner: $owner, name: $name)]
     pub repository: Option<RepoReviews>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Repository",
-    schema_module = "schema",
-    variables = "PageVariables"
-)]
+#[cynic(graphql_type = "Repository", variables = "PageVariables")]
 pub struct RepoReviews {
     #[arguments(number: $number)]
     pub pull_request: Option<PrReviews>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "PullRequest",
-    schema_module = "schema",
-    variables = "PageVariables"
-)]
+#[cynic(graphql_type = "PullRequest", variables = "PageVariables")]
 pub struct PrReviews {
     #[arguments(first: 100, after: $after)]
     pub reviews: Option<ReviewsPage>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReviewConnection", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequestReviewConnection")]
 pub struct ReviewsPage {
     pub page_info: crate::api::queries::PageInfo,
     pub nodes: Option<Vec<Option<WireReview>>>,

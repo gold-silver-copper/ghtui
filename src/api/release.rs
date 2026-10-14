@@ -246,22 +246,14 @@ pub struct TagVariables {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Query",
-    schema_module = "schema",
-    variables = "TagVariables"
-)]
+#[cynic(graphql_type = "Query", variables = "TagVariables")]
 pub struct TagQuery {
     #[arguments(owner: $owner, name: $name)]
     pub repository: Option<TagRepo>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Repository",
-    schema_module = "schema",
-    variables = "TagVariables"
-)]
+#[cynic(graphql_type = "Repository", variables = "TagVariables")]
 pub struct TagRepo {
     #[arguments(qualifiedName: $qualified)]
     #[cynic(rename = "ref")]
@@ -271,13 +263,13 @@ pub struct TagRepo {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Ref", schema_module = "schema")]
+#[cynic(graphql_type = "Ref")]
 pub struct TagRef {
     pub name: String,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Release", schema_module = "schema")]
+#[cynic(graphql_type = "Release")]
 pub struct TagRelease {
     pub is_draft: bool,
     pub url: crate::api::queries::Uri,
