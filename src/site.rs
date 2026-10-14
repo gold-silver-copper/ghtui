@@ -497,7 +497,7 @@ pub fn rows(
     q: &str,
 ) -> Vec<(
     crate::ui::overlays::PaletteItem,
-    Option<crate::writes::Chosen>,
+    Option<crate::picker::Choice>,
 )> {
     match pick {
         Pick::Lists(repo) => lists::rows(state, repo, q),

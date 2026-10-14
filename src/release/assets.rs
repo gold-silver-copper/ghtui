@@ -11,12 +11,13 @@ use std::path::{Path, PathBuf};
 use crate::api::browse::{Asset, Release};
 use crate::api::model::RepoId;
 use crate::data::DataKey;
+use crate::forms::Answer;
 use crate::keymap::Action;
+use crate::picker::{Choice, entry};
 use crate::state::{Cmd, Screen, State};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::Link;
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::{Answer, Chosen, Pick, item};
 
 /// An asset of a release, by REST's ID for the release and the asset's
 /// name (unique on a release).
@@ -151,7 +152,7 @@ pub fn open(state: &mut State, name: &str) -> Vec<Cmd> {
         state.info("The release hasn't loaded yet");
         return Vec::new();
     };
-    state.open_picker(crate::picker::Kind::Write(Pick::SaveAsset(of)))
+    state.open_picker(crate::picker::Kind::SaveAsset(of))
 }
 
 /// `,U`: a file to upload.
@@ -171,7 +172,7 @@ pub fn open_upload(state: &mut State) -> Vec<Cmd> {
     let Some(of) = of(state, "") else {
         return Vec::new();
     };
-    state.open_picker(crate::picker::Kind::Write(Pick::Upload(of)))
+    state.open_picker(crate::picker::Kind::Upload(of))
 }
 
 /// Where an asset `name` is saved for what's typed: in the current
@@ -191,23 +192,23 @@ fn save_path(typed: &str, name: &str) -> PathBuf {
 
 /// The saving picker's row: saving where it's typed, or (where a file
 /// is) replacing it, which choosing is the asking.
-pub fn save_rows(of: &Of, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
+pub fn save_rows(of: &Of, q: &str) -> Vec<(PaletteItem, Option<Choice>)> {
     let path = save_path(q, &of.name);
     let shown = path.display().to_string();
     let chosen = |replace| {
-        Some(Chosen::SaveAsset {
+        Some(Choice::SaveAsset {
             of: of.clone(),
             path: path.clone(),
             replace,
         })
     };
     if path.is_dir() {
-        return vec![item(format!("{shown} is a folder"), "", None)];
+        return vec![entry(format!("{shown} is a folder"), "", None)];
     }
     if path.exists() {
-        vec![item(format!("Replace {shown}"), "it exists", chosen(true))]
+        vec![entry(format!("Replace {shown}"), "it exists", chosen(true))]
     } else {
-        vec![item(format!("Save to {shown}"), "", chosen(false))]
+        vec![entry(format!("Save to {shown}"), "", chosen(false))]
     }
 }
 
@@ -216,7 +217,7 @@ const LISTED: usize = 50;
 
 /// The upload picker's rows: the file typed, else the files in the
 /// folder typed (or beside what's typed) whose names start as typed.
-pub fn upload_rows(state: &State, of: &Of, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
+pub fn upload_rows(state: &State, of: &Of, q: &str) -> Vec<(PaletteItem, Option<Choice>)> {
     let typed = q.trim();
     let release = (super::shown(state)).map(|(_, _, r)| r);
     let row = |path: &Path| {
@@ -228,17 +229,17 @@ pub fn upload_rows(state: &State, of: &Of, q: &str) -> Vec<(PaletteItem, Option<
         let shown = path.display().to_string();
         if release.is_some_and(|r| asset(r, &name).is_some()) {
             let delete = state.first_key(Action::DeleteComment);
-            return item(
+            return entry(
                 format!("{name} is on the release already"),
                 format!("{delete} on it deletes it"),
                 None,
             );
         }
         let up = Of { name, ..of.clone() };
-        item(
+        entry(
             format!("Upload {shown}"),
             crate::ui::text::size(size),
-            Some(Chosen::Upload {
+            Some(Choice::Upload {
                 of: up,
                 path: path.to_owned(),
             }),
@@ -262,7 +263,7 @@ pub fn upload_rows(state: &State, of: &Of, q: &str) -> Vec<(PaletteItem, Option<
         (dir, start)
     };
     let Ok(entries) = std::fs::read_dir(&dir) else {
-        return vec![item(format!("No file or folder {typed}"), "", None)];
+        return vec![entry(format!("No file or folder {typed}"), "", None)];
     };
     let mut files: Vec<PathBuf> = entries
         .filter_map(Result::ok)
@@ -277,14 +278,14 @@ pub fn upload_rows(state: &State, of: &Of, q: &str) -> Vec<(PaletteItem, Option<
     let more = files.len().saturating_sub(LISTED);
     let mut rows: Vec<_> = files.iter().take(LISTED).map(|p| row(p)).collect();
     if rows.is_empty() {
-        rows.push(item(
+        rows.push(entry(
             format!("No files in {} start with “{start}”", dir.display()),
             "",
             None,
         ));
     }
     if more > 0 {
-        rows.push(item(
+        rows.push(entry(
             format!("{more} more: type more of the name"),
             "",
             None,
@@ -295,13 +296,13 @@ pub fn upload_rows(state: &State, of: &Of, q: &str) -> Vec<(PaletteItem, Option<
 
 /// Choosing a row: saving, or uploading.
 #[must_use]
-pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
+pub fn choose(state: &mut State, chosen: Choice) -> Vec<Cmd> {
     match chosen {
-        Chosen::SaveAsset { of, path, replace } => {
+        Choice::SaveAsset { of, path, replace } => {
             state.info(format!("Saving {} to {}…", of.name, path.display()));
             work::start(Save { of, path, replace })
         }
-        Chosen::Upload { of, path } => {
+        Choice::Upload { of, path } => {
             state.info(format!("Uploading {}…", path.display()));
             work::start(Upload { of, path })
         }
@@ -330,7 +331,7 @@ pub fn ask_delete(state: &mut State, name: &str) -> Vec<Cmd> {
         ),
         true,
     )];
-    crate::writes::ask(
+    crate::forms::ask(
         state,
         Route::Releases(releases::Release { repo, tag }),
         format!("Delete {name}?"),

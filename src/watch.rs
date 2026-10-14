@@ -14,9 +14,9 @@ use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
 use crate::picker::fuzzy_score;
+use crate::picker::{Choice, entry};
 use crate::state::{Cmd, Remote, Screen, State};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::{Chosen, Pick, item};
 
 /// Setting a subscription.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,7 +145,7 @@ pub fn open(state: &mut State) -> Vec<Cmd> {
     };
     // What GitHub has now, not what was read before.
     let mut cmds = state.ensure(DataKey::Subscription(of.clone()), true);
-    cmds.extend(state.open_picker(crate::picker::Kind::Write(Pick::Watch(of))));
+    cmds.extend(state.open_picker(crate::picker::Kind::Watch(of)));
     cmds
 }
 
@@ -180,7 +180,7 @@ fn choices(of: &Watched) -> [(SubscriptionState, &'static str, &'static str); 3]
 
 /// The picker's rows: each choice, the current one marked, or why
 /// there are none.
-pub fn rows(state: &State, of: &Watched, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
+pub fn rows(state: &State, of: &Watched, q: &str) -> Vec<(PaletteItem, Option<Choice>)> {
     let key = DataKey::Subscription(of.clone());
     #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
     let fetched = Remote::fetched(state.remote(&key), "")
@@ -188,10 +188,10 @@ pub fn rows(state: &State, of: &Watched, q: &str) -> Vec<(PaletteItem, Option<Ch
         .text("your subscription");
     let s = match fetched {
         Ok(s) => s,
-        Err(why) => return vec![item(why, "", None)],
+        Err(why) => return vec![entry(why, "", None)],
     };
     if !s.can {
-        return vec![item("GitHub doesn't let you subscribe to it", "", None)];
+        return vec![entry("GitHub doesn't let you subscribe to it", "", None)];
     }
     let mut rows: Vec<_> = (choices(of).into_iter())
         .filter(|(_, label, _)| fuzzy_score(q, label).is_some())
@@ -206,11 +206,11 @@ pub fn rows(state: &State, of: &Watched, q: &str) -> Vec<(PaletteItem, Option<Ch
                 id: s.id.clone(),
                 state: set,
             };
-            item(label, hint, Some(Chosen::Subscribe(work)))
+            entry(label, hint, Some(Choice::Subscribe(work)))
         })
         .collect();
     if let Watched::Repo(_) = of {
-        rows.push(item(
+        rows.push(entry(
             "Custom (releases, issues…): on github.com",
             "GitHub's API can't set it",
             None,

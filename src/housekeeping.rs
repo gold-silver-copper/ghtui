@@ -10,7 +10,7 @@
 //! closes or reopens a milestone. What git can do in your clone (a branch
 //! or a tag, a file's commit), it does there, after asking, with your own
 //! git ([`git`]); elsewhere GitHub's API does it. Then the page follows
-//! GitHub until it shows the change, as [`crate::writes`] does.
+//! GitHub until it shows the change ([`crate::follow`]).
 
 use crate::route::{Family, Route, Target, Url, code, issues};
 use std::borrow::Cow;
@@ -1019,8 +1019,8 @@ fn item(
     label: impl Into<String>,
     hint: impl Into<String>,
     chosen: Option<Chosen>,
-) -> (PaletteItem, Option<crate::writes::Chosen>) {
-    crate::writes::item(label, hint, chosen.map(crate::writes::Chosen::Housekeeping))
+) -> (PaletteItem, Option<crate::picker::Choice>) {
+    crate::picker::entry(label, hint, chosen.map(crate::picker::Choice::Housekeeping))
 }
 
 /// A picker's rows: what each says, and what choosing it does.
@@ -1028,7 +1028,7 @@ pub fn rows(
     state: &State,
     pick: &Pick,
     q: &str,
-) -> Vec<(PaletteItem, Option<crate::writes::Chosen>)> {
+) -> Vec<(PaletteItem, Option<crate::picker::Choice>)> {
     match pick {
         Pick::Field(route, field) => field_rows(state, route, *field, q),
         Pick::RefName(repo, kind) => refs::name_rows(repo, *kind, q),
@@ -1041,7 +1041,7 @@ fn field_rows(
     route: &Route,
     field: Field,
     q: &str,
-) -> Vec<(PaletteItem, Option<crate::writes::Chosen>)> {
+) -> Vec<(PaletteItem, Option<crate::picker::Choice>)> {
     let set = |value: &str| Some(Chosen::Field(route.clone(), field, value.to_owned()));
     let q = q.trim();
     match field {
@@ -1095,8 +1095,8 @@ pub fn open_field(state: &mut State, route: &Route, field: Field) -> Vec<Cmd> {
         form_mut(state, route).toggle(field);
         return Vec::new();
     }
-    let pick = crate::writes::Pick::Housekeeping(Pick::Field(route.clone(), field));
-    state.open_picker(crate::picker::Kind::Write(pick))
+    let pick = crate::picker::Kind::Housekeeping(Pick::Field(route.clone(), field));
+    state.open_picker(pick)
 }
 
 #[must_use]
@@ -1167,9 +1167,9 @@ fn ask(
     };
     state.housekeeping.asked = subject;
     let choices = (choices.into_iter())
-        .map(|(label, a)| (label, crate::writes::Answer::Housekeeping(a)))
+        .map(|(label, a)| (label, crate::forms::Answer::Housekeeping(a)))
         .collect();
-    crate::writes::ask(state, route, title, facts, choices);
+    crate::forms::ask(state, route, title, facts, choices);
 }
 
 /// The question about `route` was answered.

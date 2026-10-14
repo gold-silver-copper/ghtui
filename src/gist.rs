@@ -20,12 +20,13 @@ use crate::ui::pages::{FormRow, Mark, TextBox, WriteFormView};
 
 use crate::data::DataKey;
 use crate::follow::{Expectation, Shown};
+use crate::forms::Answer;
 use crate::forms::{Fields, say};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
+use crate::picker::{Choice, entry};
 use crate::state::{Cmd, State};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::{Answer, Chosen, Pick, item};
 
 /// A gist being made or changed.
 #[derive(Debug, Clone, Default)]
@@ -270,11 +271,9 @@ fn on_row(state: &mut State, link: &Row) -> Vec<Cmd> {
         return Vec::new();
     };
     match link {
-        Row::Description => state.open_picker(crate::picker::Kind::Write(Pick::Description(route))),
-        Row::Rename(i) => {
-            state.open_picker(crate::picker::Kind::Write(Pick::FileName(route, Some(*i))))
-        }
-        Row::AddFile => state.open_picker(crate::picker::Kind::Write(Pick::FileName(route, None))),
+        Row::Description => state.open_picker(crate::picker::Kind::Description(route)),
+        Row::Rename(i) => state.open_picker(crate::picker::Kind::FileName(route, Some(*i))),
+        Row::AddFile => state.open_picker(crate::picker::Kind::FileName(route, None)),
         Row::Remove(i) => {
             remove(state, &route, *i);
             Vec::new()
@@ -305,16 +304,16 @@ fn remove(state: &mut State, route: &Route, i: usize) {
     state.info(format!("Removed {name}: saving takes it out of the gist"));
 }
 
-pub fn description_rows(route: &Route, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
+pub fn description_rows(route: &Route, q: &str) -> Vec<(PaletteItem, Option<Choice>)> {
     let label = if q.is_empty() {
         "No description".to_owned()
     } else {
         format!("Describe it: “{q}”")
     };
-    vec![item(
+    vec![entry(
         label,
         "↵",
-        Some(Chosen::Description(route.clone(), q.to_owned())),
+        Some(Choice::Description(route.clone(), q.to_owned())),
     )]
 }
 
@@ -336,17 +335,17 @@ pub fn name_rows(
     route: &Route,
     file: Option<usize>,
     q: &str,
-) -> Vec<(PaletteItem, Option<Chosen>)> {
+) -> Vec<(PaletteItem, Option<Choice>)> {
     let form = state.forms.shown::<Form>(route);
     if let Some(why) = name_problem(&form, file, q) {
-        return vec![item(why, "", None)];
+        return vec![entry(why, "", None)];
     }
     let label = match file {
         Some(_) => format!("Name it {q}"),
         None => format!("Add {q}"),
     };
-    let chosen = Chosen::FileName(route.clone(), file, q.to_owned());
-    vec![item(label, "↵", Some(chosen))]
+    let chosen = Choice::FileName(route.clone(), file, q.to_owned());
+    vec![entry(label, "↵", Some(chosen))]
 }
 
 #[must_use]
@@ -465,7 +464,7 @@ fn submit(state: &mut State) -> Vec<Cmd> {
         "A secret gist is hidden from search, not private: anyone with its link can see it".into(),
         false,
     ));
-    crate::writes::ask(
+    crate::forms::ask(
         state,
         route,
         "Create the gist?".into(),
@@ -524,7 +523,7 @@ pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
     let Some(route) = state.route().cloned() else {
         return Vec::new();
     };
-    crate::writes::ask(
+    crate::forms::ask(
         state,
         route,
         "Delete this gist?".into(),

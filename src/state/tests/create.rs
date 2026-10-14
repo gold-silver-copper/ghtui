@@ -30,7 +30,7 @@ fn composer(s: &mut State) -> &mut crate::compose::Compose {
     }
 }
 
-fn asked(s: &State) -> &crate::create::Ask {
+fn asked(s: &State) -> &crate::forms::Ask {
     match &s.overlay {
         Some(Overlay::Ask(a)) => a,
         _ => panic!("nothing asked"),

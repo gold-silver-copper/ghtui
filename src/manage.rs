@@ -636,18 +636,6 @@ pub enum Chosen {
 
 type Rows = Vec<(PaletteItem, Option<Chosen>)>;
 
-fn item(
-    label: impl Into<String>,
-    hint: impl Into<String>,
-    chosen: Option<Chosen>,
-) -> (PaletteItem, Option<Chosen>) {
-    let item = PaletteItem {
-        label: label.into(),
-        hint: hint.into(),
-    };
-    (item, chosen)
-}
-
 /// A list fetched for a picker: its rows, or a row saying why there are
 /// none yet.
 fn fetched<'a, T: crate::data::Picked>(
@@ -656,8 +644,16 @@ fn fetched<'a, T: crate::data::Picked>(
     what: &str,
 ) -> Result<&'a T, Rows> {
     match state.answer(key) {
-        None => Err(vec![item(format!("Loading {what}…"), "", None)]),
-        Some(Err(why)) => Err(vec![item(format!("Couldn't load {what}: {why}"), "", None)]),
+        None => Err(vec![crate::picker::entry(
+            format!("Loading {what}…"),
+            "",
+            None,
+        )]),
+        Some(Err(why)) => Err(vec![crate::picker::entry(
+            format!("Couldn't load {what}: {why}"),
+            "",
+            None,
+        )]),
         Some(Ok(found)) => Ok(found),
     }
 }
@@ -677,7 +673,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
             };
             let mut rows = Vec::new();
             if fuzzy_score(q, "Lock without a reason").is_some() {
-                rows.push(item(
+                rows.push(crate::picker::entry(
                     "Lock without a reason",
                     "only collaborators can comment",
                     Some(lock(None)),
@@ -692,7 +688,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
                 let said = crate::api::manage::lock_said(reason);
                 let label = format!("Lock as {said}");
                 if fuzzy_score(q, &label).is_some() {
-                    rows.push(item(label, "", Some(lock(Some(reason)))));
+                    rows.push(crate::picker::entry(label, "", Some(lock(Some(reason)))));
                 }
             }
             rows
@@ -708,7 +704,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
                     comment: comment.clone(),
                     reason,
                 });
-                item(
+                crate::picker::entry(
                     reason.label(),
                     format!("hides {name}"),
                     Some(Chosen::Send(change, about.clone())),
@@ -728,7 +724,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
             };
             issue_rows(state, issue, q, &[], |of, title| {
                 let label = format!("Duplicate of {} {title}", of.named(&issue.repo));
-                item(label, "closes it", Some(close(of)))
+                crate::picker::entry(label, "closes it", Some(close(of)))
             })
         }
         Pick::SubIssues { issue, id } => relation_rows(state, issue, id, q, true),
@@ -736,10 +732,14 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
         Pick::Branch { issue, id, .. } => {
             let name = q.trim();
             if name.is_empty() {
-                return vec![item("Type the branch's name", "", None)];
+                return vec![crate::picker::entry("Type the branch's name", "", None)];
             }
             if name.contains(char::is_whitespace) || name.contains("..") {
-                return vec![item("A branch's name has no spaces or ..", "", None)];
+                return vec![crate::picker::entry(
+                    "A branch's name has no spaces or ..",
+                    "",
+                    None,
+                )];
             }
             let default = state
                 .overview(&issue.repo)
@@ -751,14 +751,14 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
                 name: name.to_owned(),
             });
             let about = Subject::Issue(issue.repo.clone(), issue.number);
-            vec![item(
+            vec![crate::picker::entry(
                 format!("Create {name} from {default}"),
                 format!("linked to #{}", issue.number),
                 Some(Chosen::Send(change, about)),
             )]
         }
         Pick::Checkout { repo, branch } => vec![
-            item(
+            crate::picker::entry(
                 format!("Check out {branch}"),
                 "in your clone",
                 Some(Chosen::Checkout(crate::create::Checkout {
@@ -768,7 +768,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
                     track: Some(branch.clone()),
                 })),
             ),
-            item("Not now", "", None),
+            crate::picker::entry("Not now", "", None),
         ],
         Pick::Category { repo } => category_rows(state, repo, q),
     }
@@ -782,7 +782,7 @@ fn base_rows(state: &State, pr: &PrRef, id: &NodeId, from: &str, head: &str, q: 
             Some(err) if !loading => format!("Couldn't load the branches: {err}"),
             _ => "Loading the branches…".into(),
         };
-        return vec![item(why, "", None)];
+        return vec![crate::picker::entry(why, "", None)];
     };
     let mut hits: Vec<(usize, &String)> = (refs.branches.iter())
         .filter(|b| *b != from && *b != head)
@@ -810,18 +810,18 @@ fn base_rows(state: &State, pr: &PrRef, id: &NodeId, from: &str, head: &str, q: 
                 base: base.clone(),
             });
             confirm.choices = vec![("Change base".into(), change)];
-            item(base.clone(), "", Some(Chosen::Ask(Box::new(confirm))))
+            crate::picker::entry(base.clone(), "", Some(Chosen::Ask(Box::new(confirm))))
         })
         .collect();
     if rows.is_empty() {
-        rows.push(item("No other branch matches", "", None));
+        rows.push(crate::picker::entry("No other branch matches", "", None));
     }
     if refs.branches.left_out() > 0 {
         let more = format!(
             "{} more branches GitHub didn't list",
             refs.branches.left_out()
         );
-        rows.push(item(more, "", None));
+        rows.push(crate::picker::entry(more, "", None));
     }
     rows
 }
@@ -856,11 +856,11 @@ fn transfer_rows(state: &State, issue: &IssueAt, id: &NodeId, q: &str) -> Rows {
                 repo: t.repo.clone(),
             });
             confirm.choices = vec![("Transfer issue".into(), change)];
-            item(t.repo.to_string(), "", Some(Chosen::Ask(Box::new(confirm))))
+            crate::picker::entry(t.repo.to_string(), "", Some(Chosen::Ask(Box::new(confirm))))
         })
         .collect();
     if rows.is_empty() {
-        rows.push(item(
+        rows.push(crate::picker::entry(
             format!("No other repository of {owner}'s that you can write to has issues on"),
             "an issue moves only within its owner",
             None,
@@ -868,7 +868,7 @@ fn transfer_rows(state: &State, issue: &IssueAt, id: &NodeId, q: &str) -> Rows {
     }
     if targets.left_out() > 0 {
         let more = format!("{owner}'s first 100 repositories, most recently pushed, are listed");
-        rows.push(item(more, "", None));
+        rows.push(crate::picker::entry(more, "", None));
     }
     rows
 }
@@ -913,7 +913,7 @@ fn issue_rows(
 /// choosing removes, then what to add.
 fn relation_rows(state: &State, at: &IssueAt, id: &NodeId, q: &str, sub: bool) -> Rows {
     let Some(d) = issue(state, &at.repo, at.number) else {
-        return vec![item("Loading the issue…", "", None)];
+        return vec![crate::picker::entry("Loading the issue…", "", None)];
     };
     let about = Subject::Issue(at.repo.clone(), at.number);
     let now = if sub { &d.sub_issues } else { &d.blocked_by };
@@ -954,14 +954,18 @@ fn relation_rows(state: &State, at: &IssueAt, id: &NodeId, q: &str, sub: bool) -
         } else {
             "no longer blocked by it"
         };
-        rows.push(item(
+        rows.push(crate::picker::entry(
             format!("✓ {label}"),
             format!("↵ {verb}"),
             Some(Chosen::Send(change(other.clone(), false), about.clone())),
         ));
     }
     if now.left_out() > 0 {
-        rows.push(item(format!("and {} more", now.left_out()), "", None));
+        rows.push(crate::picker::entry(
+            format!("and {} more", now.left_out()),
+            "",
+            None,
+        ));
     }
     let adds = issue_rows(state, at, q, &there, |other, title| {
         let label = if sub {
@@ -969,7 +973,7 @@ fn relation_rows(state: &State, at: &IssueAt, id: &NodeId, q: &str, sub: bool) -
         } else {
             format!("Blocked by {} {title}", other.named(&at.repo))
         };
-        item(
+        crate::picker::entry(
             label,
             "",
             Some(Chosen::Send(change(other, true), about.clone())),
@@ -1010,15 +1014,15 @@ fn category_rows(state: &State, repo: &RepoId, q: &str) -> Rows {
                 name: c.name.clone(),
             };
             let text = form_text(c);
-            item(label, hint, Some(Chosen::Write(starting, text)))
+            crate::picker::entry(label, hint, Some(Chosen::Write(starting, text)))
         })
         .collect();
     if found.categories.is_empty() {
-        rows.push(item("It has no categories", "", None));
+        rows.push(crate::picker::entry("It has no categories", "", None));
     }
     if found.categories.left_out() > 0 {
         let more = format!("and {} more categories", found.categories.left_out());
-        rows.push(item(more, "", None));
+        rows.push(crate::picker::entry(more, "", None));
     }
     rows
 }

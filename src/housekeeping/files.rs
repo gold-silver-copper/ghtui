@@ -209,7 +209,7 @@ pub(super) fn branch_rows(
     q: &str,
 ) -> Vec<(
     crate::ui::overlays::PaletteItem,
-    Option<crate::writes::Chosen>,
+    Option<crate::picker::Choice>,
 )> {
     let Route::Housekeeping(of) = route else {
         return Vec::new();

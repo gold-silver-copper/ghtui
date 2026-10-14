@@ -143,7 +143,7 @@ pub(super) fn due_rows(
     q: &str,
 ) -> Vec<(
     crate::ui::overlays::PaletteItem,
-    Option<crate::writes::Chosen>,
+    Option<crate::picker::Choice>,
 )> {
     let set = |d: &str| Some(Chosen::Field(route.clone(), Field::Due, d.to_owned()));
     let mut rows = Vec::new();

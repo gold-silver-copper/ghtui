@@ -4,6 +4,7 @@
 
 use crate::api::browse::SearchKind;
 use crate::api::model::RepoId;
+use crate::api::watch::Watched;
 use crate::route::{self, Dest, Route, Target, code, search};
 use crate::theme::Bg;
 use crate::ui::bars::Notice;
@@ -23,7 +24,10 @@ pub enum Kind {
     /// The command palette.
     Commands,
     /// The repository's files at `rev`.
-    Files { repo: RepoId, rev: String },
+    Files {
+        repo: RepoId,
+        rev: String,
+    },
     /// Branches and tags; you land on `path` (a file if `file`) there.
     Branches {
         repo: RepoId,
@@ -34,7 +38,9 @@ pub enum Kind {
     /// The diff's files.
     DiffFiles,
     /// The diff's commits; `mark` is where a range starts.
-    Commits { mark: Option<usize> },
+    Commits {
+        mark: Option<usize>,
+    },
     /// Recent notices and errors, newest first, as they were on opening.
     Messages(Vec<(u64, Notice)>),
     /// A Home section's title, for the config file at the path: the field is all of it.
@@ -52,8 +58,23 @@ pub enum Kind {
     Project(crate::projects::Pick),
     /// Why to dismiss a security alert; the field is the comment.
     Alert(crate::security::Dismissing),
-    /// A subscription, a release's tag, a gist's names ([`crate::writes`]).
-    Write(crate::writes::Pick),
+    /// How you're notified of it ([`crate::watch`]).
+    Watch(Watched),
+    /// A release's tag, on its form's page ([`crate::release`]).
+    Tag(Route),
+    /// What a new tag is made at.
+    Target(Route),
+    /// Where to save a release's asset.
+    SaveAsset(crate::release::assets::Of),
+    /// A file to upload to a release.
+    Upload(crate::release::assets::Of),
+    /// The gist's description ([`crate::gist`]).
+    Description(Route),
+    /// A file's name (`None`: a new file's).
+    FileName(Route, Option<usize>),
+    /// Your starred lists ([`crate::site`]).
+    Site(crate::site::Pick),
+    Housekeeping(crate::housekeeping::Pick),
     /// Where to save an artifact; a workflow's branch or input.
     Workflows(crate::workflows::Pick),
     /// Locking, hiding, a base, sub-issues and the like ([`crate::manage`]).
@@ -92,7 +113,17 @@ impl Picker {
             Kind::Code { ref title, .. } => title,
             Kind::Project(ref pick) => pick.title(),
             Kind::Alert(ref d) => d.title(),
-            Kind::Write(ref pick) => pick.title(),
+            Kind::Watch(Watched::Repo(_)) => "Watch the repository",
+            Kind::Watch(_) => "Notifications",
+            Kind::Tag(_) => "Choose a tag",
+            Kind::Target(_) => "Target: a branch or commit",
+            Kind::SaveAsset(_) => "Save the asset",
+            Kind::Upload(_) => "Upload an asset",
+            Kind::Description(_) => "Gist description",
+            Kind::FileName(_, None) => "Add a file",
+            Kind::FileName(..) => "Rename the file",
+            Kind::Site(ref pick) => pick.title(),
+            Kind::Housekeeping(ref pick) => pick.title(),
             Kind::Workflows(ref pick) => pick.title(),
             Kind::Manage(ref pick) => pick.title(),
             Kind::Settings(ref pick) => pick.title(),
@@ -131,19 +162,43 @@ pub enum Choice {
     Project(crate::projects::Chosen),
     /// Dismiss a security alert so.
     Alert(crate::api::change::Change),
-    Write(crate::writes::Chosen),
+    Subscribe(crate::watch::Subscribe),
+    Tag(Route, String),
+    Target(Route, String),
+    SaveAsset {
+        of: crate::release::assets::Of,
+        path: std::path::PathBuf,
+        replace: bool,
+    },
+    Upload {
+        of: crate::release::assets::Of,
+        path: std::path::PathBuf,
+    },
+    Description(Route, String),
+    FileName(Route, Option<usize>, String),
+    Site(crate::site::Chosen),
+    Housekeeping(crate::housekeeping::Chosen),
     Workflows(crate::workflows::Chosen),
     Manage(crate::manage::Chosen),
     Settings(crate::settings::Chosen),
 }
 
-type Rows = Vec<(PaletteItem, Option<Choice>)>;
+pub type Rows = Vec<(PaletteItem, Option<Choice>)>;
 
-fn item(label: impl Into<String>, hint: impl Into<String>) -> PaletteItem {
+pub(crate) fn item(label: impl Into<String>, hint: impl Into<String>) -> PaletteItem {
     PaletteItem {
         label: label.into(),
         hint: hint.into(),
     }
+}
+
+/// A picker's row: what it says, and what choosing it does.
+pub(crate) fn entry<T>(
+    label: impl Into<String>,
+    hint: impl Into<String>,
+    chosen: Option<T>,
+) -> (PaletteItem, Option<T>) {
+    (item(label, hint), chosen)
 }
 
 /// Places in code that match `q`, best first; all of them in order
@@ -190,11 +245,18 @@ impl State {
             Kind::Form(pick) if pick.several() => {
                 "Type to filter · ↵ picks or unpicks · esc when done"
             }
-            Kind::Form(_) => "Type to filter",
+            Kind::Form(_) | Kind::Watch(_) => "Type to filter",
             Kind::Code { .. } => "Type a name",
             Kind::Project(ref pick) => pick.placeholder(),
             Kind::Alert(ref d) => d.placeholder(),
-            Kind::Write(ref pick) => pick.placeholder(),
+            Kind::Tag(_) => "Find a tag, or type a new one",
+            Kind::Target(_) => "Find a branch, or type a commit's SHA",
+            Kind::SaveAsset(_) => "A file or folder (↵ saves in the current folder)",
+            Kind::Upload(_) => "A file's path (a folder lists its files)",
+            Kind::Description(_) => "Type the description",
+            Kind::FileName(..) => "Type the file's name, with its extension",
+            Kind::Site(ref pick) => pick.placeholder(),
+            Kind::Housekeeping(ref pick) => pick.placeholder(),
             Kind::Workflows(ref pick) => pick.placeholder(),
             Kind::Manage(ref pick) => pick.placeholder(),
             Kind::Settings(ref pick) => pick.placeholder(),
@@ -203,7 +265,11 @@ impl State {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
             Kind::Branches { repo, .. } => Some(DataKey::Refs(repo.clone())),
             Kind::Edit(c) => c.need(),
-            Kind::Write(pick) => pick.need(),
+            Kind::Watch(w) => Some(DataKey::Subscription(w.clone())),
+            Kind::Tag(route) => route.repo().map(|r| DataKey::Tags(r.clone())),
+            Kind::Target(route) => route.repo().map(|r| DataKey::Branches(r.clone())),
+            Kind::Site(pick) => pick.need(),
+            Kind::Housekeeping(pick) => pick.need(),
             Kind::Manage(pick) => pick.need(),
             Kind::Form(crate::create::Pick::Base | crate::create::Pick::Head) => self
                 .route()
@@ -214,7 +280,9 @@ impl State {
         // The field holds what's set now, to change.
         let start = match &kind {
             Kind::Edit(crate::edit::Choosing::Title { was, .. }) => Some(was.clone()),
-            Kind::Write(pick) => pick.start(self),
+            Kind::Description(route) => crate::gist::description(self, route),
+            Kind::FileName(route, Some(i)) => crate::gist::file_name(self, route, *i),
+            Kind::Housekeeping(pick) => pick.start(self),
             Kind::Manage(pick) => pick.start(),
             _ => None,
         };
@@ -301,9 +369,15 @@ impl State {
             Kind::Alert(d) => (crate::security::rows(d, q).into_iter())
                 .map(|(row, change)| (row, Some(Choice::Alert(change))))
                 .collect(),
-            Kind::Write(pick) => (crate::writes::rows(self, pick, q).into_iter())
-                .map(|(row, chosen)| (row, chosen.map(Choice::Write)))
-                .collect(),
+            Kind::Watch(w) => crate::watch::rows(self, w, q),
+            Kind::Tag(route) => crate::release::tag_rows(self, route, q),
+            Kind::Target(route) => crate::release::target_rows(self, route, q),
+            Kind::SaveAsset(of) => crate::release::assets::save_rows(of, q),
+            Kind::Upload(of) => crate::release::assets::upload_rows(self, of, q),
+            Kind::Description(route) => crate::gist::description_rows(route, q),
+            Kind::FileName(route, file) => crate::gist::name_rows(self, route, *file, q),
+            Kind::Site(pick) => crate::site::rows(self, pick, q),
+            Kind::Housekeeping(pick) => crate::housekeeping::rows(self, pick, q),
             Kind::Manage(pick) => (crate::manage::rows(self, pick, q).into_iter())
                 .map(|(row, chosen)| (row, chosen.map(Choice::Manage)))
                 .collect(),
@@ -667,7 +741,16 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
         Choice::Edit(_) => Vec::new(),
         Choice::Project(chosen) => crate::projects::choose(state, chosen),
         Choice::Alert(change) => crate::security::choose(state, change),
-        Choice::Write(chosen) => crate::writes::choose(state, chosen),
+        Choice::Subscribe(work) => crate::watch::choose(state, work),
+        Choice::Tag(route, tag) => crate::release::choose_tag(state, &route, tag),
+        Choice::Target(route, target) => crate::release::choose_target(state, &route, target),
+        chosen @ (Choice::SaveAsset { .. } | Choice::Upload { .. }) => {
+            crate::release::assets::choose(state, chosen)
+        }
+        Choice::Description(route, text) => crate::gist::set_description(state, &route, text),
+        Choice::FileName(route, file, name) => crate::gist::set_name(state, &route, file, name),
+        Choice::Site(chosen) => crate::site::choose(state, chosen),
+        Choice::Housekeeping(chosen) => crate::housekeeping::choose(state, chosen),
         Choice::Workflows(chosen) => crate::workflows::choose(state, chosen),
         Choice::Manage(chosen) => crate::manage::choose(state, chosen),
         Choice::Settings(chosen) => crate::settings::choose(state, chosen),

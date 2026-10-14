@@ -1,4 +1,4 @@
-//! What used to need the browser: making a release, your gists, a
+//! Writes made from forms and pickers: making a release, your gists, a
 //! wiki's pages and your subscriptions. Each asks where GitHub would,
 //! sends one change, and the page follows GitHub until it shows it.
 
@@ -26,7 +26,7 @@ fn write(s: &mut State, text: &str) {
     c.input.insert_str(text);
 }
 
-fn asked(s: &State) -> &crate::create::Ask {
+fn asked(s: &State) -> &crate::forms::Ask {
     match &s.overlay {
         Some(Overlay::Ask(a)) => a,
         _ => panic!("nothing asked"),

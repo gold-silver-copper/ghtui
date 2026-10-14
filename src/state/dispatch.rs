@@ -266,7 +266,7 @@ pub(super) fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         Some(Overlay::Compose(_)) => return crate::compose::on_key(state, key),
         Some(Overlay::Submit(_)) => return on_submit_key(state, key),
         Some(Overlay::Confirm(_)) => return act::on_confirm_key(state, key),
-        Some(Overlay::Ask(_)) => return crate::create::on_ask_key(state, key),
+        Some(Overlay::Ask(_)) => return crate::forms::on_ask_key(state, key),
         None => {}
     }
     // Any keypress dismisses the last notice; Esc on an error does only

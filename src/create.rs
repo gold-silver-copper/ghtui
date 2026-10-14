@@ -22,14 +22,13 @@ use crate::api::create::{NewForm, NewIssue, NewPr};
 use crate::api::model::{Capped, NodeId, PrDetail, PrRef, RepoId};
 use crate::api::{ApiError, GitHub};
 use crate::git::local::{self, Branch, CommitMessage};
-use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::data::{Data, DataKey};
-use crate::forms::{Fields, Sent, say};
+use crate::forms::{Answer, Fields, Sent, say};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
 use crate::picker::Choice;
-use crate::state::{Cmd, Overlay, State};
+use crate::state::{Cmd, State};
 use crate::ui::form::Row;
 use crate::ui::overlays::PaletteItem;
 use crate::work::{self, Cx, Failure, Job};
@@ -223,60 +222,6 @@ pub async fn head_state(
     let spec = head_spec(repo, head, local.as_ref());
     let commits = gh.commit_messages(repo, base, &spec).await?;
     Ok(HeadState { local, commits })
-}
-
-/// What the confirmation for a pull request offers.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Answer {
-    Push,
-    Create {
-        draft: bool,
-    },
-    /// A release's, a gist's ([`crate::writes`]).
-    Write(crate::writes::Answer),
-}
-
-/// A question before a pull request is pushed or made: what, what's
-/// worth knowing, and the ways to go ahead.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Ask {
-    pub route: Route,
-    pub title: String,
-    pub facts: Vec<(String, bool)>,
-    pub choices: Vec<(String, Answer)>,
-    pub selected: usize,
-    pub sent: Sent,
-}
-
-impl Ask {
-    pub fn new(
-        route: Route,
-        title: String,
-        facts: Vec<(String, bool)>,
-        choices: Vec<(String, Answer)>,
-    ) -> Self {
-        Self {
-            route,
-            title,
-            facts,
-            choices,
-            selected: 0,
-            sent: Sent::default(),
-        }
-    }
-
-    /// What's happening while git or GitHub answers.
-    pub fn busy(&self) -> Option<&'static str> {
-        let (_, answer) = self
-            .choices
-            .get(self.selected)
-            .filter(|_| self.sent.sending)?;
-        Some(match answer {
-            Answer::Push => "Pushing…",
-            Answer::Create { .. } => "Creating the pull request…",
-            Answer::Write(answer) => answer.busy(),
-        })
-    }
 }
 
 /// The repository a form's page is for.
@@ -637,16 +582,15 @@ fn ask_create(state: &mut State, route: &Route) -> Vec<Cmd> {
     let choices = vec![
         (
             "Create pull request".into(),
-            Answer::Create { draft: false },
+            Answer::CreatePr { draft: false },
         ),
         (
             "Create draft pull request".into(),
-            Answer::Create { draft: true },
+            Answer::CreatePr { draft: true },
         ),
     ];
     let title = format!("Open a pull request in {repo}?");
-    let ask = Ask::new(route.clone(), title, facts, choices);
-    state.overlay = Some(Overlay::Ask(Box::new(ask)));
+    crate::forms::ask(state, route.clone(), title, facts, choices);
     Vec::new()
 }
 
@@ -709,42 +653,20 @@ fn ask_push(state: &mut State) -> Vec<Cmd> {
         _ => {}
     }
     let title = format!("Push {} to {}?", b.name, b.remote);
-    let ask = Ask::new(route, title, facts, vec![("Push".into(), Answer::Push)]);
-    state.overlay = Some(Overlay::Ask(Box::new(ask)));
+    crate::forms::ask(
+        state,
+        route,
+        title,
+        facts,
+        vec![("Push".into(), Answer::Push)],
+    );
     Vec::new()
 }
 
-/// Keys in the question: choose, go ahead, or cancel.
+/// A pull request's question was answered: push its branch (`None`), or
+/// make it, a draft or not.
 #[must_use]
-pub fn on_ask_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
-    let Some(Overlay::Ask(ask)) = &mut state.overlay else {
-        return Vec::new();
-    };
-    let n = ask.choices.len().max(1);
-    match key.code {
-        KeyCode::Esc => state.overlay = None,
-        _ if ask.sent.sending => {}
-        KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => ask.selected = (ask.selected + 1) % n,
-        KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
-            ask.selected = (ask.selected + n - 1) % n;
-        }
-        KeyCode::Enter => {
-            let Some((_, answer)) = ask.choices.get(ask.selected).cloned() else {
-                return Vec::new();
-            };
-            let route = ask.route.clone();
-            return answer_ask(state, &route, answer);
-        }
-        _ => {}
-    }
-    Vec::new()
-}
-
-#[must_use]
-fn answer_ask(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
-    if let Answer::Write(answer) = answer {
-        return crate::writes::answer(state, route, answer);
-    }
+pub fn answer(state: &mut State, route: &Route, draft: Option<bool>) -> Vec<Cmd> {
     let Some(form) = state.forms.get::<Form>(route) else {
         return Vec::new();
     };
@@ -752,10 +674,9 @@ fn answer_ask(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
         return Vec::new();
     };
     let head = form.head.clone().unwrap_or_default();
-    let work: work::Work = match answer {
-        Answer::Write(_) => return Vec::new(),
-        Answer::Push => Push { repo, branch: head }.into(),
-        Answer::Create { draft } => {
+    let work: work::Work = match draft {
+        None => Push { repo, branch: head }.into(),
+        Some(draft) => {
             let hs = match head_problem(state, &repo, form) {
                 Ok(hs) => hs,
                 Err(why) => {

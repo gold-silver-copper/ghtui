@@ -210,10 +210,10 @@ fn symbol_rows(scopes: &[Scope]) -> Vec<(PaletteItem, Choice)> {
         let depth = around
             .filter(|o| o.lines.contains(&start) && o.lines.contains(&end))
             .count();
-        let item = PaletteItem {
-            label: format!("{}{}", "  ".repeat(depth), s.name),
-            hint: format!("line {start}"),
-        };
+        let item = crate::picker::item(
+            format!("{}{}", "  ".repeat(depth), s.name),
+            format!("line {start}"),
+        );
         rows.push((item, Choice::Line(start)));
     }
     rows
@@ -428,10 +428,7 @@ pub fn answered(state: &mut State, ask: &Ask, answer: Result<Answer, String>) ->
         }
         (_, places) => {
             let rows = places.iter().map(|p| {
-                let item = PaletteItem {
-                    label: p.label.clone(),
-                    hint: format!("{}:{}", p.path, p.line),
-                };
+                let item = crate::picker::item(p.label.clone(), format!("{}:{}", p.path, p.line));
                 (item, open(p))
             });
             let rows = rows.collect();

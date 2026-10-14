@@ -1161,13 +1161,6 @@ pub enum Chosen {
     Ask(Box<Confirm>),
 }
 
-fn item(label: impl Into<String>, hint: impl Into<String>) -> PaletteItem {
-    PaletteItem {
-        label: label.into(),
-        hint: hint.into(),
-    }
-}
-
 /// Whether `s` can be a GitHub login.
 fn is_login(s: &str) -> bool {
     !s.is_empty()
@@ -1181,10 +1174,13 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
         Pick::Invite { repo } => {
             let login = q.trim().trim_start_matches('@');
             if login.is_empty() {
-                return vec![(item("Type their GitHub login", ""), None)];
+                return vec![(crate::picker::item("Type their GitHub login", ""), None)];
             }
             if !is_login(login) {
-                return vec![(item(format!("“{login}” isn't a GitHub login"), ""), None)];
+                return vec![(
+                    crate::picker::item(format!("“{login}” isn't a GitHub login"), ""),
+                    None,
+                )];
             }
             let next = Pick::Role {
                 repo: repo.clone(),
@@ -1192,7 +1188,7 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
                 now: None,
             };
             vec![(
-                item(format!("Invite @{login}"), "then choose their role"),
+                crate::picker::item(format!("Invite @{login}"), "then choose their role"),
                 Some(Chosen::Pick(next)),
             )]
         }
@@ -1205,7 +1201,7 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
                 } else {
                     p.name().to_owned()
                 };
-                let row = item(label, p.about());
+                let row = crate::picker::item(label, p.about());
                 if is_now {
                     return (row, None);
                 }
@@ -1266,7 +1262,10 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
             let name = repo.to_string();
             if !q.trim().eq_ignore_ascii_case(&name) {
                 let verb = if *archived { "archive" } else { "unarchive" };
-                return vec![(item(format!("Type {name} to {verb} it"), ""), None)];
+                return vec![(
+                    crate::picker::item(format!("Type {name} to {verb} it"), ""),
+                    None,
+                )];
             }
             let at = (repo, SettingsPage::General);
             let (verb, facts) = if *archived {
@@ -1303,7 +1302,7 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
                 (&format!("{verb} repository"), change),
             );
             vec![(
-                item(format!("{verb} {name}"), "asks once more"),
+                crate::picker::item(format!("{verb} {name}"), "asks once more"),
                 Some(Chosen::Ask(confirm)),
             )]
         }

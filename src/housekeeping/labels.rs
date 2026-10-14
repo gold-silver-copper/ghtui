@@ -154,7 +154,7 @@ pub(super) fn colour_rows(
     q: &str,
 ) -> Vec<(
     crate::ui::overlays::PaletteItem,
-    Option<crate::writes::Chosen>,
+    Option<crate::picker::Choice>,
 )> {
     let set = |c: &str| Some(Chosen::Field(route.clone(), Field::Colour, c.to_owned()));
     let mut rows = Vec::new();

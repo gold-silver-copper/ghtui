@@ -83,14 +83,14 @@ pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
         Some(hex) => format!("sha256:{}", hex.get(..12).unwrap_or(hex)),
         None => v.name.clone(),
     };
-    crate::writes::ask(
+    crate::forms::ask(
         state,
         route,
         format!("Delete version {name} of {}?", at.name),
         facts,
         vec![(
             "Delete version".into(),
-            crate::writes::Answer::Site(super::Answer::DeleteVersion(id)),
+            crate::forms::Answer::Site(super::Answer::DeleteVersion(id)),
         )],
     );
     Vec::new()

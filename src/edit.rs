@@ -570,10 +570,7 @@ fn row(
     hint: impl Into<String>,
     pick: Option<Pick>,
 ) -> (PaletteItem, Option<Choice>) {
-    let item = PaletteItem {
-        label: label.into(),
-        hint: hint.into(),
-    };
+    let item = crate::picker::item(label, hint);
     (item, pick.map(Choice::Edit))
 }
 

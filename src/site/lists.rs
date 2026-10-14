@@ -11,10 +11,10 @@ use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
 use crate::picker::fuzzy_score;
+use crate::picker::{Choice, entry};
 use crate::route::{Route, people};
 use crate::state::{Cmd, Remote, State};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::{Chosen, Pick, item};
 
 use super::Page;
 use crate::data::DataKey;
@@ -118,8 +118,8 @@ pub fn open(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     };
     let mut cmds = state.ensure(DataKey::MyLists(repo.clone()), true);
-    let pick = Pick::Site(super::Pick::Lists(repo));
-    cmds.extend(state.open_picker(crate::picker::Kind::Write(pick)));
+    let pick = crate::picker::Kind::Site(super::Pick::Lists(repo));
+    cmds.extend(state.open_picker(pick));
     cmds
 }
 
@@ -129,7 +129,7 @@ pub fn rows(
     state: &State,
     repo: &RepoId,
     q: &str,
-) -> Vec<(crate::ui::overlays::PaletteItem, Option<Chosen>)> {
+) -> Vec<(crate::ui::overlays::PaletteItem, Option<Choice>)> {
     let key = DataKey::MyLists(repo.clone());
     #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
     let fetched = Remote::fetched(state.remote(&key), "")
@@ -137,7 +137,7 @@ pub fn rows(
         .text("your lists");
     let mine = match fetched {
         Ok(m) => m,
-        Err(why) => return vec![item(why, "", None)],
+        Err(why) => return vec![entry(why, "", None)],
     };
     let ids = |except: Option<&NodeId>| -> Vec<NodeId> {
         (mine.lists.iter())
@@ -157,7 +157,7 @@ pub fn rows(
             let label = format!("{mark} {}", l.name);
             let Some(has) = l.has else {
                 let hint = "too long for ghtui to say whether it's in it";
-                return item(label, hint, None);
+                return entry(label, hint, None);
             };
             let mut lists = ids(Some(&l.id));
             if !has {
@@ -171,7 +171,7 @@ pub fn rows(
                 list: l.name.clone(),
                 add: !has,
             };
-            item(label, hint, Some(Chosen::Site(super::Chosen::Lists(work))))
+            entry(label, hint, Some(Choice::Site(super::Chosen::Lists(work))))
         })
         .collect();
     let name = q.trim();
@@ -190,22 +190,26 @@ pub fn rows(
             add: true,
         };
         let label = format!("+ Make the list “{name}” and add it");
-        rows.push(item(
+        rows.push(entry(
             label,
             "↵",
-            Some(Chosen::Site(super::Chosen::Lists(work))),
+            Some(Choice::Site(super::Chosen::Lists(work))),
         ));
     }
     if mine.lists.left_out() > 0 {
         let n = mine.lists.left_out();
-        rows.push(item(
+        rows.push(entry(
             format!("{n} more lists on GitHub, not listed"),
             "",
             None,
         ));
     }
     if rows.is_empty() {
-        rows.push(item("You have no lists: type a name to make one", "", None));
+        rows.push(entry(
+            "You have no lists: type a name to make one",
+            "",
+            None,
+        ));
     }
     rows
 }
@@ -311,14 +315,14 @@ pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
         ),
         true,
     )];
-    crate::writes::ask(
+    crate::forms::ask(
         state,
         route,
         format!("Delete the list “{}”?", list.name),
         facts,
         vec![(
             "Delete list".into(),
-            crate::writes::Answer::Site(super::Answer::DeleteList),
+            crate::forms::Answer::Site(super::Answer::DeleteList),
         )],
     );
     Vec::new()

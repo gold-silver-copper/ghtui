@@ -142,7 +142,7 @@ pub(super) fn owner_rows(
     q: &str,
 ) -> Vec<(
     crate::ui::overlays::PaletteItem,
-    Option<crate::writes::Chosen>,
+    Option<crate::picker::Choice>,
 )> {
     let Some(o) = owners(state) else {
         return vec![item("Asking GitHub who you are…", "", None)];
@@ -200,7 +200,7 @@ pub(super) fn template_rows(
     q: &str,
 ) -> Vec<(
     crate::ui::overlays::PaletteItem,
-    Option<crate::writes::Chosen>,
+    Option<crate::picker::Choice>,
 )> {
     let set = |value: &str| Some(Chosen::Field(route.clone(), field, value.to_owned()));
     let Some(t) = state.picked::<Templates>(&DataKey::Templates) else {

@@ -126,10 +126,7 @@ pub fn project_rows(
 ) -> Vec<(PaletteItem, Option<Chosen>)> {
     let list = key(subject).and_then(|k| state.picked::<Capped<InProject>>(&k));
     let Some(list) = list else {
-        let item = PaletteItem {
-            label: "Its projects haven't loaded yet".into(),
-            hint: String::new(),
-        };
+        let item = crate::picker::item("Its projects haven't loaded yet", "");
         return vec![(item, None)];
     };
     (list.iter())

@@ -22,7 +22,7 @@ fn page() -> Route {
     })
 }
 
-fn asked(s: &State) -> &crate::create::Ask {
+fn asked(s: &State) -> &crate::forms::Ask {
     match &s.overlay {
         Some(Overlay::Ask(a)) => a,
         _ => panic!("nothing asked"),

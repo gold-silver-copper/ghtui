@@ -27,13 +27,14 @@ use crate::ui::pages::{FormRow, Mark, TextBox, WriteFormView};
 
 use crate::data::DataKey;
 use crate::follow::{Expectation, Shown};
+use crate::forms::Answer;
 use crate::forms::{Fields, say};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
 use crate::picker::fuzzy_score;
+use crate::picker::{Choice, entry};
 use crate::state::{Cmd, State};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::{Answer, Chosen, Pick, item};
 
 /// A release, as written so far: a new one, or one being edited.
 #[derive(Debug, Clone)]
@@ -381,7 +382,7 @@ fn follow(state: &mut State) -> Vec<Cmd> {
     let new = matches!(route, Route::Releases(releases::NewRelease(_)));
     if new && loaded && !started && state.overlay.is_none() && refused(state, &repo).is_none() {
         state.forms.edit::<Form>(&route).started = true;
-        cmds.extend(state.open_picker(crate::picker::Kind::Write(Pick::Tag(route))));
+        cmds.extend(state.open_picker(crate::picker::Kind::Tag(route)));
     }
     cmds
 }
@@ -411,9 +412,9 @@ fn on_row(state: &mut State, link: &Row) -> Vec<Cmd> {
         return Vec::new();
     };
     match link {
-        Row::Tag => state.open_picker(crate::picker::Kind::Write(Pick::Tag(route))),
+        Row::Tag => state.open_picker(crate::picker::Kind::Tag(route)),
         Row::Target if form.new_tag(state, &repo) => {
-            state.open_picker(crate::picker::Kind::Write(Pick::Target(route)))
+            state.open_picker(crate::picker::Kind::Target(route))
         }
         Row::Target => {
             state.info("The tag is GitHub's already: it's where it is");
@@ -485,7 +486,7 @@ fn form_repo(route: &Route) -> Option<&RepoId> {
 }
 
 /// The tag picker's rows: a new tag typed, then the tags GitHub has.
-pub fn tag_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
+pub fn tag_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, Option<Choice>)> {
     let Some(repo) = form_repo(route) else {
         return Vec::new();
     };
@@ -494,16 +495,16 @@ pub fn tag_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, Opti
     let known = tags.is_some_and(|t| t.items.iter().any(|t| t.name == q));
     if !q.is_empty() && !known {
         rows.push(match tag_problem(q) {
-            Some(why) => item(why, "", None),
-            None => item(
+            Some(why) => entry(why, "", None),
+            None => entry(
                 format!("Create new tag: {q}"),
                 "on publish",
-                Some(Chosen::Tag(route.clone(), q.to_owned())),
+                Some(Choice::Tag(route.clone(), q.to_owned())),
             ),
         });
     }
     let Some(tags) = tags else {
-        rows.push(item("Loading the tags…", "", None));
+        rows.push(entry("Loading the tags…", "", None));
         return rows;
     };
     let mut hits: Vec<(usize, &TagInfo)> = (tags.items.iter())
@@ -515,16 +516,16 @@ pub fn tag_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, Opti
             .date
             .as_deref()
             .map_or("tag", |d| d.get(..10).unwrap_or(d));
-        rows.push(item(
+        rows.push(entry(
             t.name.clone(),
             hint,
-            Some(Chosen::Tag(route.clone(), t.name.clone())),
+            Some(Choice::Tag(route.clone(), t.name.clone())),
         ));
     }
     let more = tags.total.saturating_sub(tags.items.len() as u64);
     if more > 0 {
         let what = crate::ui::text::noun(more, "tag");
-        rows.push(item(
+        rows.push(entry(
             format!("{more} older {what} on GitHub: type one's name"),
             "",
             None,
@@ -534,7 +535,7 @@ pub fn tag_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, Opti
 }
 
 /// The target picker's rows: a commit typed, then the branches.
-pub fn target_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
+pub fn target_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, Option<Choice>)> {
     let Some(repo) = form_repo(route) else {
         return Vec::new();
     };
@@ -542,14 +543,14 @@ pub fn target_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, O
     let mut rows = Vec::new();
     let known = branches.is_some_and(|b| b.items.iter().any(|b| b.name == q));
     if !q.is_empty() && !known {
-        rows.push(item(
+        rows.push(entry(
             format!("Use {q}"),
             "a branch or a commit's SHA",
-            Some(Chosen::Target(route.clone(), q.to_owned())),
+            Some(Choice::Target(route.clone(), q.to_owned())),
         ));
     }
     let Some(branches) = branches else {
-        rows.push(item("Loading the branches…", "", None));
+        rows.push(entry("Loading the branches…", "", None));
         return rows;
     };
     let mut hits: Vec<(usize, &BranchInfo)> = (branches.items.iter())
@@ -562,10 +563,10 @@ pub fn target_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, O
         } else {
             "branch"
         };
-        rows.push(item(
+        rows.push(entry(
             b.name.clone(),
             hint,
-            Some(Chosen::Target(route.clone(), b.name.clone())),
+            Some(Choice::Target(route.clone(), b.name.clone())),
         ));
     }
     rows
@@ -698,7 +699,7 @@ fn submit(state: &mut State) -> Vec<Cmd> {
             ],
         ),
     };
-    crate::writes::ask(state, route, question, facts, choices);
+    crate::forms::ask(state, route, question, facts, choices);
     Vec::new()
 }
 
@@ -761,7 +762,7 @@ pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
     let title = format!("Delete the release {}?", r.name);
     let route = Route::Releases(releases::Release { repo, tag });
     let choices = vec![("Delete release".into(), Answer::DeleteRelease)];
-    crate::writes::ask(state, route, title, facts, choices);
+    crate::forms::ask(state, route, title, facts, choices);
     Vec::new()
 }
 
@@ -974,7 +975,7 @@ impl Job for Delete {
         if !tagged {
             return cmds;
         }
-        crate::writes::ask(
+        crate::forms::ask(
             state,
             route,
             format!("Delete the tag {tag} as well?"),

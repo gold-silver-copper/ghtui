@@ -83,10 +83,7 @@ pub fn rows(d: &Dismissing, q: &str) -> Vec<(PaletteItem, Change)> {
         .reasons()
         .iter()
         .map(|(word, label, hint)| {
-            let item = PaletteItem {
-                label: (*label).to_owned(),
-                hint: (*hint).to_owned(),
-            };
+            let item = crate::picker::item(*label, *hint);
             let change = Change::Alert(AlertChange {
                 alert: d.0.clone(),
                 dismiss: Some(((*word).to_owned(), q.to_owned())),

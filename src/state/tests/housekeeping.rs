@@ -15,7 +15,7 @@ use crate::housekeeping::{files, labels, milestones, refs, repos};
 use super::*;
 use crate::fixtures::{self};
 
-fn asked(s: &State) -> &crate::create::Ask {
+fn asked(s: &State) -> &crate::forms::Ask {
     match &s.overlay {
         Some(Overlay::Ask(a)) => a,
         _ => panic!("nothing asked"),
@@ -368,7 +368,7 @@ fn a_new_repository_is_made_and_cloning_offered() {
     press(&mut s, "tools<Enter>");
     select(&mut s, "Owner");
     press(&mut s, "<Enter>readers");
-    let readers = crate::writes::rows(&s, &picked(&s), "readers");
+    let readers = crate::housekeeping::rows(&s, &picked(&s), "readers");
     assert!(
         readers.iter().all(|(_, chosen)| chosen.is_none()),
         "not yours to make in"
@@ -409,11 +409,11 @@ fn a_new_repository_is_made_and_cloning_offered() {
 }
 
 /// The picker open now.
-fn picked(s: &State) -> crate::writes::Pick {
+fn picked(s: &State) -> crate::housekeeping::Pick {
     match &s.overlay {
         Some(Overlay::Picker(p)) => match &p.kind {
-            crate::picker::Kind::Write(pick) => pick.clone(),
-            _ => panic!("not a write picker"),
+            crate::picker::Kind::Housekeeping(pick) => pick.clone(),
+            _ => panic!("not a housekeeping picker"),
         },
         _ => panic!("no picker"),
     }

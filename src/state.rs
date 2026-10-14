@@ -402,7 +402,7 @@ pub enum Overlay {
     /// Asking before a change to GitHub.
     Confirm(Box<act::Confirm>),
     /// Asking before pushing a branch or opening a pull request.
-    Ask(Box<crate::create::Ask>),
+    Ask(Box<crate::forms::Ask>),
 }
 
 pub struct State {

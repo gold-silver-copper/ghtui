@@ -8,6 +8,7 @@
 //! leaving one keeps it, each with what it [`Sent`]. A change to one is
 //! a new version of it, which is what its page is built again for.
 //!
+//! A form's write may ask first ([`Ask`], answered with an [`Answer`]).
 //! The composer, a question and a confirmation say what they sent the
 //! same way; [`say`], [`sending`] and [`close_sender`] reach whichever
 //! one is open.
@@ -16,6 +17,7 @@ use std::any::Any;
 use std::borrow::Cow;
 use std::collections::HashMap;
 
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui_textarea::CursorMove;
 
 use crate::compose::Target;
@@ -432,4 +434,155 @@ pub(crate) fn close_sender(state: &mut State, route: &Route) {
 pub(crate) fn done<F: Fields + Default>(state: &mut State, route: &Route) -> F {
     close_sender(state, route);
     state.forms.take(route)
+}
+
+// ---- questions -------------------------------------------------------------------
+
+/// A question before a form's write is made: what, what's worth knowing,
+/// and the ways to go ahead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ask {
+    pub route: Route,
+    pub title: String,
+    pub facts: Vec<(String, bool)>,
+    pub choices: Vec<(String, Answer)>,
+    pub selected: usize,
+    pub sent: Sent,
+}
+
+impl Ask {
+    pub fn new(
+        route: Route,
+        title: String,
+        facts: Vec<(String, bool)>,
+        choices: Vec<(String, Answer)>,
+    ) -> Self {
+        Self {
+            route,
+            title,
+            facts,
+            choices,
+            selected: 0,
+            sent: Sent::default(),
+        }
+    }
+
+    /// What's happening while git or GitHub answers.
+    pub fn busy(&self) -> Option<&'static str> {
+        let (_, answer) = self
+            .choices
+            .get(self.selected)
+            .filter(|_| self.sent.sending)?;
+        Some(answer.busy())
+    }
+}
+
+/// The ways to answer a question.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Answer {
+    /// A new pull request's branch, pushed ([`crate::create`]).
+    Push,
+    CreatePr {
+        draft: bool,
+    },
+    /// A release ([`crate::release`]).
+    Release {
+        draft: bool,
+    },
+    DeleteRelease,
+    /// The deleted release's tag too.
+    DeleteTag,
+    KeepTag,
+    /// The release's asset of this name.
+    DeleteAsset(String),
+    /// A gist ([`crate::gist`]).
+    Gist {
+        public: bool,
+    },
+    DeleteGist,
+    Site(crate::site::Answer),
+    Housekeeping(crate::housekeeping::Answer),
+}
+
+impl Answer {
+    /// What's happening while git or GitHub answers.
+    pub fn busy(&self) -> &'static str {
+        match self {
+            Answer::Push => "Pushing…",
+            Answer::CreatePr { .. } => "Creating the pull request…",
+            Answer::Release { draft: true } => "Saving the draft…",
+            Answer::Release { .. } => "Saving the release…",
+            Answer::DeleteRelease => "Deleting the release…",
+            Answer::DeleteTag => "Deleting the tag…",
+            Answer::KeepTag => "",
+            Answer::DeleteAsset(_) => "Deleting the asset…",
+            Answer::Gist { .. } => "Creating the gist…",
+            Answer::DeleteGist => "Deleting the gist…",
+            Answer::Site(a) => a.busy(),
+            Answer::Housekeeping(a) => a.busy(),
+        }
+    }
+}
+
+/// Asks `title` about `route`, with what's worth knowing and the ways to
+/// go ahead.
+pub(crate) fn ask(
+    state: &mut State,
+    route: Route,
+    title: String,
+    facts: Vec<(String, bool)>,
+    choices: Vec<(String, Answer)>,
+) {
+    let ask = Ask::new(route, title, facts, choices);
+    state.overlay = Some(Overlay::Ask(Box::new(ask)));
+}
+
+/// Keys in the question: choose, go ahead, or cancel.
+#[must_use]
+pub fn on_ask_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
+    let Some(Overlay::Ask(ask)) = &mut state.overlay else {
+        return Vec::new();
+    };
+    let n = ask.choices.len().max(1);
+    match key.code {
+        KeyCode::Esc => state.overlay = None,
+        _ if ask.sent.sending => {}
+        KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => ask.selected = (ask.selected + 1) % n,
+        KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
+            ask.selected = (ask.selected + n - 1) % n;
+        }
+        KeyCode::Enter => {
+            let Some((_, answer)) = ask.choices.get(ask.selected).cloned() else {
+                return Vec::new();
+            };
+            let route = ask.route.clone();
+            return answered(state, &route, answer);
+        }
+        _ => {}
+    }
+    Vec::new()
+}
+
+/// The question about `route` was answered.
+#[must_use]
+fn answered(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
+    match answer {
+        Answer::Push => crate::create::answer(state, route, None),
+        Answer::CreatePr { draft } => crate::create::answer(state, route, Some(draft)),
+        Answer::Release { draft } => crate::release::create(state, route, draft),
+        Answer::DeleteRelease => crate::release::delete(state, route),
+        Answer::DeleteTag => crate::release::delete_tag(state, route),
+        Answer::KeepTag => {
+            close_sender(state, route);
+            if let Route::Releases(crate::route::releases::Release { tag, .. }) = route {
+                state.info(format!("Kept the tag {tag}"));
+            }
+            Vec::new()
+        }
+        Answer::DeleteAsset(name) => crate::release::assets::delete(state, &name),
+        Answer::Gist { public } => crate::gist::create(state, route, public),
+        Answer::DeleteGist => crate::gist::delete(state, route),
+        Answer::Site(a) => crate::site::answer(state, route, a),
+        Answer::Housekeeping(a) => crate::housekeeping::answer(state, route, a),
+    }
 }

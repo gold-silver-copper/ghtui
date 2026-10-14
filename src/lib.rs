@@ -63,7 +63,6 @@ mod watch;
 pub mod wiki;
 mod work;
 mod workflows;
-mod writes;
 mod yaml;
 
 use crate::route::{Dest, Route, Target, issues, pulls};
