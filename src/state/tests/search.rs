@@ -58,14 +58,15 @@ fn an_older_suggestion_reply_does_not_replace_a_newer_one() {
     let mut state = with_repo();
     press(&mut state, "g/");
     press(&mut state, "ra");
+    let suggest = |q: &str| DataKey::Suggest(q.into());
     let cmds = update(&mut state, Msg::SuggestDue("ra".into()));
-    assert_eq!(cmds, vec![Cmd::Api(Api::Suggest("ra".into()))]);
+    assert_eq!(fixtures::asked(&cmds), [suggest("ra")]);
     press(&mut state, "t");
     let cmds = update(&mut state, Msg::SuggestDue("rat".into()));
-    assert_eq!(cmds, vec![Cmd::Api(Api::Suggest("rat".into()))]);
-    let repos = |name: &str| Ok(vec![crate::fixtures::repo_summary(name, 5)]);
-    update(&mut state, Msg::Suggested("rat".into(), repos("o/ratatui")));
-    update(&mut state, Msg::Suggested("ra".into(), repos("o/rails")));
+    assert_eq!(fixtures::asked(&cmds), [suggest("rat")]);
+    let repos = |name: &str| Data::Suggestions(vec![crate::fixtures::repo_summary(name, 5)]);
+    fixtures::fetched(&mut state, suggest("rat"), repos("o/ratatui"));
+    fixtures::fetched(&mut state, suggest("ra"), repos("o/rails"));
     let sb = overlay!(state, Search);
     let picks: Vec<nav::Pick> = state
         .suggestions(sb)
@@ -254,15 +255,11 @@ fn search_box_jumps_searches_and_loads_more() {
         "on a repository, its own issues first"
     );
     // Live suggestions arrive after a pause, below what's there.
+    let key = DataKey::Suggest("bug".into());
     let cmds = update(&mut state, Msg::SuggestDue("bug".into()));
-    assert_eq!(cmds, vec![Cmd::Api(Api::Suggest("bug".into()))]);
-    update(
-        &mut state,
-        Msg::Suggested(
-            "bug".into(),
-            Ok(vec![crate::fixtures::repo_summary("o/bugs", 5)]),
-        ),
-    );
+    assert!(fixtures::asks(&cmds, &key));
+    let bugs = vec![crate::fixtures::repo_summary("o/bugs", 5)];
+    fixtures::fetched(&mut state, key, Data::Suggestions(bugs));
     let sb = overlay!(state, Search);
     let picks: Vec<nav::Pick> = state
         .suggestions(sb)

@@ -176,6 +176,8 @@ pub enum DataKey {
     Mentionable(RepoId),
     /// How many of your notifications are unread, for the header.
     Unread,
+    /// Repositories the search box suggests for what's typed.
+    Suggest(String),
 }
 
 impl DataKey {
@@ -212,6 +214,7 @@ impl DataKey {
                 | DataKey::FileLook(..)
                 | DataKey::Mentionable(_)
                 | DataKey::Unread
+                | DataKey::Suggest(_)
                 // Git answers these.
                 | DataKey::Clone(_)
                 | DataKey::Head { .. }
@@ -359,6 +362,8 @@ data! {
     Mentionable(Box<Mentionable>) => Mentionable,
     #[serde(skip)]
     Unread(Unread) => Unread,
+    #[serde(skip)]
+    Suggestions(Vec<RepoSummary>) => [RepoSummary],
 }
 
 impl Data {

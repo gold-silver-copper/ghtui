@@ -8,22 +8,12 @@ pub struct SearchBox {
     /// Filtering the list on screen rather than searching GitHub.
     pub filter: bool,
     pub selected: usize,
-    /// Live repository suggestions, and the input they're for.
-    pub(super) remote: Vec<RepoSummary>,
-    pub(super) remote_for: String,
 }
 
 impl SearchBox {
     /// What's typed, trimmed.
     pub(crate) fn query(&self) -> String {
         self.input.lines().join("").trim().to_owned()
-    }
-
-    /// Live suggestions for `q`, kept only if it's still what's typed.
-    pub(crate) fn suggested(&mut self, q: String, repos: Vec<RepoSummary>) {
-        if q == self.query() {
-            (self.remote, self.remote_for) = (repos, q);
-        }
     }
 }
 
@@ -89,8 +79,6 @@ impl State {
             input,
             filter: filter_query.is_some(),
             selected: 0,
-            remote: Vec::new(),
-            remote_for: String::new(),
         })));
         Vec::new()
     }
@@ -297,9 +285,9 @@ impl State {
         }
         jump(&mut out, far);
         // Live matches come last, so they never move what's selected.
-        if sb.remote_for == q && !q.is_empty() {
-            let live: Vec<&RepoSummary> = sb
-                .remote
+        let suggested = self.picked::<[RepoSummary]>(&DataKey::Suggest(q.to_owned()));
+        if let Some(suggested) = suggested.filter(|_| !q.is_empty()) {
+            let live: Vec<&RepoSummary> = suggested
                 .iter()
                 .filter(|r| !seen.contains(&pages::url::repo(&r.repo)))
                 .collect();

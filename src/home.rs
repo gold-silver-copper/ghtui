@@ -20,6 +20,7 @@ use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::{self, Titling};
 use crate::state::{Cmd, Overlay, Screen, State};
+use crate::work::{Cx, Failure, Job};
 
 /// Rows a section shows unless it says.
 pub const DEFAULT_ROWS: usize = 25;
@@ -611,55 +612,72 @@ impl State {
     #[must_use]
     pub fn edit_home(&mut self, path: PathBuf, edit: Edit, what: String) -> Vec<Cmd> {
         self.home_editing = true;
-        vec![Cmd::EditHome {
+        crate::work::start(EditConfig {
             path,
             shown: self.home.clone(),
             edit,
             what,
-        }]
+        })
+    }
+}
+
+/// Changes Home's sections in the config file at `path`, if it still has
+/// `shown`; `what` says it's done.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditConfig {
+    pub path: PathBuf,
+    pub shown: Vec<Section>,
+    pub edit: Edit,
+    pub what: String,
+}
+
+impl Job for EditConfig {
+    /// What Home shows now, and the table a removal took out.
+    type Out = (Vec<Section>, Option<String>);
+    const WRITES: bool = false;
+
+    async fn run(&self, _: &Cx) -> Result<Self::Out, Failure> {
+        let (path, shown, edit) = (self.path.clone(), self.shown.clone(), self.edit.clone());
+        let edited = crate::runtime::blocking(move || edit_file(&path, &shown, &edit)).await;
+        edited.map_err(Failure::msg)
     }
 
     /// `config.toml` was changed (or not, and why): Home shows what it
     /// says now, the selection staying on the section moved.
-    #[must_use]
-    pub fn home_edited(
-        &mut self,
-        edit: &Edit,
-        result: Result<(Vec<Section>, Option<String>), String>,
-        what: String,
-    ) -> Vec<Cmd> {
-        self.home_editing = false;
+    fn done(self, state: &mut State, result: Result<Self::Out, Failure>) -> Vec<Cmd> {
+        state.home_editing = false;
         match result {
             Ok((sections, removed)) => {
-                self.home = sections;
-                match (edit, removed) {
-                    (Edit::Remove { at }, Some(table)) => self.removed = Some((*at, table)),
-                    (Edit::Restore { .. }, _) => self.removed = None,
+                state.home = sections;
+                match (self.edit, removed) {
+                    (Edit::Remove { at }, Some(table)) => state.removed = Some((at, table)),
+                    (Edit::Restore { .. }, _) => state.removed = None,
                     _ => {}
                 }
-                self.info(what);
+                state.info(self.what);
             }
             Err(why) => {
                 // What the file says now, if it reads.
-                if let Some(sections) = self
+                if let Some(sections) = state
                     .config_path
                     .as_deref()
                     .and_then(|p| crate::config::Config::load(p).ok())
                     .map(|c| sections(c.home.as_deref()))
                 {
-                    self.home = sections;
+                    state.home = sections;
                 }
-                self.error(why);
+                state.error(why.to_string());
             }
         }
-        self.shown_gen += 1;
-        if self.route() == Some(&Route::App(app::Home)) {
-            self.ensure_route(&Route::App(app::Home), false)
+        if state.route() == Some(&Route::App(app::Home)) {
+            state.ensure_route(&Route::App(app::Home), false)
         } else {
             Vec::new()
         }
     }
+}
 
+impl State {
     /// Follows a section's row that isn't a row of its list: its empty
     /// state, its error, or what's wrong with how it's written.
     #[must_use]

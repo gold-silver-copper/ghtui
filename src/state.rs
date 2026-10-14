@@ -69,23 +69,12 @@ pub enum Msg {
     /// The search box's input settled; fetch live suggestions if it's
     /// still this.
     SuggestDue(String),
-    Suggested(
-        String,
-        Result<Vec<crate::api::browse::RepoSummary>, ApiError>,
-    ),
     RateLimits(RateLimits),
     Notice(Notice),
     /// A lasting problem started (`Some`) or cleared up (`None`).
     Problem(Problem, Option<String>),
     /// `$EDITOR` finished (or failed to start).
     Edited(EditPurpose, Result<String, Failure>),
-    /// `config.toml` was changed (or wasn't, and why): what Home shows
-    /// now, and the table a removal took out.
-    HomeEdited {
-        edit: crate::home::Edit,
-        result: Result<(Vec<crate::home::Section>, Option<String>), String>,
-        what: String,
-    },
     /// For a PR's diff screen.
     Diff(DiffOf, DiffMsg),
     /// Text pasted into the terminal, whole.
@@ -156,14 +145,6 @@ pub enum Cmd {
         purpose: EditPurpose,
         text: String,
     },
-    /// Change Home's sections in the config file, if it still has `shown`;
-    /// `what` says it's done.
-    EditHome {
-        path: std::path::PathBuf,
-        shown: Vec<crate::home::Section>,
-        edit: crate::home::Edit,
-        what: String,
-    },
     /// A write to GitHub, or git in your clone; answered by
     /// [`Msg::Done`].
     Work(crate::work::Work),
@@ -185,8 +166,6 @@ pub enum Api {
         key: DataKey,
         after: String,
     },
-    /// Search repositories for the search box's suggestions.
-    Suggest(String),
     SaveVisits(Vec<Visit>),
     FetchViewed(PrRef),
     FetchThreads(PrRef),

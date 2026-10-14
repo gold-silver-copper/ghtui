@@ -2389,6 +2389,7 @@ pub(crate) fn sample(key: &DataKey) -> Data {
         })),
         K::FileLook(..) => Data::FileLook(Box::new(file_look())),
         K::Mentionable(_) => Data::Mentionable(Box::default()),
+        K::Suggest(_) => Data::Suggestions(Vec::new()),
         K::Unread => Data::Unread(crate::api::notifications::Unread {
             count: 3,
             more: false,

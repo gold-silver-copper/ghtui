@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 
 use super::{Data, DataKey};
+use crate::api::browse::{SearchKind, SearchResults};
 use crate::api::model::PrRef;
 use crate::api::{ApiError, GitHub};
 use crate::diff_job::GitContext;
@@ -236,6 +237,10 @@ async fn answer(
         }
         K::Mentionable(repo) => Data::Mentionable(Box::new(gh.mentionable(repo).await?)),
         K::Unread => Data::Unread(gh.unread().await?),
+        K::Suggest(q) => match gh.search(SearchKind::Repos, q, None).await? {
+            SearchResults::Repos(r) => Data::Suggestions(r.items.into_iter().take(6).collect()),
+            _ => Data::Suggestions(Vec::new()),
+        },
     })
 }
 

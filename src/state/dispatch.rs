@@ -228,12 +228,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             if let Some(Overlay::Search(sb)) = &state.overlay
                 && sb.query() == q
             {
-                return vec![Cmd::Api(Api::Suggest(q))];
-            }
-        }
-        Msg::Suggested(q, result) => {
-            if let (Some(Overlay::Search(sb)), Ok(repos)) = (&mut state.overlay, result) {
-                sb.suggested(q, repos);
+                return state.ensure(DataKey::Suggest(q), false);
             }
         }
         Msg::RateLimits(limits) => state.rate_limits = limits,
@@ -251,7 +246,6 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Focus(focused) => crate::live::on_focus(state, focused),
         Msg::Code(ask, result) => return crate::code_nav::answered(state, &ask, result),
         Msg::Edited(purpose, result) => return on_edited(state, purpose, result),
-        Msg::HomeEdited { edit, result, what } => return state.home_edited(&edit, result, what),
         Msg::Offline(msg) => return crate::offline::on_msg(state, msg),
         Msg::Timer(Timer::Probe) => return crate::offline::on_timer(state),
     }

@@ -264,19 +264,6 @@ impl Effects {
                 let _ = self.save_review.send((pr, review));
             }
             Cmd::Edit { purpose, text } => return Some((purpose, text)),
-            Cmd::EditHome {
-                path,
-                shown,
-                edit,
-                what,
-            } => {
-                spawn_guarded(&self.tx, replies, |tx| async move {
-                    let made = edit.clone();
-                    let result =
-                        blocking(move || crate::home::edit_file(&path, &shown, &made)).await;
-                    let _ = tx.send(Msg::HomeEdited { edit, result, what });
-                });
-            }
         }
         None
     }
@@ -491,18 +478,6 @@ fn spawn(
                 let (result, source) = data::load::load(&gh, &local, &key, more, None).await;
                 Msg::FetchedMore(key, after, result, source)
             }
-            Api::Suggest(q) => {
-                let result = gh
-                    .search(crate::api::browse::SearchKind::Repos, &q, None)
-                    .await
-                    .map(|r| match r {
-                        crate::api::browse::SearchResults::Repos(r) => {
-                            r.items.into_iter().take(6).collect()
-                        }
-                        _ => Vec::new(),
-                    });
-                Msg::Suggested(q, result)
-            }
             Api::SaveVisits(visits) => {
                 gh.remember(crate::store::VISITS, &visits);
                 return;
@@ -661,7 +636,6 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         Cmd::Api(Api::FetchMore { key, after }) => {
             Msg::FetchedMore(key.clone(), after.clone(), api(), None)
         }
-        Cmd::Api(Api::Suggest(q)) => Msg::Suggested(q.clone(), api()),
         Cmd::Api(Api::FetchViewed(pr)) => {
             Msg::Diff(pr.clone().into(), DiffMsg::ViewedLoaded(Box::new(api())))
         }
@@ -678,11 +652,6 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         }
         Cmd::LoadReview(pr) => Msg::Diff(pr.clone().into(), DiffMsg::ReviewLoaded(git())),
         Cmd::Work(work) => Msg::Done(work.failed()),
-        Cmd::EditHome { edit, what, .. } => Msg::HomeEdited {
-            edit: edit.clone(),
-            result: Err("ghtui hit a bug".into()),
-            what: what.clone(),
-        },
         Cmd::Api(Api::FetchPendingReview(pr)) => {
             Msg::Diff(pr.clone().into(), DiffMsg::PendingReview(api()))
         }

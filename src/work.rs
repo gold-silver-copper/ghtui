@@ -1,5 +1,5 @@
-//! Work in the background besides fetching data: writes to GitHub, and
-//! git in your clone. Each is a [`Job`]: what's done, run away from the
+//! Work in the background besides fetching data: writes to GitHub, git
+//! in your clone, and Home's sections in the config file. Each is a [`Job`]: what's done, run away from the
 //! screen, and what its answer does to the state. [`Work`] is every job,
 //! sent as [`Cmd::Work`]; [`Done`] is a job with what came of it,
 //! answered as [`Msg::Done`](crate::state::Msg::Done).
@@ -182,6 +182,7 @@ jobs! {
     Push(crate::create::Push),
     Submit(crate::create::Submit),
     SaveArtifact(crate::workflows::SaveArtifact),
+    EditConfig(crate::home::EditConfig),
     SetViewed(crate::review::SetViewed),
     Resolve(crate::review::Resolve),
     SubmitReview(crate::review::Submit),

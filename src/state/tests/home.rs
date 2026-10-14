@@ -90,70 +90,38 @@ fn a_section_opens_the_rest_of_its_list() {
 /// file says.
 #[test]
 fn home_sections_are_changed_in_the_config() {
-    use crate::home::Edit;
+    use crate::home::{Edit, EditConfig};
     let mut state = with_prs(2);
     press(&mut state, "j");
     assert!(matches!(state.section_here(), Some((1, _))));
-    let cmds = press(&mut state, "<A-Up>");
-    let [Cmd::EditHome { edit, shown, .. }] = cmds.as_slice() else {
-        panic!("{cmds:?}")
-    };
-    assert_eq!(*edit, Edit::Move { at: 1, up: true });
-    assert_eq!(*shown, crate::home::defaults());
+    let job = fixtures::sent::<EditConfig>(&press(&mut state, "<A-Up>"));
+    assert_eq!(job.edit, Edit::Move { at: 1, up: true });
+    assert_eq!(job.shown, crate::home::defaults());
     assert!(
         press(&mut state, "<A-Up>").is_empty(),
         "one change at a time"
     );
     let mut moved = crate::home::defaults();
     moved.swap(0, 1);
-    update(
-        &mut state,
-        Msg::HomeEdited {
-            edit: edit.clone(),
-            result: Ok((moved.clone(), None)),
-            what: "Moved".into(),
-        },
-    );
+    fixtures::done(&mut state, job, Ok((moved.clone(), None)));
     assert_eq!(state.home, moved);
     assert!(
         matches!(state.section_here(), Some((0, _))),
         "the selection moved with it"
     );
-    let cmds = press(&mut state, "<Delete>");
-    let [Cmd::EditHome { edit, .. }] = cmds.as_slice() else {
-        panic!("{cmds:?}")
-    };
-    assert_eq!(*edit, Edit::Remove { at: 0 });
+    let job = fixtures::sent::<EditConfig>(&press(&mut state, "<Delete>"));
+    assert_eq!(job.edit, Edit::Remove { at: 0 });
     let (removed, table) = (moved[1..].to_vec(), "[[home]]\ntitle = \"x\"".to_owned());
-    update(
-        &mut state,
-        Msg::HomeEdited {
-            edit: edit.clone(),
-            result: Ok((removed, Some(table.clone()))),
-            what: "Removed".into(),
-        },
-    );
+    fixtures::done(&mut state, job, Ok((removed, Some(table.clone()))));
     let restore = Edit::Restore { at: 0, table };
-    let cmds = press(&mut state, "<C-z>");
-    assert!(
-        matches!(cmds.as_slice(), [Cmd::EditHome { edit, .. }] if *edit == restore),
-        "{cmds:?}"
-    );
+    let job = fixtures::sent::<EditConfig>(&press(&mut state, "<C-z>"));
+    assert_eq!(job.edit, restore);
     // A change the file refused says why, and can be tried again.
-    update(
-        &mut state,
-        Msg::HomeEdited {
-            edit: restore.clone(),
-            result: Err("config.toml changed since ghtui read it".into()),
-            what: String::new(),
-        },
-    );
+    let refused = fixtures::failure("config.toml changed since ghtui read it");
+    fixtures::done(&mut state, job, Err(refused));
     warns(&state, "changed since");
-    let cmds = press(&mut state, "<C-z>");
-    assert!(
-        matches!(cmds.as_slice(), [Cmd::EditHome { edit, .. }] if *edit == restore),
-        "{cmds:?}"
-    );
+    let job = fixtures::sent::<EditConfig>(&press(&mut state, "<C-z>"));
+    assert_eq!(job.edit, restore);
 }
 
 /// Any list of issues, pull requests or repositories can be saved to
@@ -170,7 +138,7 @@ fn a_list_is_saved_to_home() {
     assert!(state.overlay.is_none(), "the prompt closed");
     assert_eq!(
         cmds,
-        vec![Cmd::EditHome {
+        vec![fixtures::start(crate::home::EditConfig {
             path: "config.toml".into(),
             shown: crate::home::defaults(),
             edit: crate::home::Edit::Add {
@@ -179,7 +147,7 @@ fn a_list_is_saved_to_home() {
                 query: "repo:o/r is:pr label:bug".into(),
             },
             what: "Added “Bugs” to Home".into(),
-        }]
+        })]
     );
     let _ = state.push(Route::user("octocat"));
     let _ = act(&mut state, Action::SaveSection);
