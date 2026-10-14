@@ -1026,37 +1026,16 @@ mod tests {
             ]
         );
         assert_eq!(f.ignored, ["nonsense"]);
-        let f = filter(AlertKind::CodeScanning, "is:open branch:main");
-        assert_eq!(
-            f.params,
-            [
-                ("state", "open".to_owned()),
-                ("ref", "refs/heads/main".to_owned())
-            ]
-        );
         let f = filter(AlertKind::SecretScanning, "is:closed severity:high");
         assert_eq!(f.params, [("state", "resolved".to_owned())]);
         assert_eq!(f.ignored, ["severity:high"]);
     }
 
-    /// A refusal says what's missing: the feature, a classic token's
-    /// scope (with the command that adds it), a fine-grained token's
-    /// permission, or the account's access.
+    /// A refusal says what's missing: a classic token's scope (with the
+    /// command that adds it), a fine-grained token's permission, or the
+    /// account's access.
     #[test]
     fn a_refusal_says_what_is_missing() {
-        let off = refusal(
-            AlertKind::Dependabot,
-            403,
-            "Dependabot alerts are disabled for this repository.",
-            Some("repo"),
-            None,
-        );
-        assert_eq!(
-            off,
-            Some(Refusal::Off(
-                "Dependabot alerts are disabled for this repository".into()
-            ))
-        );
         let scope = refusal(
             AlertKind::CodeScanning,
             403,

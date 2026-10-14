@@ -1701,7 +1701,7 @@ mod tests {
     /// A tag's commit, lightweight or annotated; a tree's entries by kind,
     /// directories first, then by name whatever its case.
     #[test]
-    fn tags_and_tree_entries() {
+    fn tags_resolve_to_commits_and_trees_list_dirs_first() {
         let tags: TagRefs = serde_json::from_value(serde_json::json!({
             "totalCount": 3,
             "pageInfo": {"hasNextPage": true, "endCursor": "c"},
@@ -1796,7 +1796,7 @@ mod tests {
     /// How REST names a run's, job's or step's outcome (found by mutation
     /// testing: no test pinned it), decoded as REST spells it.
     #[test]
-    fn rest_outcomes() {
+    fn rest_statuses_and_conclusions_map_to_outcomes() {
         for (status, conclusion, outcome) in [
             ("completed", Some("success"), CheckOutcome::Success),
             ("completed", Some("skipped"), CheckOutcome::Skipped),

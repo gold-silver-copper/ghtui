@@ -113,7 +113,7 @@ mod tests {
     }
 
     #[test]
-    fn retry_after_rules() {
+    fn only_rate_limited_403s_wait() {
         let forbidden = http::StatusCode::FORBIDDEN;
         assert_eq!(
             retry_after(forbidden, &headers(&[("retry-after", "30")]), 0),

@@ -1058,7 +1058,7 @@ mod tests {
     }
 
     #[test]
-    fn versions_and_rest_paths() {
+    fn versions_parse_and_new_servers_still_lack_rest_advisories() {
         assert_eq!(Version::parse("3.18.2"), Some(Version(3, 18)));
         assert_eq!(Version::parse("3.9"), Some(Version(3, 9)));
         assert!(Version(3, 9) < Version(3, 18));
