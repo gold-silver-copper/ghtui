@@ -20,6 +20,7 @@ use crate::nav::new_input;
 use crate::review::apply_commit_choice;
 use crate::state::{Cmd, Overlay, Remote, Screen, State, apply};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Kind {
     /// The command palette.
     Commands,
@@ -179,8 +180,8 @@ pub enum Choice {
     Site(crate::site::Chosen),
     Housekeeping(crate::housekeeping::Chosen),
     Workflows(crate::workflows::Chosen),
-    Manage(crate::manage::Chosen),
-    Settings(crate::settings::Chosen),
+    /// A step of an action's plan ([`crate::act::take`]).
+    Step(crate::act::Step),
 }
 
 pub type Rows = Vec<(PaletteItem, Option<Choice>)>;
@@ -378,10 +379,10 @@ impl State {
             Kind::Site(pick) => crate::site::rows(self, pick, q),
             Kind::Housekeeping(pick) => crate::housekeeping::rows(self, pick, q),
             Kind::Manage(pick) => (crate::manage::rows(self, pick, q).into_iter())
-                .map(|(row, chosen)| (row, chosen.map(Choice::Manage)))
+                .map(|(row, chosen)| (row, chosen.map(Choice::Step)))
                 .collect(),
             Kind::Settings(pick) => (crate::settings::rows(pick, q).into_iter())
-                .map(|(row, chosen)| (row, chosen.map(Choice::Settings)))
+                .map(|(row, chosen)| (row, chosen.map(Choice::Step)))
                 .collect(),
         }
     }
@@ -751,8 +752,7 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
         Choice::Site(chosen) => crate::site::choose(state, chosen),
         Choice::Housekeeping(chosen) => crate::housekeeping::choose(state, chosen),
         Choice::Workflows(chosen) => crate::workflows::choose(state, chosen),
-        Choice::Manage(chosen) => crate::manage::choose(state, chosen),
-        Choice::Settings(chosen) => crate::settings::choose(state, chosen),
+        Choice::Step(step) => crate::act::take(state, Ok(step)),
     }
 }
 

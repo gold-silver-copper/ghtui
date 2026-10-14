@@ -114,7 +114,8 @@ pub(crate) enum Plan {
 }
 
 /// What an action on what's on screen does, once its feature has planned
-/// it: what [`take`] goes ahead with.
+/// it, or a picker's row: what [`take`] goes ahead with.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
     /// Say what's being done, and send it.
     Send(Change, Subject),
@@ -124,6 +125,8 @@ pub enum Step {
     Pick(crate::picker::Kind),
     /// Write it in the composer, starting with this text.
     Compose(crate::compose::Target, String),
+    /// Say what's being done, and start the job.
+    Start(String, work::Work),
 }
 
 /// Goes ahead with a planned step, or says why it can't.
@@ -141,6 +144,10 @@ pub fn take(state: &mut State, planned: Result<Step, String>) -> Vec<Cmd> {
         }
         Ok(Step::Pick(kind)) => state.open_picker(kind),
         Ok(Step::Compose(target, text)) => state.compose(target, &text),
+        Ok(Step::Start(doing, job)) => {
+            state.info(doing);
+            work::start(job)
+        }
     }
 }
 

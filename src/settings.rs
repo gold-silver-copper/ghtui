@@ -24,7 +24,7 @@ use crate::act::{Step, Subject};
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::state::{Cmd, Overlay, Screen, State};
+use crate::state::{Cmd, Screen, State};
 use crate::ui::page::{Link, Page};
 
 /// The actions this module takes as its own.
@@ -1149,13 +1149,6 @@ impl Pick {
     }
 }
 
-/// What choosing a row does.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Chosen {
-    Pick(Pick),
-    Ask(Box<crate::forms::Ask>),
-}
-
 /// Whether `s` can be a GitHub login.
 fn is_login(s: &str) -> bool {
     !s.is_empty()
@@ -1164,7 +1157,7 @@ fn is_login(s: &str) -> bool {
         && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
-pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
+pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Step>)> {
     match pick {
         Pick::Invite { repo } => {
             let login = q.trim().trim_start_matches('@');
@@ -1184,7 +1177,7 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
             };
             vec![(
                 crate::picker::item(format!("Invite @{login}"), "then choose their role"),
-                Some(Chosen::Pick(next)),
+                Some(Step::Pick(crate::picker::Kind::Settings(next))),
             )]
         }
         Pick::Role { repo, who, now } => (Permission::ALL.into_iter())
@@ -1250,7 +1243,7 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
                     ),
                 };
                 let confirm = asking(Action::EditSetting, at, title, facts, (choice, change));
-                (row, Some(Chosen::Ask(confirm)))
+                (row, Some(Step::Ask(confirm)))
             })
             .collect(),
         Pick::Archive { repo, archived } => {
@@ -1298,19 +1291,8 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
             );
             vec![(
                 crate::picker::item(format!("{verb} {name}"), "asks once more"),
-                Some(Chosen::Ask(confirm)),
+                Some(Step::Ask(confirm)),
             )]
-        }
-    }
-}
-
-#[must_use]
-pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
-    match chosen {
-        Chosen::Pick(pick) => state.open_picker(crate::picker::Kind::Settings(pick)),
-        Chosen::Ask(confirm) => {
-            state.overlay = Some(Overlay::Ask(confirm));
-            Vec::new()
         }
     }
 }

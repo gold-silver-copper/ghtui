@@ -629,20 +629,7 @@ pub fn branch_name(number: u64, title: &str) -> String {
     name
 }
 
-/// What choosing a row does.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Chosen {
-    /// Send this change, about this.
-    Send(Change, Subject),
-    /// Ask first.
-    Ask(Box<crate::forms::Ask>),
-    /// Check out a branch in your clone.
-    Checkout(crate::clone::Checkout),
-    /// Write the new discussion in the composer, starting with this.
-    Write(Starting, String),
-}
-
-type Rows = Vec<(PaletteItem, Option<Chosen>)>;
+type Rows = Vec<(PaletteItem, Option<Step>)>;
 
 /// A list fetched for a picker: its rows, or a row saying why there are
 /// none yet.
@@ -671,7 +658,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
     match pick {
         Pick::Lock { about, id } => {
             let lock = |reason: Option<LockReason>| {
-                Chosen::Send(
+                Step::Send(
                     Change::Manage(Manage::Lock {
                         subject: id.clone(),
                         reason,
@@ -715,7 +702,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
                 crate::picker::entry(
                     reason.label(),
                     format!("hides {name}"),
-                    Some(Chosen::Send(change, about.clone())),
+                    Some(Step::Send(change, about.clone())),
                 )
             })
             .collect(),
@@ -728,7 +715,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
                     issue: id.clone(),
                     of: Some(of),
                 });
-                Chosen::Send(change, about.clone())
+                Step::Send(change, about.clone())
             };
             issue_rows(state, issue, q, &[], |of, title| {
                 let label = format!("Duplicate of {} {title}", of.named(&issue.repo));
@@ -762,19 +749,23 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
             vec![crate::picker::entry(
                 format!("Create {name} from {default}"),
                 format!("linked to #{}", issue.number),
-                Some(Chosen::Send(change, about)),
+                Some(Step::Send(change, about)),
             )]
         }
         Pick::Checkout { repo, branch } => vec![
             crate::picker::entry(
                 format!("Check out {branch}"),
                 "in your clone",
-                Some(Chosen::Checkout(crate::clone::Checkout {
-                    repo: repo.clone(),
-                    pr: None,
-                    name: branch.clone(),
-                    track: Some(branch.clone()),
-                })),
+                Some(Step::Start(
+                    format!("Checking out {branch}…"),
+                    crate::clone::Checkout {
+                        repo: repo.clone(),
+                        pr: None,
+                        name: branch.clone(),
+                        track: Some(branch.clone()),
+                    }
+                    .into(),
+                )),
             ),
             crate::picker::entry("Not now", "", None),
         ],
@@ -818,7 +809,7 @@ fn base_rows(state: &State, pr: &PrRef, id: &NodeId, from: &str, head: &str, q: 
                 base: base.clone(),
             });
             confirm.choices = vec![("Change base".into(), crate::forms::Answer::Change(change))];
-            crate::picker::entry(base.clone(), "", Some(Chosen::Ask(Box::new(confirm))))
+            crate::picker::entry(base.clone(), "", Some(Step::Ask(Box::new(confirm))))
         })
         .collect();
     if rows.is_empty() {
@@ -867,7 +858,7 @@ fn transfer_rows(state: &State, issue: &IssueAt, id: &NodeId, q: &str) -> Rows {
                 "Transfer issue".into(),
                 crate::forms::Answer::Change(change),
             )];
-            crate::picker::entry(t.repo.to_string(), "", Some(Chosen::Ask(Box::new(confirm))))
+            crate::picker::entry(t.repo.to_string(), "", Some(Step::Ask(Box::new(confirm))))
         })
         .collect();
     if rows.is_empty() {
@@ -891,7 +882,7 @@ fn issue_rows(
     issue: &IssueAt,
     q: &str,
     skip: &[IssueAt],
-    row: impl Fn(IssueAt, &str) -> (PaletteItem, Option<Chosen>),
+    row: impl Fn(IssueAt, &str) -> (PaletteItem, Option<Step>),
 ) -> Rows {
     let mut rows = Vec::new();
     let typed = IssueAt::parse(q, &issue.repo).filter(|t| t != issue && !skip.contains(t));
@@ -968,7 +959,7 @@ fn relation_rows(state: &State, at: &IssueAt, id: &NodeId, q: &str, sub: bool) -
         rows.push(crate::picker::entry(
             format!("✓ {label}"),
             format!("↵ {verb}"),
-            Some(Chosen::Send(change(other.clone(), false), about.clone())),
+            Some(Step::Send(change(other.clone(), false), about.clone())),
         ));
     }
     if now.left_out() > 0 {
@@ -987,7 +978,7 @@ fn relation_rows(state: &State, at: &IssueAt, id: &NodeId, q: &str, sub: bool) -
         crate::picker::entry(
             label,
             "",
-            Some(Chosen::Send(change(other, true), about.clone())),
+            Some(Step::Send(change(other, true), about.clone())),
         )
     });
     // What's typed first: it's what ↵ takes.
@@ -1025,7 +1016,14 @@ fn category_rows(state: &State, repo: &RepoId, q: &str) -> Rows {
                 name: c.name.clone(),
             };
             let text = form_text(c);
-            crate::picker::entry(label, hint, Some(Chosen::Write(starting, text)))
+            crate::picker::entry(
+                label,
+                hint,
+                Some(Step::Compose(
+                    crate::compose::Target::NewDiscussion(starting),
+                    text,
+                )),
+            )
         })
         .collect();
     if found.categories.is_empty() {
@@ -1074,7 +1072,7 @@ pub fn picker_key(
             let child = match rows.get(p.selected) {
                 Some((
                     _,
-                    Some(crate::picker::Choice::Manage(Chosen::Send(
+                    Some(crate::picker::Choice::Step(Step::Send(
                         Change::Manage(Manage::SubIssue {
                             child, add: false, ..
                         }),
@@ -1089,7 +1087,7 @@ pub fn picker_key(
         (KeyCode::Enter, pick) if pick.stays() => {
             let chosen = rows.get_mut(p.selected).and_then(|(_, c)| c.take());
             match chosen {
-                Some(crate::picker::Choice::Manage(chosen)) => Some(choose(state, chosen)),
+                Some(crate::picker::Choice::Step(step)) => Some(crate::act::take(state, Ok(step))),
                 _ => Some(Vec::new()),
             }
         }
@@ -1146,26 +1144,6 @@ fn move_sub_issue(
         before: up,
     });
     send(state, change, Subject::Issue(at.repo.clone(), at.number))
-}
-
-/// A row chosen in one of this module's pickers.
-#[must_use]
-pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
-    match chosen {
-        Chosen::Send(change, about) => send(state, change, about),
-        Chosen::Ask(confirm) => {
-            state.overlay = Some(Overlay::Ask(confirm));
-            Vec::new()
-        }
-        Chosen::Checkout(checkout) => {
-            state.info(format!("Checking out {}…", checkout.name));
-            work::start(checkout)
-        }
-        Chosen::Write(starting, text) => {
-            let target = crate::compose::Target::NewDiscussion(starting);
-            state.compose(target, &text)
-        }
-    }
 }
 
 /// A change chosen in a confirmation that isn't simply sent: a revert or
