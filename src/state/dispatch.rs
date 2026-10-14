@@ -21,19 +21,14 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     let opened = state.route().cloned();
     // Who's signed in, and what the writes' answers changed of the
     // features' own state, show on pages too.
-    let shown = matches!(
-        msg,
-        Msg::Viewer(_) | Msg::Changed(..) | Msg::Create(_) | Msg::Write(_)
-    );
+    let shown = matches!(msg, Msg::Viewer(_) | Msg::Done(_));
     let data = shown || matches!(msg, Msg::Fetched { .. } | Msg::FetchedMore(..));
     if shown {
         state.shown_gen += 1;
     }
     // A write changes what GitHub shows, wherever it shows it.
     let wrote = match &msg {
-        Msg::Changed(_, _, r) => r.is_ok(),
-        Msg::Create(crate::create::Done::Created(_, r)) => r.is_ok(),
-        Msg::Write(done) => done.wrote(),
+        Msg::Done(done) => done.wrote(),
         // A queued write reached GitHub.
         Msg::Offline(crate::offline::Msg::Queue(crate::offline::queue::Told::Taken(_))) => true,
         // Drafts GitHub accepted wait in a pending review there.
@@ -123,9 +118,7 @@ pub(super) const LIVE_MS: u64 = 5_000;
 pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Diff(of, msg) => return diff_screen::update(state, &of, msg),
-        Msg::Create(done) => return crate::create::on_done(state, done),
-        Msg::Write(done) => return crate::writes::on_done(state, done),
-        Msg::Actions(done) => return crate::actions::on_done(state, done),
+        Msg::Done(done) => return done.apply(state),
         Msg::Key(key) => return on_key(state, key),
         Msg::Resize(w, h) => state.size = (w, h),
         Msg::Viewer(Ok(login)) => state.viewer = Some(login),
@@ -202,7 +195,6 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 Err(err) => state.error(format!("Couldn't load more: {err}")),
             }
         }
-        Msg::Changed(change, by, result) => return act::on_changed(state, &change, by, result),
         Msg::Mouse(ev) => return nav::on_mouse(state, ev),
         Msg::Timer(Timer::ExpireNotice(id)) => state.notices.expire(id),
         Msg::Timer(Timer::Spin) => {

@@ -169,7 +169,7 @@ fn a_repository_is_put_in_a_list_and_followed() {
     let labels: Vec<String> = s.picker_rows(p).into_iter().map(|(r, _)| r.label).collect();
     assert_eq!(labels, ["✓ Terminal tools", "  To read"]);
     let sent = press(&mut s, "read<Enter>");
-    let work = crate::site::lists::Work {
+    let work = crate::site::lists::SetLists {
         repo: ghtui(),
         item: NodeId::new("R_ghtui"),
         lists: vec![NodeId::new("UL_terminal-tools"), NodeId::new("UL_to-read")],
@@ -177,10 +177,8 @@ fn a_repository_is_put_in_a_list_and_followed() {
         list: "To read".into(),
         add: true,
     };
-    let lists = crate::site::Work::Lists(work.clone());
-    assert_eq!(sent, [crate::fixtures::start(lists)]);
-    let done = crate::site::Done::Lists(work, Ok(()));
-    let cmds = crate::fixtures::done::<crate::site::Work>(&mut s, done);
+    assert_eq!(sent, [crate::fixtures::start(work.clone())]);
+    let cmds = crate::fixtures::done(&mut s, work, Ok(()));
     says(&s, "Added gold-silver-copper/ghtui to “To read”");
     assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
     assert!(s.writing.expect.is_some());
@@ -194,9 +192,7 @@ fn a_repository_is_put_in_a_list_and_followed() {
     // A new name makes the list, and puts the repository in it too.
     press(&mut s, ",B");
     let sent = press(&mut s, "Rust<Enter>");
-    let crate::site::Work::Lists(w) = crate::fixtures::sent(&sent) else {
-        panic!("{sent:?}");
-    };
+    let w = crate::fixtures::sent::<crate::site::lists::SetLists>(&sent);
     assert_eq!(w.create.as_deref(), Some("Rust"));
 }
 
@@ -212,15 +208,13 @@ fn a_packages_version_is_deleted_after_asking() {
     };
     assert_eq!(ask.title, "Delete version sha256:3a7b55e1 of ghtui?");
     let sent = press(&mut s, "<Enter>");
-    let delete = crate::site::packages::Delete {
+    let delete = crate::site::packages::DeleteVersion {
         at: fixtures::package_ref(),
         id: 101,
         name: "sha256:3a7b55e1".into(),
     };
-    let work = crate::site::Work::DeleteVersion(delete.clone());
-    assert_eq!(sent, [crate::fixtures::start(work)]);
-    let done = crate::site::Done::DeleteVersion(delete, Ok(()));
-    crate::fixtures::done::<crate::site::Work>(&mut s, done);
+    assert_eq!(sent, [crate::fixtures::start(delete.clone())]);
+    crate::fixtures::done(&mut s, delete, Ok(()));
     says(&s, "Deleted version sha256:3a7b55e1 of ghtui");
     assert!(s.writing.expect.is_some());
     let mut detail = fixtures::package_detail();

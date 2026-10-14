@@ -912,7 +912,7 @@ fn send_pick(state: &mut State, pick: Pick) -> Vec<Cmd> {
 fn send(state: &mut State, about: Subject, edit: Edit) -> Vec<Cmd> {
     state.overlay = None;
     state.info(format!("{}…", doing(&edit)));
-    vec![Cmd::Api(Api::Change(Change::Edit(edit), By::Edit(about)))]
+    vec![crate::act::send(Change::Edit(edit), By::Edit(about))]
 }
 
 /// ctrl-s in a picker of many: sends what changed from what's set.

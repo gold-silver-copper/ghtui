@@ -8,7 +8,6 @@
 //! afterwards. Deleting asks first. Then the gist's page (or, once it's
 //! deleted, your gists) follows GitHub until it shows the change.
 
-use crate::api::GitHub;
 use crate::api::browse::Gist;
 use crate::api::gist::{FileChange, GistChange, MadeGist, NewGist};
 use crate::route::{Route, app, gists, people};
@@ -21,7 +20,8 @@ use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::review::ComposeTarget;
 use crate::state::{Cmd, Overlay, State};
-use crate::writes::{Answer, Chosen, Expected, Pick, Text, Work as Writes, item, row};
+use crate::work::{self, Cx, Failure, Job};
+use crate::writes::{Answer, Chosen, Expected, Pick, Text, item, row};
 
 /// A gist being made or changed.
 #[derive(Debug, Clone, Default)]
@@ -51,63 +51,24 @@ pub struct File {
     pub locked: Option<String>,
 }
 
-/// Work in the background.
+/// Making the gist written on the form at `route`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Work {
-    Create(Route, NewGist),
-    Update(Route, GistChange),
-    Delete { id: String, owner: String },
+pub struct Create {
+    pub route: Route,
+    pub new: NewGist,
 }
 
-#[derive(Debug)]
-pub enum Done {
-    Created(Route, Result<MadeGist, String>),
-    Updated(Route, GistChange, Result<(), String>),
-    Deleted {
-        id: String,
-        owner: String,
-        result: Result<(), String>,
-    },
+/// Changing a gist as its form at `route` has it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Update {
+    pub route: Route,
+    pub change: GistChange,
 }
 
-impl Done {
-    pub fn wrote(&self) -> bool {
-        match self {
-            Done::Created(_, result) => result.is_ok(),
-            Done::Updated(.., result) | Done::Deleted { result, .. } => result.is_ok(),
-        }
-    }
-}
-
-impl Work {
-    pub fn failed(&self, why: String) -> Done {
-        match self.clone() {
-            Work::Create(route, _) => Done::Created(route, Err(why)),
-            Work::Update(route, change) => Done::Updated(route, change, Err(why)),
-            Work::Delete { id, owner } => Done::Deleted {
-                id,
-                owner,
-                result: Err(why),
-            },
-        }
-    }
-
-    pub async fn run(self, gh: &GitHub) -> Done {
-        let why = |err: crate::api::ApiError| crate::writes::reason(&err);
-        match self {
-            Work::Create(route, new) => {
-                Done::Created(route, gh.create_gist(&new).await.map_err(why))
-            }
-            Work::Update(route, change) => {
-                let result = gh.update_gist(&change).await.map_err(why);
-                Done::Updated(route, change, result)
-            }
-            Work::Delete { id, owner } => {
-                let result = gh.delete_gist(&id).await.map_err(why);
-                Done::Deleted { id, owner, result }
-            }
-        }
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Delete {
+    pub id: String,
+    pub owner: String,
 }
 
 /// The gist form on screen (blank until it's started), and its page.
@@ -487,7 +448,7 @@ pub fn submit(state: &mut State) -> Vec<Cmd> {
         form_mut(state, &route).sending = true;
         crate::writes::sending(state);
         state.info("Saving the gist…");
-        return vec![Cmd::Write(Writes::Gist(Work::Update(route, change)))];
+        return work::start(Update { route, change });
     }
     let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
     let mut facts = vec![(names.join(", "), false)];
@@ -531,7 +492,10 @@ pub fn create(state: &mut State, route: &Route, public: bool) -> Vec<Cmd> {
     };
     form_mut(state, route).sending = true;
     crate::writes::sending(state);
-    vec![Cmd::Write(Writes::Gist(Work::Create(route.clone(), new)))]
+    work::start(Create {
+        route: route.clone(),
+        new,
+    })
 }
 
 /// `,D` on your gist: asks first, as GitHub does.
@@ -576,10 +540,10 @@ pub fn delete(state: &mut State, route: &Route) -> Vec<Cmd> {
     };
     let owner = g.owner.clone().unwrap_or_default();
     crate::writes::sending(state);
-    vec![Cmd::Write(Writes::Gist(Work::Delete {
+    work::start(Delete {
         id: id.clone(),
         owner,
-    }))]
+    })
 }
 
 /// What a gist shows once GitHub has it as sent.
@@ -591,83 +555,111 @@ fn expected(id: String, description: String, files: Vec<(String, String)>) -> Ex
     }
 }
 
-/// Work's answers: the gist's page follows GitHub until it shows the
-/// change; once it's deleted, your gists do.
-#[must_use]
-pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
-    match done {
-        Done::Created(route, Ok(made)) => {
-            let form = state.writing.gists.remove(&route).unwrap_or_default();
-            crate::writes::close_sender(state, &route);
-            let owner = made.owner.map(|o| o.login).or_else(|| state.viewer.clone());
-            state.info("Created the gist");
-            if state.route() != Some(&route) {
-                return Vec::new();
-            }
-            let files = named(&form).unwrap_or_default();
-            let page = Route::Gists(gists::Gist {
-                owner,
-                id: made.id.clone(),
-            });
-            crate::writes::expect(
-                state,
-                page.clone(),
-                expected(made.id, form.description, files),
-            );
-            state.replace(page, true, None)
-        }
-        Done::Updated(route, change, Ok(())) => {
-            let form = state.writing.gists.remove(&route).unwrap_or_default();
-            crate::writes::close_sender(state, &route);
-            state.info("Saved the gist");
-            let Route::Gists(gists::EditGist { owner, id }) = &route else {
-                return Vec::new();
-            };
-            if state.route() != Some(&route) {
-                return Vec::new();
-            }
-            let page = Route::Gists(gists::Gist {
-                owner: Some(owner.clone()),
-                id: id.clone(),
-            });
-            let files = named(&form).unwrap_or_default();
-            crate::writes::expect(
-                state,
-                page.clone(),
-                expected(change.id, change.description, files),
-            );
-            back_to(state, page)
-        }
-        Done::Deleted {
-            id,
-            owner,
-            result: Ok(()),
-        } => {
-            state.overlay = None;
-            state.info("Deleted the gist");
-            let on_it = matches!(state.route(), Some(Route::Gists(gists::Gist { id: shown, .. })) if *shown == id);
-            if !on_it {
-                return Vec::new();
-            }
-            let page = Route::Gists(gists::Gists(owner.clone()));
-            crate::writes::expect(state, page.clone(), Expected::GistGone(owner, id));
-            state.replace(page, true, None)
-        }
-        Done::Created(route, Err(why)) | Done::Updated(route, _, Err(why)) => {
-            if let Some(form) = state.writing.gists.get_mut(&route) {
-                form.sending = false;
-                form.error = Some(why.clone());
-            }
-            crate::writes::say(state, format!("GitHub didn't save the gist: {why}"));
-            Vec::new()
-        }
-        Done::Deleted {
-            result: Err(why), ..
-        } => {
-            crate::writes::say(state, format!("GitHub didn't delete the gist: {why}"));
-            Vec::new()
-        }
+/// The gist's page follows GitHub until it shows it.
+impl Job for Create {
+    type Out = MadeGist;
+
+    async fn run(&self, cx: &Cx) -> Result<MadeGist, Failure> {
+        Ok(cx.gh.create_gist(&self.new).await?)
     }
+
+    fn done(self, state: &mut State, result: Result<MadeGist, Failure>) -> Vec<Cmd> {
+        let route = self.route;
+        let made = match result {
+            Ok(made) => made,
+            Err(why) => return unsaved(state, &route, &why),
+        };
+        let form = state.writing.gists.remove(&route).unwrap_or_default();
+        crate::writes::close_sender(state, &route);
+        let owner = made.owner.map(|o| o.login).or_else(|| state.viewer.clone());
+        state.info("Created the gist");
+        if state.route() != Some(&route) {
+            return Vec::new();
+        }
+        let files = named(&form).unwrap_or_default();
+        let page = Route::Gists(gists::Gist {
+            owner,
+            id: made.id.clone(),
+        });
+        crate::writes::expect(
+            state,
+            page.clone(),
+            expected(made.id, form.description, files),
+        );
+        state.replace(page, true, None)
+    }
+}
+
+/// The gist's page follows GitHub until it shows the change.
+impl Job for Update {
+    type Out = ();
+
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        Ok(cx.gh.update_gist(&self.change).await?)
+    }
+
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        let Update { route, change } = self;
+        if let Err(why) = result {
+            return unsaved(state, &route, &why);
+        }
+        let form = state.writing.gists.remove(&route).unwrap_or_default();
+        crate::writes::close_sender(state, &route);
+        state.info("Saved the gist");
+        let Route::Gists(gists::EditGist { owner, id }) = &route else {
+            return Vec::new();
+        };
+        if state.route() != Some(&route) {
+            return Vec::new();
+        }
+        let page = Route::Gists(gists::Gist {
+            owner: Some(owner.clone()),
+            id: id.clone(),
+        });
+        let files = named(&form).unwrap_or_default();
+        crate::writes::expect(
+            state,
+            page.clone(),
+            expected(change.id, change.description, files),
+        );
+        back_to(state, page)
+    }
+}
+
+/// Once it's deleted, your gists follow GitHub until it's gone.
+impl Job for Delete {
+    type Out = ();
+
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        Ok(cx.gh.delete_gist(&self.id).await?)
+    }
+
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        let Delete { id, owner } = self;
+        if let Err(why) = result {
+            crate::writes::say(state, format!("GitHub didn't delete the gist: {why}"));
+            return Vec::new();
+        }
+        state.overlay = None;
+        state.info("Deleted the gist");
+        let on_it = matches!(state.route(), Some(Route::Gists(gists::Gist { id: shown, .. })) if *shown == id);
+        if !on_it {
+            return Vec::new();
+        }
+        let page = Route::Gists(gists::Gists(owner.clone()));
+        crate::writes::expect(state, page.clone(), Expected::GistGone(owner, id));
+        state.replace(page, true, None)
+    }
+}
+
+/// GitHub didn't save the gist on the form at `route`, and why.
+fn unsaved(state: &mut State, route: &Route, why: &Failure) -> Vec<Cmd> {
+    if let Some(form) = state.writing.gists.get_mut(route) {
+        form.sending = false;
+        form.error = Some(why.to_string());
+    }
+    crate::writes::say(state, format!("GitHub didn't save the gist: {why}"));
+    Vec::new()
 }
 
 /// Back to `page` when it's the page before, else to it in place.

@@ -9,14 +9,23 @@ use crate::ui::page::{Link, Page};
 use crate::ui::pages::{Mark, TextBox, WriteFormView};
 
 use super::{
-    Chosen, Expected, Field, Form, FormOf, MilestoneWrite, Subject, Work, ask, expect, failed,
-    form, form_mut, form_row, item, refused, selected,
+    Chosen, Expected, Field, Form, FormOf, MilestoneWrite, Subject, ask, expect, failed, form,
+    form_mut, form_row, item, refused, selected,
 };
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::state::{Cmd, State};
-use crate::writes::{Work as Writes, row};
+use crate::work::{self, Cx, Failure, Job};
+use crate::writes::row;
+
+/// A milestone's change: a new one's (no number), or one's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Save {
+    pub repo: RepoId,
+    pub number: Option<u64>,
+    pub write: MilestoneWrite,
+}
 
 const WHAT: &str = "Changing milestones";
 
@@ -189,11 +198,11 @@ pub(super) fn submit(
     form_mut(state, route).sending = true;
     crate::writes::sending(state);
     state.info(format!("Saving the milestone {}…", change.title));
-    vec![Cmd::Write(Writes::Housekeeping(Work::Milestone {
+    work::start(Save {
         repo: repo.clone(),
         number,
         write: MilestoneWrite::Save(change),
-    }))]
+    })
 }
 
 /// `,x`: closes the milestone, or reopens it. GitHub doesn't ask.
@@ -209,11 +218,11 @@ pub(super) fn toggle(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
     };
     let verb = if m.closed { "Reopening" } else { "Closing" };
     state.info(format!("{verb} {}…", m.title));
-    vec![Cmd::Write(Writes::Housekeeping(Work::Milestone {
+    work::start(Save {
         repo: repo.clone(),
         number: Some(m.number),
         write: MilestoneWrite::Close(!m.closed),
-    }))]
+    })
 }
 
 /// `,D`: asks first, as GitHub does.
@@ -246,130 +255,147 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
 #[must_use]
 pub(super) fn delete(state: &mut State, repo: RepoId, number: u64) -> Vec<Cmd> {
     crate::writes::sending(state);
-    vec![Cmd::Write(Writes::Housekeeping(Work::Milestone {
+    work::start(Save {
         repo,
         number: Some(number),
         write: MilestoneWrite::Delete,
-    }))]
+    })
 }
 
-/// GitHub's answer: back on the list or the milestone's page, which
-/// follows GitHub until it shows the change.
-#[must_use]
-pub(super) fn on_done(
-    state: &mut State,
-    work: Work,
-    result: Result<Option<u64>, String>,
-) -> Vec<Cmd> {
-    let Work::Milestone {
-        repo,
-        number,
-        write,
-    } = work
-    else {
-        return Vec::new();
-    };
-    let form = Route::Housekeeping(FormOf::Milestone {
-        repo: repo.clone(),
-        number,
-    });
-    let made = number.is_none();
-    let number = match result {
-        Ok(Some(n)) => n,
-        Ok(None) => return Vec::new(),
-        Err(why) => {
-            if matches!(write, MilestoneWrite::Close(_)) {
-                state.error(why);
-            } else {
-                failed(state, &form, why);
+impl Job for Save {
+    type Out = Option<u64>;
+
+    async fn run(&self, cx: &Cx) -> Result<Option<u64>, Failure> {
+        let (gh, repo) = (&cx.gh, &self.repo);
+        Ok(match (self.number, &self.write) {
+            (None, MilestoneWrite::Save(m)) => Some(gh.create_milestone(repo, m).await?.number),
+            (Some(n), MilestoneWrite::Save(m)) => {
+                gh.update_milestone(repo, n, m).await?;
+                Some(n)
             }
-            return Vec::new();
-        }
-    };
-    let asked = state.route().cloned();
-    if let Some(route) = &asked {
-        crate::writes::close_sender(state, route);
+            (Some(n), MilestoneWrite::Close(closed)) => {
+                gh.set_milestone_closed(repo, n, *closed).await?;
+                Some(n)
+            }
+            (Some(n), MilestoneWrite::Delete) => {
+                gh.delete_milestone(repo, n).await?;
+                Some(n)
+            }
+            (None, _) => None,
+        })
     }
-    state.writing.housekeeping.forms.remove(&form);
-    let mut cmds = Vec::new();
-    if state.route() == Some(&form) {
-        cmds.extend(state.back());
-        state.forward.clear();
-    }
-    let (closed, title) = match &write {
-        MilestoneWrite::Save(m) => {
-            let verb = if made { "Created" } else { "Saved" };
-            state.info(format!("{verb} the milestone {}", m.title));
-            (Some(false), Some(m.title.clone()))
-        }
-        MilestoneWrite::Close(closed) => {
-            state.info(if *closed {
-                "Closed the milestone"
-            } else {
-                "Reopened the milestone"
-            });
-            (Some(*closed), None)
-        }
-        MilestoneWrite::Delete => {
-            state.info("Deleted the milestone");
-            (None, None)
-        }
-    };
-    // A deleted milestone's page is gone: its list instead.
-    if write == MilestoneWrite::Delete
-        && let Some(Route::Issues(issues::Milestone { repo: r, number: n })) =
-            state.route().cloned()
-        && r == repo
-        && n == number
-    {
-        let list = Route::Issues(issues::Milestones {
+
+    /// GitHub's answer: back on the list or the milestone's page, which
+    /// follows GitHub until it shows the change.
+    fn done(self, state: &mut State, result: Result<Option<u64>, Failure>) -> Vec<Cmd> {
+        let work = self;
+        let Save {
+            repo,
+            number,
+            write,
+        } = work;
+        let form = Route::Housekeeping(FormOf::Milestone {
             repo: repo.clone(),
-            closed: false,
+            number,
         });
-        cmds.extend(state.replace(list, true, None));
-    }
-    // An edit keeps it open or closed as it was: its title is what's
-    // waited for, on the list it's on.
-    let closed = match (&write, closed) {
-        (MilestoneWrite::Save(_), _) => match state.route() {
-            Some(Route::Issues(issues::Milestones { closed, .. })) => Some(*closed),
+        let made = number.is_none();
+        let number = match result {
+            Ok(Some(n)) => n,
+            Ok(None) => return Vec::new(),
+            Err(why) => {
+                if matches!(write, MilestoneWrite::Close(_)) {
+                    state.error(why.to_string());
+                } else {
+                    failed(state, &form, &why);
+                }
+                return Vec::new();
+            }
+        };
+        let asked = state.route().cloned();
+        if let Some(route) = &asked {
+            crate::writes::close_sender(state, route);
+        }
+        state.writing.housekeeping.forms.remove(&form);
+        let mut cmds = Vec::new();
+        if state.route() == Some(&form) {
+            cmds.extend(state.back());
+            state.forward.clear();
+        }
+        let (closed, title) = match &write {
+            MilestoneWrite::Save(m) => {
+                let verb = if made { "Created" } else { "Saved" };
+                state.info(format!("{verb} the milestone {}", m.title));
+                (Some(false), Some(m.title.clone()))
+            }
+            MilestoneWrite::Close(closed) => {
+                state.info(if *closed {
+                    "Closed the milestone"
+                } else {
+                    "Reopened the milestone"
+                });
+                (Some(*closed), None)
+            }
+            MilestoneWrite::Delete => {
+                state.info("Deleted the milestone");
+                (None, None)
+            }
+        };
+        // A deleted milestone's page is gone: its list instead.
+        if write == MilestoneWrite::Delete
+            && let Some(Route::Issues(issues::Milestone { repo: r, number: n })) =
+                state.route().cloned()
+            && r == repo
+            && n == number
+        {
+            let list = Route::Issues(issues::Milestones {
+                repo: repo.clone(),
+                closed: false,
+            });
+            cmds.extend(state.replace(list, true, None));
+        }
+        // An edit keeps it open or closed as it was: its title is what's
+        // waited for, on the list it's on.
+        let closed = match (&write, closed) {
+            (MilestoneWrite::Save(_), _) => match state.route() {
+                Some(Route::Issues(issues::Milestones { closed, .. })) => Some(*closed),
+                Some(Route::Issues(issues::Milestone { repo: r, number: n }))
+                    if *r == repo && *n == number =>
+                {
+                    state
+                        .picked::<MilestoneDetail>(&DataKey::Milestone(repo.clone(), number))
+                        .map(|d| d.info.closed)
+                }
+                _ => Some(false),
+            },
+            (_, closed) => closed,
+        };
+        let list = match state.route() {
+            Some(Route::Issues(issues::Milestones { repo: r, closed })) if *r == repo => {
+                Some(Some(*closed))
+            }
             Some(Route::Issues(issues::Milestone { repo: r, number: n }))
                 if *r == repo && *n == number =>
             {
-                state
-                    .picked::<MilestoneDetail>(&DataKey::Milestone(repo.clone(), number))
-                    .map(|d| d.info.closed)
+                Some(None)
             }
-            _ => Some(false),
-        },
-        (_, closed) => closed,
-    };
-    let list = match state.route() {
-        Some(Route::Issues(issues::Milestones { repo: r, closed })) if *r == repo => {
-            Some(Some(*closed))
+            _ => None,
+        };
+        if let (Some(list), Some(page)) = (list, state.route().cloned()) {
+            expect(
+                state,
+                page.clone(),
+                Expected::Milestone {
+                    repo,
+                    number,
+                    list,
+                    closed,
+                    title,
+                },
+            );
+            cmds.extend(state.ensure_route(&page, true));
         }
-        Some(Route::Issues(issues::Milestone { repo: r, number: n }))
-            if *r == repo && *n == number =>
-        {
-            Some(None)
-        }
-        _ => None,
-    };
-    if let (Some(list), Some(page)) = (list, state.route().cloned()) {
-        expect(
-            state,
-            page.clone(),
-            Expected::Milestone {
-                repo,
-                number,
-                list,
-                closed,
-                title,
-            },
-        );
-        cmds.extend(state.ensure_route(&page, true));
+        cmds
     }
-    cmds
 }
 
 /// The menu's rows on the milestones and a milestone's page.

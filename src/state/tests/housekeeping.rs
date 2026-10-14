@@ -9,21 +9,11 @@ use std::path::PathBuf;
 use crate::api::housekeeping::{
     BranchRules, FileLook, LabelChange, MadeRepo, MilestoneChange, NewFork, NewRepo, RefKind,
 };
-use crate::housekeeping::{
-    Done as HDone, FileChange, FormOf, MilestoneWrite, RefWrite, Work as HWork,
-};
+use crate::housekeeping::{FileChange, FormOf, MilestoneWrite, RefWrite};
+use crate::housekeeping::{files, labels, milestones, refs, repos};
 
 use super::*;
 use crate::fixtures::{self};
-
-/// The one housekeeping work `cmds` hold.
-fn sent(cmds: &[Cmd]) -> HWork {
-    fixtures::sent(cmds)
-}
-
-fn done(s: &mut State, done: HDone) -> Vec<Cmd> {
-    fixtures::done::<HWork>(s, done)
-}
 
 fn asked(s: &State) -> &crate::create::Ask {
     match &s.overlay {
@@ -101,21 +91,14 @@ fn a_label_is_made_and_the_page_follows() {
     select(&mut s, "Colour");
     press(&mut s, "<Enter><C-u>#ABCDEF<Enter>");
     let cmds = press(&mut s, ",s");
-    let HWork::Label { was, change, .. } = sent(&cmds) else {
-        panic!("{cmds:?}");
-    };
+    let work = fixtures::sent::<labels::Save>(&cmds);
     let made = LabelChange {
         name: "triage".into(),
         color: "abcdef".into(),
         description: String::new(),
     };
-    assert_eq!((was, change.clone()), (None, Some(made)));
-    let work = HWork::Label {
-        repo: ghtui(),
-        was: None,
-        change,
-    };
-    done(&mut s, HDone::Label(work, Ok(())));
+    assert_eq!((&work.was, &work.change), (&None, &Some(made)));
+    fixtures::done(&mut s, work, Ok(()));
     assert_eq!(
         s.route(),
         Some(&Route::Issues(issues::Labels(ghtui()))),
@@ -143,14 +126,12 @@ fn a_label_is_edited_and_deleted() {
     select(&mut s, "good first issue");
     press(&mut s, ",e");
     let cmds = press(&mut s, ",s");
-    let HWork::Label { was, change, .. } = sent(&cmds) else {
-        panic!("{cmds:?}");
-    };
-    assert_eq!(was.as_deref(), Some("good first issue"));
-    let change = change.unwrap();
+    let work = fixtures::sent::<labels::Save>(&cmds);
+    assert_eq!(work.was.as_deref(), Some("good first issue"));
+    let change = work.change.clone().unwrap();
     assert_eq!(change.color, "7057ff");
     assert_eq!(change.description, "Good for newcomers");
-    done(&mut s, HDone::Label(sent(&cmds), Ok(())));
+    fixtures::done(&mut s, work, Ok(()));
     assert_eq!(s.route(), Some(&Route::Issues(issues::Labels(ghtui()))));
 
     select(&mut s, "bug");
@@ -166,8 +147,8 @@ fn a_label_is_edited_and_deleted() {
     );
     let cmds = press(&mut s, "<Enter>");
     assert_eq!(
-        sent(&cmds),
-        HWork::Label {
+        fixtures::sent::<labels::Save>(&cmds),
+        labels::Save {
             repo: ghtui(),
             was: Some("bug".into()),
             change: None,
@@ -183,13 +164,13 @@ fn milestones_are_closed_edited_and_deleted() {
     let mut s = with_milestones();
     select(&mut s, "Pages");
     let cmds = press(&mut s, ",x");
-    let close = HWork::Milestone {
+    let close = milestones::Save {
         repo: ghtui(),
         number: Some(5),
         write: MilestoneWrite::Close(true),
     };
-    assert_eq!(sent(&cmds), close);
-    done(&mut s, HDone::Milestone(close, Ok(Some(5))));
+    assert_eq!(fixtures::sent::<milestones::Save>(&cmds), close);
+    fixtures::done(&mut s, close, Ok(Some(5)));
     says(&s, "Closed the milestone");
     let mut list = fixtures::milestones();
     list.results.items.retain(|m| m.number != 5);
@@ -215,16 +196,14 @@ fn milestones_are_closed_edited_and_deleted() {
     assert!(page_text(&s).contains("Due date"));
     press(&mut s, "<C-u>2027-01-31<Enter>");
     let cmds = press(&mut s, ",s");
-    let HWork::Milestone { write, .. } = sent(&cmds) else {
-        panic!("{cmds:?}");
-    };
+    let work = fixtures::sent::<milestones::Save>(&cmds);
     let saved = MilestoneChange {
         title: "Links".into(),
         description: fixtures::milestone().info.description,
         due_on: Some("2027-01-31".into()),
     };
-    assert_eq!(write, MilestoneWrite::Save(saved));
-    done(&mut s, HDone::Milestone(sent(&cmds), Ok(Some(3))));
+    assert_eq!(work.write, MilestoneWrite::Save(saved));
+    fixtures::done(&mut s, work, Ok(Some(3)));
     assert_eq!(
         s.route(),
         Some(&Route::Issues(issues::Milestones {
@@ -237,12 +216,12 @@ fn milestones_are_closed_edited_and_deleted() {
     press(&mut s, ",D");
     assert_eq!(asked(&s).title, "Delete the milestone Links?");
     let cmds = press(&mut s, "<Enter>");
-    let delete = HWork::Milestone {
+    let delete = milestones::Save {
         repo: ghtui(),
         number: Some(3),
         write: MilestoneWrite::Delete,
     };
-    assert_eq!(sent(&cmds), delete);
+    assert_eq!(fixtures::sent::<milestones::Save>(&cmds), delete);
 }
 
 /// A branch is made from the branches list at the branch selected, by
@@ -261,8 +240,8 @@ fn branches_are_made_and_protected_ones_kept() {
     // Where it starts: the branch selected first.
     let cmds = press(&mut s, "<Enter>");
     assert_eq!(
-        sent(&cmds),
-        HWork::Ref {
+        fixtures::sent::<refs::Save>(&cmds),
+        refs::Save {
             repo: repo.clone(),
             kind: RefKind::Branch,
             name: "topic".into(),
@@ -322,15 +301,15 @@ fn in_a_clone_git_pushes_after_asking() {
         ask.facts
     );
     let cmds = press(&mut s, "<Enter>");
-    let delete = HWork::Ref {
+    let delete = refs::Save {
         repo: repo.clone(),
         kind: RefKind::Branch,
         name: "tabs".into(),
         write: RefWrite::Delete,
         clone: Some(clone),
     };
-    assert_eq!(sent(&cmds), delete);
-    done(&mut s, HDone::Ref(delete, Ok(())));
+    assert_eq!(fixtures::sent::<refs::Save>(&cmds), delete);
+    fixtures::done(&mut s, delete, Ok(()));
     says(&s, "Deleted the branch tabs");
     let mut branches = fixtures::branches();
     branches.items.retain(|b| b.name != "tabs");
@@ -360,12 +339,13 @@ fn a_repository_is_forked_and_opened() {
         name: "ghtui".into(),
         default_branch_only: true,
     };
-    assert_eq!(sent(&cmds), HWork::Fork(form.clone(), new));
+    let fork = repos::Fork { route: form, new };
+    assert_eq!(fixtures::sent::<repos::Fork>(&cmds), fork);
     let made = MadeRepo {
         full_name: "octocat/ghtui".into(),
         clone_url: "https://github.com/octocat/ghtui.git".into(),
     };
-    done(&mut s, HDone::Forked(form, Ok(made)));
+    fixtures::done(&mut s, fork, Ok(made));
     let fork = crate::api::model::RepoId::new("octocat", "ghtui");
     assert_eq!(s.route(), Some(&Route::Code(code::Repo(fork))));
     assert!(s.busy().is_some_and(|b| b.contains("make the repository")));
@@ -408,19 +388,20 @@ fn a_new_repository_is_made_and_cloning_offered() {
         gitignore: None,
         license: Some("mit".into()),
     };
-    assert_eq!(sent(&cmds), HWork::Repo(form.clone(), new));
+    let make = repos::Make { route: form, new };
+    assert_eq!(fixtures::sent::<repos::Make>(&cmds), make);
     let made = MadeRepo {
         full_name: "ghtui-org/tools".into(),
         clone_url: "https://github.com/ghtui-org/tools.git".into(),
     };
-    done(&mut s, HDone::Made(form, Ok(made)));
+    fixtures::done(&mut s, make, Ok(made));
     let repo = crate::api::model::RepoId::new("ghtui-org", "tools");
     assert_eq!(s.route(), Some(&Route::Code(code::Repo(repo))));
     assert_eq!(asked(&s).title, "Clone ghtui-org/tools?");
     let cmds = press(&mut s, "<Enter>");
     assert_eq!(
-        sent(&cmds),
-        HWork::Clone {
+        fixtures::sent::<repos::CloneTo>(&cmds),
+        repos::CloneTo {
             url: "https://github.com/ghtui-org/tools.git".into(),
             dir: PathBuf::from("tools"),
         }
@@ -480,10 +461,9 @@ fn a_file_is_edited_and_committed_on_a_new_branch() {
     );
     assert!(ask.facts.iter().any(|(f, _)| f == "On GitHub, by you"));
     let cmds = press(&mut s, "<Enter>");
-    let HWork::Commit(route, write) = sent(&cmds) else {
-        panic!("{cmds:?}");
-    };
-    assert_eq!(route, form);
+    let commit = fixtures::sent::<files::Commit>(&cmds);
+    let write = &commit.write;
+    assert_eq!(commit.route, form);
     assert_eq!(write.commit.branch, "octocat-patch-1");
     assert_eq!(write.commit.from.as_deref(), Some(look().commit.as_str()));
     assert_eq!(
@@ -493,7 +473,7 @@ fn a_file_is_edited_and_committed_on_a_new_branch() {
     assert_eq!(write.commit.message, "Update main.rs");
     let text = &write.commit.additions[0].1;
     assert!(text.starts_with("// Edited.\nuse std::io;"), "{text}");
-    done(&mut s, HDone::Committed(form, write, Ok(())));
+    fixtures::done(&mut s, commit, Ok(()));
     let page = Route::blob(ghtui(), "octocat-patch-1".into(), "src/main.rs".into());
     assert_eq!(s.route(), Some(&page));
     assert_eq!(asked(&s).title, "Open a pull request for octocat-patch-1?");
@@ -523,16 +503,12 @@ fn a_file_changed_meanwhile_keeps_your_text() {
     c.input.insert_str("Mine. ");
     press(&mut s, "<C-s>");
     let cmds = press(&mut s, "<Enter>");
-    let HWork::Commit(_, write) = sent(&cmds) else {
-        panic!("{cmds:?}");
-    };
+    let commit = fixtures::sent::<files::Commit>(&cmds);
+    let write = &commit.write;
     assert_eq!(write.commit.branch, "main");
     assert_eq!(write.commit.from, None);
     let why = "src/main.rs changed on GitHub since you opened it: committing would overwrite that";
-    done(
-        &mut s,
-        HDone::Committed(form.clone(), write, Err(why.into())),
-    );
+    fixtures::done(&mut s, commit, Err(fixtures::failure(why)));
     assert_eq!(s.route(), Some(&form));
     assert!(page_text(&s).contains("changed on GitHub since you opened it"));
     let kept = &s.writing.housekeeping.forms[&form].text;
@@ -556,13 +532,12 @@ fn a_file_is_deleted_with_a_commit() {
     press(&mut s, ",s");
     assert_eq!(asked(&s).title, "Delete src/main.rs?");
     let cmds = press(&mut s, "<Enter>");
-    let HWork::Commit(_, write) = sent(&cmds) else {
-        panic!("{cmds:?}");
-    };
+    let commit = fixtures::sent::<files::Commit>(&cmds);
+    let write = &commit.write;
     assert_eq!(write.commit.deletions, ["src/main.rs"]);
     assert!(write.commit.additions.is_empty());
     assert_eq!(write.commit.message, "Delete main.rs");
-    done(&mut s, HDone::Committed(form, write, Ok(())));
+    fixtures::done(&mut s, commit, Ok(()));
     let folder = Route::Code(code::Tree {
         repo: ghtui(),
         rev: "main".into(),

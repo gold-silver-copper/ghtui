@@ -27,7 +27,7 @@ use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::{Kind, fuzzy_score};
-use crate::state::{Api, Cmd, Screen, State};
+use crate::state::{Cmd, Screen, State};
 
 /// The actions on a project's pages.
 pub const ACTIONS: [Action; 8] = [
@@ -84,10 +84,10 @@ impl Drafting {
             },
         };
         let about = Subject::Project(self.project.clone(), self.view);
-        Ok(vec![Cmd::Api(Api::Change(
+        Ok(vec![crate::act::send(
             Change::Project(change),
             By::Edit(about),
-        ))])
+        )])
     }
 }
 
@@ -439,7 +439,7 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
             let about = Subject::Project(project, view);
             if !archived {
                 state.info("Restoring it…");
-                return vec![Cmd::Api(Api::Change(change, By::Act(about)))];
+                return vec![crate::act::send(change, By::Act(about))];
             }
             // GitHub asks first.
             let title = crate::ui::text::truncate(it.title(), 50);
@@ -795,10 +795,10 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
             if let Change::Project(c) = &change {
                 state.info(format!("{}…", doing(c)));
             }
-            vec![Cmd::Api(Api::Change(
+            vec![crate::act::send(
                 change,
                 By::Act(Subject::Project(project, view)),
-            ))]
+            )]
         }
         Chosen::Draft(drafting, title) => {
             state.overlay = None;
@@ -819,7 +819,7 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
                 };
                 state.info(format!("{doing} {said}…"));
             }
-            vec![Cmd::Api(Api::Change(change, By::Act(at.about())))]
+            vec![crate::act::send(change, By::Act(at.about()))]
         }
     }
 }

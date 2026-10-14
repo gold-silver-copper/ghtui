@@ -16,11 +16,8 @@ use crate::route::{Family, Route, Target, Url, code, issues};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
-use crate::api::GitHub;
 use crate::api::browse::Results;
-use crate::api::housekeeping::{
-    LabelChange, LabelInfo, MadeRepo, MilestoneChange, NewFork, NewRepo, RefKind,
-};
+use crate::api::housekeeping::{LabelChange, LabelInfo, MilestoneChange, RefKind};
 use crate::api::model::RepoId;
 use crate::git::local::Clone;
 use crate::ui::overlays::PaletteItem;
@@ -32,15 +29,15 @@ use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::state::{Cmd, Screen, State};
-use crate::writes::{Expected as Expects, Work as Writes, row};
+use crate::writes::{Expected as Expects, row};
 
-mod files;
+pub mod files;
 pub mod git;
-mod labels;
+pub mod labels;
 pub(crate) use labels::label_url;
-mod milestones;
-mod refs;
-mod repos;
+pub mod milestones;
+pub mod refs;
+pub mod repos;
 
 /// The actions housekeeping adds.
 pub const ACTIONS: [Action; 3] = [Action::NewHere, Action::Fork, Action::NewRepo];
@@ -1313,7 +1310,7 @@ pub fn answer(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
         ) => refs::send(state, repo, kind, name, from),
         (Answer::Clone, Some(Subject::Clone { url, dir })) => {
             crate::writes::sending(state);
-            vec![Cmd::Write(Writes::Housekeeping(Work::Clone { url, dir }))]
+            crate::work::start(repos::CloneTo { url, dir })
         }
         (Answer::Propose, Some(Subject::Propose(repo, branch, base))) => {
             state.overlay = None;
@@ -1326,7 +1323,7 @@ pub fn answer(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
     }
 }
 
-// ---- work in the background ------------------------------------------------------------
+// ---- writes ------------------------------------------------------------
 
 /// A milestone's change.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1358,153 +1355,9 @@ pub struct FileWrite {
     pub clone: Option<Clone>,
 }
 
-/// Work in the background.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Work {
-    /// Make or change a label (`was`: its name before), or (no change)
-    /// delete it.
-    Label {
-        repo: RepoId,
-        was: Option<String>,
-        change: Option<LabelChange>,
-    },
-    Milestone {
-        repo: RepoId,
-        number: Option<u64>,
-        write: MilestoneWrite,
-    },
-    Ref {
-        repo: RepoId,
-        kind: RefKind,
-        name: String,
-        write: RefWrite,
-        clone: Option<Clone>,
-    },
-    Fork(Route, NewFork),
-    Repo(Route, NewRepo),
-    Clone {
-        url: String,
-        dir: PathBuf,
-    },
-    Commit(Route, Box<FileWrite>),
-}
-
-/// Work's answer.
-#[derive(Debug)]
-pub enum Done {
-    Label(Work, Result<(), String>),
-    /// A new milestone's number.
-    Milestone(Work, Result<Option<u64>, String>),
-    Ref(Work, Result<(), String>),
-    Forked(Route, Result<MadeRepo, String>),
-    Made(Route, Result<MadeRepo, String>),
-    Cloned(PathBuf, Result<(), String>),
-    Committed(Route, Box<FileWrite>, Result<(), String>),
-}
-
-impl Done {
-    pub fn wrote(&self) -> bool {
-        match self {
-            Done::Label(_, r) | Done::Ref(_, r) | Done::Committed(_, _, r) => r.is_ok(),
-            Done::Milestone(_, r) => r.is_ok(),
-            Done::Forked(_, r) | Done::Made(_, r) => r.is_ok(),
-            Done::Cloned(..) => false,
-        }
-    }
-}
-
-impl Work {
-    pub fn failed(&self, why: String) -> Done {
-        match self.clone() {
-            w @ Work::Label { .. } => Done::Label(w, Err(why)),
-            w @ Work::Milestone { .. } => Done::Milestone(w, Err(why)),
-            w @ Work::Ref { .. } => Done::Ref(w, Err(why)),
-            Work::Fork(route, _) => Done::Forked(route, Err(why)),
-            Work::Repo(route, _) => Done::Made(route, Err(why)),
-            Work::Clone { dir, .. } => Done::Cloned(dir, Err(why)),
-            Work::Commit(route, write) => Done::Committed(route, write, Err(why)),
-        }
-    }
-
-    pub async fn run(self, gh: &GitHub) -> Done {
-        let why = |err: crate::api::ApiError| crate::writes::reason(&err);
-        match self {
-            Work::Label {
-                ref repo,
-                ref was,
-                ref change,
-            } => {
-                let result = match (was, change) {
-                    (None, Some(c)) => gh.create_label(repo, c).await,
-                    (Some(was), Some(c)) => gh.update_label(repo, was, c).await,
-                    (Some(was), None) => gh.delete_label(repo, was).await,
-                    (None, None) => Ok(()),
-                };
-                Done::Label(self, result.map_err(why))
-            }
-            Work::Milestone {
-                ref repo,
-                number,
-                ref write,
-            } => {
-                let result = match (number, write) {
-                    (None, MilestoneWrite::Save(m)) => {
-                        gh.create_milestone(repo, m).await.map(|m| Some(m.number))
-                    }
-                    (Some(n), MilestoneWrite::Save(m)) => {
-                        gh.update_milestone(repo, n, m).await.map(|()| Some(n))
-                    }
-                    (Some(n), MilestoneWrite::Close(closed)) => gh
-                        .set_milestone_closed(repo, n, *closed)
-                        .await
-                        .map(|()| Some(n)),
-                    (Some(n), MilestoneWrite::Delete) => {
-                        gh.delete_milestone(repo, n).await.map(|()| Some(n))
-                    }
-                    (None, _) => Ok(None),
-                };
-                Done::Milestone(self, result.map_err(why))
-            }
-            Work::Ref {
-                ref repo,
-                kind,
-                ref name,
-                ref write,
-                ref clone,
-            } => {
-                let result = refs::run(gh, repo, kind, name, write, clone.as_ref()).await;
-                Done::Ref(self, result)
-            }
-            Work::Fork(route, new) => Done::Forked(route, gh.fork(&new).await.map_err(why)),
-            Work::Repo(route, new) => Done::Made(route, gh.create_repo(&new).await.map_err(why)),
-            Work::Clone { url, dir } => {
-                let result = git::clone(&url, &dir).await;
-                Done::Cloned(dir, result)
-            }
-            Work::Commit(route, write) => {
-                let result = files::run(gh, &write).await;
-                Done::Committed(route, write, result)
-            }
-        }
-    }
-}
-
-/// Work's answers.
-#[must_use]
-pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
-    match done {
-        Done::Label(work, result) => labels::on_done(state, work, result),
-        Done::Milestone(work, result) => milestones::on_done(state, work, result),
-        Done::Ref(work, result) => refs::on_done(state, work, result),
-        Done::Forked(route, result) => repos::on_forked(state, &route, result),
-        Done::Made(route, result) => repos::on_made(state, &route, result),
-        Done::Cloned(dir, result) => repos::on_cloned(state, &dir, result),
-        Done::Committed(route, write, result) => files::on_committed(state, &route, write, result),
-    }
-}
-
 /// Says `why` where it'll be seen, and marks the form unsent.
-fn failed(state: &mut State, route: &Route, why: String) {
+fn failed(state: &mut State, route: &Route, why: &impl std::fmt::Display) {
+    let why = why.to_string();
     if let Some(f) = state.writing.housekeeping.forms.get_mut(route) {
         f.sending = false;
         f.error = Some(why.clone());

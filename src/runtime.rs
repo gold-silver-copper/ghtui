@@ -20,8 +20,9 @@ use crate::diff_job::{self, GitContext, JobControl, JobMsg, JobTx, RepoGit};
 use crate::diff_screen::DiffOf;
 use crate::review::EditPurpose;
 use crate::review::{self, SubmitOutcome};
-use crate::state::{Api, Cmd, DiffMsg, Failure, Git, Msg, Problem, State, apply_msg, timers};
+use crate::state::{Api, Cmd, DiffMsg, Git, Msg, Problem, State, apply_msg, timers};
 use crate::view::view;
+use crate::work::Failure;
 
 struct Effects {
     gh: GitHub,
@@ -244,20 +245,15 @@ impl Effects {
                     let _ = tx.send(Msg::SuggestDue(q));
                 });
             }
-            Cmd::Create(work) => {
-                let (gh, cwd) = (self.gh.clone(), self.git.cwd.clone());
+            Cmd::Work(work) => {
+                let cx = crate::work::Cx {
+                    gh: self.gh.clone(),
+                    git: self.git.clone(),
+                };
                 spawn_guarded(&self.tx, replies, |tx| async move {
-                    let done = work.run(&gh, &cwd).await;
-                    let _ = tx.send(Msg::Create(done));
-                    let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
-                });
-            }
-            Cmd::Write(work) => {
-                let (gh, git) = (self.gh.clone(), self.git.clone());
-                spawn_guarded(&self.tx, replies, |tx| async move {
-                    let done = work.run(&gh, &git).await;
-                    let _ = tx.send(Msg::Write(done));
-                    let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
+                    let done = work.run(&cx).await;
+                    let _ = tx.send(Msg::Done(done));
+                    told(&cx.gh, &tx);
                 });
             }
             Cmd::Offline(cmd) => self.offline(cmd, replies),
@@ -494,10 +490,6 @@ fn spawn(
                 let (result, source) = data::load::load(&gh, &local, &key, more, None).await;
                 Msg::FetchedMore(key, after, result, source)
             }
-            Api::Change(change, by) => {
-                let result = gh.change(&change).await;
-                Msg::Changed(change, by, result)
-            }
             Api::Suggest(q) => {
                 let result = gh
                     .search(crate::api::browse::SearchKind::Repos, &q, None)
@@ -599,7 +591,6 @@ fn spawn(
                 let answers = futures::future::join_all(polls).await;
                 Msg::Polled(pr, answers)
             }
-            Api::Actions(work) => Msg::Actions(work.run(&gh).await),
             Api::Watch { what, asks } => {
                 let polls = asks.into_iter().map(|ask| {
                     let gh = &gh;
@@ -613,26 +604,32 @@ fn spawn(
             }
         };
         let _ = tx.send(msg);
-        let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
-        let left_out = gh.take_left_out();
-        if !left_out.is_empty() {
-            let text = format!("GitHub left some data out: {}", left_out.join("; "));
-            let _ = tx.send(Msg::Notice(Notice::Error(text)));
-        }
-        for missing in gh.take_missing() {
-            let _ = tx.send(Msg::Notice(Notice::Info(missing)));
-        }
-        let doubts = gh.take_doubts();
-        if !doubts.is_empty() {
-            let text = format!("GitHub's answer doesn't add up: {}", doubts.join("; "));
-            let _ = tx.send(Msg::Notice(Notice::Error(text)));
-        }
-        if let Some(rejected) = gh.token_rejected_change() {
-            let hint = crate::api::auth::sign_in_hint(crate::host::current());
-            let text = format!("GitHub rejected the token: {hint}, then restart");
-            let _ = tx.send(Msg::Problem(Problem::Auth, rejected.then_some(text)));
-        }
+        told(&gh, &tx);
     });
+}
+
+/// After a request: the rate limits, and what GitHub's answers left out,
+/// doubted or rejected.
+fn told(gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
+    let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
+    let left_out = gh.take_left_out();
+    if !left_out.is_empty() {
+        let text = format!("GitHub left some data out: {}", left_out.join("; "));
+        let _ = tx.send(Msg::Notice(Notice::Error(text)));
+    }
+    for missing in gh.take_missing() {
+        let _ = tx.send(Msg::Notice(Notice::Info(missing)));
+    }
+    let doubts = gh.take_doubts();
+    if !doubts.is_empty() {
+        let text = format!("GitHub's answer doesn't add up: {}", doubts.join("; "));
+        let _ = tx.send(Msg::Notice(Notice::Error(text)));
+    }
+    if let Some(rejected) = gh.token_rejected_change() {
+        let hint = crate::api::auth::sign_in_hint(crate::host::current());
+        let text = format!("GitHub rejected the token: {hint}, then restart");
+        let _ = tx.send(Msg::Problem(Problem::Auth, rejected.then_some(text)));
+    }
 }
 
 /// Tells the page each time GitHub becomes unreachable, or reachable
@@ -717,7 +714,6 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         Cmd::Api(Api::FetchMore { key, after }) => {
             Msg::FetchedMore(key.clone(), after.clone(), api(), None)
         }
-        Cmd::Api(Api::Change(change, by)) => Msg::Changed(change.clone(), by.clone(), api()),
         Cmd::Api(Api::Suggest(q)) => Msg::Suggested(q.clone(), api()),
         Cmd::Api(Api::FetchViewed(pr)) => {
             Msg::Diff(pr.clone().into(), DiffMsg::ViewedLoaded(Box::new(api())))
@@ -756,8 +752,7 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             },
         ),
         Cmd::LoadReview(pr) => Msg::Diff(pr.clone().into(), DiffMsg::ReviewLoaded(git())),
-        Cmd::Create(work) => Msg::Create(work.failed()),
-        Cmd::Write(work) => Msg::Write(work.failed()),
+        Cmd::Work(work) => Msg::Done(work.failed()),
         Cmd::EditHome { edit, what, .. } => Msg::HomeEdited {
             edit: edit.clone(),
             result: Err("ghtui hit a bug".into()),
@@ -780,7 +775,6 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         Cmd::Git(Git::Code(ask)) => Msg::Code(ask.clone(), Err("ghtui hit a bug".into())),
         Cmd::Api(Api::Poll { pr, .. }) => Msg::Polled(pr.clone(), Vec::new()),
         Cmd::Api(Api::Watch { what, .. }) => Msg::Watched(what.clone(), Vec::new()),
-        Cmd::Api(Api::Actions(work)) => Msg::Actions(work.failed()),
         Cmd::Offline(crate::offline::Cmd::Probe) => {
             Msg::Offline(crate::offline::Msg::Probed(false))
         }

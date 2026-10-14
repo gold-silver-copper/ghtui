@@ -9,7 +9,7 @@ use crate::git::local::{Branch, Checkout, Clone, CommitMessage};
 use ratatui_textarea::CursorMove;
 
 use super::*;
-use crate::create::{Done, HeadState, Submission, Work};
+use crate::create::{HeadState, Push, Submission, Submit};
 use crate::ui::page::FormLink;
 
 /// The repository's page, then `keys` (`,i` or `,p`), with what the form
@@ -74,11 +74,14 @@ fn a_new_issue_starts_from_its_template_and_opens_once_made() {
         assignees: vec![NodeId::new("U_octo")],
         milestone: None,
     };
-    let submit = fixtures::start(Work::Submit(route.clone(), Submission::Issue(new)));
-    assert_eq!(sent, [submit]);
+    let submit = Submit {
+        route: route.clone(),
+        new: Submission::Issue(new),
+    };
+    assert_eq!(sent, [fixtures::start(submit.clone())]);
     assert!(composer(&mut s).sending);
 
-    let cmds = fixtures::done::<crate::create::Work>(&mut s, Done::Created(route.clone(), Ok(42)));
+    let cmds = fixtures::done(&mut s, submit, Ok(42));
     let issue = Route::Issues(issues::Issue {
         repo: ghtui(),
         number: 42,
@@ -95,10 +98,9 @@ fn a_new_issue_starts_from_its_template_and_opens_once_made() {
 #[test]
 fn a_refused_issue_says_why_in_the_composer() {
     let mut s = bug_report();
-    press(&mut s, "<C-s>");
-    let route = Route::Issues(issues::NewIssue(ghtui()));
+    let submit = fixtures::sent::<Submit>(&press(&mut s, "<C-s>"));
     let refused = ApiError::GraphQl(vec!["Title can't be blank".into()]);
-    fixtures::done::<crate::create::Work>(&mut s, Done::Created(route, Err(refused)));
+    fixtures::done(&mut s, submit, Err(refused.into()));
     let c = composer(&mut s);
     assert!(!c.sending);
     assert_eq!(
@@ -204,15 +206,12 @@ fn a_pull_request_from_the_clones_branch_is_pushed_then_made() {
     assert!(press(&mut s, ",P").is_empty());
     assert_eq!(asked(&s).title, "Push fix-parser to origin?");
     let push = press(&mut s, "<Enter>");
-    let pushed = Work::Push {
+    let pushed = Push {
         repo: ghtui(),
         branch: "fix-parser".into(),
     };
-    assert_eq!(push, [fixtures::start(pushed)]);
-    let again = fixtures::done::<crate::create::Work>(
-        &mut s,
-        Done::Pushed(ghtui(), "fix-parser".into(), Ok(())),
-    );
+    assert_eq!(push, [fixtures::start(pushed.clone())]);
+    let again = fixtures::done(&mut s, pushed, Ok(()));
     assert!(s.overlay.is_none());
     says(&s, "Pushed fix-parser");
     assert_eq!(fixtures::asked(&again), [compare()], "compared again");
@@ -233,15 +232,13 @@ fn a_pull_request_from_the_clones_branch_is_pushed_then_made() {
         body: "It dropped the last line.\n\n## Checklist\n\n- [ ] Tests".into(),
         draft: true,
     };
-    assert_eq!(
-        sent,
-        [fixtures::start(Work::Submit(
-            route.clone(),
-            Submission::Pr(new)
-        ))]
-    );
+    let submit = Submit {
+        route,
+        new: Submission::Pr(new),
+    };
+    assert_eq!(sent, [fixtures::start(submit.clone())]);
 
-    let cmds = fixtures::done::<crate::create::Work>(&mut s, Done::Created(route, Ok(7)));
+    let cmds = fixtures::done(&mut s, submit, Ok(7));
     let pr = PrRef {
         repo: ghtui(),
         number: 7,
@@ -258,17 +255,18 @@ fn checkout_says_what_branch_or_why_not() {
     let mut s = with_pr();
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
     let cmds = press(&mut s, ",c");
-    let work = Work::Checkout {
-        pr: pr.clone(),
+    let work = crate::create::Checkout {
+        repo: pr.repo,
+        pr: Some(pr.number),
         name: "octocat/syntax-palette".into(),
         track: None,
     };
-    assert_eq!(cmds, [fixtures::start(work)]);
+    assert_eq!(cmds, [fixtures::start(work.clone())]);
     let dirty = Checkout::Uncommitted(vec!["src/a.rs".into(), "b.rs".into()]);
-    fixtures::done::<crate::create::Work>(&mut s, Done::CheckedOut(pr.clone(), Ok(dirty)));
+    fixtures::done(&mut s, work.clone(), Ok(dirty));
     says(&s, "Not checked out: src/a.rs and 1 other has changes");
     let made = Checkout::Created("octocat/syntax-palette".into());
-    fixtures::done::<crate::create::Work>(&mut s, Done::CheckedOut(pr, Ok(made)));
+    fixtures::done(&mut s, work, Ok(made));
     says(&s, "you're on octocat/syntax-palette");
     // Outside a clone of it, it says so.
     fixtures::cloned(&mut s, &ghtui(), None);

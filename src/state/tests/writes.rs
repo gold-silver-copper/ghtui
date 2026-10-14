@@ -10,7 +10,6 @@ use ratatui_textarea::CursorMove;
 
 use super::*;
 use crate::fixtures::{self};
-use crate::writes::{Done, Work};
 
 fn composer(s: &mut State) -> &mut crate::review::Compose {
     match &mut s.overlay {
@@ -83,20 +82,19 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
         latest: true,
     };
     let route = Route::Releases(releases::NewRelease(repo.clone()));
-    let create = fixtures::start(crate::release::Work::Save {
-        route: route.clone(),
+    let create = crate::release::Save {
+        route,
         id: None,
         new,
-    });
-    assert_eq!(sent, [create]);
+    };
+    assert_eq!(sent, [fixtures::start(create.clone())]);
 
     let made = Made {
         tag_name: "v9.0".into(),
         draft: false,
         html_url: String::new(),
     };
-    let done = crate::release::Done::Saved(route, Ok(made));
-    fixtures::done::<crate::release::Work>(&mut s, done);
+    fixtures::done(&mut s, create, Ok(made));
     let page = Route::Releases(releases::Release {
         repo: repo.clone(),
         tag: "v9.0".into(),
@@ -149,13 +147,13 @@ fn a_thread_is_unsubscribed_and_followed() {
     let rows = s.picker_rows(p);
     assert!(rows[0].0.hint.starts_with("current"), "{:?}", rows[0].0);
     let sent = press(&mut s, "Unsub<Enter>");
-    let work = crate::watch::Work {
+    let work = crate::watch::Subscribe {
         of: of.clone(),
         id: crate::api::model::NodeId::new("I_sub"),
         state: SubscriptionState::Unsubscribed,
     };
     assert_eq!(sent, [fixtures::start(work.clone())]);
-    let cmds = fixtures::done::<crate::watch::Work>(&mut s, crate::watch::Done(work, Ok(())));
+    let cmds = fixtures::done(&mut s, work, Ok(()));
     says(&s, "Unsubscribed from gold-silver-copper/ghtui#14");
     assert!(
         crate::fixtures::asks(&cmds, &DataKey::Subscription(of.clone())),
@@ -194,10 +192,9 @@ fn your_gist_is_edited_and_its_page_follows() {
     composer(&mut s).input.move_cursor(CursorMove::End);
     composer(&mut s).input.insert_str("\n// more");
     let sent = press(&mut s, "<C-s>");
-    let crate::gist::Work::Update(r, change) = fixtures::sent(&sent) else {
-        panic!("{sent:?}");
-    };
-    assert_eq!(r, route);
+    let update = fixtures::sent::<crate::gist::Update>(&sent);
+    let change = &update.change;
+    assert_eq!(update.route, route);
     let text = "fn main() {\n    println!(\"hello\");\n}\n// more";
     assert_eq!(
         change.changed,
@@ -207,8 +204,7 @@ fn your_gist_is_edited_and_its_page_follows() {
         }]
     );
     assert!(change.added.is_empty());
-    let done = crate::gist::Done::Updated(route, change, Ok(()));
-    fixtures::done::<crate::gist::Work>(&mut s, done);
+    fixtures::done(&mut s, update, Ok(()));
     let page = Route::Gists(gists::Gist {
         owner: Some("octocat".into()),
         id: "6cad326836d38bd3a7ae".into(),
@@ -245,16 +241,16 @@ fn a_gist_is_made_then_deleted() {
         public: true,
         files: vec![("gistfile1.txt".into(), "hi".into())],
     };
-    let create = crate::gist::Work::Create(Route::Gists(gists::NewGist), new);
-    assert_eq!(sent, [fixtures::start(create)]);
+    let create = crate::gist::Create {
+        route: Route::Gists(gists::NewGist),
+        new,
+    };
+    assert_eq!(sent, [fixtures::start(create.clone())]);
     let made = MadeGist {
         id: "aa5a315d61ae9438b18d".into(),
         owner: None,
     };
-    fixtures::done::<crate::gist::Work>(
-        &mut s,
-        crate::gist::Done::Created(Route::Gists(gists::NewGist), Ok(made)),
-    );
+    fixtures::done(&mut s, create, Ok(made));
     assert_eq!(
         s.route(),
         Some(&Route::Gists(gists::Gist {
@@ -267,17 +263,12 @@ fn a_gist_is_made_then_deleted() {
     press(&mut s, ",D");
     assert_eq!(asked(&s).title, "Delete this gist?");
     let sent = press(&mut s, "<Enter>");
-    let delete = crate::gist::Work::Delete {
+    let delete = crate::gist::Delete {
         id: "6cad326836d38bd3a7ae".into(),
         owner: "octocat".into(),
     };
-    assert_eq!(sent, [fixtures::start(delete)]);
-    let deleted = crate::gist::Done::Deleted {
-        id: "6cad326836d38bd3a7ae".into(),
-        owner: "octocat".into(),
-        result: Ok(()),
-    };
-    fixtures::done::<crate::gist::Work>(&mut s, deleted);
+    assert_eq!(sent, [fixtures::start(delete.clone())]);
+    fixtures::done(&mut s, delete, Ok(()));
     assert_eq!(
         s.route(),
         Some(&Route::Gists(gists::Gists("octocat".into())))
@@ -311,15 +302,16 @@ fn a_wiki_page_is_edited_never_over_a_newer_one() {
         text: "Welcome, all.".into(),
         login: Some("octocat".into()),
     };
-    assert_eq!(sent, [fixtures::start(Work::Wiki(route.clone(), save))]);
-    let changed = "Home changed on GitHub since you opened it".to_owned();
-    fixtures::done::<crate::writes::Work>(&mut s, Done::Wiki(route.clone(), Err(changed.clone())));
+    let save = crate::wiki::form::Save { route, save };
+    assert_eq!(sent, [fixtures::start(save.clone())]);
+    let changed = "Home changed on GitHub since you opened it";
+    fixtures::done(&mut s, save.clone(), Err(fixtures::failure(changed)));
     let c = composer(&mut s);
     assert!(!c.sending);
-    assert_eq!(c.error.as_deref(), Some(changed.as_str()));
+    assert_eq!(c.error.as_deref(), Some(changed));
     assert_eq!(c.text(), "Welcome, all.");
 
-    fixtures::done::<crate::writes::Work>(&mut s, Done::Wiki(route, Ok("Home".into())));
+    fixtures::done(&mut s, save, Ok("Home".into()));
     let home = Route::Wiki(wiki::Wiki {
         repo: ghtui(),
         page: None,

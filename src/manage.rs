@@ -12,7 +12,6 @@
 
 use crate::route::{Route, discussions, issues, pulls};
 
-use crate::api::GitHub;
 use crate::api::browse::{DiscussionDetail, DiscussionsOf, IssueDetail, IssueState, PrState};
 use crate::api::change::Change;
 use crate::api::manage::{
@@ -27,8 +26,9 @@ use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::fuzzy_score;
-use crate::state::{Api, Cmd, Overlay, Screen, State};
+use crate::state::{Cmd, Overlay, Screen, State};
 use crate::ui::page::Link;
+use crate::work::{self, Cx, Failure, Job};
 
 /// The actions this module takes as its own.
 pub const ACTIONS: [Action; 10] = [
@@ -443,7 +443,7 @@ fn send(state: &mut State, change: Change, about: Subject) -> Vec<Cmd> {
     if let Change::Manage(m) = &change {
         state.info(format!("{}…", doing(m)));
     }
-    vec![Cmd::Api(Api::Change(change, By::Act(about)))]
+    vec![crate::act::send(change, By::Act(about))]
 }
 
 /// The menu's rows where they apply.
@@ -651,7 +651,8 @@ pub enum Chosen {
     Send(Change, Subject),
     /// Ask first.
     Ask(Box<Confirm>),
-    Work(Work),
+    /// Check out a branch in your clone.
+    Checkout(crate::create::Checkout),
     /// Write the new discussion in the composer, starting with this.
     Write(Starting, String),
 }
@@ -793,9 +794,11 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
             item(
                 format!("Check out {branch}"),
                 "in your clone",
-                Some(Chosen::Work(Work::Checkout {
+                Some(Chosen::Checkout(crate::create::Checkout {
                     repo: repo.clone(),
-                    branch: branch.clone(),
+                    pr: None,
+                    name: branch.clone(),
+                    track: Some(branch.clone()),
                 })),
             ),
             item("Not now", "", None),
@@ -1174,11 +1177,9 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
             state.overlay = Some(Overlay::Confirm(confirm));
             Vec::new()
         }
-        Chosen::Work(work) => {
-            if let Work::Checkout { branch, .. } = &work {
-                state.info(format!("Checking out {branch}…"));
-            }
-            vec![Cmd::Write(crate::writes::Work::Manage(work))]
+        Chosen::Checkout(checkout) => {
+            state.info(format!("Checking out {}…", checkout.name));
+            work::start(checkout)
         }
         Chosen::Write(starting, text) => {
             let target = crate::review::ComposeTarget::NewDiscussion(starting);
@@ -1195,7 +1196,7 @@ pub fn confirmed(state: &mut State, change: &Change, about: &Subject) -> Option<
     let Change::Manage(m) = change else {
         return None;
     };
-    let work = match (m, about) {
+    let work: work::Work = match (m, about) {
         (Manage::CloseAsDuplicate { issue, of: None }, Subject::Issue(repo, number)) => {
             let pick = Pick::Duplicate {
                 issue: IssueAt {
@@ -1206,26 +1207,27 @@ pub fn confirmed(state: &mut State, change: &Change, about: &Subject) -> Option<
             };
             return Some(open(state, pick));
         }
-        (Manage::Revert { pr: id }, Subject::Pr(pr)) => Work::Revert {
+        (Manage::Revert { pr: id }, Subject::Pr(pr)) => Revert {
             pr: pr.clone(),
             id: id.clone(),
-        },
-        (Manage::Transfer { issue, to, repo }, Subject::Issue(from, number)) => Work::Transfer {
+        }
+        .into(),
+        (Manage::Transfer { issue, to, .. }, Subject::Issue(from, number)) => Transfer {
             from: IssueAt {
                 repo: from.clone(),
                 number: *number,
             },
             issue: issue.clone(),
             to: to.clone(),
-            repo: repo.clone(),
-        },
+        }
+        .into(),
         _ => return None,
     };
     if let Some(Overlay::Confirm(c)) = &mut state.overlay {
         c.sending = true;
         c.error = None;
     }
-    Some(vec![Cmd::Write(crate::writes::Work::Manage(work))])
+    Some(work::start(work))
 }
 
 /// After GitHub took a change: a branch made for an issue is offered to
@@ -1289,160 +1291,109 @@ pub fn start(state: &mut State, s: &Starting, text: &str) -> Vec<Cmd> {
     }
     c.sending = true;
     c.error = None;
-    vec![Cmd::Write(crate::writes::Work::Manage(Work::Start {
+    work::start(Start {
         repo: s.repo.clone(),
         repo_id: s.repo_id.clone(),
         category: s.category.clone(),
         title,
         body,
-    }))]
+    })
 }
 
 // ---- work in the background --------------------------------------------------------
 
+/// Reverting a merged pull request: GitHub opens a pull request that
+/// does.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Work {
-    Revert {
-        pr: PrRef,
-        id: NodeId,
-    },
-    Transfer {
-        from: IssueAt,
-        issue: NodeId,
-        to: NodeId,
-        repo: RepoId,
-    },
-    Start {
-        repo: RepoId,
-        repo_id: NodeId,
-        category: NodeId,
-        title: String,
-        body: String,
-    },
-    /// Check out a branch of `repo` in the clone ghtui runs in.
-    Checkout {
-        repo: RepoId,
-        branch: String,
-    },
+pub struct Revert {
+    pub pr: PrRef,
+    pub id: NodeId,
 }
 
-#[derive(Debug)]
-pub enum Done {
-    Reverted(PrRef, Result<u64, String>),
-    Transferred(IssueAt, Result<IssueAt, String>),
-    Started(RepoId, Result<u64, String>),
-    CheckedOut(String, Result<crate::git::local::Checkout, String>),
+/// Moving an issue to another repository of its owner's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Transfer {
+    pub from: IssueAt,
+    pub issue: NodeId,
+    pub to: NodeId,
 }
 
-impl Done {
-    /// Whether GitHub changed.
-    pub fn wrote(&self) -> bool {
-        match self {
-            Done::Reverted(_, made) | Done::Started(_, made) => made.is_ok(),
-            Done::Transferred(_, moved) => moved.is_ok(),
-            Done::CheckedOut(..) => false,
+/// Starting a discussion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Start {
+    pub repo: RepoId,
+    pub repo_id: NodeId,
+    pub category: NodeId,
+    pub title: String,
+    pub body: String,
+}
+
+/// Its pull request opens.
+impl Job for Revert {
+    type Out = u64;
+
+    async fn run(&self, cx: &Cx) -> Result<u64, Failure> {
+        Ok(cx.gh.revert(&self.id).await?)
+    }
+
+    fn done(self, state: &mut State, result: Result<u64, Failure>) -> Vec<Cmd> {
+        let number = match result {
+            Ok(number) => number,
+            Err(why) => return refused(state, format!("GitHub refused the revert: {why}")),
+        };
+        close_confirm(state);
+        state.info(format!("Opened #{number}, which reverts {}", self.pr));
+        let made = PrRef {
+            repo: self.pr.repo,
+            number,
+        };
+        state.push(Route::pr(made))
+    }
+}
+
+/// Its page, if it's on screen, moves with it.
+impl Job for Transfer {
+    type Out = IssueAt;
+
+    async fn run(&self, cx: &Cx) -> Result<IssueAt, Failure> {
+        Ok(cx.gh.transfer(&self.issue, &self.to).await?)
+    }
+
+    fn done(self, state: &mut State, result: Result<IssueAt, Failure>) -> Vec<Cmd> {
+        let (from, to) = match result {
+            Ok(to) => (self.from, to),
+            Err(why) => return refused(state, format!("GitHub refused the transfer: {why}")),
+        };
+        close_confirm(state);
+        state.info(format!("Moved {from} to {to}"));
+        let here = Route::Issues(issues::Issue {
+            repo: from.repo,
+            number: from.number,
+        });
+        let there = Route::Issues(issues::Issue {
+            repo: to.repo,
+            number: to.number,
+        });
+        if state.route() == Some(&here) {
+            state.replace(there, true, None)
+        } else {
+            Vec::new()
         }
     }
 }
 
-impl Work {
-    pub fn failed(&self, why: String) -> Done {
-        match self.clone() {
-            Work::Revert { pr, .. } => Done::Reverted(pr, Err(why)),
-            Work::Transfer { from, .. } => Done::Transferred(from, Err(why)),
-            Work::Start { repo, .. } => Done::Started(repo, Err(why)),
-            Work::Checkout { branch, .. } => Done::CheckedOut(branch, Err(why)),
-        }
+/// The new discussion opens.
+impl Job for Start {
+    type Out = u64;
+
+    async fn run(&self, cx: &Cx) -> Result<u64, Failure> {
+        let made = (cx.gh).start_discussion(&self.repo_id, &self.category, &self.title, &self.body);
+        Ok(made.await?)
     }
 
-    pub async fn run(self, gh: &GitHub, cwd: &std::path::Path) -> Done {
-        let reason = |e: crate::api::ApiError| crate::writes::reason(&e);
-        match self {
-            Work::Revert { pr, id } => Done::Reverted(pr, gh.revert(&id).await.map_err(reason)),
-            Work::Transfer {
-                from, issue, to, ..
-            } => Done::Transferred(from, gh.transfer(&issue, &to).await.map_err(reason)),
-            Work::Start {
-                repo,
-                repo_id,
-                category,
-                title,
-                body,
-            } => {
-                let made = gh
-                    .start_discussion(&repo_id, &category, &title, &body)
-                    .await;
-                Done::Started(repo, made.map_err(reason))
-            }
-            Work::Checkout { repo, branch } => {
-                let done = async {
-                    use crate::git::local;
-                    let c = local::clone_of(cwd, &repo.owner, &repo.name)
-                        .await
-                        .map_err(|e| e.to_string())?
-                        .ok_or_else(|| format!("ghtui isn't running in a clone of {repo}"))?;
-                    let source = format!("refs/heads/{branch}");
-                    local::checkout(&c.top, &c.remote, &source, &branch, Some(&branch))
-                        .await
-                        .map_err(|e| e.to_string())
-                }
-                .await;
-                Done::CheckedOut(branch, done)
-            }
-        }
-    }
-}
-
-/// Work's answers.
-#[must_use]
-pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
-    state.shown_gen += 1;
-    match done {
-        Done::Reverted(pr, made) => match made {
-            Ok(number) => {
-                close_confirm(state);
-                state.info(format!("Opened #{number}, which reverts {pr}"));
-                let made = PrRef {
-                    repo: pr.repo,
-                    number,
-                };
-                state.push(Route::pr(made))
-            }
-            Err(why) => refused(state, format!("GitHub refused the revert: {why}")),
-        },
-        Done::Transferred(from, moved) => match moved {
-            Ok(to) => {
-                close_confirm(state);
-                state.info(format!("Moved {from} to {to}"));
-                let here = Route::Issues(issues::Issue {
-                    repo: from.repo,
-                    number: from.number,
-                });
-                let there = Route::Issues(issues::Issue {
-                    repo: to.repo,
-                    number: to.number,
-                });
-                if state.route() == Some(&here) {
-                    state.replace(there, true, None)
-                } else {
-                    Vec::new()
-                }
-            }
-            Err(why) => refused(state, format!("GitHub refused the transfer: {why}")),
-        },
-        Done::Started(repo, made) => match made {
-            Ok(number) => {
-                if let Some(Overlay::Compose(c)) = &state.overlay
-                    && let crate::review::ComposeTarget::NewDiscussion(_) = c.target
-                {
-                    state.overlay = None;
-                }
-                state.info(format!("Started discussion #{number}"));
-                state.push(Route::Discussions(discussions::Discussion {
-                    of: DiscussionsOf::Repo(repo),
-                    number,
-                }))
-            }
+    fn done(self, state: &mut State, result: Result<u64, Failure>) -> Vec<Cmd> {
+        let number = match result {
+            Ok(number) => number,
             Err(why) => {
                 let text = format!("GitHub didn't start the discussion: {why}");
                 match &mut state.overlay {
@@ -1452,28 +1403,19 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
                     }
                     _ => state.error(text),
                 }
-                Vec::new()
+                return Vec::new();
             }
-        },
-        Done::CheckedOut(branch, done) => {
-            use crate::git::local::Checkout;
-            match done {
-                Ok(Checkout::Created(b) | Checkout::Switched(b)) => {
-                    state.info(format!("You're on {b}"));
-                }
-                Ok(Checkout::Diverged(b)) => state.info(format!(
-                    "You're on {b}, which has commits GitHub's doesn't: it's left as it was"
-                )),
-                Ok(Checkout::Uncommitted(files)) => {
-                    let first = files.first().cloned().unwrap_or_default();
-                    state.info(format!(
-                        "Not checked out: {first} has changes that aren't committed. Commit or stash them first"
-                    ));
-                }
-                Err(err) => state.error(format!("Couldn't check out {branch}: {err}")),
-            }
-            Vec::new()
+        };
+        if let Some(Overlay::Compose(c)) = &state.overlay
+            && let crate::review::ComposeTarget::NewDiscussion(_) = c.target
+        {
+            state.overlay = None;
         }
+        state.info(format!("Started discussion #{number}"));
+        state.push(Route::Discussions(discussions::Discussion {
+            of: DiscussionsOf::Repo(self.repo),
+            number,
+        }))
     }
 }
 

@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::api::browse::{IssueKind, IssueState, PrState, SearchKind, SearchResults, Status};
+use crate::api::change::Change;
 use crate::api::model::{ChecksState, PrDetail, RepoId, ReviewDecision};
 use crate::api::rate_limit::{Bucket, RateLimits};
 use crate::fixtures;

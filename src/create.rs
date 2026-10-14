@@ -20,7 +20,7 @@ use std::path::Path;
 use crate::api::create::{NewForm, NewIssue, NewPr};
 use crate::api::model::{Capped, NodeId, PrDetail, PrRef, RepoId};
 use crate::api::{ApiError, GitHub};
-use crate::git::local::{self, Branch, Checkout, CommitMessage};
+use crate::git::local::{self, Branch, CommitMessage};
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::data::{Data, DataKey};
@@ -28,9 +28,10 @@ use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::Choice;
 use crate::review::ComposeTarget;
-use crate::state::{Cmd, Failure, Overlay, State};
+use crate::state::{Cmd, Overlay, State};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::FormLink;
+use crate::work::{self, Cx, Failure, Job};
 pub use page::build;
 use templates::Chooser;
 
@@ -103,19 +104,18 @@ pub struct HeadState {
     pub commits: Capped<CommitMessage>,
 }
 
-/// Work in the background.
+/// `git push` the branch, from the repository's clone.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Work {
-    /// `git push` the branch, from the repository's clone.
-    Push { repo: RepoId, branch: String },
-    /// Make it on GitHub; the form's page asked.
-    Submit(Route, Submission),
-    /// Check out the pull request on branch `name`, tracking `track`.
-    Checkout {
-        pr: PrRef,
-        name: String,
-        track: Option<String>,
-    },
+pub struct Push {
+    pub repo: RepoId,
+    pub branch: String,
+}
+
+/// Makes it on GitHub; the form's page asked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Submit {
+    pub route: Route,
+    pub new: Submission,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,64 +124,66 @@ pub enum Submission {
     Pr(NewPr),
 }
 
-/// Work's answer.
-#[derive(Debug)]
-pub enum Done {
-    Pushed(RepoId, String, Result<(), Failure>),
-    Created(Route, Result<u64, ApiError>),
-    CheckedOut(PrRef, Result<Checkout, Failure>),
+/// Checks out a pull request's head (`pr`), or else the branch `name`,
+/// in the clone ghtui runs in: on branch `name`, tracking `track`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Checkout {
+    pub repo: RepoId,
+    pub pr: Option<u64>,
+    pub name: String,
+    pub track: Option<String>,
 }
 
-impl Work {
-    /// Its answer, had it failed: for when the task running it panics.
-    pub fn failed(&self) -> Done {
-        let bug = || Failure::msg("ghtui hit a bug");
-        match self.clone() {
-            Work::Push { repo, branch } => Done::Pushed(repo, branch, Err(bug())),
-            Work::Submit(route, _) => {
-                Done::Created(route, Err(ApiError::Internal("ghtui hit a bug".into())))
-            }
-            Work::Checkout { pr, .. } => Done::CheckedOut(pr, Err(bug())),
-        }
+/// The clone ghtui runs in, if it's `repo`'s.
+async fn clone_here(cx: &Cx, repo: &RepoId) -> Result<local::Clone, Failure> {
+    let found = local::clone_of(&cx.git.cwd, &repo.owner, &repo.name).await?;
+    found.ok_or_else(|| Failure::msg(format!("ghtui isn't running in a clone of {repo}")))
+}
+
+impl Job for Checkout {
+    type Out = local::Checkout;
+    const WRITES: bool = false;
+
+    async fn run(&self, cx: &Cx) -> Result<local::Checkout, Failure> {
+        let c = clone_here(cx, &self.repo).await?;
+        let source = match self.pr {
+            Some(n) => format!("refs/pull/{n}/head"),
+            None => format!("refs/heads/{}", self.name),
+        };
+        let track = self.track.as_deref();
+        Ok(local::checkout(&c.top, &c.remote, &source, &self.name, track).await?)
     }
 
-    /// Does it, with `gh` and the clone `cwd` is in.
-    pub async fn run(self, gh: &GitHub, cwd: &Path) -> Done {
-        match self {
-            Work::Push { repo, branch } => {
-                let result = async {
-                    let c = local::clone_of(cwd, &repo.owner, &repo.name)
-                        .await?
-                        .ok_or_else(|| not_a_clone(&repo))?;
-                    let b = (local::branch(&c.top, &c.remote, &branch).await?)
-                        .ok_or_else(|| Failure::msg(format!("{branch} isn't a branch here")))?;
-                    local::push(&c.top, &b.remote, &branch, !b.tracked).await?;
-                    Ok(())
-                }
-                .await;
-                Done::Pushed(repo, branch, result)
+    fn done(self, state: &mut State, result: Result<local::Checkout, Failure>) -> Vec<Cmd> {
+        use local::Checkout as C;
+        let text = match (result, self.pr) {
+            (Ok(C::Created(b)), Some(n)) => {
+                format!("Checked out #{n}: you're on {b}, a new branch at its head")
             }
-            Work::Submit(route, submission) => {
-                let result = match &submission {
-                    Submission::Issue(new) => gh.create_issue(new).await,
-                    Submission::Pr(new) => gh.create_pull_request(new).await,
+            (Ok(C::Switched(b)), Some(n)) => format!("You're on {b}, at #{n}'s head"),
+            (Ok(C::Created(b) | C::Switched(b)), None) => format!("You're on {b}"),
+            (Ok(C::Diverged(b)), pr) => {
+                let theirs = pr.map_or_else(|| "GitHub's".to_owned(), |n| format!("#{n}"));
+                format!("You're on {b}, which has commits {theirs} doesn't: it's left as it was")
+            }
+            (Ok(C::Uncommitted(files)), _) => {
+                let first = files.first().cloned().unwrap_or_default();
+                let files = match files.len() {
+                    1 => first,
+                    n => format!("{first} and {}", count(n as u64 - 1, "other")),
                 };
-                Done::Created(route, result)
+                format!(
+                    "Not checked out: {files} has changes that aren't committed. Commit or stash them first"
+                )
             }
-            Work::Checkout { pr, name, track } => {
-                let result = async {
-                    let c = local::clone_of(cwd, &pr.repo.owner, &pr.repo.name)
-                        .await?
-                        .ok_or_else(|| not_a_clone(&pr.repo))?;
-                    let source = format!("refs/pull/{}/head", pr.number);
-                    let done = local::checkout(&c.top, &c.remote, &source, &name, track.as_deref())
-                        .await?;
-                    Ok(done)
-                }
-                .await;
-                Done::CheckedOut(pr, result)
+            (Err(err), pr) => {
+                let what = pr.map_or_else(|| self.name.clone(), |n| format!("#{n}"));
+                state.error(format!("Couldn't check out {what}: {err}"));
+                return Vec::new();
             }
-        }
+        };
+        state.info(text);
+        Vec::new()
     }
 }
 
@@ -209,10 +211,6 @@ pub async fn head_state(
     let spec = head_spec(repo, head, local.as_ref());
     let commits = gh.commit_messages(repo, base, &spec).await?;
     Ok(HeadState { local, commits })
-}
-
-fn not_a_clone(repo: &RepoId) -> Failure {
-    Failure::msg(format!("ghtui isn't running in a clone of {repo}"))
 }
 
 /// What the confirmation for a pull request offers.
@@ -504,7 +502,10 @@ pub fn submit(state: &mut State) -> Vec<Cmd> {
     };
     sending(state, true);
     state.info("Creating the issue…");
-    vec![Cmd::Create(Work::Submit(route, Submission::Issue(new)))]
+    work::start(Submit {
+        route,
+        new: Submission::Issue(new),
+    })
 }
 
 /// Marks the form, and the composer or question that sent it, as waiting
@@ -783,9 +784,9 @@ fn answer_ask(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
         return Vec::new();
     };
     let head = form.head.clone().unwrap_or_default();
-    let work = match answer {
+    let work: work::Work = match answer {
         Answer::Write(_) => return Vec::new(),
-        Answer::Push => Work::Push { repo, branch: head },
+        Answer::Push => Push { repo, branch: head }.into(),
         Answer::Create { draft } => {
             let hs = match head_problem(state, &repo, form) {
                 Ok(hs) => hs,
@@ -798,148 +799,135 @@ fn answer_ask(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
                 return Vec::new();
             };
             let (title, body) = templates::split(&form.text);
-            Work::Submit(
-                route.clone(),
-                Submission::Pr(NewPr {
-                    repo: d.repo_id.clone(),
-                    base: form.base.clone().unwrap_or_default(),
-                    head: head_spec(&repo, &head, hs.local.as_ref()),
-                    title,
-                    body,
-                    draft,
-                }),
-            )
+            let new = Submission::Pr(NewPr {
+                repo: d.repo_id.clone(),
+                base: form.base.clone().unwrap_or_default(),
+                head: head_spec(&repo, &head, hs.local.as_ref()),
+                title,
+                body,
+                draft,
+            });
+            let route = route.clone();
+            Submit { route, new }.into()
         }
     };
     sending(state, true);
-    vec![Cmd::Create(work)]
+    work::start(work)
 }
 
-/// Work's answers.
-#[must_use]
-pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
-    match done {
-        Done::Pushed(repo, branch, result) => {
-            let route = Route::Pulls(pulls::NewPr(repo.clone()));
-            match result {
-                Ok(()) => {
-                    if matches!(&state.overlay, Some(Overlay::Ask(a)) if a.route == route) {
-                        state.overlay = None;
-                    }
-                    state.info(format!("Pushed {branch}"));
-                    // Compared again, now GitHub has it.
-                    let Some(form) = state.creating.forms.get_mut(&route) else {
-                        return Vec::new();
-                    };
+impl Job for Push {
+    type Out = ();
+    const WRITES: bool = false;
+
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        let (repo, branch) = (&self.repo, &self.branch);
+        let c = clone_here(cx, repo).await?;
+        let b = (local::branch(&c.top, &c.remote, branch).await?)
+            .ok_or_else(|| Failure::msg(format!("{branch} isn't a branch here")))?;
+        Ok(local::push(&c.top, &b.remote, branch, !b.tracked).await?)
+    }
+
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        let Push { repo, branch } = self;
+        let route = Route::Pulls(pulls::NewPr(repo.clone()));
+        match result {
+            Ok(()) => {
+                if matches!(&state.overlay, Some(Overlay::Ask(a)) if a.route == route) {
+                    state.overlay = None;
+                }
+                state.info(format!("Pushed {branch}"));
+                // Compared again, now GitHub has it.
+                let Some(form) = state.creating.forms.get_mut(&route) else {
+                    return Vec::new();
+                };
+                form.sending = false;
+                form.filled_for = None;
+                let key = form.head_key(&repo);
+                key.map_or_else(Vec::new, |key| state.ensure(key, true))
+            }
+            Err(err) => {
+                if let Some(form) = state.creating.forms.get_mut(&route) {
                     form.sending = false;
-                    form.filled_for = None;
-                    let key = form.head_key(&repo);
-                    key.map_or_else(Vec::new, |key| state.ensure(key, true))
                 }
-                Err(err) => {
-                    if let Some(form) = state.creating.forms.get_mut(&route) {
-                        form.sending = false;
+                let text = format!("Couldn't push {branch}: {err}");
+                match &mut state.overlay {
+                    Some(Overlay::Ask(a)) if a.route == route => {
+                        a.sending = false;
+                        a.error = Some(text);
                     }
-                    let text = format!("Couldn't push {branch}: {err}");
-                    match &mut state.overlay {
-                        Some(Overlay::Ask(a)) if a.route == route => {
-                            a.sending = false;
-                            a.error = Some(text);
-                        }
-                        _ => state.error(text),
-                    }
-                    Vec::new()
+                    _ => state.error(text),
                 }
+                Vec::new()
             }
-        }
-        Done::Created(route, result) => created(state, &route, result),
-        Done::CheckedOut(pr, result) => {
-            let n = pr.number;
-            match result {
-                Ok(Checkout::Created(b)) => {
-                    state.info(format!(
-                        "Checked out #{n}: you're on {b}, a new branch at its head"
-                    ));
-                }
-                Ok(Checkout::Switched(b)) => state.info(format!("You're on {b}, at #{n}'s head")),
-                Ok(Checkout::Diverged(b)) => state.info(format!(
-                    "You're on {b}, which has commits #{n} doesn't: it's left as it was"
-                )),
-                Ok(Checkout::Uncommitted(files)) => {
-                    let first = files.first().cloned().unwrap_or_default();
-                    let files = match files.len() {
-                        1 => first,
-                        n => format!("{first} and {}", count(n as u64 - 1, "other")),
-                    };
-                    state.info(format!(
-                        "Not checked out: {files} has changes that aren't committed. Commit or stash them first"
-                    ));
-                }
-                Err(err) => state.error(format!("Couldn't check out #{n}: {err}")),
-            }
-            Vec::new()
         }
     }
 }
 
-/// GitHub made it (and its page opens in place of the form's) or said why
-/// not.
-#[must_use]
-fn created(state: &mut State, route: &Route, result: Result<u64, ApiError>) -> Vec<Cmd> {
-    let ours = |o: &Option<Overlay>| match o {
-        Some(Overlay::Compose(c)) => c.target == ComposeTarget::Form(route.clone()),
-        Some(Overlay::Ask(a)) => a.route == *route,
-        _ => false,
-    };
-    let Some(repo) = form_repo(route).cloned() else {
-        return Vec::new();
-    };
-    match result {
-        Ok(number) => {
-            state.creating.forms.remove(route);
-            if ours(&state.overlay) {
-                state.overlay = None;
-            }
-            let (page, what) = match route {
-                Route::Pulls(pulls::NewPr(_)) => {
-                    (Route::pr(PrRef { repo, number }), "pull request")
+impl Job for Submit {
+    type Out = u64;
+
+    async fn run(&self, cx: &Cx) -> Result<u64, Failure> {
+        let gh = &cx.gh;
+        Ok(match &self.new {
+            Submission::Issue(new) => gh.create_issue(new).await?,
+            Submission::Pr(new) => gh.create_pull_request(new).await?,
+        })
+    }
+
+    /// GitHub made it (and its page opens in place of the form's) or said why
+    /// not.
+    fn done(self, state: &mut State, result: Result<u64, Failure>) -> Vec<Cmd> {
+        let route = &self.route;
+        let ours = |o: &Option<Overlay>| match o {
+            Some(Overlay::Compose(c)) => c.target == ComposeTarget::Form(route.clone()),
+            Some(Overlay::Ask(a)) => a.route == *route,
+            _ => false,
+        };
+        let Some(repo) = form_repo(route).cloned() else {
+            return Vec::new();
+        };
+        match result {
+            Ok(number) => {
+                state.creating.forms.remove(route);
+                if ours(&state.overlay) {
+                    state.overlay = None;
                 }
-                _ => (Route::Issues(issues::Issue { repo, number }), "issue"),
-            };
-            state.info(format!("Opened {what} #{number}"));
-            if state.route() == Some(route) {
-                return state.replace(page, true, None);
-            }
-            Vec::new()
-        }
-        Err(err) => {
-            tracing::warn!(%err, "creating failed");
-            let what = match route {
-                Route::Pulls(pulls::NewPr(_)) => "the pull request",
-                _ => "the issue",
-            };
-            let reason = match &err {
-                ApiError::GraphQl(messages) => messages.join("; "),
-                ApiError::Http { message, .. } => message.clone(),
-                err => err.to_string(),
-            };
-            let text = format!("GitHub didn't create {what}: {reason}");
-            if let Some(form) = state.creating.forms.get_mut(route) {
-                form.sending = false;
-                form.error = Some(text.clone());
-            }
-            match &mut state.overlay {
-                Some(Overlay::Compose(c)) if c.target == ComposeTarget::Form(route.clone()) => {
-                    c.sending = false;
-                    c.error = Some(text);
+                let (page, what) = match route {
+                    Route::Pulls(pulls::NewPr(_)) => {
+                        (Route::pr(PrRef { repo, number }), "pull request")
+                    }
+                    _ => (Route::Issues(issues::Issue { repo, number }), "issue"),
+                };
+                state.info(format!("Opened {what} #{number}"));
+                if state.route() == Some(route) {
+                    return state.replace(page, true, None);
                 }
-                Some(Overlay::Ask(a)) if a.route == *route => {
-                    a.sending = false;
-                    a.error = Some(text);
-                }
-                _ => state.error(text),
+                Vec::new()
             }
-            Vec::new()
+            Err(err) => {
+                tracing::warn!(%err, "creating failed");
+                let what = match route {
+                    Route::Pulls(pulls::NewPr(_)) => "the pull request",
+                    _ => "the issue",
+                };
+                let text = format!("GitHub didn't create {what}: {err}");
+                if let Some(form) = state.creating.forms.get_mut(route) {
+                    form.sending = false;
+                    form.error = Some(text.clone());
+                }
+                match &mut state.overlay {
+                    Some(Overlay::Compose(c)) if c.target == ComposeTarget::Form(route.clone()) => {
+                        c.sending = false;
+                        c.error = Some(text);
+                    }
+                    Some(Overlay::Ask(a)) if a.route == *route => {
+                        a.sending = false;
+                        a.error = Some(text);
+                    }
+                    _ => state.error(text),
+                }
+                Vec::new()
+            }
         }
     }
 }
@@ -1010,7 +998,12 @@ fn start_checkout(state: &mut State, pr: PrRef, d: &PrDetail) -> Vec<Cmd> {
         None => (format!("pr-{}", pr.number), None),
     };
     state.info(format!("Checking out {pr} on {name}…"));
-    vec![Cmd::Create(Work::Checkout { pr, name, track })]
+    work::start(Checkout {
+        repo: pr.repo,
+        pr: Some(pr.number),
+        name,
+        track,
+    })
 }
 
 // ---- links, pickers and the menu ---------------------------------------------

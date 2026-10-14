@@ -1,7 +1,7 @@
 //! Saving a run's artifacts, and running a workflow by hand.
 
 use super::*;
-use crate::actions::{Done, Work};
+use crate::actions::{Dispatch, SaveArtifact};
 use crate::route::runs;
 use crate::ui::page::{DispatchLink, Link};
 
@@ -16,11 +16,6 @@ fn select_link(s: &mut State, link: &Link) {
         .find(|&i| page.target(page.items[i].link) == Some(link))
         .unwrap_or_else(|| panic!("no {link:?} row"));
     p.select(i, height);
-}
-
-/// The one write `cmds` holds.
-fn work(cmds: &[Cmd]) -> Work {
-    crate::fixtures::sent(cmds)
 }
 
 const WORKFLOW: &str = "name: CI\non:\n  workflow_dispatch:\n    inputs:\n      outcome:\n        type: choice\n        options: [fail, pass]\n        default: fail\n      seconds:\n        type: string\n        default: \"60\"\n";
@@ -69,24 +64,17 @@ fn a_workflow_runs_by_hand_with_its_inputs_and_is_followed() {
     press(&mut s, "<Enter>");
     press(&mut s, "pass<Enter>");
     let cmds = press(&mut s, ",E");
-    assert_eq!(
-        work(&cmds),
-        Work::Dispatch {
-            repo: ghtui(),
-            file: "ci.yml".into(),
-            git_ref: "main".into(),
-            inputs: vec![
-                ("outcome".into(), "pass".into()),
-                ("seconds".into(), "60".into()),
-            ],
-        }
-    );
-    let done = Done::Dispatched {
+    let dispatch = Dispatch {
         repo: ghtui(),
         file: "ci.yml".into(),
-        result: Ok(Some(55)),
+        git_ref: "main".into(),
+        inputs: vec![
+            ("outcome".into(), "pass".into()),
+            ("seconds".into(), "60".into()),
+        ],
     };
-    crate::fixtures::done::<Work>(&mut s, done);
+    assert_eq!(crate::fixtures::sent::<Dispatch>(&cmds), dispatch);
+    crate::fixtures::done(&mut s, dispatch, Ok(Some(55)));
     let run = Route::Runs(runs::WorkflowRun {
         repo: ghtui(),
         run: 55,
@@ -137,14 +125,14 @@ fn an_artifact_is_saved_where_you_say() {
     select_link(&mut s, &artifact);
     press(&mut s, "<Enter>");
     let cmds = press(&mut s, "<Enter>");
-    let saved = Work::Save {
+    let saved = SaveArtifact {
         repo: ghtui(),
         id: 31,
         name: "coverage-report".into(),
         path: std::path::Path::new(".").join("coverage-report.zip"),
         replace: false,
     };
-    assert_eq!(work(&cmds), saved);
+    assert_eq!(crate::fixtures::sent::<SaveArtifact>(&cmds), saved);
     // Cargo.toml is there: the row asks to replace it.
     select_link(&mut s, &artifact);
     press(&mut s, "<Enter>");
@@ -155,7 +143,7 @@ fn an_artifact_is_saved_where_you_say() {
     let rows = s.picker_rows(p);
     assert_eq!(rows[0].0.label, "Replace Cargo.toml");
     let cmds = press(&mut s, "<Enter>");
-    assert!(matches!(work(&cmds), Work::Save { replace: true, .. }));
+    assert!(crate::fixtures::sent::<SaveArtifact>(&cmds).replace);
 }
 
 /// A check's annotation on a file shows in Files changed on its line, as

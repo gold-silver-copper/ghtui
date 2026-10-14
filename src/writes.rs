@@ -1,23 +1,20 @@
-//! Writes that used to need the browser: making a release
+//! Writes made on forms and pickers: making a release
 //! ([`crate::release`]), your gists ([`crate::gist`]), a wiki's pages
 //! ([`crate::wiki::form`]), and what you're subscribed to
 //! ([`crate::watch`]). This module is what they share: their keys and
 //! menu rows, the composer's text on their forms, their pickers and
-//! questions, the work they do in the background, and following GitHub
-//! until the page shows what changed, as [`crate::act`] does for its
-//! changes.
+//! questions, and following GitHub until the page shows what changed, as
+//! [`crate::act`] does for its changes.
 
 use crate::route::{Route, gists, releases, wiki};
 use std::collections::HashMap;
 
-use crate::api::GitHub;
 use crate::api::model::RepoId;
 use crate::api::watch::{SubscriptionState, Watched};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{Link, WriteLink};
 
 use crate::data::DataKey;
-use crate::diff_job::GitContext;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::state::{Cmd, Overlay, State};
@@ -47,102 +44,6 @@ pub struct Writing {
     /// and files.
     pub housekeeping: crate::housekeeping::Housekeeping,
     pub expect: Option<Expect>,
-}
-
-/// Work in the background.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Work {
-    Release(crate::release::Work),
-    Gist(crate::gist::Work),
-    /// Commit and push a wiki page; the form's page asked.
-    Wiki(Route, crate::wiki::Save),
-    Watch(crate::watch::Work),
-    /// A revert, a transfer, a new discussion, a branch checked out, and
-    /// what their pickers list ([`crate::manage`]).
-    Manage(crate::manage::Work),
-    /// Starred lists and packages ([`crate::site`]).
-    Site(crate::site::Work),
-    Housekeeping(crate::housekeeping::Work),
-}
-
-/// Work's answer.
-#[derive(Debug)]
-pub enum Done {
-    Release(crate::release::Done),
-    Gist(crate::gist::Done),
-    /// The page's title as its URL names it, or why it wasn't saved.
-    Wiki(Route, Result<String, String>),
-    Watch(crate::watch::Done),
-    Manage(crate::manage::Done),
-    Site(crate::site::Done),
-    Housekeeping(Box<crate::housekeeping::Done>),
-}
-
-impl Done {
-    /// Whether GitHub changed: what any page shows may be old.
-    pub fn wrote(&self) -> bool {
-        match self {
-            Done::Release(d) => d.wrote(),
-            Done::Gist(d) => d.wrote(),
-            Done::Wiki(_, result) => result.is_ok(),
-            Done::Watch(d) => d.wrote(),
-            Done::Manage(d) => d.wrote(),
-            Done::Site(d) => d.wrote(),
-            Done::Housekeeping(d) => d.wrote(),
-        }
-    }
-}
-
-impl Work {
-    /// Its answer, had it failed: for when the task running it panics.
-    pub fn failed(&self) -> Done {
-        let bug = "ghtui hit a bug".to_owned();
-        match self {
-            Work::Release(w) => Done::Release(w.failed(bug)),
-            Work::Gist(w) => Done::Gist(w.failed(bug)),
-            Work::Wiki(route, _) => Done::Wiki(route.clone(), Err(bug)),
-            Work::Watch(w) => Done::Watch(w.failed(bug)),
-            Work::Manage(w) => Done::Manage(w.failed(bug)),
-            Work::Site(w) => Done::Site(w.failed(bug)),
-            Work::Housekeeping(w) => Done::Housekeeping(Box::new(w.failed(bug))),
-        }
-    }
-
-    pub async fn run(self, gh: &GitHub, git: &GitContext) -> Done {
-        match self {
-            Work::Release(w) => Done::Release(w.run(gh).await),
-            Work::Gist(w) => Done::Gist(w.run(gh).await),
-            Work::Wiki(route, save) => Done::Wiki(route, crate::wiki::save(git, &save).await),
-            Work::Watch(w) => Done::Watch(w.run(gh).await),
-            Work::Manage(w) => Done::Manage(w.run(gh, &git.cwd).await),
-            Work::Site(w) => Done::Site(w.run(gh).await),
-            Work::Housekeeping(w) => Done::Housekeeping(Box::new(w.run(gh).await)),
-        }
-    }
-}
-
-/// Work's answers.
-#[must_use]
-pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
-    match done {
-        Done::Release(d) => crate::release::on_done(state, d),
-        Done::Gist(d) => crate::gist::on_done(state, d),
-        Done::Wiki(route, result) => crate::wiki::form::on_saved(state, &route, result),
-        Done::Watch(d) => crate::watch::on_done(state, d),
-        Done::Manage(d) => crate::manage::on_done(state, d),
-        Done::Site(d) => crate::site::on_done(state, d),
-        Done::Housekeeping(d) => crate::housekeeping::on_done(state, *d),
-    }
-}
-
-/// GitHub's reason, as the status bar says it.
-pub fn reason(err: &crate::api::ApiError) -> String {
-    use crate::api::ApiError;
-    match err {
-        ApiError::GraphQl(messages) => messages.join("; "),
-        ApiError::Http { message, .. } => message.clone(),
-        err => err.to_string(),
-    }
 }
 
 // ---- where they work -------------------------------------------------------------
@@ -557,7 +458,7 @@ impl Pick {
 /// What choosing a row does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Chosen {
-    Subscribe(crate::watch::Work),
+    Subscribe(crate::watch::Subscribe),
     Tag(Route, String),
     Target(Route, String),
     SaveAsset {

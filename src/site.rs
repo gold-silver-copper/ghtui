@@ -14,7 +14,6 @@ pub mod lists;
 pub mod packages;
 pub mod replies;
 
-use crate::api::GitHub;
 use crate::api::browse::SearchKind;
 use crate::api::explore::{Since, Topic};
 use crate::api::lists::ListPage;
@@ -429,67 +428,7 @@ pub(crate) fn arb() -> impl proptest::strategy::Strategy<Value = Route> {
     page.prop_map(Route::Site)
 }
 
-// ---- writes ---------------------------------------------------------------------------
-
-/// Changes these pages make, run in the background ([`crate::writes`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Work {
-    Lists(lists::Work),
-    DeleteList(lists::Delete),
-    DeleteVersion(packages::Delete),
-}
-
-/// Their answers.
-#[derive(Debug)]
-pub enum Done {
-    Lists(lists::Work, Result<(), String>),
-    DeleteList(lists::Delete, Result<(), String>),
-    DeleteVersion(packages::Delete, Result<(), String>),
-}
-
-impl Work {
-    pub fn failed(&self, why: String) -> Done {
-        match self {
-            Work::Lists(w) => Done::Lists(w.clone(), Err(why)),
-            Work::DeleteList(d) => Done::DeleteList(d.clone(), Err(why)),
-            Work::DeleteVersion(d) => Done::DeleteVersion(d.clone(), Err(why)),
-        }
-    }
-
-    pub async fn run(self, gh: &GitHub) -> Done {
-        match self {
-            Work::Lists(w) => {
-                let result = w.clone().run(gh).await;
-                Done::Lists(w, result)
-            }
-            Work::DeleteList(d) => {
-                let result = d.clone().run(gh).await;
-                Done::DeleteList(d, result)
-            }
-            Work::DeleteVersion(d) => {
-                let result = d.clone().run(gh).await;
-                Done::DeleteVersion(d, result)
-            }
-        }
-    }
-}
-
-impl Done {
-    pub fn wrote(&self) -> bool {
-        match self {
-            Done::Lists(_, r) | Done::DeleteList(_, r) | Done::DeleteVersion(_, r) => r.is_ok(),
-        }
-    }
-}
-
-#[must_use]
-pub fn on_done(state: &mut crate::state::State, done: Done) -> Vec<crate::state::Cmd> {
-    match done {
-        Done::Lists(w, result) => lists::on_done(state, w, result),
-        Done::DeleteList(d, result) => lists::on_deleted(state, d, result),
-        Done::DeleteVersion(d, result) => packages::on_deleted(state, d, result),
-    }
-}
+// ---- following GitHub ---------------------------------------------------------------
 
 /// What the page shows once GitHub has a change.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -582,7 +521,7 @@ impl Pick {
 /// What choosing one of their rows does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Chosen {
-    Lists(lists::Work),
+    Lists(lists::SetLists),
 }
 
 pub fn rows(

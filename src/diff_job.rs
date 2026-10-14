@@ -23,7 +23,8 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
 use crate::diff_screen::DiffOf;
-use crate::state::{DiffMsg, Failure, Msg};
+use crate::state::{DiffMsg, Msg};
+use crate::work::Failure;
 
 /// Where and how git runs.
 #[derive(Debug, Clone)]

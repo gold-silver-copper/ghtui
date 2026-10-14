@@ -17,7 +17,15 @@ use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::review::ComposeTarget;
 use crate::state::{Cmd, Overlay, State};
-use crate::writes::{Expected, Text, Work as Writes, row};
+use crate::work::{self, Cx, Failure, Job};
+use crate::writes::{Expected, Text, row};
+
+/// Commits and pushes a wiki page; its form's page asked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Save {
+    pub route: Route,
+    pub save: crate::wiki::Save,
+}
 
 /// A page being written.
 #[derive(Debug, Clone, Default)]
@@ -238,71 +246,82 @@ pub fn submit(state: &mut State) -> Vec<Cmd> {
     form_mut(state, &route).sending = true;
     crate::writes::sending(state);
     state.info(format!("Saving {}…", save.title));
-    vec![Cmd::Write(Writes::Wiki(route, save))]
+    work::start(Save { route, save })
 }
 
-/// Saved: the page opens (back on it, when it's the page before), and
-/// follows GitHub until it shows the text saved.
-#[must_use]
-pub fn on_saved(state: &mut State, route: &Route, result: Result<String, String>) -> Vec<Cmd> {
-    let Route::Wiki(wiki::WikiEdit { repo, .. }) = route else {
-        return Vec::new();
-    };
-    match result {
-        Ok(slug) => {
-            let form = state.writing.wikis.remove(route).unwrap_or_default();
-            crate::writes::close_sender(state, route);
-            let text = match &form.page {
-                Some(_) => form.text.clone(),
-                None => templates::split(&form.text).1,
-            };
-            state.info(match &form.page {
-                Some((title, ..)) => format!("Saved {title}"),
-                None => format!("Created {}", slug.replace('-', " ")),
-            });
-            if state.route() != Some(route) {
-                return Vec::new();
+impl Job for Save {
+    type Out = String;
+
+    async fn run(&self, cx: &Cx) -> Result<String, Failure> {
+        crate::wiki::save(&cx.git, &self.save)
+            .await
+            .map_err(Failure::msg)
+    }
+
+    /// Saved: the page opens (back on it, when it's the page before), and
+    /// follows GitHub until it shows the text saved.
+    fn done(self, state: &mut State, result: Result<String, Failure>) -> Vec<Cmd> {
+        let route = &self.route;
+        let Route::Wiki(wiki::WikiEdit { repo, .. }) = route else {
+            return Vec::new();
+        };
+        match result {
+            Ok(slug) => {
+                let form = state.writing.wikis.remove(route).unwrap_or_default();
+                crate::writes::close_sender(state, route);
+                let text = match &form.page {
+                    Some(_) => form.text.clone(),
+                    None => templates::split(&form.text).1,
+                };
+                state.info(match &form.page {
+                    Some((title, ..)) => format!("Saved {title}"),
+                    None => format!("Created {}", slug.replace('-', " ")),
+                });
+                if state.route() != Some(route) {
+                    return Vec::new();
+                }
+                // Back on the page it was opened from, if it's that one.
+                let below = state.screens.below().and_then(|s| match s {
+                    crate::state::Screen::Page(p) => match &p.route {
+                        Route::Wiki(wiki::Wiki { repo: r, page }) if r == repo => {
+                            let title = (state
+                                .picked::<WikiPage>(&DataKey::Wiki(r.clone(), page.clone())))
+                            .and_then(|w| w.title.as_deref().map(crate::wiki::slug));
+                            (title.as_deref() == Some(slug.as_str())).then(|| p.route.clone())
+                        }
+                        _ => None,
+                    },
+                    crate::state::Screen::Diff(_) => None,
+                });
+                let page = below.clone().unwrap_or_else(|| {
+                    Route::Wiki(wiki::Wiki {
+                        repo: repo.clone(),
+                        page: Some(slug),
+                    })
+                });
+                let Route::Wiki(wiki::Wiki { page: name, .. }) = &page else {
+                    return Vec::new();
+                };
+                let shows = Expected::Wiki(DataKey::Wiki(repo.clone(), name.clone()), text);
+                crate::writes::expect(state, page.clone(), shows);
+                if below.is_some() {
+                    let mut cmds = state.back();
+                    state.forward.clear();
+                    cmds.extend(state.ensure_route(&page, true));
+                    cmds
+                } else {
+                    state.replace(page, true, None)
+                }
             }
-            // Back on the page it was opened from, if it's that one.
-            let below = state.screens.below().and_then(|s| match s {
-                crate::state::Screen::Page(p) => match &p.route {
-                    Route::Wiki(wiki::Wiki { repo: r, page }) if r == repo => {
-                        let title = (state
-                            .picked::<WikiPage>(&DataKey::Wiki(r.clone(), page.clone())))
-                        .and_then(|w| w.title.as_deref().map(crate::wiki::slug));
-                        (title.as_deref() == Some(slug.as_str())).then(|| p.route.clone())
-                    }
-                    _ => None,
-                },
-                crate::state::Screen::Diff(_) => None,
-            });
-            let page = below.clone().unwrap_or_else(|| {
-                Route::Wiki(wiki::Wiki {
-                    repo: repo.clone(),
-                    page: Some(slug),
-                })
-            });
-            let Route::Wiki(wiki::Wiki { page: name, .. }) = &page else {
-                return Vec::new();
-            };
-            let shows = Expected::Wiki(DataKey::Wiki(repo.clone(), name.clone()), text);
-            crate::writes::expect(state, page.clone(), shows);
-            if below.is_some() {
-                let mut cmds = state.back();
-                state.forward.clear();
-                cmds.extend(state.ensure_route(&page, true));
-                cmds
-            } else {
-                state.replace(page, true, None)
+            Err(why) => {
+                let why = why.to_string();
+                if let Some(form) = state.writing.wikis.get_mut(route) {
+                    form.sending = false;
+                    form.error = Some(why.clone());
+                }
+                crate::writes::say(state, why);
+                Vec::new()
             }
-        }
-        Err(why) => {
-            if let Some(form) = state.writing.wikis.get_mut(route) {
-                form.sending = false;
-                form.error = Some(why.clone());
-            }
-            crate::writes::say(state, why);
-            Vec::new()
         }
     }
 }

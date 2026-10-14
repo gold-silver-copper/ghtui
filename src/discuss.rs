@@ -19,7 +19,7 @@ use crate::edit::Choosing;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::review::ComposeTarget;
-use crate::state::{Api, Cmd, Overlay, Screen, State};
+use crate::state::{Cmd, Overlay, Screen, State};
 use crate::ui::page::Link;
 
 /// The actions a discussion's page takes as its own.
@@ -93,10 +93,10 @@ pub fn send(w: &Writing, body: String) -> Vec<Cmd> {
         },
     };
     let about = Subject::Discussion(w.of.clone(), w.number);
-    vec![Cmd::Api(Api::Change(
+    vec![crate::act::send(
         Change::Discussion(change),
         By::Edit(about),
-    ))]
+    )]
 }
 
 /// The discussion on screen, as loaded, and the comment selected.
@@ -384,10 +384,7 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
         }
         Ok(Plan::Send(change)) => {
             state.info(format!("{}…", doing(&change)));
-            vec![Cmd::Api(Api::Change(
-                Change::Discussion(change),
-                By::Act(about),
-            ))]
+            vec![crate::act::send(Change::Discussion(change), By::Act(about))]
         }
         Ok(Plan::Delete(confirm)) => {
             state.overlay = Some(Overlay::Confirm(confirm));

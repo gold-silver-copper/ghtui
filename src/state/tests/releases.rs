@@ -5,7 +5,7 @@
 
 use crate::api::release::{Made, NewRelease};
 use crate::release::assets::{self, Of};
-use crate::release::{Done as ReleaseDone, Work as ReleaseWork};
+use crate::release::{Delete, DeleteTag, Save};
 use crate::route::releases;
 use ratatui_textarea::CursorMove;
 
@@ -41,14 +41,6 @@ fn select_link(s: &mut State, link: &Link) {
     p.select(i, height);
 }
 
-fn release_work(cmds: &[Cmd]) -> ReleaseWork {
-    fixtures::sent(cmds)
-}
-
-fn done(s: &mut State, d: ReleaseDone) -> Vec<Cmd> {
-    fixtures::done::<ReleaseWork>(s, d)
-}
-
 /// `,e` on a release opens it as the form, filled from it; saving asks
 /// whether to update it or make it a draft again, sends the whole of it
 /// to the release's ID, and its page follows until it shows the edit.
@@ -76,7 +68,7 @@ fn a_release_is_edited_and_its_page_follows() {
         .map(|(l, _)| l.as_str())
         .collect();
     assert_eq!(choices, ["Update release", "Make it a draft again"]);
-    let sent = release_work(&press(&mut s, "<Enter>"));
+    let sent = fixtures::sent::<Save>(&press(&mut s, "<Enter>"));
     let new = NewRelease {
         repo: ghtui(),
         tag: "v0.2.0".into(),
@@ -87,8 +79,8 @@ fn a_release_is_edited_and_its_page_follows() {
         prerelease: false,
         latest: true,
     };
-    let want = ReleaseWork::Save {
-        route: form.clone(),
+    let want = Save {
+        route: form,
         id: Some(ID),
         new,
     };
@@ -98,7 +90,7 @@ fn a_release_is_edited_and_its_page_follows() {
         draft: false,
         html_url: String::new(),
     };
-    done(&mut s, ReleaseDone::Saved(form, Ok(made)));
+    fixtures::done(&mut s, sent, Ok(made));
     assert_eq!(s.route(), Some(&page()));
     says(&s, "Updated v0.2.0");
     // GitHub still shows the old title: the page waits.
@@ -127,28 +119,23 @@ fn a_release_is_deleted_then_its_tag_asked_about() {
         "{:?}",
         asked(&s).facts
     );
-    let sent = release_work(&press(&mut s, "<Enter>"));
-    let want = ReleaseWork::Delete {
+    let sent = fixtures::sent::<Delete>(&press(&mut s, "<Enter>"));
+    let want = Delete {
         repo: ghtui(),
         tag: "v0.2.0".into(),
         id: ID,
     };
     assert_eq!(sent, want);
-    done(
-        &mut s,
-        ReleaseDone::Deleted(ghtui(), "v0.2.0".into(), Ok(true)),
-    );
+    fixtures::done(&mut s, sent, Ok(true));
     assert_eq!(
         s.route(),
         Some(&Route::Releases(releases::Releases(ghtui())))
     );
     assert_eq!(asked(&s).title, "Delete the tag v0.2.0 as well?");
-    let sent = release_work(&press(&mut s, "<Enter>"));
-    assert_eq!(sent, ReleaseWork::DeleteTag(ghtui(), "v0.2.0".into()));
-    done(
-        &mut s,
-        ReleaseDone::TagDeleted(ghtui(), "v0.2.0".into(), Ok(())),
-    );
+    let sent = fixtures::sent::<DeleteTag>(&press(&mut s, "<Enter>"));
+    let tag = "v0.2.0".to_owned();
+    assert_eq!(sent, DeleteTag { repo: ghtui(), tag });
+    fixtures::done(&mut s, sent, Ok(()));
     assert!(s.overlay.is_none());
     says(&s, "Deleted the tag v0.2.0");
     // The releases still list it until GitHub drops it.
@@ -178,19 +165,19 @@ fn an_asset_is_saved_where_you_say() {
     let asset = Link::Write(WriteLink::Asset(name.into()));
     select_link(&mut s, &asset);
     press(&mut s, "<Enter>");
-    let sent = release_work(&press(&mut s, "<Enter>"));
+    let sent = fixtures::sent::<assets::Save>(&press(&mut s, "<Enter>"));
     let of = Of {
         repo: ghtui(),
         tag: "v0.2.0".into(),
         id: ID,
         name: name.into(),
     };
-    let save = assets::Work::Save {
+    let save = assets::Save {
         of,
         path: std::path::Path::new(".").join(name),
         replace: false,
     };
-    assert_eq!(sent, ReleaseWork::Asset(save));
+    assert_eq!(sent, save);
     select_link(&mut s, &asset);
     press(&mut s, "<Enter>");
     press(&mut s, "Cargo.toml");
@@ -198,11 +185,8 @@ fn an_asset_is_saved_where_you_say() {
         panic!("no picker")
     };
     assert_eq!(s.picker_rows(p)[0].0.label, "Replace Cargo.toml");
-    let sent = release_work(&press(&mut s, "<Enter>"));
-    assert!(matches!(
-        sent,
-        ReleaseWork::Asset(assets::Work::Save { replace: true, .. })
-    ));
+    let sent = fixtures::sent::<assets::Save>(&press(&mut s, "<Enter>"));
+    assert!(sent.replace);
 }
 
 /// `,U` uploads a file from a path, named as it is; the page follows
@@ -213,22 +197,19 @@ fn assets_are_uploaded_and_deleted() {
     let mut s = with_release();
     press(&mut s, ",U");
     press(&mut s, "Cargo.toml");
-    let sent = release_work(&press(&mut s, "<Enter>"));
+    let sent = fixtures::sent::<assets::Upload>(&press(&mut s, "<Enter>"));
     let of = Of {
         repo: ghtui(),
         tag: "v0.2.0".into(),
         id: ID,
         name: "Cargo.toml".into(),
     };
-    let upload = assets::Work::Upload {
-        of: of.clone(),
+    let upload = assets::Upload {
+        of,
         path: "Cargo.toml".into(),
     };
-    assert_eq!(sent, ReleaseWork::Asset(upload));
-    done(
-        &mut s,
-        ReleaseDone::Asset(assets::Done::Uploaded(of, Ok(()))),
-    );
+    assert_eq!(sent, upload);
+    fixtures::done(&mut s, sent, Ok(()));
     says(&s, "Uploaded Cargo.toml");
     assert!(s.writing.expect.is_some(), "it follows the upload");
     let mut with = fixtures::release(true);
@@ -243,18 +224,15 @@ fn assets_are_uploaded_and_deleted() {
     select_link(&mut s, &Link::Write(WriteLink::Asset(name.into())));
     press(&mut s, ",D");
     assert_eq!(asked(&s).title, format!("Delete {name}?"));
-    let sent = release_work(&press(&mut s, "<Enter>"));
+    let sent = fixtures::sent::<assets::Delete>(&press(&mut s, "<Enter>"));
     let of = Of {
         repo: ghtui(),
         tag: "v0.2.0".into(),
         id: ID,
         name: name.into(),
     };
-    assert_eq!(sent, ReleaseWork::Asset(assets::Work::Delete(of.clone())));
-    done(
-        &mut s,
-        ReleaseDone::Asset(assets::Done::Deleted(of, Ok(()))),
-    );
+    assert_eq!(sent, assets::Delete(of));
+    fixtures::done(&mut s, sent, Ok(()));
     assert!(s.overlay.is_none());
     let mut without = fixtures::release(true);
     without.assets.items.retain(|a| a.name != name);

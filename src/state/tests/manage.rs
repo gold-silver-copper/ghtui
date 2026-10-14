@@ -9,7 +9,7 @@ use crate::route::{discussions, issues};
 
 use super::*;
 use crate::fixtures::{self};
-use crate::manage::{Done, Pick, Work};
+use crate::manage::{Pick, Revert, Start, Transfer};
 use crate::ui::page::{Link, ReviewLink};
 
 fn issue() -> Subject {
@@ -69,16 +69,6 @@ fn linked(number: u64, title: &str) -> Linked {
 /// The one change `cmds` sends.
 fn sent(cmds: &[Cmd]) -> (&Change, &By) {
     fixtures::sent_change(cmds)
-}
-
-/// The work `cmds` starts.
-fn work(cmds: &[Cmd]) -> Work {
-    fixtures::sent(cmds)
-}
-
-/// Work's answer.
-fn done(s: &mut State, done: Done) -> Vec<Cmd> {
-    fixtures::done::<Work>(s, done)
 }
 
 fn pick(s: &State) -> &Pick {
@@ -247,15 +237,13 @@ fn a_revert_opens_the_pull_request_github_makes() {
     from_menu(&mut s, "revert");
     assert_eq!(confirm(&s).title, "Revert #12?");
     let cmds = press(&mut s, "<Enter>");
-    assert_eq!(
-        work(&cmds),
-        Work::Revert {
-            pr: pr(),
-            id: NodeId::new("PR_12"),
-        }
-    );
+    let revert = Revert {
+        pr: pr(),
+        id: NodeId::new("PR_12"),
+    };
+    assert_eq!(fixtures::sent::<Revert>(&cmds), revert);
     assert!(confirm(&s).sending);
-    done(&mut s, Done::Reverted(pr(), Ok(20)));
+    fixtures::done(&mut s, revert, Ok(20));
     assert!(s.overlay.is_none());
     assert_eq!(
         s.route(),
@@ -411,11 +399,14 @@ fn a_branch_for_an_issue_is_made_then_checked_out() {
     answer(&mut s, &cmds, Ok(()));
     assert!(matches!(pick(&s), Pick::Checkout { .. }));
     let cmds = press(&mut s, "<Enter>");
+    let branch = "14-pages-wrap-at-the-terminal-width".to_owned();
     assert_eq!(
-        work(&cmds),
-        Work::Checkout {
+        fixtures::sent::<crate::create::Checkout>(&cmds),
+        crate::create::Checkout {
             repo: ghtui(),
-            branch: "14-pages-wrap-at-the-terminal-width".into(),
+            pr: None,
+            name: branch.clone(),
+            track: Some(branch),
         }
     );
     deliver(&mut s, |d| {
@@ -455,12 +446,13 @@ fn an_issue_is_pinned_and_transferred() {
         "Transfer #14 to gold-silver-copper/elsewhere?"
     );
     let cmds = press(&mut s, "<Enter>");
-    assert!(matches!(work(&cmds), Work::Transfer { .. }));
+    let transfer = fixtures::sent::<Transfer>(&cmds);
+    assert_eq!(transfer.from, at(14));
     let moved = IssueAt {
         repo: to.clone(),
         number: 1,
     };
-    done(&mut s, Done::Transferred(at(14), Ok(moved)));
+    fixtures::done(&mut s, transfer, Ok(moved));
     assert_eq!(
         s.route(),
         Some(&Route::Issues(issues::Issue {
@@ -544,23 +536,18 @@ fn a_new_discussion_starts_from_its_categorys_form() {
     assert!(text.starts_with("[Idea]"), "{text}");
     assert!(text.contains("### What would it do"), "{text}");
     let cmds = press(&mut s, "<C-s>");
-    let Work::Start {
-        repo_id,
-        category,
-        title,
-        body,
-        ..
-    } = work(&cmds)
-    else {
-        panic!("not started");
-    };
+    let start = fixtures::sent::<Start>(&cmds);
     assert_eq!(
-        (repo_id, category),
-        (NodeId::new("R_1"), NodeId::new("DIC_1"))
+        (&start.repo_id, &start.category),
+        (&NodeId::new("R_1"), &NodeId::new("DIC_1"))
     );
-    assert_eq!(title, "[Idea]");
-    assert!(body.starts_with("### What would it do"), "{body}");
-    done(&mut s, Done::Started(ghtui(), Ok(7)));
+    assert_eq!(start.title, "[Idea]");
+    assert!(
+        start.body.starts_with("### What would it do"),
+        "{}",
+        start.body
+    );
+    fixtures::done(&mut s, start, Ok(7));
     assert!(s.overlay.is_none());
     let of = DiscussionsOf::Repo(ghtui());
     assert_eq!(

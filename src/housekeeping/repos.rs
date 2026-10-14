@@ -3,7 +3,7 @@
 //! there, and (for a new one) an offer to clone it.
 
 use crate::route::{Route, code};
-use std::path::Path;
+use std::path::PathBuf;
 
 use crate::api::housekeeping::{MadeRepo, NewFork, NewRepo, Owners, Templates};
 use crate::api::model::RepoId;
@@ -12,13 +12,34 @@ use crate::ui::page::Page;
 use crate::ui::pages::{Mark, WriteFormView};
 
 use super::{
-    Chosen, Expected, Field, Form, FormOf, Subject, Work, ask, expect, failed, form, form_mut,
-    form_row, item,
+    Chosen, Expected, Field, Form, FormOf, Subject, ask, expect, failed, form, form_mut, form_row,
+    item,
 };
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::state::{Cmd, State};
-use crate::writes::Work as Writes;
+use crate::work::{self, Cx, Failure, Job};
+
+/// Forking a repository; the form's page asked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fork {
+    pub route: Route,
+    pub new: NewFork,
+}
+
+/// Making a new repository; the form's page asked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Make {
+    pub route: Route,
+    pub new: NewRepo,
+}
+
+/// Cloning a new repository into `dir`, with your own git.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloneTo {
+    pub url: String,
+    pub dir: PathBuf,
+}
 
 fn owners(state: &State) -> Option<&Owners> {
     state.picked(&DataKey::Owners)
@@ -224,10 +245,10 @@ pub(super) fn fork(state: &mut State, route: &Route, repo: &RepoId) -> Vec<Cmd> 
     form_mut(state, route).sending = true;
     crate::writes::sending(state);
     state.info(format!("Forking {repo}…"));
-    vec![Cmd::Write(Writes::Housekeeping(Work::Fork(
-        route.clone(),
+    work::start(Fork {
+        route: route.clone(),
         new,
-    )))]
+    })
 }
 
 /// The new repository's form sent.
@@ -251,10 +272,10 @@ pub(super) fn create(state: &mut State, route: &Route) -> Vec<Cmd> {
     form_mut(state, route).sending = true;
     crate::writes::sending(state);
     state.info(format!("Creating {}…", new.name));
-    vec![Cmd::Write(Writes::Housekeeping(Work::Repo(
-        route.clone(),
+    work::start(Make {
+        route: route.clone(),
         new,
-    )))]
+    })
 }
 
 /// Made: the form gives way to the repository's page, which follows
@@ -273,78 +294,97 @@ fn opened(state: &mut State, route: &Route, made: &MadeRepo) -> Option<Vec<Cmd>>
     Some(cmds)
 }
 
-#[must_use]
-pub(super) fn on_forked(
-    state: &mut State,
-    route: &Route,
-    result: Result<MadeRepo, String>,
-) -> Vec<Cmd> {
-    match result {
-        Ok(made) => {
-            state.info(format!(
-                "Forked as {}: GitHub may take a moment to copy it",
-                made.full_name
-            ));
-            opened(state, route, &made).unwrap_or_default()
-        }
-        Err(why) => {
-            failed(state, route, why);
-            Vec::new()
+impl Job for Fork {
+    type Out = MadeRepo;
+
+    async fn run(&self, cx: &Cx) -> Result<MadeRepo, Failure> {
+        Ok(cx.gh.fork(&self.new).await?)
+    }
+
+    fn done(self, state: &mut State, result: Result<MadeRepo, Failure>) -> Vec<Cmd> {
+        let Fork { route, .. } = &self;
+        match result {
+            Ok(made) => {
+                state.info(format!(
+                    "Forked as {}: GitHub may take a moment to copy it",
+                    made.full_name
+                ));
+                opened(state, route, &made).unwrap_or_default()
+            }
+            Err(why) => {
+                failed(state, route, &why);
+                Vec::new()
+            }
         }
     }
 }
 
-#[must_use]
-pub(super) fn on_made(
-    state: &mut State,
-    route: &Route,
-    result: Result<MadeRepo, String>,
-) -> Vec<Cmd> {
-    let made = match result {
-        Ok(made) => made,
-        Err(why) => {
-            failed(state, route, why);
-            return Vec::new();
-        }
-    };
-    state.info(format!("Created {}", made.full_name));
-    let on_form = state.route() == Some(route);
-    let cmds = opened(state, route, &made).unwrap_or_default();
-    // Offered as GitHub's page offers it: its clone command, run here.
-    let Some(repo) = made.repo().filter(|_| on_form) else {
-        return cmds;
-    };
-    let dir = Path::new(&repo.name).to_path_buf();
-    ask(
-        state,
-        Some(Subject::Clone {
-            url: made.clone_url.clone(),
-            dir: dir.clone(),
-        }),
-        format!("Clone {repo}?"),
-        vec![(
-            format!(
-                "Into ./{} here, with your own git: git clone {}",
-                dir.display(),
-                made.clone_url
-            ),
-            false,
-        )],
-        vec![("Clone it".into(), super::Answer::Clone)],
-    );
-    cmds
+impl Job for Make {
+    type Out = MadeRepo;
+
+    async fn run(&self, cx: &Cx) -> Result<MadeRepo, Failure> {
+        Ok(cx.gh.create_repo(&self.new).await?)
+    }
+
+    fn done(self, state: &mut State, result: Result<MadeRepo, Failure>) -> Vec<Cmd> {
+        let Make { route, .. } = &self;
+        let made = match result {
+            Ok(made) => made,
+            Err(why) => {
+                failed(state, route, &why);
+                return Vec::new();
+            }
+        };
+        state.info(format!("Created {}", made.full_name));
+        let on_form = state.route() == Some(route);
+        let cmds = opened(state, route, &made).unwrap_or_default();
+        // Offered as GitHub's page offers it: its clone command, run here.
+        let Some(repo) = made.repo().filter(|_| on_form) else {
+            return cmds;
+        };
+        let dir = PathBuf::from(&repo.name);
+        ask(
+            state,
+            Some(Subject::Clone {
+                url: made.clone_url.clone(),
+                dir: dir.clone(),
+            }),
+            format!("Clone {repo}?"),
+            vec![(
+                format!(
+                    "Into ./{} here, with your own git: git clone {}",
+                    dir.display(),
+                    made.clone_url
+                ),
+                false,
+            )],
+            vec![("Clone it".into(), super::Answer::Clone)],
+        );
+        cmds
+    }
 }
 
-#[must_use]
-pub(super) fn on_cloned(state: &mut State, dir: &Path, result: Result<(), String>) -> Vec<Cmd> {
-    match result {
-        Ok(()) => {
-            state.overlay = None;
-            state.info(format!("Cloned into ./{}", dir.display()));
-        }
-        Err(why) => crate::writes::say(state, why),
+impl Job for CloneTo {
+    type Out = ();
+    const WRITES: bool = false;
+
+    async fn run(&self, _: &Cx) -> Result<(), Failure> {
+        super::git::clone(&self.url, &self.dir)
+            .await
+            .map_err(Failure::msg)
     }
-    Vec::new()
+
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        let CloneTo { dir, .. } = &self;
+        match result {
+            Ok(()) => {
+                state.overlay = None;
+                state.info(format!("Cloned into ./{}", dir.display()));
+            }
+            Err(why) => crate::writes::say(state, why.to_string()),
+        }
+        Vec::new()
+    }
 }
 
 /// The fork's or the new repository's page.

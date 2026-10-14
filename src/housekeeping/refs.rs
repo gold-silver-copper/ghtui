@@ -3,7 +3,6 @@
 //! after asking; elsewhere GitHub's API makes and deletes them. The
 //! default branch, and a branch GitHub's rules protect, aren't deleted.
 
-use crate::api::GitHub;
 use crate::api::browse::{BranchInfo, Results, TagInfo};
 use crate::api::housekeeping::{BranchRules, RefKind};
 use crate::api::model::RepoId;
@@ -12,14 +11,25 @@ use crate::picker::fuzzy_score;
 use crate::route::{Route, code};
 
 use super::{
-    Chosen, Expected, Pick, RefWrite, Subject, Work, ask, clone_here, expect, item, refused,
-    selected,
+    Chosen, Expected, Pick, RefWrite, Subject, ask, clone_here, expect, item, refused, selected,
 };
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::state::{Cmd, State};
-use crate::writes::{Work as Writes, row};
+use crate::work::{self, Cx, Failure, Job};
+use crate::writes::row;
+
+/// A branch's or tag's change: made at a commit, or deleted, with git in
+/// your clone (`clone`) or with GitHub's API.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Save {
+    pub repo: RepoId,
+    pub kind: RefKind,
+    pub name: String,
+    pub write: RefWrite,
+    pub clone: Option<Clone>,
+}
 
 /// What making or deleting one takes.
 fn what(kind: RefKind) -> &'static str {
@@ -358,81 +368,84 @@ pub(super) fn send(
         (RefWrite::Delete, _) => "Deleting",
     };
     state.info(format!("{doing} the {} {name}…", kind.noun()));
-    vec![Cmd::Write(Writes::Housekeeping(Work::Ref {
+    work::start(Save {
         repo,
         kind,
         name,
         write,
         clone,
-    }))]
+    })
 }
 
-/// Does it: GitHub names the commit, then git or GitHub's API makes the
-/// branch or tag there.
-pub(super) async fn run(
-    gh: &GitHub,
-    repo: &RepoId,
-    kind: RefKind,
-    name: &str,
-    write: &RefWrite,
-    clone: Option<&Clone>,
-) -> Result<(), String> {
-    let why = |err: crate::api::ApiError| crate::writes::reason(&err);
-    match write {
-        RefWrite::Create(from) => {
-            let full_sha = from.len() == 40 && from.chars().all(|c| c.is_ascii_hexdigit());
-            let sha = if full_sha {
-                from.clone()
-            } else {
-                gh.commit_of(repo, from).await.map_err(why)?
-            };
-            match clone {
-                Some(c) => super::git::push_new_ref(&c.top, &c.remote, kind, name, &sha).await,
-                None => gh.create_ref(repo, kind, name, &sha).await.map_err(why),
+impl Job for Save {
+    type Out = ();
+
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        let Save {
+            repo,
+            kind,
+            name,
+            write,
+            clone,
+        } = self;
+        let (gh, kind, git) = (&cx.gh, *kind, |e: String| Failure::msg(e));
+        // GitHub names the commit, then git or GitHub's API makes the branch or
+        // tag there.
+        match (write, clone) {
+            (RefWrite::Create(from), clone) => {
+                let full_sha = from.len() == 40 && from.chars().all(|c| c.is_ascii_hexdigit());
+                let sha = if full_sha {
+                    from.clone()
+                } else {
+                    gh.commit_of(repo, from).await?
+                };
+                match clone {
+                    Some(c) => (super::git::push_new_ref(&c.top, &c.remote, kind, name, &sha)
+                        .await)
+                        .map_err(git),
+                    None => Ok(gh.create_ref(repo, kind, name, &sha).await?),
+                }
             }
+            (RefWrite::Delete, Some(c)) => {
+                (super::git::push_delete(&c.top, &c.remote, kind, name).await).map_err(git)
+            }
+            (RefWrite::Delete, None) => Ok(gh.delete_ref(repo, kind, name).await?),
         }
-        RefWrite::Delete => match clone {
-            Some(c) => super::git::push_delete(&c.top, &c.remote, kind, name).await,
-            None => gh.delete_ref(repo, kind, name).await.map_err(why),
-        },
     }
-}
 
-/// GitHub's answer: the list follows it until it shows the change.
-#[must_use]
-pub(super) fn on_done(state: &mut State, work: Work, result: Result<(), String>) -> Vec<Cmd> {
-    let Work::Ref {
-        repo,
-        kind,
-        name,
-        write,
-        ..
-    } = work
-    else {
-        return Vec::new();
-    };
-    if let Err(why) = result {
-        crate::writes::say(state, why);
-        return Vec::new();
+    /// GitHub's answer: the list follows it until it shows the change.
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        let work = self;
+        let Save {
+            repo,
+            kind,
+            name,
+            write,
+            ..
+        } = work;
+        if let Err(why) = result {
+            crate::writes::say(state, why.to_string());
+            return Vec::new();
+        }
+        let page = match kind {
+            RefKind::Branch => Route::Code(code::Branches(repo.clone())),
+            RefKind::Tag => Route::Code(code::Tags(repo.clone())),
+        };
+        crate::writes::close_sender(state, &page);
+        let there = matches!(write, RefWrite::Create(_));
+        // A branch made again with its name is asked about again.
+        (state.data).remove(&DataKey::BranchRules(repo.clone(), name.clone()));
+        state.info(format!(
+            "{} the {} {name}",
+            if there { "Created" } else { "Deleted" },
+            kind.noun()
+        ));
+        if state.route() != Some(&page) {
+            return Vec::new();
+        }
+        expect(state, page.clone(), Expected::Ref(repo, kind, name, there));
+        state.ensure_route(&page, true)
     }
-    let page = match kind {
-        RefKind::Branch => Route::Code(code::Branches(repo.clone())),
-        RefKind::Tag => Route::Code(code::Tags(repo.clone())),
-    };
-    crate::writes::close_sender(state, &page);
-    let there = matches!(write, RefWrite::Create(_));
-    // A branch made again with its name is asked about again.
-    (state.data).remove(&DataKey::BranchRules(repo.clone(), name.clone()));
-    state.info(format!(
-        "{} the {} {name}",
-        if there { "Created" } else { "Deleted" },
-        kind.noun()
-    ));
-    if state.route() != Some(&page) {
-        return Vec::new();
-    }
-    expect(state, page.clone(), Expected::Ref(repo, kind, name, there));
-    state.ensure_route(&page, true)
 }
 
 /// The menu's rows on the branches and tags.

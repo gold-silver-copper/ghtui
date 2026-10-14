@@ -161,10 +161,10 @@ pub fn queue_change(
     state: &mut State,
     change: &Change,
     by: &By,
-    err: &ApiError,
+    err: &crate::work::Failure,
     sender: bool,
 ) -> Option<Vec<Do>> {
-    let ApiError::Offline(_) = err else {
+    let Some(ApiError::Offline(_)) = err.api() else {
         return None;
     };
     let write = queue::Write::of(change)?;

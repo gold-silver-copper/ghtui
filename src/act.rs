@@ -4,7 +4,7 @@
 //! you are is decided once, by [`plan`]: the key, the menu and the command
 //! palette all ask it, so they can't disagree, and it asks GitHub's own
 //! word on what you may do. Every change goes to GitHub as a [`Change`]
-//! and comes back as [`Msg::Changed`], handled by [`on_changed`]; the page
+//! ([`Changing`]) and its answer is handled by [`on_changed`]; the page
 //! then follows GitHub ([`follow`]) until it shows the change.
 
 use crate::api::ApiError;
@@ -22,6 +22,7 @@ use crate::data::{DataKey, Picked};
 use crate::keymap::Action;
 use crate::nav;
 use crate::state::{Api, Cmd, Overlay, Screen, State};
+use crate::work::{self, Cx, Failure};
 
 mod inbox;
 mod merge;
@@ -166,7 +167,7 @@ fn act_on(state: &mut State, subject: Subject, action: Action) -> Vec<Cmd> {
         }
         Ok(Plan::Do(change)) => {
             state.info(format!("{}…", doing(&change)));
-            vec![Cmd::Api(Api::Change(change, By::Act(subject)))]
+            vec![send(change, By::Act(subject))]
         }
         Ok(Plan::Approve(pr)) => crate::review::open_approve(state, pr),
         Ok(Plan::Dismiss(d)) => crate::security::open_dismiss(state, d),
@@ -816,7 +817,7 @@ pub fn on_confirm_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
                     confirm.sending = true;
                     confirm.error = None;
                 }
-                return vec![Cmd::Api(Api::Change(change, By::Confirm(about)))];
+                return vec![send(change, By::Confirm(about))];
             }
         }
         _ => {}
@@ -824,16 +825,35 @@ pub fn on_confirm_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     Vec::new()
 }
 
+/// A change sent to GitHub, and what sent it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Changing {
+    pub change: Change,
+    pub by: By,
+}
+
+/// Sends `change` to GitHub; its answer goes back to `by`.
+pub fn send(change: Change, by: By) -> Cmd {
+    Cmd::Work(Changing { change, by }.into())
+}
+
+impl work::Job for Changing {
+    type Out = ();
+
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        Ok(cx.gh.change(&self.change).await?)
+    }
+
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        on_changed(state, &self.change, self.by, result)
+    }
+}
+
 /// GitHub's answer to a change, back to what sent it. Whatever was shown
 /// is fetched again (a write marks everything stale), so the page ends up
 /// as GitHub has it.
 #[must_use]
-pub fn on_changed(
-    state: &mut State,
-    change: &Change,
-    by: By,
-    result: Result<(), ApiError>,
-) -> Vec<Cmd> {
+fn on_changed(state: &mut State, change: &Change, by: By, result: Result<(), Failure>) -> Vec<Cmd> {
     // The dialog or the composer that sent it, if it's still waiting.
     let sender = match (&by, &state.overlay) {
         (By::Confirm(_), Some(Overlay::Confirm(c))) => {
@@ -1253,7 +1273,7 @@ pub fn needs(change: &Change) -> &'static str {
 
 /// Why a change failed, in GitHub's words, and the permission it needs
 /// when GitHub says the token lacks one.
-fn failure(change: &Change, err: &ApiError) -> String {
+fn failure(change: &Change, err: &Failure) -> String {
     let what = match change {
         Change::Comment { .. } | Change::CommitComment { .. } => "the comment",
         Change::Reply { .. } => "the reply",
@@ -1282,14 +1302,13 @@ fn failure(change: &Change, err: &ApiError) -> String {
         Change::Manage(m) => crate::manage::what(m),
         Change::Settings(c) => crate::settings::what(c),
     };
-    let reason = match err {
-        ApiError::GraphQl(messages) => messages.join("; "),
-        ApiError::Http { message, .. } => message.clone(),
-        err => err.to_string(),
-    };
+    let reason = err.to_string();
     // GitHub refuses with 403 for other reasons too ("already running"),
     // so only its words say it's a permission.
-    let denied = matches!(err, ApiError::Http { .. } | ApiError::GraphQl(_)) && {
+    let denied = matches!(
+        err.api(),
+        Some(ApiError::Http { .. } | ApiError::GraphQl(_))
+    ) && {
         let reason = reason.to_lowercase();
         ["not accessible", "permission", "must have", "forbidden"]
             .iter()
@@ -1355,9 +1374,11 @@ mod tests {
             repo: RepoId::new("o", "r"),
             job: 9,
         };
-        let refused = |message: &str| ApiError::Http {
-            status: 403,
-            message: message.into(),
+        let refused = |message: &str| {
+            Failure::from(ApiError::Http {
+                status: 403,
+                message: message.into(),
+            })
         };
         let busy = failure(
             &rerun,

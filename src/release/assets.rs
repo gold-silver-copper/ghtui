@@ -8,7 +8,6 @@
 use crate::route::{Route, releases};
 use std::path::{Path, PathBuf};
 
-use crate::api::GitHub;
 use crate::api::browse::{Asset, Release};
 use crate::api::model::RepoId;
 use crate::data::DataKey;
@@ -16,7 +15,8 @@ use crate::keymap::Action;
 use crate::state::{Cmd, Screen, State};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{Link, WriteLink};
-use crate::writes::{Answer, Chosen, Expected, Pick, Work as Writes, item};
+use crate::work::{self, Cx, Failure, Job};
+use crate::writes::{Answer, Chosen, Expected, Pick, item};
 
 /// An asset of a release, by REST's ID for the release and the asset's
 /// name (unique on a release).
@@ -28,64 +28,92 @@ pub struct Of {
     pub name: String,
 }
 
-/// Work in the background.
+/// Saving an asset to `path` (over a file there, with `replace`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Work {
-    Save {
-        of: Of,
-        path: PathBuf,
-        replace: bool,
-    },
-    Upload {
-        of: Of,
-        path: PathBuf,
-    },
-    Delete(Of),
+pub struct Save {
+    pub of: Of,
+    pub path: PathBuf,
+    pub replace: bool,
 }
 
-#[derive(Debug)]
-pub enum Done {
-    Saved(Of, PathBuf, Result<u64, String>),
-    Uploaded(Of, Result<(), String>),
-    Deleted(Of, Result<(), String>),
+/// Uploading the file at `path` as the asset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Upload {
+    pub of: Of,
+    pub path: PathBuf,
 }
 
-impl Done {
-    pub fn wrote(&self) -> bool {
-        match self {
-            Done::Saved(..) => false,
-            Done::Uploaded(_, r) | Done::Deleted(_, r) => r.is_ok(),
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Delete(pub Of);
+
+impl Job for Save {
+    /// Its size.
+    type Out = u64;
+    const WRITES: bool = false;
+
+    async fn run(&self, cx: &Cx) -> Result<u64, Failure> {
+        let Save { of, path, replace } = self;
+        let saved = cx
+            .gh
+            .download_asset(&of.repo, of.id, &of.name, path, *replace);
+        Ok(saved.await?)
+    }
+
+    fn done(self, state: &mut State, result: Result<u64, Failure>) -> Vec<Cmd> {
+        match result {
+            Ok(size) => {
+                let size = crate::ui::text::size(size);
+                let (name, path) = (self.of.name, self.path.display());
+                state.info(format!("Saved {name} to {path} ({size})"));
+            }
+            Err(why) => state.error(format!("Couldn't save {}: {why}", self.of.name)),
         }
+        Vec::new()
     }
 }
 
-impl Work {
-    pub fn failed(self, why: String) -> Done {
-        match self {
-            Work::Save { of, path, .. } => Done::Saved(of, path, Err(why)),
-            Work::Upload { of, .. } => Done::Uploaded(of, Err(why)),
-            Work::Delete(of) => Done::Deleted(of, Err(why)),
-        }
+impl Job for Upload {
+    type Out = ();
+
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        let of = &self.of;
+        Ok(cx
+            .gh
+            .upload_asset(&of.repo, of.id, &self.path, &of.name)
+            .await?)
     }
 
-    pub async fn run(self, gh: &GitHub) -> Done {
-        let why = |err: crate::api::ApiError| crate::writes::reason(&err);
-        match self {
-            Work::Save { of, path, replace } => {
-                let saved = gh
-                    .download_asset(&of.repo, of.id, &of.name, &path, replace)
-                    .await;
-                Done::Saved(of, path, saved.map_err(why))
-            }
-            Work::Upload { of, path } => {
-                let sent = gh.upload_asset(&of.repo, of.id, &path, &of.name).await;
-                Done::Uploaded(of, sent.map_err(why))
-            }
-            Work::Delete(of) => {
-                let done = gh.delete_asset(&of.repo, of.id, &of.name).await;
-                Done::Deleted(of, done.map_err(why))
-            }
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        if let Err(why) = result {
+            state.error(format!("GitHub didn't take {}: {why}", self.of.name));
+            return Vec::new();
         }
+        state.info(format!("Uploaded {}", self.of.name));
+        follow(state, self.of, true)
+    }
+}
+
+impl Job for Delete {
+    type Out = ();
+
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        let of = &self.0;
+        Ok(cx.gh.delete_asset(&of.repo, of.id, &of.name).await?)
+    }
+
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        let of = self.0;
+        if let Err(why) = result {
+            crate::writes::say(state, format!("GitHub didn't delete {}: {why}", of.name));
+            return Vec::new();
+        }
+        let route = Route::Releases(releases::Release {
+            repo: of.repo.clone(),
+            tag: of.tag.clone(),
+        });
+        crate::writes::close_sender(state, &route);
+        state.info(format!("Deleted {}", of.name));
+        follow(state, of, false)
     }
 }
 
@@ -268,18 +296,17 @@ pub fn upload_rows(state: &State, of: &Of, q: &str) -> Vec<(PaletteItem, Option<
 /// Choosing a row: saving, or uploading.
 #[must_use]
 pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
-    let work = match chosen {
+    match chosen {
         Chosen::SaveAsset { of, path, replace } => {
             state.info(format!("Saving {} to {}…", of.name, path.display()));
-            Work::Save { of, path, replace }
+            work::start(Save { of, path, replace })
         }
         Chosen::Upload { of, path } => {
             state.info(format!("Uploading {}…", path.display()));
-            Work::Upload { of, path }
+            work::start(Upload { of, path })
         }
-        _ => return Vec::new(),
-    };
-    vec![Cmd::Write(Writes::Release(super::Work::Asset(work)))]
+        _ => Vec::new(),
+    }
 }
 
 /// `,D` on an asset: asks first, as GitHub does.
@@ -320,47 +347,7 @@ pub fn delete(state: &mut State, name: &str) -> Vec<Cmd> {
         return Vec::new();
     };
     crate::writes::sending(state);
-    vec![Cmd::Write(Writes::Release(super::Work::Asset(
-        Work::Delete(of),
-    )))]
-}
-
-/// Work's answers: a saved file is said; the release's page follows an
-/// upload or a deletion.
-#[must_use]
-pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
-    match done {
-        Done::Saved(of, path, Ok(size)) => {
-            let size = crate::ui::text::size(size);
-            state.info(format!("Saved {} to {} ({size})", of.name, path.display()));
-            Vec::new()
-        }
-        Done::Saved(of, _, Err(why)) => {
-            state.error(format!("Couldn't save {}: {why}", of.name));
-            Vec::new()
-        }
-        Done::Uploaded(of, Ok(())) => {
-            state.info(format!("Uploaded {}", of.name));
-            follow(state, of, true)
-        }
-        Done::Uploaded(of, Err(why)) => {
-            state.error(format!("GitHub didn't take {}: {why}", of.name));
-            Vec::new()
-        }
-        Done::Deleted(of, Ok(())) => {
-            let route = Route::Releases(releases::Release {
-                repo: of.repo.clone(),
-                tag: of.tag.clone(),
-            });
-            crate::writes::close_sender(state, &route);
-            state.info(format!("Deleted {}", of.name));
-            follow(state, of, false)
-        }
-        Done::Deleted(of, Err(why)) => {
-            crate::writes::say(state, format!("GitHub didn't delete {}: {why}", of.name));
-            Vec::new()
-        }
-    }
+    work::start(Delete(of))
 }
 
 /// The release's page, if it's on screen, follows GitHub until it shows

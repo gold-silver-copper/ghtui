@@ -28,6 +28,7 @@ use crate::api::change::Change;
 use crate::data::{Data, DataKey};
 use crate::diff_screen::DiffOf;
 use crate::state::{Api, Cmd, DiffMsg, Msg, State, update};
+use crate::work::{Failure, Sent, Work};
 
 /// Asserts the status bar says `part`, as information.
 #[track_caller]
@@ -68,14 +69,14 @@ pub(crate) fn answer(state: &mut State, sent: &[Cmd], result: Result<(), ApiErro
 
 /// Sending `change` to GitHub, from `by`.
 pub(crate) fn change(change: Change, by: By) -> Cmd {
-    Cmd::Api(Api::Change(change, by))
+    crate::act::send(change, by)
 }
 
 /// The changes `cmds` send.
 pub(crate) fn changes(cmds: &[Cmd]) -> Vec<(&Change, &By)> {
     (cmds.iter())
         .filter_map(|c| match c {
-            Cmd::Api(Api::Change(change, by)) => Some((change, by)),
+            Cmd::Work(Work::Change(c)) => Some((&c.change, &c.by)),
             _ => None,
         })
         .collect()
@@ -97,89 +98,46 @@ pub(crate) fn changed(
     by: By,
     result: Result<(), ApiError>,
 ) -> Vec<Cmd> {
-    update(state, Msg::Changed(change, by, result))
+    let job = crate::act::Changing { change, by };
+    done(state, job, result.map_err(Failure::from))
 }
 
-/// Work in the background, as tests send and answer it.
-pub(crate) trait Work: Clone + std::fmt::Debug {
-    type Done;
-    fn cmd(self) -> Cmd;
-    fn of(cmd: &Cmd) -> Option<&Self>;
-    fn msg(done: Self::Done) -> Msg;
+/// Starting `job`.
+pub(crate) fn start(job: impl Into<Work>) -> Cmd {
+    Cmd::Work(job.into())
 }
 
-macro_rules! jobs {
-    ($($work:ty, $done:ty: |$w:ident| $cmd:expr, $pat:pat => $found:ident, |$d:ident| $msg:expr;)*) => {
-        $(impl Work for $work {
-            type Done = $done;
-            fn cmd(self) -> Cmd {
-                let $w = self;
-                $cmd
-            }
-            fn of(cmd: &Cmd) -> Option<&Self> {
-                match cmd {
-                    $pat => Some($found),
-                    _ => None,
-                }
-            }
-            fn msg(done: $done) -> Msg {
-                let $d = done;
-                $msg
-            }
-        })*
-    };
+/// The jobs of `J`'s kind `cmds` start.
+pub(crate) fn jobs<J: Sent>(cmds: &[Cmd]) -> Vec<J> {
+    (cmds.iter())
+        .filter_map(|c| match c {
+            Cmd::Work(work) => J::of(work).cloned(),
+            _ => None,
+        })
+        .collect()
 }
 
-use crate::writes::{Done as W, Work as Ww};
-jobs! {
-    Ww, W: |w| Cmd::Write(w), Cmd::Write(w) => w, |d| Msg::Write(d);
-    crate::release::Work, crate::release::Done:
-        |w| Cmd::Write(Ww::Release(w)), Cmd::Write(Ww::Release(w)) => w,
-        |d| Msg::Write(W::Release(d));
-    crate::release::assets::Work, crate::release::assets::Done:
-        |w| Cmd::Write(Ww::Release(crate::release::Work::Asset(w))),
-        Cmd::Write(Ww::Release(crate::release::Work::Asset(w))) => w,
-        |d| Msg::Write(W::Release(crate::release::Done::Asset(d)));
-    crate::gist::Work, crate::gist::Done:
-        |w| Cmd::Write(Ww::Gist(w)), Cmd::Write(Ww::Gist(w)) => w, |d| Msg::Write(W::Gist(d));
-    crate::watch::Work, crate::watch::Done:
-        |w| Cmd::Write(Ww::Watch(w)), Cmd::Write(Ww::Watch(w)) => w, |d| Msg::Write(W::Watch(d));
-    crate::manage::Work, crate::manage::Done:
-        |w| Cmd::Write(Ww::Manage(w)), Cmd::Write(Ww::Manage(w)) => w,
-        |d| Msg::Write(W::Manage(d));
-    crate::site::Work, crate::site::Done:
-        |w| Cmd::Write(Ww::Site(w)), Cmd::Write(Ww::Site(w)) => w, |d| Msg::Write(W::Site(d));
-    crate::housekeeping::Work, crate::housekeeping::Done:
-        |w| Cmd::Write(Ww::Housekeeping(w)), Cmd::Write(Ww::Housekeeping(w)) => w,
-        |d| Msg::Write(W::Housekeeping(Box::new(d)));
-    crate::create::Work, crate::create::Done:
-        |w| Cmd::Create(w), Cmd::Create(w) => w, |d| Msg::Create(d);
-    crate::actions::Work, crate::actions::Done:
-        |w| Cmd::Api(Api::Actions(w)), Cmd::Api(Api::Actions(w)) => w, |d| Msg::Actions(d);
-}
-
-/// Starting `work`.
-pub(crate) fn start<J: Work>(work: J) -> Cmd {
-    work.cmd()
-}
-
-/// The work of `J`'s kind `cmds` start.
-pub(crate) fn jobs<J: Work>(cmds: &[Cmd]) -> Vec<J> {
-    cmds.iter().filter_map(J::of).cloned().collect()
-}
-
-/// The one work of `J`'s kind `cmds` start.
+/// The one job of `J`'s kind `cmds` start.
 #[track_caller]
-pub(crate) fn sent<J: Work>(cmds: &[Cmd]) -> J {
+pub(crate) fn sent<J: Sent>(cmds: &[Cmd]) -> J {
     match jobs::<J>(cmds).as_slice() {
         [one] => one.clone(),
         _ => panic!("not one {}: {cmds:?}", std::any::type_name::<J>()),
     }
 }
 
-/// Work's answer, delivered.
-pub(crate) fn done<J: Work>(state: &mut State, done: J::Done) -> Vec<Cmd> {
-    update(state, J::msg(done))
+/// What came of `job`, delivered.
+pub(crate) fn done<J: Sent>(
+    state: &mut State,
+    job: J,
+    result: Result<J::Out, Failure>,
+) -> Vec<Cmd> {
+    update(state, Msg::Done(job.answered(result)))
+}
+
+/// Why a job failed, as tests say it.
+pub(crate) fn failure(why: &str) -> Failure {
+    Failure::msg(why.to_owned())
 }
 
 /// Delivers freshly fetched page data.

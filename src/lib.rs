@@ -57,6 +57,7 @@ mod typing;
 mod view;
 mod watch;
 pub mod wiki;
+mod work;
 mod writes;
 
 use crate::route::{Dest, Route, Target, issues, pulls};

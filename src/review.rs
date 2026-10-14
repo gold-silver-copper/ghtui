@@ -586,7 +586,7 @@ pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcom
 pub(crate) fn on_edited(
     state: &mut State,
     purpose: EditPurpose,
-    result: Result<String, crate::state::Failure>,
+    result: Result<String, crate::work::Failure>,
 ) -> Vec<Cmd> {
     let text = match result {
         Ok(text) => text,
@@ -1082,10 +1082,10 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
             id: e.id,
             body,
         };
-        return vec![Cmd::Api(Api::Change(
+        return vec![crate::act::send(
             Change::Edit(edit),
             crate::act::By::Edit(e.about),
-        ))];
+        )];
     }
     if let ComposeTarget::Form(_) = target {
         return crate::create::submit(state);
@@ -1118,12 +1118,12 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
             subject: subject_id,
             body,
         };
-        return vec![Cmd::Api(Api::Change(change, crate::act::By::Compose))];
+        return vec![crate::act::send(change, crate::act::By::Compose)];
     }
     if let ComposeTarget::Commit { repo, oid } = target {
         compose.sending = true;
         let change = Change::CommitComment { repo, oid, body };
-        return vec![Cmd::Api(Api::Change(change, crate::act::By::Compose))];
+        return vec![crate::act::send(change, crate::act::By::Compose)];
     }
     let Some((screen, diff)) = state.diff_parts() else {
         return Vec::new();
@@ -1140,7 +1140,7 @@ pub(crate) fn save_compose(state: &mut State) -> Vec<Cmd> {
                 thread: thread_id,
                 body,
             };
-            vec![Cmd::Api(Api::Change(reply, crate::act::By::Reply(pr)))]
+            vec![crate::act::send(reply, crate::act::By::Reply(pr))]
         }
         ComposeTarget::Draft { id } => {
             let save = diff.edit_review(&pr, |i| {

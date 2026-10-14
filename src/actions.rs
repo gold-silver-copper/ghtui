@@ -10,14 +10,14 @@ use std::path::{Path, PathBuf};
 use crate::api::actions::{Input, InputKind, dispatch_inputs};
 use crate::api::browse::{Blob, Refs, Workflow, WorkflowRun};
 use crate::api::model::RepoId;
-use crate::api::{ApiError, GitHub};
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::state::{Api, Cmd, State};
+use crate::state::{Cmd, State};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{DispatchLink, Link, Page};
 use crate::ui::pages::{self, DispatchView};
+use crate::work::{self, Cx, Failure, Job};
 
 /// The forms that run a workflow by hand, by repository and workflow file.
 #[derive(Debug, Default)]
@@ -35,72 +35,46 @@ struct Form {
     error: Option<String>,
 }
 
-/// Work done away from the screen.
+/// Saving a run's artifact to `path` (over a file there, with
+/// `replace`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Work {
-    Save {
-        repo: RepoId,
-        id: u64,
-        name: String,
-        path: PathBuf,
-        replace: bool,
-    },
-    Dispatch {
-        repo: RepoId,
-        file: String,
-        git_ref: String,
-        inputs: Vec<(String, String)>,
-    },
+pub struct SaveArtifact {
+    pub repo: RepoId,
+    pub id: u64,
+    pub name: String,
+    pub path: PathBuf,
+    pub replace: bool,
 }
 
-/// What came of it.
-#[derive(Debug)]
-pub enum Done {
-    Saved(String, PathBuf, Result<u64, ApiError>),
-    Dispatched {
-        repo: RepoId,
-        file: String,
-        result: Result<Option<u64>, ApiError>,
-    },
+/// Running a workflow by hand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Dispatch {
+    pub repo: RepoId,
+    pub file: String,
+    pub git_ref: String,
+    pub inputs: Vec<(String, String)>,
 }
 
-impl Work {
-    pub async fn run(self, gh: &GitHub) -> Done {
-        match self {
-            Work::Save {
-                repo,
-                id,
-                name,
-                path,
-                replace,
-            } => {
-                let result = gh.download_artifact(&repo, id, &path, replace).await;
-                Done::Saved(name, path, result)
-            }
-            Work::Dispatch {
-                repo,
-                file,
-                git_ref,
-                inputs,
-            } => {
-                let result = gh.dispatch(&repo, &file, &git_ref, &inputs).await;
-                Done::Dispatched { repo, file, result }
-            }
-        }
+impl Job for SaveArtifact {
+    /// Its size.
+    type Out = u64;
+    const WRITES: bool = false;
+
+    async fn run(&self, cx: &Cx) -> Result<u64, Failure> {
+        let saved = (cx.gh).download_artifact(&self.repo, self.id, &self.path, self.replace);
+        Ok(saved.await?)
     }
 
-    /// What it would have come to, had it run: the runtime's answer to a
-    /// command it couldn't start.
-    pub fn failed(&self) -> Done {
-        let bug = || ApiError::Internal("ghtui hit a bug".into());
-        match self {
-            Work::Save { name, path, .. } => Done::Saved(name.clone(), path.clone(), Err(bug())),
-            Work::Dispatch { repo, file, .. } => Done::Dispatched {
-                repo: repo.clone(),
-                file: file.clone(),
-                result: Err(bug()),
-            },
+    fn done(self, state: &mut State, result: Result<u64, Failure>) -> Vec<Cmd> {
+        let (name, path) = (self.name, self.path.display());
+        match result {
+            Ok(size) => {
+                let size = crate::ui::text::size(size);
+                state.info(format!("Saved {name} ({size}) to {path}"));
+            }
+            Err(err) => state.error(format!("Couldn't save {name} to {path}: {err}")),
         }
+        Vec::new()
     }
 }
 
@@ -263,13 +237,13 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
             replace,
         } => {
             state.info(format!("Saving {name} to {}…", path.display()));
-            vec![Cmd::Api(Api::Actions(Work::Save {
+            work::start(SaveArtifact {
                 repo,
                 id,
                 name,
                 path,
                 replace,
-            }))]
+            })
         }
         Chosen::Ref(name) => {
             let Some(key) = here(state) else {
@@ -535,66 +509,63 @@ fn run(state: &mut State) -> Vec<Cmd> {
     form.sending = true;
     form.error = None;
     state.shown_gen += 1;
-    vec![Cmd::Api(Api::Actions(Work::Dispatch {
+    work::start(Dispatch {
         repo,
         file,
         git_ref,
         inputs: values,
-    }))]
+    })
 }
 
-/// Work's answers.
-#[must_use]
-pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
-    match done {
-        Done::Saved(name, path, Ok(size)) => {
-            let size = crate::ui::text::size(size);
-            state.info(format!("Saved {name} ({size}) to {}", path.display()));
-            Vec::new()
-        }
-        Done::Saved(name, path, Err(err)) => {
-            state.error(format!("Couldn't save {name} to {}: {err}", path.display()));
-            Vec::new()
-        }
-        Done::Dispatched { repo, file, result } => {
-            let key = (repo.clone(), file.clone());
-            let form = state.dispatching.forms.entry(key.clone()).or_default();
-            form.sending = false;
-            state.shown_gen += 1;
-            let on_form = here(state) == Some(key.clone());
-            match result {
-                Err(err) => {
-                    let text = format!("Couldn't run {file}: {err}");
-                    match state.dispatching.forms.get_mut(&key) {
-                        Some(form) if on_form => form.error = Some(text),
-                        _ => state.error(text),
-                    }
-                    Vec::new()
+impl Job for Dispatch {
+    /// The run it started, when GitHub says.
+    type Out = Option<u64>;
+
+    async fn run(&self, cx: &Cx) -> Result<Option<u64>, Failure> {
+        let started = (cx.gh).dispatch(&self.repo, &self.file, &self.git_ref, &self.inputs);
+        Ok(started.await?)
+    }
+
+    /// A new run is followed from the form; elsewhere it's said.
+    fn done(self, state: &mut State, result: Result<Option<u64>, Failure>) -> Vec<Cmd> {
+        let Dispatch { repo, file, .. } = self;
+        let key = (repo.clone(), file.clone());
+        let form = state.dispatching.forms.entry(key.clone()).or_default();
+        form.sending = false;
+        state.shown_gen += 1;
+        let on_form = here(state) == Some(key.clone());
+        match result {
+            Err(err) => {
+                let text = format!("Couldn't run {file}: {err}");
+                match state.dispatching.forms.get_mut(&key) {
+                    Some(form) if on_form => form.error = Some(text),
+                    _ => state.error(text),
                 }
-                // It's a new run: the form starts over next time.
-                Ok(run) => {
-                    state.dispatching.forms.remove(&key);
-                    if !on_form {
-                        state.info(format!("Started {file}"));
-                        return Vec::new();
-                    }
-                    let route = match run {
-                        Some(run) => {
-                            state.info(format!("Started {file}: following its run"));
-                            Route::Runs(runs::WorkflowRun {
-                                repo,
-                                run,
-                                attempt: None,
-                            })
-                        }
-                        // GitHub didn't say which: its runs show it soon.
-                        None => {
-                            state.info(format!("Started {file}: it shows in its runs in a moment"));
-                            Route::Runs(runs::Workflow { repo, file })
-                        }
-                    };
-                    state.replace(route, true, None)
+                Vec::new()
+            }
+            // It's a new run: the form starts over next time.
+            Ok(run) => {
+                state.dispatching.forms.remove(&key);
+                if !on_form {
+                    state.info(format!("Started {file}"));
+                    return Vec::new();
                 }
+                let route = match run {
+                    Some(run) => {
+                        state.info(format!("Started {file}: following its run"));
+                        Route::Runs(runs::WorkflowRun {
+                            repo,
+                            run,
+                            attempt: None,
+                        })
+                    }
+                    // GitHub didn't say which: its runs show it soon.
+                    None => {
+                        state.info(format!("Started {file}: it shows in its runs in a moment"));
+                        Route::Runs(runs::Workflow { repo, file })
+                    }
+                };
+                state.replace(route, true, None)
             }
         }
     }

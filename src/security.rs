@@ -11,7 +11,7 @@ use crate::ui::overlays::PaletteItem;
 use crate::act::{By, Subject};
 use crate::data::DataKey;
 use crate::picker::Kind;
-use crate::state::{Api, Cmd, State};
+use crate::state::{Cmd, State};
 
 /// An alert whose dismissal is being chosen.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,7 +121,7 @@ pub fn choose(state: &mut State, change: Change) -> Vec<Cmd> {
     };
     state.info(format!("{}…", doing(c)));
     let about = Subject::Alert(c.alert.clone());
-    vec![Cmd::Api(Api::Change(change, By::Act(about)))]
+    vec![crate::act::send(change, By::Act(about))]
 }
 
 /// Whether the alert, as loaded, shows `c`.

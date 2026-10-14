@@ -4,7 +4,6 @@
 //! choices, with the one set now; the one chosen goes to GitHub, and the
 //! subscription is read again until GitHub shows it.
 
-use crate::api::GitHub;
 use crate::api::model::NodeId;
 use crate::api::watch::{Subscription, SubscriptionState, Watched};
 use crate::route::{Dest, Route, Target, discussions, issues, pulls};
@@ -15,33 +14,56 @@ use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::fuzzy_score;
 use crate::state::{Cmd, Remote, Screen, State};
-use crate::writes::{Chosen, Expected, Pick, Work as Writes, item, row};
+use crate::work::{self, Cx, Failure, Job};
+use crate::writes::{Chosen, Expected, Pick, item, row};
 
 /// Setting a subscription.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Work {
+pub struct Subscribe {
     pub of: Watched,
     pub id: NodeId,
     pub state: SubscriptionState,
 }
 
-#[derive(Debug)]
-pub struct Done(pub Work, pub Result<(), String>);
+impl Job for Subscribe {
+    type Out = ();
 
-impl Done {
-    pub fn wrote(&self) -> bool {
-        self.1.is_ok()
-    }
-}
-
-impl Work {
-    pub fn failed(&self, why: String) -> Done {
-        Done(self.clone(), Err(why))
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        Ok(cx.gh.subscribe(&self.of, &self.id, self.state).await?)
     }
 
-    pub async fn run(self, gh: &GitHub) -> Done {
-        let result = gh.subscribe(&self.of, &self.id, self.state).await;
-        Done(self, result.map_err(|e| crate::writes::reason(&e)))
+    /// GitHub's answer: the subscription is read again until it shows it.
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        match result {
+            Ok(()) => {
+                state.info(said(&self.of, self.state));
+                if let Some(route) = state.route().cloned() {
+                    let what = Expected::Subscription(self.of.clone(), self.state);
+                    crate::writes::expect(state, route, what);
+                }
+                let key = DataKey::Subscription(self.of);
+                let mut cmds = state.ensure(key, true);
+                // What the page shows of it (a repository's watchers) follows.
+                cmds.extend(state.load_visible(false));
+                cmds
+            }
+            Err(why) => {
+                let why = why.to_string();
+                // GitHub sets a thread's subscription only for a token with
+                // the notifications scope, which gh doesn't ask for.
+                let text = if why.contains("'notifications'") {
+                    "Subscribing to a thread takes your token's notifications scope: gh auth refresh -s notifications adds it".to_owned()
+                } else if why.to_lowercase().contains("not accessible") {
+                    format!(
+                        "GitHub didn't change your subscription: {why}. A fine-grained token can't: a classic one can"
+                    )
+                } else {
+                    format!("GitHub didn't change your subscription: {why}")
+                };
+                state.error(text);
+                Vec::new()
+            }
+        }
     }
 }
 
@@ -158,7 +180,7 @@ pub fn rows(state: &State, of: &Watched, q: &str) -> Vec<(PaletteItem, Option<Ch
             } else {
                 means.to_owned()
             };
-            let work = Work {
+            let work = Subscribe {
                 of: of.clone(),
                 id: s.id.clone(),
                 state: set,
@@ -192,43 +214,9 @@ fn said(of: &Watched, state: SubscriptionState) -> String {
 }
 
 #[must_use]
-pub fn choose(state: &mut State, work: Work) -> Vec<Cmd> {
+pub fn choose(state: &mut State, work: Subscribe) -> Vec<Cmd> {
     state.info(format!("{}…", said(&work.of, work.state)));
-    vec![Cmd::Write(Writes::Watch(work))]
-}
-
-/// GitHub's answer: the subscription is read again until it shows it.
-#[must_use]
-pub fn on_done(state: &mut State, Done(work, result): Done) -> Vec<Cmd> {
-    match result {
-        Ok(()) => {
-            state.info(said(&work.of, work.state));
-            if let Some(route) = state.route().cloned() {
-                let what = Expected::Subscription(work.of.clone(), work.state);
-                crate::writes::expect(state, route, what);
-            }
-            let key = DataKey::Subscription(work.of);
-            let mut cmds = state.ensure(key, true);
-            // What the page shows of it (a repository's watchers) follows.
-            cmds.extend(state.load_visible(false));
-            cmds
-        }
-        Err(why) => {
-            // GitHub sets a thread's subscription only for a token with
-            // the notifications scope, which gh doesn't ask for.
-            let text = if why.contains("'notifications'") {
-                "Subscribing to a thread takes your token's notifications scope: gh auth refresh -s notifications adds it".to_owned()
-            } else if why.to_lowercase().contains("not accessible") {
-                format!(
-                    "GitHub didn't change your subscription: {why}. A fine-grained token can't: a classic one can"
-                )
-            } else {
-                format!("GitHub didn't change your subscription: {why}")
-            };
-            state.error(text);
-            Vec::new()
-        }
-    }
+    work::start(work)
 }
 
 /// The menu's row, wherever there's something to subscribe to.

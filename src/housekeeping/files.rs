@@ -6,7 +6,6 @@
 //! elsewhere GitHub's API does. A file changed on GitHub since you opened
 //! it is never overwritten: committing says so, and keeps your text.
 
-use crate::api::GitHub;
 use crate::api::housekeeping::{FileCommit, FileLook, RefKind};
 use crate::api::model::RepoId;
 use crate::route::{Route, code, pulls};
@@ -14,14 +13,22 @@ use crate::ui::page::{Link, Page};
 use crate::ui::pages::{Mark, TextBox, WriteFormView};
 
 use super::{
-    Chosen, Expected, Field, FileChange, FileWrite, Form, FormOf, Subject, Work, ask, clone_here,
-    expect, failed, form, form_mut, form_row, item, refused,
+    Chosen, Expected, Field, FileChange, FileWrite, Form, FormOf, Subject, ask, clone_here, expect,
+    failed, form, form_mut, form_row, item, refused,
 };
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::state::{Cmd, State};
-use crate::writes::{Work as Writes, row};
+use crate::work::{self, Cx, Failure, Job};
+use crate::writes::row;
+
+/// A file's commit; its form's page asked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Commit {
+    pub route: Route,
+    pub write: Box<FileWrite>,
+}
 
 const WHAT: &str = "Changing its files";
 
@@ -381,10 +388,10 @@ pub(super) fn commit(state: &mut State, route: &Route) -> Vec<Cmd> {
     };
     form_mut(state, route).sending = true;
     crate::writes::sending(state);
-    vec![Cmd::Write(Writes::Housekeeping(Work::Commit(
-        route.clone(),
-        Box::new(write),
-    )))]
+    work::start(Commit {
+        route: route.clone(),
+        write: Box::new(write),
+    })
 }
 
 /// What committing says when GitHub's file changed since it was read.
@@ -394,142 +401,143 @@ fn changed_meanwhile(path: &str) -> String {
     )
 }
 
-/// Commits it: with git in your clone, or with GitHub's API, on a new
-/// branch made first when it's one.
-pub(super) async fn run(gh: &GitHub, w: &FileWrite) -> Result<(), String> {
-    let c = &w.commit;
-    if let Some(clone) = &w.clone {
-        return super::git::commit(&clone.top, &clone.remote, c)
-            .await
-            .map(drop);
-    }
-    let why = |err: crate::api::ApiError| crate::writes::reason(&err);
-    let head = match &c.from {
-        Some(from) => {
-            gh.create_ref(&w.repo, RefKind::Branch, &c.branch, from)
-                .await
-                .map_err(|e| format!("GitHub didn't make the branch {}: {}", c.branch, why(e)))?;
-            from.clone()
-        }
-        None => {
-            // GitHub's branch now: committed on, unless a file changed.
-            let mut head = w.head.clone();
-            for (path, seen) in &c.seen {
-                let look = gh.file_look(&w.repo, &c.branch, path).await.map_err(why)?;
-                if look.file.map(|f| f.oid) != *seen {
-                    return Err(match seen {
-                        Some(_) => changed_meanwhile(path),
-                        None => format!("{} has {path} already", c.branch),
-                    });
-                }
-                head = look.branch_head.unwrap_or(head);
-            }
-            head
-        }
-    };
-    let (headline, body) = match c.message.split_once('\n') {
-        Some((headline, body)) => (headline.trim().to_owned(), body.trim().to_owned()),
-        None => (c.message.trim().to_owned(), String::new()),
-    };
-    let commit = FileCommit {
-        repo: w.repo.clone(),
-        branch: c.branch.clone(),
-        head,
-        headline,
-        body,
-        additions: c.additions.clone(),
-        deletions: c.deletions.clone(),
-    };
-    match gh.commit_files(&commit).await {
-        Ok(()) => Ok(()),
-        Err(err) => {
-            // A new branch with nothing on it isn't left behind.
-            if c.from.is_some() {
-                let _ = gh.delete_ref(&w.repo, RefKind::Branch, &c.branch).await;
-            }
-            let reason = why(err);
-            if reason.contains("Expected branch to point to") {
-                return Err(format!(
-                    "{} moved on GitHub while committing: commit again",
-                    c.branch
-                ));
-            }
-            Err(reason)
-        }
-    }
-}
+impl Job for Commit {
+    type Out = ();
 
-/// Committed: the file (a deleted one's folder) opens at the branch, and
-/// follows GitHub until it shows the change; a new branch is offered as a
-/// pull request.
-#[must_use]
-pub(super) fn on_committed(
-    state: &mut State,
-    route: &Route,
-    write: Box<FileWrite>,
-    result: Result<(), String>,
-) -> Vec<Cmd> {
-    let Route::Housekeeping(of) = route else {
-        return Vec::new();
-    };
-    let Some((repo, _, _, change)) = parts(of) else {
-        return Vec::new();
-    };
-    let repo = repo.clone();
-    if let Err(why) = result {
-        failed(state, route, why);
-        return Vec::new();
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        let (gh, w) = (&cx.gh, &self.write);
+        let c = &w.commit;
+        if let Some(clone) = &w.clone {
+            let made = super::git::commit(&clone.top, &clone.remote, c).await;
+            return made.map(drop).map_err(Failure::msg);
+        }
+        let head = match &c.from {
+            Some(from) => {
+                let made = gh
+                    .create_ref(&w.repo, RefKind::Branch, &c.branch, from)
+                    .await;
+                made.map_err(|e| {
+                    let e = Failure::from(e);
+                    Failure::msg(format!("GitHub didn't make the branch {}: {e}", c.branch))
+                })?;
+                from.clone()
+            }
+            None => {
+                // GitHub's branch now: committed on, unless a file changed.
+                let mut head = w.head.clone();
+                for (path, seen) in &c.seen {
+                    let look = gh.file_look(&w.repo, &c.branch, path).await?;
+                    if look.file.map(|f| f.oid) != *seen {
+                        return Err(Failure::msg(match seen {
+                            Some(_) => changed_meanwhile(path),
+                            None => format!("{} has {path} already", c.branch),
+                        }));
+                    }
+                    head = look.branch_head.unwrap_or(head);
+                }
+                head
+            }
+        };
+        let (headline, body) = match c.message.split_once('\n') {
+            Some((headline, body)) => (headline.trim().to_owned(), body.trim().to_owned()),
+            None => (c.message.trim().to_owned(), String::new()),
+        };
+        let commit = FileCommit {
+            repo: w.repo.clone(),
+            branch: c.branch.clone(),
+            head,
+            headline,
+            body,
+            additions: c.additions.clone(),
+            deletions: c.deletions.clone(),
+        };
+        match gh.commit_files(&commit).await {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                // A new branch with nothing on it isn't left behind.
+                if c.from.is_some() {
+                    let _ = gh.delete_ref(&w.repo, RefKind::Branch, &c.branch).await;
+                }
+                let failure = Failure::from(err);
+                if failure.to_string().contains("Expected branch to point to") {
+                    return Err(Failure::msg(format!(
+                        "{} moved on GitHub while committing: commit again",
+                        c.branch
+                    )));
+                }
+                Err(failure)
+            }
+        }
     }
-    state.writing.housekeeping.forms.remove(route);
-    crate::writes::close_sender(state, route);
-    let FileWrite {
-        commit: c, base, ..
-    } = *write;
-    state.info(format!("Committed to {}", c.branch));
-    if state.route() != Some(route) {
-        return Vec::new();
-    }
-    let (page, text, path) = match (change, c.additions.first()) {
-        (FileChange::Delete, _) | (_, None) => {
-            let path = c.deletions.first().cloned().unwrap_or_default();
-            let dir = path.rsplit_once('/').map_or("", |(dir, _)| dir).to_owned();
-            let page = Route::Code(code::Tree {
+
+    /// Committed: the file (a deleted one's folder) opens at the branch, and
+    /// follows GitHub until it shows the change; a new branch is offered as a
+    /// pull request.
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        let Commit { route, write } = self;
+        let route = &route;
+        let Route::Housekeeping(of) = route else {
+            return Vec::new();
+        };
+        let Some((repo, _, _, change)) = parts(of) else {
+            return Vec::new();
+        };
+        let repo = repo.clone();
+        if let Err(why) = result {
+            failed(state, route, &why);
+            return Vec::new();
+        }
+        state.writing.housekeeping.forms.remove(route);
+        crate::writes::close_sender(state, route);
+        let FileWrite {
+            commit: c, base, ..
+        } = *write;
+        state.info(format!("Committed to {}", c.branch));
+        if state.route() != Some(route) {
+            return Vec::new();
+        }
+        let (page, text, path) = match (change, c.additions.first()) {
+            (FileChange::Delete, _) | (_, None) => {
+                let path = c.deletions.first().cloned().unwrap_or_default();
+                let dir = path.rsplit_once('/').map_or("", |(dir, _)| dir).to_owned();
+                let page = Route::Code(code::Tree {
+                    repo: repo.clone(),
+                    rev: c.branch.clone(),
+                    path: dir,
+                });
+                (page, None, path)
+            }
+            (_, Some((path, text))) => {
+                let page = Route::blob(repo.clone(), c.branch.clone(), path.clone());
+                (page, Some(text.clone()), path.clone())
+            }
+        };
+        let mut cmds = state.replace(page.clone(), true, None);
+        expect(
+            state,
+            page,
+            Expected::File {
                 repo: repo.clone(),
                 rev: c.branch.clone(),
-                path: dir,
-            });
-            (page, None, path)
-        }
-        (_, Some((path, text))) => {
-            let page = Route::blob(repo.clone(), c.branch.clone(), path.clone());
-            (page, Some(text.clone()), path.clone())
-        }
-    };
-    let mut cmds = state.replace(page.clone(), true, None);
-    expect(
-        state,
-        page,
-        Expected::File {
-            repo: repo.clone(),
-            rev: c.branch.clone(),
-            path,
-            text,
-        },
-    );
-    if c.from.is_some() {
-        ask(
-            state,
-            Some(Subject::Propose(repo, c.branch.clone(), base)),
-            format!("Open a pull request for {}?", c.branch),
-            vec![(
-                "Its title and description are written on the next page".into(),
-                false,
-            )],
-            vec![("Open a pull request".into(), super::Answer::Propose)],
+                path,
+                text,
+            },
         );
+        if c.from.is_some() {
+            ask(
+                state,
+                Some(Subject::Propose(repo, c.branch.clone(), base)),
+                format!("Open a pull request for {}?", c.branch),
+                vec![(
+                    "Its title and description are written on the next page".into(),
+                    false,
+                )],
+                vec![("Open a pull request".into(), super::Answer::Propose)],
+            );
+        }
+        cmds.extend(super::follow(state));
+        cmds
     }
-    cmds.extend(super::follow(state));
-    cmds
 }
 
 /// A new pull request from `branch`, into the default branch.

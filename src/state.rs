@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::api::ApiError;
-use crate::api::change::Change;
 use crate::api::model::{NodeId, PrRef, ViewedFiles};
 use crate::api::rate_limit::RateLimits;
 use crate::diff::FileDiff;
@@ -37,6 +36,7 @@ use crate::review::{
 };
 use crate::store::DraftComment;
 use crate::tabs::Tab;
+use crate::work::Failure;
 
 mod diff;
 mod dispatch;
@@ -70,8 +70,6 @@ pub enum Msg {
         Result<Data, ApiError>,
         Option<crate::source::From>,
     ),
-    /// GitHub's answer to a change.
-    Changed(Change, act::By, Result<(), ApiError>),
     Mouse(MouseEvent),
     Timer(Timer),
     /// The search box's input settled; fetch live suggestions if it's
@@ -125,38 +123,11 @@ pub enum Msg {
             Result<crate::api::Polled, ApiError>,
         )>,
     ),
-    /// New issues and pull requests, and checking one out.
-    Create(crate::create::Done),
-    /// Releases, gists, wiki pages and subscriptions.
-    Write(crate::writes::Done),
-    /// An artifact saved, a workflow run by hand.
-    Actions(crate::actions::Done),
+    /// What came of work in the background.
+    Done(crate::work::Done),
     /// Whether GitHub can be reached, the queued writes, the kept
     /// repositories ([`crate::offline`]).
     Offline(crate::offline::Msg),
-}
-
-/// Why background work failed. Shows as its message with its causes
-/// (`a: b`); `{:?}` has everything, for the log.
-#[derive(Debug)]
-pub struct Failure(anyhow::Error);
-
-impl Failure {
-    pub fn msg(text: impl std::fmt::Display + std::fmt::Debug + Send + Sync + 'static) -> Self {
-        Self(anyhow::Error::msg(text))
-    }
-}
-
-impl<E: std::error::Error + Send + Sync + 'static> From<E> for Failure {
-    fn from(err: E) -> Self {
-        Self(err.into())
-    }
-}
-
-impl std::fmt::Display for Failure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:#}", self.0)
-    }
 }
 
 /// What arrives for a PR's diff: from its job, GitHub, or the drafts.
@@ -215,12 +186,9 @@ pub enum Cmd {
         edit: crate::home::Edit,
         what: String,
     },
-    /// Making an issue or pull request, or git work in your clone;
-    /// answered by [`Msg::Create`].
-    Create(crate::create::Work),
-    /// A release, a gist, a wiki page or a subscription; answered by
-    /// [`Msg::Write`].
-    Write(crate::writes::Work),
+    /// A write to GitHub, or git in your clone; answered by
+    /// [`Msg::Done`].
+    Work(crate::work::Work),
     /// Asking whether GitHub is back, the queue, the kept repositories;
     /// answered by [`Msg::Offline`].
     Offline(crate::offline::Cmd),
@@ -241,8 +209,6 @@ pub enum Api {
         key: DataKey,
         after: String,
     },
-    /// Change something on GitHub, answered by [`Msg::Changed`].
-    Change(Change, act::By),
     /// Search repositories for the search box's suggestions.
     Suggest(String),
     SaveVisits(Vec<Visit>),
@@ -284,8 +250,6 @@ pub enum Api {
         pr: PrRef,
         asks: Vec<crate::live::Ask>,
     },
-    /// Saving an artifact, running a workflow by hand.
-    Actions(crate::actions::Work),
     /// Whether another watched page changed, asked with ETags.
     Watch {
         what: crate::live::page::Watched,
