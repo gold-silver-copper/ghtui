@@ -5,6 +5,7 @@
 use crate::api::ApiError;
 use crate::api::browse::WikiPage;
 use crate::api::model::RepoId;
+use crate::git::commit;
 use crate::git::repo::Repo;
 
 use crate::diff_job::GitContext;
@@ -223,7 +224,8 @@ async fn save_in(wiki: &Repo, save: &Save) -> Result<String, String> {
             Some(file) => {
                 let changed = match &save.base {
                     Some(base) if *base != head => {
-                        blob(wiki, base, file).await != blob(wiki, &head, file).await
+                        commit::blob(wiki, base, file).await
+                            != commit::blob(wiki, &head, file).await
                     }
                     _ => false,
                 };
@@ -249,20 +251,18 @@ async fn save_in(wiki: &Repo, save: &Save) -> Result<String, String> {
                 format!("{}.md", slug(&save.title))
             }
         };
-        let commit = commit(wiki, &head, &file, save).await.map_err(failed)?;
+        let made = make(wiki, &head, &file, save).await.map_err(failed)?;
         let branch = branch(wiki).await;
-        let spec = format!("{commit}:refs/heads/{branch}");
+        let spec = format!("{made}:refs/heads/{branch}");
         let push = ["push", "--quiet", wiki.remote.as_str(), spec.as_str()];
         match wiki.git(&push, &[], None).await {
             Ok(_) => {
-                wiki.git(&["update-ref", HEAD, &commit], &[], None)
+                wiki.git(&["update-ref", HEAD, &made], &[], None)
                     .await
                     .map_err(failed)?;
                 return Ok(slug(&save.title));
             }
-            Err(crate::git::GitError::Failed { stderr, .. })
-                if attempt == 0
-                    && (stderr.contains("[rejected]") || stderr.contains("fetch first")) => {}
+            Err(err) if attempt == 0 && commit::moved_on(&err) => {}
             Err(crate::git::GitError::Failed { stderr, .. }) => {
                 return Err(format!("GitHub refused the page: {}", stderr.trim()));
             }
@@ -272,14 +272,6 @@ async fn save_in(wiki: &Repo, save: &Save) -> Result<String, String> {
     Err(format!(
         "{repo}'s wiki kept changing while saving: save again"
     ))
-}
-
-/// The blob at `rev:path`, if there's one.
-async fn blob(wiki: &Repo, rev: &str, path: &str) -> Option<String> {
-    let spec = format!("{rev}:{path}");
-    let args = ["rev-parse", "--verify", "--quiet", &spec];
-    let out = wiki.git(&args, &[], None).await;
-    out.ok().map(|o| o.trim().to_owned())
 }
 
 /// The branch the wiki's pages are on: its remote's `HEAD`.
@@ -293,9 +285,8 @@ async fn branch(wiki: &Repo) -> String {
         .map_or_else(|| "master".to_owned(), str::to_owned)
 }
 
-/// A commit on `parent` with `file` holding the page's text, made
-/// without a working tree: through an index of its own.
-async fn commit(
+/// A commit on `parent` with `file` holding the page's text.
+async fn make(
     wiki: &Repo,
     parent: &str,
     file: &str,
@@ -305,22 +296,6 @@ async fn commit(
     if !text.ends_with('\n') {
         text.push('\n');
     }
-    let blob = wiki
-        .git(&["hash-object", "-w", "--stdin"], &[], Some(text))
-        .await?;
-    let index = (wiki.path).join(format!("ghtui-wiki-index-{}", std::process::id()));
-    let index_path = index.to_string_lossy().into_owned();
-    let env = [("GIT_INDEX_FILE", index_path.as_str())];
-    let cacheinfo = format!("100644,{},{file}", blob.trim());
-    let tree = async {
-        wiki.git(&["read-tree", parent], &env, None).await?;
-        let add = ["update-index", "--add", "--cacheinfo", &cacheinfo];
-        wiki.git(&add, &env, None).await?;
-        wiki.git(&["write-tree", "--missing-ok"], &env, None).await
-    }
-    .await;
-    let _ = std::fs::remove_file(&index);
-    let tree = tree?;
     let markup = match file.rsplit_once('.') {
         Some((_, "md" | "markdown")) | None => "markdown",
         Some((_, ext)) => ext,
@@ -330,25 +305,13 @@ async fn commit(
     } else {
         "Created"
     };
-    let message = format!("{verb} {} ({markup})", save.title);
-    let config = |key: &'static str| async move {
-        let value = wiki.git(&["config", key], &[], None).await.ok()?;
-        Some(value.trim().to_owned()).filter(|v| !v.is_empty())
+    let change = commit::Change {
+        additions: &[(file.to_owned(), text)],
+        deletions: &[],
+        message: &format!("{verb} {} ({markup})", save.title),
+        login: save.login.as_deref(),
     };
-    let login = save.login.as_deref().unwrap_or("ghtui");
-    let name = config("user.name")
-        .await
-        .unwrap_or_else(|| login.to_owned());
-    let email =
-        (config("user.email").await).unwrap_or_else(|| format!("{login}@users.noreply.github.com"));
-    let who = [
-        ("GIT_AUTHOR_NAME", name.as_str()),
-        ("GIT_AUTHOR_EMAIL", email.as_str()),
-        ("GIT_COMMITTER_NAME", name.as_str()),
-        ("GIT_COMMITTER_EMAIL", email.as_str()),
-    ];
-    let args = ["commit-tree", tree.trim(), "-p", parent, "-m", &message];
-    Ok(wiki.git(&args, &who, None).await?.trim().to_owned())
+    commit::make(wiki, parent, &change).await
 }
 
 #[cfg(test)]

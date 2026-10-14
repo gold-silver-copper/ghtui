@@ -388,11 +388,15 @@ pub(super) fn commit(state: &mut State, route: &Route) -> Vec<Cmd> {
     })
 }
 
-/// What committing says when GitHub's file changed since it was read.
-fn changed_meanwhile(path: &str) -> String {
-    format!(
-        "{path} changed on GitHub since you opened it: committing would overwrite that, so it isn't committed. Your text is kept here; open the file again to see GitHub's"
-    )
+/// What committing says when GitHub's `path` on `branch` isn't as it was
+/// `seen` (none: it wasn't there).
+pub(super) fn not_as_seen(branch: &str, path: &str, seen: Option<&String>) -> String {
+    match seen {
+        Some(_) => format!(
+            "{path} changed on GitHub since you opened it: committing would overwrite that, so it isn't committed. Your text is kept here; open the file again to see GitHub's"
+        ),
+        None => format!("{branch} has {path} already"),
+    }
 }
 
 impl Job for Commit {
@@ -422,10 +426,8 @@ impl Job for Commit {
                 for (path, seen) in &c.seen {
                     let look = gh.file_look(&w.repo, &c.branch, path).await?;
                     if look.file.map(|f| f.oid) != *seen {
-                        return Err(Failure::msg(match seen {
-                            Some(_) => changed_meanwhile(path),
-                            None => format!("{} has {path} already", c.branch),
-                        }));
+                        let why = not_as_seen(&c.branch, path, seen.as_ref());
+                        return Err(Failure::msg(why));
                     }
                     head = look.branch_head.unwrap_or(head);
                 }
