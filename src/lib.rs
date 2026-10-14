@@ -15,6 +15,7 @@ pub mod ui;
 mod act;
 mod browse;
 mod chrome;
+mod clone;
 mod code_index;
 mod code_nav;
 mod compose;

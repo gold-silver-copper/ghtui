@@ -173,7 +173,7 @@ jobs! {
     Revert(crate::manage::Revert),
     Transfer(crate::manage::Transfer),
     StartDiscussion(crate::manage::Start),
-    Checkout(crate::create::Checkout),
+    Checkout(crate::clone::Checkout),
     Push(crate::create::Push),
     Submit(crate::create::Submit),
     SaveArtifact(crate::workflows::SaveArtifact),

@@ -629,7 +629,7 @@ pub enum Chosen {
     /// Ask first.
     Ask(Box<Confirm>),
     /// Check out a branch in your clone.
-    Checkout(crate::create::Checkout),
+    Checkout(crate::clone::Checkout),
     /// Write the new discussion in the composer, starting with this.
     Write(Starting, String),
 }
@@ -761,7 +761,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
             crate::picker::entry(
                 format!("Check out {branch}"),
                 "in your clone",
-                Some(Chosen::Checkout(crate::create::Checkout {
+                Some(Chosen::Checkout(crate::clone::Checkout {
                     repo: repo.clone(),
                     pr: None,
                     name: branch.clone(),

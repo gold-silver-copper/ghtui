@@ -401,8 +401,8 @@ fn a_branch_for_an_issue_is_made_then_checked_out() {
     let cmds = press(&mut s, "<Enter>");
     let branch = "14-pages-wrap-at-the-terminal-width".to_owned();
     assert_eq!(
-        fixtures::sent::<crate::create::Checkout>(&cmds),
-        crate::create::Checkout {
+        fixtures::sent::<crate::clone::Checkout>(&cmds),
+        crate::clone::Checkout {
             repo: ghtui(),
             pr: None,
             name: branch.clone(),

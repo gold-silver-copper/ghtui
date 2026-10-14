@@ -264,7 +264,7 @@ fn checkout_says_what_branch_or_why_not() {
     let mut s = with_pr();
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
     let cmds = press(&mut s, ",c");
-    let work = crate::create::Checkout {
+    let work = crate::clone::Checkout {
         repo: pr.repo,
         pr: Some(pr.number),
         name: "octocat/syntax-palette".into(),
