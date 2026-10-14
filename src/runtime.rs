@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::api::model::{PendingReview, PrRef, ReviewEvent};
+use crate::api::model::PrRef;
 use crate::api::{ApiError, GitHub};
-use crate::store::{DraftComment, ReviewState, Reviews};
+use crate::store::{ReviewState, Reviews};
 use crate::ui::bars::Notice;
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind, MouseEventKind};
@@ -19,7 +19,6 @@ use crate::data::{self, DataKey};
 use crate::diff_job::{self, GitContext, JobControl, JobMsg, JobTx, RepoGit};
 use crate::diff_screen::DiffOf;
 use crate::review::EditPurpose;
-use crate::review::{self, SubmitOutcome};
 use crate::state::{Api, Cmd, DiffMsg, Git, Msg, Problem, State, apply_msg, timers};
 use crate::view::view;
 use crate::work::Failure;
@@ -512,23 +511,6 @@ fn spawn(
                 let result = gh.viewed_files(&pr).await;
                 Msg::Diff(pr.into(), DiffMsg::ViewedLoaded(Box::new(result)))
             }
-            Api::SetViewed {
-                pr,
-                pull_request_id,
-                path,
-                viewed,
-                previous,
-            } => {
-                let result = gh.set_viewed(&pull_request_id, &path, viewed).await;
-                Msg::Diff(
-                    pr.into(),
-                    DiffMsg::ViewedSaved {
-                        path,
-                        previous,
-                        result,
-                    },
-                )
-            }
             Api::FetchThreads(pr) => {
                 let result = gh.review_threads(&pr).await;
                 Msg::Diff(pr.into(), DiffMsg::ThreadsLoaded(result))
@@ -536,38 +518,6 @@ fn spawn(
             Api::FetchPatches(pr) => {
                 let result = gh.pr_patches(&pr).await;
                 Msg::Diff(pr.into(), DiffMsg::PatchesLoaded(result))
-            }
-            Api::SetResolved {
-                pr,
-                thread_id,
-                resolved,
-            } => {
-                let result = gh.set_resolved(&thread_id, resolved).await;
-                Msg::Diff(
-                    pr.into(),
-                    DiffMsg::ResolvedSet {
-                        thread_id,
-                        resolved,
-                        result,
-                    },
-                )
-            }
-            Api::SubmitReview {
-                pr,
-                head,
-                drafts,
-                event,
-                body,
-                seen,
-            } => {
-                let review = Review {
-                    drafts,
-                    event,
-                    body: &body,
-                    seen,
-                };
-                let outcome = submit_review(&gh, &pr, &head, review).await;
-                Msg::Diff(pr.into(), DiffMsg::ReviewSubmitted(outcome))
             }
             Api::FetchPendingReview(pr) => {
                 let result = gh.pending_review(&pr).await;
@@ -715,16 +665,6 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         Cmd::Api(Api::FetchViewed(pr)) => {
             Msg::Diff(pr.clone().into(), DiffMsg::ViewedLoaded(Box::new(api())))
         }
-        Cmd::Api(Api::SetViewed {
-            pr, path, previous, ..
-        }) => Msg::Diff(
-            pr.clone().into(),
-            DiffMsg::ViewedSaved {
-                path: path.clone(),
-                previous: *previous,
-                result: api(),
-            },
-        ),
         Cmd::Api(Api::FetchThreads(pr)) => {
             Msg::Diff(pr.clone().into(), DiffMsg::ThreadsLoaded(api()))
         }
@@ -736,18 +676,6 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             let none = threads.iter().map(|t| (t.thread.clone(), None)).collect();
             Msg::Diff(pr.clone().into(), DiffMsg::Job(*job, JobMsg::Mapped(none)))
         }
-        Cmd::Api(Api::SetResolved {
-            pr,
-            thread_id,
-            resolved,
-        }) => Msg::Diff(
-            pr.clone().into(),
-            DiffMsg::ResolvedSet {
-                thread_id: thread_id.clone(),
-                resolved: *resolved,
-                result: api(),
-            },
-        ),
         Cmd::LoadReview(pr) => Msg::Diff(pr.clone().into(), DiffMsg::ReviewLoaded(git())),
         Cmd::Work(work) => Msg::Done(work.failed()),
         Cmd::EditHome { edit, what, .. } => Msg::HomeEdited {
@@ -755,13 +683,6 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             result: Err("ghtui hit a bug".into()),
             what: what.clone(),
         },
-        Cmd::Api(Api::SubmitReview { pr, .. }) => Msg::Diff(
-            pr.clone().into(),
-            DiffMsg::ReviewSubmitted(SubmitOutcome {
-                error: Some("Couldn't submit: ghtui hit a bug".into()),
-                ..SubmitOutcome::default()
-            }),
-        ),
         Cmd::Api(Api::FetchPendingReview(pr)) => {
             Msg::Diff(pr.clone().into(), DiffMsg::PendingReview(api()))
         }
@@ -978,152 +899,6 @@ fn check_git(tx: mpsc::UnboundedSender<Msg>) {
     });
 }
 
-fn api_message(err: &ApiError) -> String {
-    match err {
-        ApiError::GraphQl(messages) => messages.join("; "),
-        err => err.to_string(),
-    }
-}
-
-/// A review to submit.
-struct Review<'a> {
-    drafts: Vec<DraftComment>,
-    event: ReviewEvent,
-    body: &'a str,
-    /// The comments in your pending review on GitHub you were shown.
-    seen: u64,
-}
-
-/// Submits a review: reuses the viewer's pending review on GitHub (or
-/// starts one on `head`), adds each draft as a thread, and submits only if
-/// GitHub accepted every draft. Each draft's fate is reported, so rejected
-/// ones keep their text. A pending review holding comments you weren't
-/// shown isn't submitted: they'd be published unseen.
-async fn submit_review(gh: &GitHub, pr: &PrRef, head: &str, review: Review<'_>) -> SubmitOutcome {
-    let mut outcome = SubmitOutcome::default();
-    // GitHub can't be reached, and nothing was sent: to queue.
-    let unsent = |review: &Review<'_>| {
-        Some(Box::new(crate::offline::queue::Review {
-            pr: pr.clone(),
-            head: head.to_owned(),
-            drafts: review.drafts.clone(),
-            event: review.event,
-            body: review.body.to_owned(),
-            seen: review.seen,
-        }))
-    };
-    let (review_id, held) = match gh.pending_review(pr).await {
-        Ok((_, Some(pending))) if pending.comments > review.seen => {
-            outcome.on_github = Some(pending.comments);
-            outcome.error = Some(
-                "Not sent: your pending review on GitHub holds comments you hadn't seen".into(),
-            );
-            return outcome;
-        }
-        Ok((_, Some(pending))) => match reusable(&pending, head) {
-            Ok(()) => (pending.id, pending.comments),
-            Err(message) => {
-                outcome.error = Some(message);
-                return outcome;
-            }
-        },
-        Ok((pr_id, None)) => match gh.start_review(&pr_id, head).await {
-            Ok(id) => (id, 0),
-            Err(err) => {
-                if let ApiError::Offline(_) = err {
-                    outcome.unsent = unsent(&review);
-                }
-                outcome.error = Some(format!("Couldn't start the review: {}", api_message(&err)));
-                return outcome;
-            }
-        },
-        Err(err) => {
-            if let ApiError::Offline(_) = err {
-                outcome.unsent = unsent(&review);
-            }
-            outcome.error = Some(format!("Couldn't reach the PR: {}", api_message(&err)));
-            return outcome;
-        }
-    };
-    for draft in review.drafts {
-        match gh
-            .add_review_thread(&review_id, &review::new_thread(&draft))
-            .await
-        {
-            Ok(_) => outcome.accepted.push(draft.id),
-            Err(err) => outcome.rejected.push((draft.id, api_message(&err))),
-        }
-    }
-    // Those accepted are in it now, and were yours to see.
-    outcome.on_github = Some(held + outcome.accepted.len() as u64);
-    if !outcome.rejected.is_empty() {
-        return outcome;
-    }
-    match gh
-        .submit_review(&review_id, review.event, review.body)
-        .await
-    {
-        Ok(()) => outcome.submitted = true,
-        Err(err) => outcome.error = Some(format!("Couldn't submit: {}", api_message(&err))),
-    }
-    outcome
-}
-
-/// Submits a queued review ([`crate::offline::queue`]). What GitHub
-/// refuses stays queued as refused, without the comments it took (they
-/// wait in your pending review there, counted as seen).
-pub(crate) async fn send_review(
-    gh: &GitHub,
-    queued: crate::offline::queue::Review,
-) -> crate::offline::queue::Sent {
-    use crate::offline::queue::Sent;
-    let review = Review {
-        drafts: queued.drafts.clone(),
-        event: queued.event,
-        body: &queued.body,
-        seen: queued.seen,
-    };
-    let outcome = submit_review(gh, &queued.pr, &queued.head, review).await;
-    if outcome.unsent.is_some() {
-        return Sent::Unsent;
-    }
-    if outcome.submitted {
-        return Sent::Taken;
-    }
-    let why = match (&outcome.error, outcome.rejected.as_slice()) {
-        (Some(err), _) => err.clone(),
-        (None, rejected) => {
-            let reasons: Vec<&str> = rejected.iter().map(|(_, r)| r.as_str()).collect();
-            format!("GitHub refused comments: {}", reasons.join("; "))
-        }
-    };
-    let seen = outcome.on_github.unwrap_or(queued.seen);
-    let mut rest = queued;
-    rest.drafts.retain(|d| !outcome.accepted.contains(&d.id));
-    for draft in &mut rest.drafts {
-        draft.error = (outcome.rejected.iter())
-            .find(|(id, _)| *id == draft.id)
-            .map(|(_, reason)| reason.clone());
-    }
-    rest.seen = seen;
-    Sent::Partly(rest, why)
-}
-
-/// Whether the drafts can join your pending review: it must be on `head`.
-/// One on another commit has its comments placed on that commit's lines,
-/// and the drafts' line numbers are from this diff, so they're not mixed;
-/// nor is the pending review discarded, since it may hold comments written
-/// on GitHub.
-fn reusable(pending: &PendingReview, head: &str) -> Result<(), String> {
-    match &pending.commit {
-        Some(commit) if commit != head => Err(format!(
-            "You have a pending review on another commit ({}): finish or discard it on GitHub, then submit again",
-            crate::ui::text::short_sha(commit)
-        )),
-        _ => Ok(()),
-    }
-}
-
 /// A temporary file holding `text` for the editor: created exclusively
 /// (never through a symlink someone planted), readable only by you, and
 /// removed when dropped.
@@ -1199,7 +974,6 @@ async fn edit_externally(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::model::NodeId;
 
     /// A panicking task still answers: a notice, then the failure reply
     /// the screen is waiting for.
@@ -1218,19 +992,6 @@ mod tests {
             rx.recv().await,
             Some(Msg::Diff(p, DiffMsg::ThreadsLoaded(Err(ApiError::Internal(_))))) if p == DiffOf::Pr(pr.clone())
         ));
-    }
-
-    #[test]
-    fn a_pending_review_on_another_commit_is_not_reused() {
-        let on = |commit: Option<&str>| PendingReview {
-            id: NodeId::new("R_1"),
-            commit: commit.map(Into::into),
-            comments: 0,
-        };
-        assert_eq!(reusable(&on(Some("abc")), "abc"), Ok(()));
-        assert_eq!(reusable(&on(None), "abc"), Ok(()));
-        let err = reusable(&on(Some("0123456789")), "abc").unwrap_err();
-        assert!(err.contains("another commit (0123456)"), "{err}");
     }
 
     #[cfg(unix)]

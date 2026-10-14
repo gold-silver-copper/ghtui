@@ -22,6 +22,11 @@ pub trait Job: Clone + std::fmt::Debug + PartialEq + Eq + Send + Sync + 'static 
     /// Whether it changes GitHub when it works: then what any page shows
     /// may be old.
     const WRITES: bool = true;
+    /// Whether GitHub changed, as it answered: when it worked, if it
+    /// [`WRITES`](Job::WRITES).
+    fn wrote(result: &Result<Self::Out, Failure>) -> bool {
+        Self::WRITES && result.is_ok()
+    }
     fn run(&self, cx: &Cx) -> impl Future<Output = Result<Self::Out, Failure>> + Send;
     fn done(self, state: &mut State, result: Result<Self::Out, Failure>) -> Vec<Cmd>;
 }
@@ -111,7 +116,7 @@ macro_rules! jobs {
             /// Whether GitHub changed: what any page shows may be old.
             pub fn wrote(&self) -> bool {
                 match self {
-                    $(Done::$name(_, result) => <$job as Job>::WRITES && result.is_ok(),)*
+                    $(Done::$name(_, result) => <$job as Job>::wrote(result),)*
                 }
             }
 
@@ -177,5 +182,8 @@ jobs! {
     Push(crate::create::Push),
     Submit(crate::create::Submit),
     SaveArtifact(crate::workflows::SaveArtifact),
+    SetViewed(crate::review::SetViewed),
+    Resolve(crate::review::Resolve),
+    SubmitReview(crate::review::Submit),
     Dispatch(crate::workflows::Dispatch),
 }

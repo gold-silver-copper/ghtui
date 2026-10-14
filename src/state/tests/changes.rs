@@ -349,11 +349,14 @@ fn approving_from_the_page_takes_your_saved_drafts() {
     let Some(Overlay::Submit(dialog)) = &s.overlay else {
         panic!("no dialog");
     };
-    assert_eq!((dialog.event, dialog.quick), (ReviewEvent::Approve, true));
+    assert_eq!(
+        (dialog.event, dialog.quick),
+        (crate::api::model::ReviewEvent::Approve, true)
+    );
     // Enter before the drafts are read waits for them.
     assert!(press(&mut s, "<Enter>").is_empty());
 
-    let draft = DraftComment {
+    let draft = crate::store::DraftComment {
         id: 3,
         path: "src/lib.rs".into(),
         body: "nit".into(),
@@ -374,26 +377,21 @@ fn approving_from_the_page_takes_your_saved_drafts() {
     );
     press(&mut s, "LGTM");
     let cmds = press(&mut s, "<Enter>");
-    assert_eq!(
-        cmds,
-        vec![Cmd::Api(Api::SubmitReview {
-            pr: pr(),
-            head: crate::git::Oid::parse(&pr_detail().head_oid).unwrap(),
-            drafts: vec![draft],
-            event: ReviewEvent::Approve,
-            body: "LGTM".into(),
-            seen: 0,
-        })]
-    );
-    let outcome = SubmitOutcome {
+    let submit = crate::review::Submit {
+        pr: pr(),
+        head: crate::git::Oid::parse(&pr_detail().head_oid).unwrap(),
+        drafts: vec![draft],
+        event: crate::api::model::ReviewEvent::Approve,
+        body: "LGTM".into(),
+        seen: 0,
+    };
+    assert_eq!(cmds, vec![fixtures::start(submit.clone())]);
+    let outcome = crate::review::SubmitOutcome {
         accepted: vec![3],
         submitted: true,
-        ..SubmitOutcome::default()
+        ..Default::default()
     };
-    let cmds = update(
-        &mut s,
-        Msg::Diff(pr().into(), DiffMsg::ReviewSubmitted(outcome)),
-    );
+    let cmds = fixtures::done(&mut s, submit, Ok(outcome));
     assert!(s.overlay.is_none());
     says(&s, "Approved gold-silver-copper/ghtui#12");
     let left = ReviewState {

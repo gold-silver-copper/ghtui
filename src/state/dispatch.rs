@@ -31,8 +31,6 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Done(done) => done.wrote(),
         // A queued write reached GitHub.
         Msg::Offline(crate::offline::Msg::Queue(crate::offline::queue::Told::Taken(_))) => true,
-        // Drafts GitHub accepted wait in a pending review there.
-        Msg::Diff(_, DiffMsg::ReviewSubmitted(o)) => o.error.is_none() || !o.accepted.is_empty(),
         _ => false,
     };
     if wrote {

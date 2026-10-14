@@ -211,29 +211,14 @@ fn viewed_state_applies_and_rolls_back_on_failure() {
     assert_eq!(screen(&s).cursor.file, 1);
 
     // Toggle file 1 viewed: optimistic, then GitHub refuses.
-    let cmds = press(&mut s, ",v");
-    assert!(cmds.iter().any(|c| matches!(
-        c,
-        Cmd::Api(Api::SetViewed { viewed: true, previous: Viewed::Unviewed, pull_request_id, .. })
-            if pull_request_id.as_str() == "PR_1"
-    )));
+    let job = fixtures::sent::<crate::review::SetViewed>(&press(&mut s, ",v"));
+    assert!(job.viewed && job.previous == Viewed::Unviewed);
+    assert_eq!(job.pull_request_id.as_str(), "PR_1");
     assert_eq!(
         s.diffs[&DiffOf::Pr(pr.clone())].doc.files()[1].viewed,
         Viewed::Viewed
     );
-    let path = s.diffs[&DiffOf::Pr(pr.clone())].doc.files()[1]
-        .meta
-        .path()
-        .to_owned();
-    diff_msg(
-        &mut s,
-        &pr,
-        DiffMsg::ViewedSaved {
-            path,
-            previous: Viewed::Unviewed,
-            result: Err(ApiError::Network("offline".into())),
-        },
-    );
+    fixtures::done(&mut s, job, Err(fixtures::failure("offline")));
     assert_eq!(
         s.diffs[&DiffOf::Pr(pr.clone())].doc.files()[1].viewed,
         Viewed::Unviewed

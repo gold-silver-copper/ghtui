@@ -1,4 +1,6 @@
 use super::*;
+use crate::api::model::ReviewEvent;
+use crate::review::SubmitOutcome;
 
 fn to_line(s: &mut State, text: &str) {
     press(s, "/");
@@ -40,21 +42,10 @@ fn threads_show_navigate_and_resolve() {
     );
 
     // Resolve: optimistic, rolled back on failure.
-    let cmds = act(&mut s, Action::ResolveThread);
-    assert!(matches!(
-        &cmds[..],
-        [Cmd::Api(Api::SetResolved { resolved: true, .. }), ..]
-    ));
+    let job = fixtures::sent::<crate::review::Resolve>(&act(&mut s, Action::ResolveThread));
+    assert!(job.resolved && job.thread == NodeId::new("open"));
     assert!(s.diffs[&DiffOf::Pr(pr.clone())].inputs().thread_list()[1].resolved);
-    diff_msg(
-        &mut s,
-        &pr,
-        DiffMsg::ResolvedSet {
-            thread_id: NodeId::new("open"),
-            resolved: true,
-            result: Err(ApiError::Network("down".into())),
-        },
-    );
+    fixtures::done(&mut s, job, Err(fixtures::failure("down")));
     assert!(!s.diffs[&DiffOf::Pr(pr.clone())].inputs().thread_list()[1].resolved);
     warns(&s, "");
 }
@@ -217,20 +208,16 @@ fn submit_with_rejection_then_fix_and_resubmit() {
     press(&mut s, ",s");
     assert!(matches!(s.overlay, Some(Overlay::Submit(_))));
     press(&mut s, "<Tab>");
-    let cmds = press(&mut s, "<C-s>");
-    let Some(Cmd::Api(Api::SubmitReview { drafts, event, .. })) = cmds.first() else {
-        panic!("{cmds:?}")
-    };
-    assert_eq!((drafts.len(), *event), (1, ReviewEvent::Approve));
-
-    diff_msg(
-        &mut s,
-        &pr,
-        DiffMsg::ReviewSubmitted(SubmitOutcome {
-            rejected: vec![(id, "line must be part of the diff".into())],
-            ..SubmitOutcome::default()
-        }),
+    let submit = fixtures::sent::<crate::review::Submit>(&press(&mut s, "<C-s>"));
+    assert_eq!(
+        (submit.drafts.len(), submit.event),
+        (1, ReviewEvent::Approve)
     );
+    let outcome = SubmitOutcome {
+        rejected: vec![(id, "line must be part of the diff".into())],
+        ..SubmitOutcome::default()
+    };
+    fixtures::done(&mut s, submit, Ok(outcome));
     assert!(
         matches!(&s.overlay, Some(Overlay::Submit(d)) if d.sent.error.is_some() && !d.sent.sending)
     );
@@ -249,16 +236,13 @@ fn submit_with_rejection_then_fix_and_resubmit() {
         None
     );
     press(&mut s, ",s");
-    press(&mut s, "<C-s>");
-    diff_msg(
-        &mut s,
-        &pr,
-        DiffMsg::ReviewSubmitted(SubmitOutcome {
-            accepted: vec![id],
-            submitted: true,
-            ..SubmitOutcome::default()
-        }),
-    );
+    let submit = fixtures::sent::<crate::review::Submit>(&press(&mut s, "<C-s>"));
+    let outcome = SubmitOutcome {
+        accepted: vec![id],
+        submitted: true,
+        ..SubmitOutcome::default()
+    };
+    fixtures::done(&mut s, submit, Ok(outcome));
     assert!(s.overlay.is_none());
     assert!(
         s.diffs[&DiffOf::Pr(pr.clone())]
@@ -268,7 +252,7 @@ fn submit_with_rejection_then_fix_and_resubmit() {
             .is_empty()
     );
     assert_eq!(
-        s.diffs[&DiffOf::Pr(pr.clone())]
+        s.diffs[&DiffOf::Pr(pr)]
             .inputs()
             .review
             .last_reviewed_head

@@ -76,16 +76,22 @@ fn only_a_review_that_went_through_counts_as_a_write() {
     let _ = state.push(issue(14));
     let issue = Data::Issue(Some(Box::new(crate::fixtures::issue())));
     fetched(&mut state, key.clone(), issue);
-    let of = DiffOf::Pr(PrRef::parse("o/r#1").unwrap());
+    let submit = crate::review::Submit {
+        pr: PrRef::parse("o/r#1").unwrap(),
+        head: crate::git::Oid::parse(&crate::fixtures::pr_detail().head_oid).unwrap(),
+        drafts: Vec::new(),
+        event: crate::api::model::ReviewEvent::Approve,
+        body: String::new(),
+        seen: 0,
+    };
     let mut outcome = crate::review::SubmitOutcome {
         error: Some("Couldn't reach the PR".into()),
         ..Default::default()
     };
-    let submitted = |o| Msg::Diff(of.clone(), DiffMsg::ReviewSubmitted(o));
-    update(&mut state, submitted(outcome.clone()));
+    crate::fixtures::done(&mut state, submit.clone(), Ok(outcome.clone()));
     assert_eq!(state.load_visible(false), Vec::new());
     outcome.accepted.push(1);
-    update(&mut state, submitted(outcome));
+    crate::fixtures::done(&mut state, submit, Ok(outcome));
     let refetch = Cmd::Api(Api::Fetch { key, cached: false });
     assert!(state.load_visible(false).contains(&refetch));
 }

@@ -24,8 +24,8 @@ use crate::join;
 use crate::keymap::Action;
 use crate::notice::Notices;
 use crate::picker;
-use crate::review::{annotations, on_submitted};
-use crate::state::{Api, Cmd, DiffMsg, Git, Overlay, Problem, Remote, State};
+use crate::review::annotations;
+use crate::state::{Cmd, DiffMsg, Git, Overlay, Problem, Remote, State};
 
 /// What GitHub says about your last submitted review of a PR.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1068,20 +1068,20 @@ fn toggle_viewed(screen: &mut DiffScreen, state: &mut DiffState, notice: &mut No
     } else {
         Viewed::Viewed
     };
-    let cmd = Cmd::Api(Api::SetViewed {
+    let job = crate::review::SetViewed {
         pr,
         pull_request_id: viewed.pull_request_id.clone(),
         path: path.clone(),
         viewed: now == Viewed::Viewed,
         previous,
-    });
+    };
     // Optimistic: show it now, roll back if GitHub refuses.
     state.edit(|i| i.set_viewed(path, now));
     screen.cursor = Pos {
         file: index,
         row: 0,
     };
-    vec![cmd]
+    crate::work::start(job)
 }
 
 #[must_use]
@@ -1375,7 +1375,7 @@ fn change<R>(state: &mut State, of: &DiffOf, f: impl FnOnce(&mut DiffState) -> R
 }
 
 /// Changes the inputs of `of`'s diff, if it's still open.
-fn edit(state: &mut State, of: &DiffOf, f: impl FnOnce(&mut DiffInputs)) {
+pub(crate) fn edit(state: &mut State, of: &DiffOf, f: impl FnOnce(&mut DiffInputs)) {
     change(state, of, |d| d.edit(f));
 }
 
@@ -1422,17 +1422,6 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
                 state.error(format!("Couldn't load viewed files: {err}"));
             }
         },
-        DiffMsg::ViewedSaved {
-            path,
-            previous,
-            result,
-        } => {
-            if let Err(err) = result {
-                tracing::warn!(%pr, %err, "viewed state update failed");
-                edit(state, of, |i| i.set_viewed(path, previous));
-                state.error(format!("GitHub didn't save “viewed”: {err}"));
-            }
-        }
         // Approving from the pull request's page: its drafts go with it.
         DiffMsg::ReviewLoaded(Ok(saved)) if !state.diffs.contains_key(of) => {
             if let Some(Overlay::Submit(dialog)) = &mut state.overlay
@@ -1473,17 +1462,8 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
         DiffMsg::PatchesLoaded(Err(err)) => {
             tracing::warn!(%pr, %err, "GitHub patches unavailable; using local hunks");
         }
-        DiffMsg::ResolvedSet {
-            thread_id,
-            resolved,
-            result: Err(err),
-        } => {
-            edit(state, of, |i| i.set_resolved(&thread_id, !resolved));
-            state.error(format!("GitHub didn't save that: {err}"));
-        }
         // Jobs are handled above.
-        DiffMsg::ResolvedSet { .. } | DiffMsg::Job(..) => {}
-        DiffMsg::ReviewSubmitted(outcome) => return on_submitted(state, &pr, &outcome),
+        DiffMsg::Job(..) => {}
         DiffMsg::PendingReview(result) => match (result, &mut state.overlay) {
             (Ok(n), Some(Overlay::Submit(dialog))) if dialog.pr == pr => {
                 dialog.on_github = Some(n);

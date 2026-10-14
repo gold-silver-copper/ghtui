@@ -442,7 +442,7 @@ pub fn start(
 /// Sends one queued write.
 async fn send(gh: &GitHub, write: Write) -> Sent {
     match write {
-        Write::Review(review) => crate::runtime::send_review(gh, review).await,
+        Write::Review(review) => crate::review::send_review(gh, review).await,
         Write::Change(change) => Sent::of(gh.change(&change).await),
     }
 }

@@ -14,13 +14,12 @@ use crate::git::Oid;
 use crate::store::ReviewState;
 use crate::theme::{Bg, Theme};
 use crate::ui::bars::Notice;
-use crate::ui::diff_doc::Viewed;
 use crate::ui::{Ctx, Fetched, Icons};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use ratatui_textarea::TextArea;
 
 use crate::act;
-use crate::api::model::{PatchFile, ReviewEvent, ReviewThread};
+use crate::api::model::{PatchFile, ReviewThread};
 use crate::browse;
 use crate::compose::{self, Compose};
 use crate::data::{Data, DataKey};
@@ -31,10 +30,7 @@ use crate::keymap::{Action, Context, Key, Keymap, Resolved};
 use crate::nav::{self, Hints, Menu, PageScreen, SearchBox, Visit};
 use crate::notice::Notices;
 use crate::picker::{self, Picker};
-use crate::review::{
-    EditPurpose, SubmitDialog, SubmitOutcome, on_edited, on_submit_key, review_action,
-};
-use crate::store::DraftComment;
+use crate::review::{EditPurpose, SubmitDialog, on_edited, on_submit_key, review_action};
 use crate::tabs::Tab;
 use crate::work::Failure;
 
@@ -129,21 +125,10 @@ pub enum DiffMsg {
     /// From the diff job; ignored unless it's the PR's current job.
     Job(JobId, JobMsg),
     ViewedLoaded(Box<Result<ViewedFiles, ApiError>>),
-    ViewedSaved {
-        path: String,
-        previous: Viewed,
-        result: Result<(), ApiError>,
-    },
     /// The saved review state, or why it couldn't be read.
     ReviewLoaded(Result<ReviewState, Failure>),
     ThreadsLoaded(Result<Vec<ReviewThread>, ApiError>),
     PatchesLoaded(Result<Vec<PatchFile>, ApiError>),
-    ResolvedSet {
-        thread_id: NodeId,
-        resolved: bool,
-        result: Result<(), ApiError>,
-    },
-    ReviewSubmitted(SubmitOutcome),
     /// How many comments your pending review on GitHub holds.
     PendingReview(Result<u64, ApiError>),
     LastReview(Result<Option<String>, ApiError>),
@@ -204,30 +189,8 @@ pub enum Api {
     Suggest(String),
     SaveVisits(Vec<Visit>),
     FetchViewed(PrRef),
-    SetViewed {
-        pr: PrRef,
-        pull_request_id: NodeId,
-        path: String,
-        viewed: bool,
-        previous: Viewed,
-    },
     FetchThreads(PrRef),
     FetchPatches(PrRef),
-    SetResolved {
-        pr: PrRef,
-        thread_id: NodeId,
-        resolved: bool,
-    },
-    SubmitReview {
-        pr: PrRef,
-        head: Oid,
-        drafts: Vec<DraftComment>,
-        event: ReviewEvent,
-        body: String,
-        /// The comments in your pending review on GitHub you were shown:
-        /// if it holds more, it isn't submitted.
-        seen: u64,
-    },
     /// How many comments your pending review on GitHub holds.
     FetchPendingReview(PrRef),
     FetchLastReview {

@@ -4,12 +4,14 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::api::model::{NewThread, ReviewEvent, ReviewThread, Side as ApiSide};
-use crate::api::model::{NodeId, PrDetail, PrRef};
+use crate::api::model::{NodeId, PendingReview, PrDetail, PrRef};
+use crate::api::{ApiError, GitHub};
 use crate::data::{DataKey, Picked};
 use crate::diff::anchor::{AnchorError, LinePos, Side};
 use crate::store::{DraftComment, DraftSide, ReviewState};
 use crate::theme::{Bg, Theme};
 use crate::ui::annotations::{Annotation, AnnotationComment, AnnotationKey, Place};
+use crate::ui::diff_doc::Viewed;
 use crate::ui::diff_doc::{Doc, Pos, Row};
 use crate::ui::text::short_sha;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -22,6 +24,7 @@ use crate::forms::Sent;
 use crate::keymap::Action;
 use crate::picker::{self, PickItem};
 use crate::state::{Api, Cmd, Git, OutdatedThread, Overlay, Screen, State};
+use crate::work::{Cx, Failure, Job};
 
 /// A review's comment being written: where it goes, or what it answers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -733,11 +736,11 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             }
             // Optimistic; rolled back if GitHub refuses.
             diff.edit(|i| i.set_resolved(&thread_id, resolved));
-            vec![Cmd::Api(Api::SetResolved {
+            crate::work::start(Resolve {
                 pr,
-                thread_id,
+                thread: thread_id,
                 resolved,
-            })]
+            })
         }
         Action::Delete => {
             let Some(AnnotationKey::Draft(id)) = annotation.map(|a| a.key) else {
@@ -989,14 +992,14 @@ fn submit(state: &mut State) -> Vec<Cmd> {
     };
     dialog.sent.sending = true;
     dialog.sent.error = None;
-    vec![Cmd::Api(Api::SubmitReview {
+    crate::work::start(Submit {
         pr,
         head,
         drafts,
         event,
         body,
         seen,
-    })]
+    })
 }
 
 /// Opens the review dialog set to approve, from anywhere `pr` is on
@@ -1015,9 +1018,263 @@ pub(crate) fn open_approve(state: &mut State, pr: PrRef) -> Vec<Cmd> {
     cmds
 }
 
+/// Marks a file viewed on GitHub, or not: shown at once, and put back
+/// as it was if GitHub refuses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetViewed {
+    pub pr: PrRef,
+    pub pull_request_id: NodeId,
+    pub path: String,
+    pub viewed: bool,
+    pub previous: Viewed,
+}
+
+impl Job for SetViewed {
+    type Out = ();
+    /// Only the diff shows it, and it already does.
+    const WRITES: bool = false;
+
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        let id = &self.pull_request_id;
+        Ok(cx.gh.set_viewed(id, &self.path, self.viewed).await?)
+    }
+
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        if let Err(err) = result {
+            tracing::warn!(pr = %self.pr, %err, "viewed state update failed");
+            let of = DiffOf::Pr(self.pr);
+            diff_screen::edit(state, &of, |i| i.set_viewed(self.path, self.previous));
+            state.error(format!("GitHub didn't save “viewed”: {err}"));
+        }
+        Vec::new()
+    }
+}
+
+/// Resolves a review thread on GitHub, or unresolves it: shown at once,
+/// and put back if GitHub refuses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Resolve {
+    pub pr: PrRef,
+    pub thread: NodeId,
+    pub resolved: bool,
+}
+
+impl Job for Resolve {
+    type Out = ();
+
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        Ok(cx.gh.set_resolved(&self.thread, self.resolved).await?)
+    }
+
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        if let Err(err) = result {
+            let of = DiffOf::Pr(self.pr);
+            diff_screen::edit(state, &of, |i| i.set_resolved(&self.thread, !self.resolved));
+            state.error(format!("GitHub didn't save that: {err}"));
+        }
+        Vec::new()
+    }
+}
+
+/// Submits a review ([`submit_review`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Submit {
+    pub pr: PrRef,
+    pub head: crate::git::Oid,
+    pub drafts: Vec<DraftComment>,
+    pub event: ReviewEvent,
+    pub body: String,
+    /// The comments in your pending review on GitHub you were shown: if
+    /// it holds more, it isn't submitted.
+    pub seen: u64,
+}
+
+impl Job for Submit {
+    type Out = SubmitOutcome;
+
+    /// Drafts GitHub accepted wait in a pending review there.
+    fn wrote(result: &Result<SubmitOutcome, Failure>) -> bool {
+        matches!(result, Ok(o) if o.error.is_none() || !o.accepted.is_empty())
+    }
+
+    async fn run(&self, cx: &Cx) -> Result<SubmitOutcome, Failure> {
+        let review = Review {
+            drafts: self.drafts.clone(),
+            event: self.event,
+            body: &self.body,
+            seen: self.seen,
+        };
+        Ok(submit_review(&cx.gh, &self.pr, &self.head, review).await)
+    }
+
+    fn done(self, state: &mut State, result: Result<SubmitOutcome, Failure>) -> Vec<Cmd> {
+        let outcome = result.unwrap_or_else(|err| SubmitOutcome {
+            error: Some(format!("Couldn't submit: {err}")),
+            ..SubmitOutcome::default()
+        });
+        on_submitted(state, &self.pr, &outcome)
+    }
+}
+
+fn api_message(err: &ApiError) -> String {
+    match err {
+        ApiError::GraphQl(messages) => messages.join("; "),
+        err => err.to_string(),
+    }
+}
+
+/// A review to submit.
+struct Review<'a> {
+    drafts: Vec<DraftComment>,
+    event: ReviewEvent,
+    body: &'a str,
+    /// The comments in your pending review on GitHub you were shown.
+    seen: u64,
+}
+
+/// Submits a review: reuses the viewer's pending review on GitHub (or
+/// starts one on `head`), adds each draft as a thread, and submits only if
+/// GitHub accepted every draft. Each draft's fate is reported, so rejected
+/// ones keep their text. A pending review holding comments you weren't
+/// shown isn't submitted: they'd be published unseen.
+async fn submit_review(gh: &GitHub, pr: &PrRef, head: &str, review: Review<'_>) -> SubmitOutcome {
+    let mut outcome = SubmitOutcome::default();
+    // GitHub can't be reached, and nothing was sent: to queue.
+    let unsent = |review: &Review<'_>| {
+        Some(Box::new(crate::offline::queue::Review {
+            pr: pr.clone(),
+            head: head.to_owned(),
+            drafts: review.drafts.clone(),
+            event: review.event,
+            body: review.body.to_owned(),
+            seen: review.seen,
+        }))
+    };
+    let (review_id, held) = match gh.pending_review(pr).await {
+        Ok((_, Some(pending))) if pending.comments > review.seen => {
+            outcome.on_github = Some(pending.comments);
+            outcome.error = Some(
+                "Not sent: your pending review on GitHub holds comments you hadn't seen".into(),
+            );
+            return outcome;
+        }
+        Ok((_, Some(pending))) => match reusable(&pending, head) {
+            Ok(()) => (pending.id, pending.comments),
+            Err(message) => {
+                outcome.error = Some(message);
+                return outcome;
+            }
+        },
+        Ok((pr_id, None)) => match gh.start_review(&pr_id, head).await {
+            Ok(id) => (id, 0),
+            Err(err) => {
+                if let ApiError::Offline(_) = err {
+                    outcome.unsent = unsent(&review);
+                }
+                outcome.error = Some(format!("Couldn't start the review: {}", api_message(&err)));
+                return outcome;
+            }
+        },
+        Err(err) => {
+            if let ApiError::Offline(_) = err {
+                outcome.unsent = unsent(&review);
+            }
+            outcome.error = Some(format!("Couldn't reach the PR: {}", api_message(&err)));
+            return outcome;
+        }
+    };
+    for draft in review.drafts {
+        match gh.add_review_thread(&review_id, &new_thread(&draft)).await {
+            Ok(_) => outcome.accepted.push(draft.id),
+            Err(err) => outcome.rejected.push((draft.id, api_message(&err))),
+        }
+    }
+    // Those accepted are in it now, and were yours to see.
+    outcome.on_github = Some(held + outcome.accepted.len() as u64);
+    if !outcome.rejected.is_empty() {
+        return outcome;
+    }
+    match gh
+        .submit_review(&review_id, review.event, review.body)
+        .await
+    {
+        Ok(()) => outcome.submitted = true,
+        Err(err) => outcome.error = Some(format!("Couldn't submit: {}", api_message(&err))),
+    }
+    outcome
+}
+
+/// Submits a queued review ([`crate::offline::queue`]). What GitHub
+/// refuses stays queued as refused, without the comments it took (they
+/// wait in your pending review there, counted as seen).
+pub(crate) async fn send_review(
+    gh: &GitHub,
+    queued: crate::offline::queue::Review,
+) -> crate::offline::queue::Sent {
+    use crate::offline::queue::Sent;
+    let review = Review {
+        drafts: queued.drafts.clone(),
+        event: queued.event,
+        body: &queued.body,
+        seen: queued.seen,
+    };
+    let outcome = submit_review(gh, &queued.pr, &queued.head, review).await;
+    if outcome.unsent.is_some() {
+        return Sent::Unsent;
+    }
+    if outcome.submitted {
+        return Sent::Taken;
+    }
+    let why = match (&outcome.error, outcome.rejected.as_slice()) {
+        (Some(err), _) => err.clone(),
+        (None, rejected) => {
+            let reasons: Vec<&str> = rejected.iter().map(|(_, r)| r.as_str()).collect();
+            format!("GitHub refused comments: {}", reasons.join("; "))
+        }
+    };
+    let seen = outcome.on_github.unwrap_or(queued.seen);
+    let mut rest = queued;
+    rest.drafts.retain(|d| !outcome.accepted.contains(&d.id));
+    for draft in &mut rest.drafts {
+        draft.error = (outcome.rejected.iter())
+            .find(|(id, _)| *id == draft.id)
+            .map(|(_, reason)| reason.clone());
+    }
+    rest.seen = seen;
+    Sent::Partly(rest, why)
+}
+
+/// Whether the drafts can join your pending review: it must be on `head`.
+/// One on another commit has its comments placed on that commit's lines,
+/// and the drafts' line numbers are from this diff, so they're not mixed;
+/// nor is the pending review discarded, since it may hold comments written
+/// on GitHub.
+fn reusable(pending: &PendingReview, head: &str) -> Result<(), String> {
+    match &pending.commit {
+        Some(commit) if commit != head => Err(format!(
+            "You have a pending review on another commit ({}): finish or discard it on GitHub, then submit again",
+            crate::ui::text::short_sha(commit)
+        )),
+        _ => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pending_review_on_another_commit_is_not_reused() {
+        let on = |commit: Option<&str>| PendingReview {
+            id: NodeId::new("R_1"),
+            commit: commit.map(Into::into),
+            comments: 0,
+        };
+        assert_eq!(reusable(&on(Some("abc")), "abc"), Ok(()));
+        assert_eq!(reusable(&on(None), "abc"), Ok(()));
+        let err = reusable(&on(Some("0123456789")), "abc").unwrap_err();
+        assert!(err.contains("another commit (0123456)"), "{err}");
+    }
     use crate::fixtures::thread;
 
     #[test]

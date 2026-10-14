@@ -195,21 +195,9 @@ fn a_file_marked_viewed_stays_viewed_in_another_range() {
             states: std::collections::HashMap::new(),
         }))),
     );
-    let cmds = press(&mut s, ",v");
-    assert!(
-        cmds.iter()
-            .any(|c| matches!(c, Cmd::Api(Api::SetViewed { viewed: true, .. }))),
-        "{cmds:?}"
-    );
-    diff_msg(
-        &mut s,
-        &pr,
-        DiffMsg::ViewedSaved {
-            path: PATH.into(),
-            previous: Viewed::Unviewed,
-            result: Ok(()),
-        },
-    );
+    let job = fixtures::sent::<crate::review::SetViewed>(&press(&mut s, ",v"));
+    assert!(job.viewed && job.path == PATH);
+    fixtures::done(&mut s, job, Ok(()));
     let of = DiffOf::Pr(pr.clone());
     assert_eq!(s.diffs[&of].doc.files()[0].viewed, Viewed::Viewed);
 
