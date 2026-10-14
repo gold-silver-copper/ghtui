@@ -541,65 +541,46 @@ pub fn history(next: Option<&str>) -> Results<CommitInfo> {
 /// Checks on a commit: a failure, a run still going, passes, a skip, and
 /// a commit status from another service.
 pub fn checks() -> Checks {
-    let run = |name: &str,
-               group: &str,
-               outcome,
-               took: Option<(&str, &str)>,
-               summary: Option<&str>,
-               job: u32| {
-        CheckItem {
+    use CheckOutcome::{Failure, Pending, Skipped, Success};
+    let failed = Some("Process completed with exit code 101.");
+    let runs = [
+        (
+            "test (ubuntu)",
+            "CI",
+            Failure,
+            Some(("00:00", "04:12")),
+            failed,
+        ),
+        (
+            "test (macos)",
+            "CI",
+            Pending,
+            Some(("01:00", "01:00")),
+            None,
+        ),
+        ("clippy", "CI", Success, Some(("00:00", "01:31")), None),
+        ("fmt", "CI", Success, Some(("00:00", "00:14")), None),
+        ("deploy", "Release", Skipped, None, None),
+    ];
+    let mut items: Vec<_> = (runs.into_iter().zip(1u32..))
+        .map(|((name, group, outcome, took, summary), job)| CheckItem {
             name: name.into(),
             group: group.into(),
             outcome,
             started_at: took.map(|(s, _)| format!("2026-10-03T12:{s}Z")),
             completed_at: took
                 .map(|(_, e)| format!("2026-10-03T12:{e}Z"))
-                .filter(|_| outcome != CheckOutcome::Pending),
+                .filter(|_| outcome != Pending),
             summary: summary.map(str::to_owned),
             url: Some(format!(
                 "https://github.com/gold-silver-copper/ghtui/actions/runs/7/job/{job}"
             )),
             annotations: match outcome {
-                CheckOutcome::Failure => vec![check_annotation()].into(),
+                Failure => vec![check_annotation()].into(),
                 _ => Default::default(),
             },
-        }
-    };
-    let mut items = vec![
-        run(
-            "test (ubuntu)",
-            "CI",
-            CheckOutcome::Failure,
-            Some(("00:00", "04:12")),
-            Some("Process completed with exit code 101."),
-            1,
-        ),
-        run(
-            "test (macos)",
-            "CI",
-            CheckOutcome::Pending,
-            Some(("01:00", "01:00")),
-            None,
-            2,
-        ),
-        run(
-            "clippy",
-            "CI",
-            CheckOutcome::Success,
-            Some(("00:00", "01:31")),
-            None,
-            3,
-        ),
-        run(
-            "fmt",
-            "CI",
-            CheckOutcome::Success,
-            Some(("00:00", "00:14")),
-            None,
-            4,
-        ),
-        run("deploy", "Release", CheckOutcome::Skipped, None, None, 5),
-    ];
+        })
+        .collect();
     items.push(CheckItem {
         name: "codecov/patch".into(),
         group: "Statuses".into(),
@@ -1081,20 +1062,24 @@ pub fn reviews() -> Capped<Review> {
 }
 
 /// The two commits of the fixture pull request.
-fn pr_commits() -> Vec<CommitInfo> {
-    vec![
-        CommitInfo {
-            oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
-            headline: "Theme: derive syntax colors from the seed".into(),
-            author: Person::User(Login::unchecked("octocat")),
-            date: "2026-09-30T12:00:00Z".into(),
-        },
-        CommitInfo {
-            oid: "1b2c3d4e5f60718293a4b5c6d7e8f9012345678a".into(),
-            headline: "Check every syntax role against diff backgrounds".into(),
-            author: Person::User(Login::unchecked("octocat")),
-            date: "2026-10-01T12:00:00Z".into(),
-        },
+fn pr_commits() -> [CommitInfo; 2] {
+    let commit = |oid: &str, headline: &str, date: &str| CommitInfo {
+        oid: oid.into(),
+        headline: headline.into(),
+        author: Person::User(Login::unchecked("octocat")),
+        date: date.into(),
+    };
+    [
+        commit(
+            "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+            "Theme: derive syntax colors from the seed",
+            "2026-09-30T12:00:00Z",
+        ),
+        commit(
+            "1b2c3d4e5f60718293a4b5c6d7e8f9012345678a",
+            "Check every syntax role against diff backgrounds",
+            "2026-10-01T12:00:00Z",
+        ),
     ]
 }
 
@@ -1167,41 +1152,30 @@ pub(crate) fn pr_detail() -> crate::api::model::PrDetail {
 }
 
 pub fn activity() -> PrActivity {
-    let mut commits = pr_commits().into_iter().map(|c| {
-        let at = c.date.clone();
-        event("octocat", &at, What::Committed(c))
-    });
-    let (first, second) = (commits.next(), commits.next());
+    let committed = |c: CommitInfo| event("octocat", &c.date.clone(), What::Committed(c));
+    let [first, second] = pr_commits().map(committed);
     // hubot's review started a thread on the theme, which octocat answered.
     let mut thread = thread("PRRT_1", Some(42), false, false);
     thread.path = "src/theme.rs".into();
     thread.original_line = Some(42);
     thread.diff_hunk = "@@ -40,3 +40,4 @@ impl Theme {\n     fn syntax(&self) -> Syntax {\n-        Syntax::default()\n+        let seed = self.seed;\n+        Syntax::from_seed(seed)".into();
-    let said = thread.comments.items.clone();
-    thread.comments = said
-        .into_iter()
-        .flat_map(|c| {
-            [
-                ReviewComment {
-                    body: "Is the seed's tone checked against the diff backgrounds?".into(),
-                    author: "hubot".into(),
-                    review: Some(2_000_002),
-                    url: "https://github.com/gold-silver-copper/ghtui/pull/12#discussion_r3000001"
-                        .into(),
-                    ..c.clone()
-                },
-                ReviewComment {
-                    id: NodeId::new("PRRC_2"),
-                    body: "Yes, in `contrast_tests`.".into(),
-                    author: "octocat".into(),
-                    created_at: "2026-10-01T11:00:00Z".into(),
-                    review: Some(2_000_003),
-                    ..c
-                },
-            ]
-        })
-        .collect::<Vec<_>>()
-        .into();
+    let asked = ReviewComment {
+        body: "Is the seed's tone checked against the diff backgrounds?".into(),
+        author: "hubot".into(),
+        review: Some(2_000_002),
+        url: "https://github.com/gold-silver-copper/ghtui/pull/12#discussion_r3000001".into(),
+        ..thread.comments.items[0].clone()
+    };
+    let answered = ReviewComment {
+        id: NodeId::new("PRRC_2"),
+        body: "Yes, in `contrast_tests`.".into(),
+        author: "octocat".into(),
+        created_at: "2026-10-01T11:00:00Z".into(),
+        review: Some(2_000_003),
+        url: String::new(),
+        ..asked.clone()
+    };
+    thread.comments = vec![asked, answered].into();
     let mut commented = review(
         2_000_002,
         "hubot",
@@ -1210,41 +1184,47 @@ pub fn activity() -> PrActivity {
         "2026-10-01T10:00:00Z",
     );
     commented.comments = 1;
+    let latest = |author: &str, state, id, at: &str, commit: &str, teams: &[&str]| Latest {
+        author: author.into(),
+        state,
+        id: Some(id),
+        at: at.into(),
+        commit: Some(commit.into()),
+        for_teams: teams.iter().map(|t| (*t).to_owned()).collect(),
+    };
     PrActivity {
         id: NodeId::new("PR_12"),
-        timeline: first
-            .into_iter()
-            .chain([Item::Comment(Comment {
+        timeline: vec![
+            first,
+            Item::Comment(Comment {
                 id: Some(1_000_001),
                 author: "hubot".into(),
                 body: "Does this cover the 256-color fallback?".into(),
                 created_at: "2026-10-01T09:00:00Z".into(),
                 editable: Some(editable("IC_2")),
                 ..Default::default()
-            })])
-            .chain([Item::Review(commented)])
-            .chain(second)
-            .chain([
-                event(
-                    "octocat",
-                    "2026-10-01T12:30:00Z",
-                    What::ReviewRequested {
-                        who: Some(Reviewer::User("defunkt".into())),
-                        added: true,
-                    },
-                ),
-                Item::Review(review(
-                    2_000_001,
-                    "monalisa",
-                    ReviewState::Approved,
-                    "",
-                    "2026-10-02T09:00:00Z",
-                )),
-            ])
-            .collect::<Vec<_>>()
-            .into(),
+            }),
+            Item::Review(commented),
+            second,
+            event(
+                "octocat",
+                "2026-10-01T12:30:00Z",
+                What::ReviewRequested {
+                    who: Some(Reviewer::User("defunkt".into())),
+                    added: true,
+                },
+            ),
+            Item::Review(review(
+                2_000_001,
+                "monalisa",
+                ReviewState::Approved,
+                "",
+                "2026-10-02T09:00:00Z",
+            )),
+        ]
+        .into(),
         comment_count: 1,
-        commits: pr_commits().into(),
+        commits: pr_commits().to_vec().into(),
         requested: vec![
             Requested {
                 who: Reviewer::User("defunkt".into()),
@@ -1257,22 +1237,22 @@ pub fn activity() -> PrActivity {
         ]
         .into(),
         latest: vec![
-            Latest {
-                author: "hubot".into(),
-                state: ReviewState::Commented,
-                id: Some(2_000_002),
-                at: "2026-10-01T10:00:00Z".into(),
-                commit: Some("0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into()),
-                for_teams: Vec::new(),
-            },
-            Latest {
-                author: "monalisa".into(),
-                state: ReviewState::Approved,
-                id: Some(2_000_001),
-                at: "2026-10-02T09:00:00Z".into(),
-                commit: Some("1b2c3d4e5f60718293a4b5c6d7e8f9012345678a".into()),
-                for_teams: vec!["octo-org/design".into()],
-            },
+            latest(
+                "hubot",
+                ReviewState::Commented,
+                2_000_002,
+                "2026-10-01T10:00:00Z",
+                "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+                &[],
+            ),
+            latest(
+                "monalisa",
+                ReviewState::Approved,
+                2_000_001,
+                "2026-10-02T09:00:00Z",
+                "1b2c3d4e5f60718293a4b5c6d7e8f9012345678a",
+                &["octo-org/design"],
+            ),
         ]
         .into(),
         closing: vec![Linked {

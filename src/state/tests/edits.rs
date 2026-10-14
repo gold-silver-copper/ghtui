@@ -247,7 +247,7 @@ fn the_labels_picker_lists_whats_set_first() {
     let cmds = press(&mut s, ",l");
     let key = DataKey::Sidebar(ghtui(), 14);
     assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
-    fetched(&mut s, key, Data::Sidebar(Box::new(fixtures::sidebar())));
+    fixtures::served(&mut s, &cmds);
     press(&mut s, "<Down><Down><Enter><Up><Enter>");
     let screen = screen_text(&s);
     let row = |text: &str| screen.lines().position(|l| l.contains(text));
@@ -262,9 +262,8 @@ fn the_labels_picker_lists_whats_set_first() {
 #[test]
 fn labels_are_checked_then_applied() {
     let mut s = issue_with(|_| {});
-    press(&mut s, ",l");
-    let key = DataKey::Sidebar(ghtui(), 14);
-    fetched(&mut s, key, Data::Sidebar(Box::new(fixtures::sidebar())));
+    let cmds = press(&mut s, ",l");
+    fixtures::served(&mut s, &cmds);
     // bug, ui, documentation, good first issue: check documentation,
     // uncheck ui.
     press(&mut s, "<Down><Down><Enter><Up><Enter>");
@@ -305,9 +304,8 @@ fn labels_are_checked_then_applied() {
 #[test]
 fn reviewers_include_teams() {
     let mut s = with_pr();
-    press(&mut s, ",q");
-    let key = DataKey::Sidebar(ghtui(), 12);
-    fetched(&mut s, key, Data::Sidebar(Box::new(fixtures::sidebar())));
+    let cmds = press(&mut s, ",q");
+    fixtures::served(&mut s, &cmds);
     let rows: Vec<String> = match &s.overlay {
         Some(Overlay::Picker(p)) => s.picker_rows(p).into_iter().map(|(r, _)| r.label).collect(),
         _ => panic!(",q opens the reviewers"),
@@ -349,9 +347,8 @@ fn reviewers_include_teams() {
 #[test]
 fn milestone_and_title() {
     let mut s = issue_with(|_| {});
-    press(&mut s, ",M");
-    let key = DataKey::Sidebar(ghtui(), 14);
-    fetched(&mut s, key, Data::Sidebar(Box::new(fixtures::sidebar())));
+    let cmds = press(&mut s, ",M");
+    fixtures::served(&mut s, &cmds);
     // No milestone, Links (current), 1.0.
     let cmds = press(&mut s, "<Down><Down><Enter>");
     let Change::Edit(Edit::Milestone { milestone, .. }) = sent(&cmds).0 else {
