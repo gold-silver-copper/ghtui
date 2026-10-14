@@ -133,6 +133,18 @@ fn split_half(left: Option<u32>, right: Option<u32>, half: Side) -> Option<(Side
     }
 }
 
+/// Annotations by the path they're on, with their places in `all`.
+fn by_path(all: &[Annotation]) -> HashMap<&str, Vec<(u32, &Annotation)>> {
+    let mut by_path: HashMap<&str, Vec<_>> = HashMap::new();
+    for (i, a) in all.iter().enumerate() {
+        by_path
+            .entry(a.path.as_str())
+            .or_default()
+            .push((idx(i), a));
+    }
+    by_path
+}
+
 impl Row {
     /// The alignment entries a line row shows (none for other rows).
     pub fn entries(self) -> impl Iterator<Item = u32> {
@@ -319,6 +331,17 @@ impl DocFile {
             };
             self.push_thread_row(ann, kind, line);
         }
+    }
+
+    /// Its annotations, unchanged, moved in the document's list from
+    /// `was` to `is`: its rows name them by their new places.
+    fn renumber(&mut self, was: &[(u32, &Annotation)], is: &[(u32, &Annotation)]) {
+        let moved: HashMap<u32, u32> = was.iter().zip(is).map(|(w, i)| (w.0, i.0)).collect();
+        let renumber = |ann: &mut u32| *ann = moved.get(ann).copied().unwrap_or(*ann);
+        self.thread_rows
+            .iter_mut()
+            .for_each(|r| renumber(&mut r.ann));
+        self.by_line.values_mut().flatten().for_each(renumber);
     }
 
     fn push_thread_row(&mut self, ann: u32, kind: ThreadRowKind, line: CommentLine) {
@@ -838,39 +861,41 @@ impl Doc {
         doc
     }
 
-    /// Shows new inputs, rebuilding files whose viewed state changed
-    /// (collapsing them), or everything if the threads or drafts did.
+    /// Shows new inputs, rebuilding the files whose viewed state changed
+    /// (collapsing them), or whose threads or drafts did.
     pub fn set_inputs(&mut self, inputs: DocInputs) {
         let old = std::mem::replace(&mut self.inputs, inputs);
-        let all = old.annotations != self.inputs.annotations;
+        let (was, is) = (by_path(&old.annotations), by_path(&self.inputs.annotations));
         let viewed = &self.inputs.viewed;
         let mut changed = Vec::new();
         for (i, f) in self.files.iter_mut().enumerate() {
             let now = viewed.get(f.meta.path()).copied().unwrap_or_default();
+            let none = Vec::new();
+            let was = was.get(f.meta.path()).unwrap_or(&none);
+            let is = is.get(f.meta.path()).unwrap_or(&none);
+            let same = was.iter().map(|(_, a)| a).eq(is.iter().map(|(_, a)| a));
             if f.viewed != now {
                 (f.viewed, f.open) = (now, None);
-            } else if !all {
+            } else if same {
+                if was.iter().map(|w| w.0).ne(is.iter().map(|i| i.0)) {
+                    f.renumber(was, is);
+                }
                 continue;
             }
             changed.push(i);
         }
-        changed.iter().for_each(|&i| self.rebuild_file(i));
         if !changed.is_empty() {
-            self.reindex();
+            self.rebuild_files(changed);
         }
     }
 
     fn rebuild_all(&mut self) {
-        for index in 0..self.files.len() {
-            self.rebuild_file(index);
-        }
-        self.reindex();
+        self.rebuild_files(0..self.files.len());
     }
 
     fn rebuild(&mut self, index: usize) {
         if index < self.files.len() {
-            self.rebuild_file(index);
-            self.reindex();
+            self.rebuild_files([index]);
         }
     }
 
@@ -882,7 +907,9 @@ impl Doc {
         }
     }
 
-    fn rebuild_file(&mut self, index: usize) {
+    /// Rebuilds the rows of files `which`, finding each one's annotations
+    /// and moves among the document's once for them all.
+    fn rebuild_files(&mut self, which: impl IntoIterator<Item = usize>) {
         let Doc {
             files,
             opts,
@@ -893,39 +920,34 @@ impl Doc {
             since_active,
             ..
         } = self;
-        let Some(file) = files.get_mut(index) else {
-            return;
-        };
-        let path = file.meta.path().to_owned();
+        let anns = by_path(annotations);
         // Moves index the exact alignment.
-        let file_moves: Vec<(u32, Range<u32>, bool)> = if opts.whitespace == Whitespace::Exact {
-            moves
-                .iter()
-                .enumerate()
-                .flat_map(|(i, m)| {
-                    let from = (m.from.0 == index).then(|| (idx(i), m.from.1.clone(), true));
-                    let to = (m.to.0 == index).then(|| (idx(i), m.to.1.clone(), false));
-                    from.into_iter().chain(to)
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let anns: Vec<(u32, &Annotation)> = annotations
-            .iter()
-            .enumerate()
-            .filter(|(_, a)| a.path == path)
-            .map(|(i, a)| (idx(i), a))
-            .collect();
+        let mut file_moves: HashMap<usize, Vec<(u32, Range<u32>, bool)>> = HashMap::new();
+        if opts.whitespace == Whitespace::Exact {
+            for (i, m) in moves.iter().enumerate() {
+                let from = (m.from.0, (idx(i), m.from.1.clone(), true));
+                let to = (m.to.0, (idx(i), m.to.1.clone(), false));
+                for (file, mv) in [from, to] {
+                    file_moves.entry(file).or_default().push(mv);
+                }
+            }
+        }
         let open = |a: &Annotation| is_open(thread_open, a);
-        let extras = Extras {
-            anns: &anns,
-            open: &open,
-            since: since.as_ref().filter(|_| *since_active),
-            moves: &file_moves,
-        };
-        file.rebuild(*opts, &extras);
-        file.moves = file_moves;
+        for index in which {
+            let Some(file) = files.get_mut(index) else {
+                continue;
+            };
+            let moves = file_moves.remove(&index).unwrap_or_default();
+            let extras = Extras {
+                anns: anns.get(file.meta.path()).map_or(&[], Vec::as_slice),
+                open: &open,
+                since: since.as_ref().filter(|_| *since_active),
+                moves: &moves,
+            };
+            file.rebuild(*opts, &extras);
+            file.moves = moves;
+        }
+        self.reindex();
     }
 
     pub fn set_moves(&mut self, moves: Vec<Move>) {
@@ -1934,6 +1956,48 @@ pub(crate) mod tests {
             let row = line_row(file, |l| l.right().is_some_and(|p| p.line == 5)).unwrap();
             assert!(matches!(file.rows()[row + 1], Row::Thread(_)));
             assert_eq!(doc.annotation_at(Pos { file: 0, row }), Some(0));
+        }
+
+        /// A change to one file's threads rebuilds that file only; another
+        /// file's, moved along in the document's list, are named by their
+        /// new places.
+        #[test]
+        fn a_change_to_one_files_threads_rebuilds_only_it() {
+            let mut doc = doc();
+            let old = numbered(60);
+            doc.set_diff(
+                2,
+                compute("b.txt", &old, &old.replace("line 7\n", "seven\n")),
+            );
+            let on_b = Annotation {
+                path: "b.txt".into(),
+                ..ann("b", Side::Right, Some(7))
+            };
+            set_annotations(&mut doc, vec![on_b.clone()]);
+            // Rows built from another diff, were b.txt built again.
+            let rows = doc.files[2].rows().to_vec();
+            doc.files[2].diff = Some(compute("b.txt", "x\n", "y\n"));
+            set_annotations(&mut doc, vec![ann("a", Side::Right, Some(5)), on_b]);
+            assert!(rows_of(&doc).contains('T'), "{}", rows_of(&doc));
+            let b = &doc.files[2];
+            assert_eq!(b.rows(), rows);
+            assert_eq!(
+                b.annotations_at(LinePos {
+                    side: Side::Right,
+                    line: 7
+                }),
+                [1]
+            );
+            let threads: Vec<u32> = (b.rows().iter())
+                .filter_map(|r| match r {
+                    Row::Thread(t) => b.thread_row(*t).map(|t| t.ann),
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                !threads.is_empty() && threads.iter().all(|&a| a == 1),
+                "{threads:?}"
+            );
         }
 
         /// A fold row is not on the thread it hides, so Enter on it opens

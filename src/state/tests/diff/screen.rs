@@ -844,3 +844,57 @@ fn big_file_timing_50k_lines() {
     );
     assert!(full_file < Duration::from_millis(100), "{full_file:?}");
 }
+
+/// Saving a draft on a big PR's diff rebuilds what it changed: 500
+/// files, a thread on every other one, and a draft added to one file at
+/// a time. Run with `cargo test --release -p ghtui -- --ignored draft_save_timing`.
+#[test]
+#[ignore = "timing; run in release"]
+#[expect(clippy::print_stderr, reason = "reports the timings")]
+fn draft_save_timing_on_500_files() {
+    let regular = (0o100644, 0o100644);
+    let path = |i: usize| format!("src/m{i}.rs");
+    let files: Vec<ChangedFile> = (0..500)
+        .map(|i| {
+            file(
+                FileStatus::Modified,
+                Some(&path(i)),
+                Some(&path(i)),
+                regular,
+            )
+        })
+        .collect();
+    let mut doc = Doc::new(files, &HashSet::new(), Default::default());
+    let old: String = (0..60)
+        .map(|i| format!("    let v{i} = compute({i}, \"x\");\n"))
+        .collect();
+    let new: String = old.replace("compute(", "compute_fast(");
+    let diff = Arc::new(FileDiff::compute(
+        "m.rs",
+        Some(old.as_bytes()),
+        Some(new.as_bytes()),
+    ));
+    for i in 0..500 {
+        doc.set_diff(i, diff.clone());
+    }
+    let mut s = state();
+    s.size = (160, 50);
+    open_diff(&mut s, loaded(&doc), Pos::default(), Pane::Diff);
+    let threads: Vec<_> = (0..250)
+        .map(|i| {
+            let mut t = crate::fixtures::thread(&format!("T{i}"), Some(10), false, false);
+            t.path = path(2 * i);
+            t
+        })
+        .collect();
+    let diff = s.diffs.get_mut(&DiffOf::Pr(pr())).unwrap();
+    diff.edit(|i| i.threads.data = Some(threads));
+    let saves: u32 = 100;
+    let start = std::time::Instant::now();
+    for n in 0..saves {
+        let mut draft = crate::fixtures::draft(u64::from(n) + 1, 20, "Why not compute?");
+        draft.path = path(n as usize * 5 % 500);
+        let _ = diff.edit_review(&pr(), |i| i.review.pending.push(draft));
+    }
+    eprintln!("draft save: {:?}", start.elapsed() / saves);
+}
