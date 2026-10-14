@@ -1159,10 +1159,11 @@ run, a notification, a project or a repository's settings is one job, a
 `Change` (`act::Changing`), and what the offline queue keeps is made of
 them. What an action does where you are is planned once by the feature
 that owns it, as a step (`act::Step`: send it, ask first, choose in a
-picker, write in the composer, or start a job), and the key, the menu
-and the palette all ask that plan, so they can't disagree; a picker's
-row can be such a step too. Asking first is one question
-(`forms::Ask`), about a form or about what an action changes.
+picker, write in the composer, start a job, or set a form's row), and
+the key, the menu and the palette all ask that plan, so they can't
+disagree; a picker's row is such a step too. Asking first is one
+question (`forms::Ask`), about a form or about what an action changes,
+whose answers carry what they're about.
 
 **After a write, the page follows GitHub until it shows it**
 (`src/follow.rs`). The feature that made the write says what the page
