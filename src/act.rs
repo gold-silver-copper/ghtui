@@ -119,13 +119,15 @@ pub struct Shows {
     pub about: Subject,
 }
 
-/// An action asked for on something not loaded yet (a list's row): it
-/// runs once that's in, if you're still on the page.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// An action asked for on something not loaded yet (a list's row, a
+/// pull request to check out): it runs once that's in, if you're still
+/// on the page.
+#[derive(Debug, Clone)]
 pub struct Pending {
-    pub action: Action,
-    pub subject: Subject,
-    pub route: Option<Route>,
+    action: Action,
+    subject: Subject,
+    route: Option<Route>,
+    then: fn(&mut State, Subject, Action) -> Vec<Cmd>,
 }
 
 /// What an action does here.
@@ -137,7 +139,7 @@ pub(crate) enum Plan {
     Do(Change),
     Approve(PrRef),
     /// It's about something that has to load first.
-    Load(DataKey),
+    Load,
     /// Choose why to dismiss a security alert.
     Dismiss(crate::security::Dismissing),
 }
@@ -214,18 +216,29 @@ fn act_on(state: &mut State, subject: Subject, action: Action) -> Vec<Cmd> {
         Ok(Plan::Do(change)) => Ok(Step::Send(change, subject)),
         Ok(Plan::Dismiss(d)) => Ok(Step::Pick(crate::picker::Kind::Alert(d))),
         Ok(Plan::Approve(pr)) => return crate::review::open_approve(state, pr),
-        Ok(Plan::Load(need)) => {
-            state.info(format!("Loading {}…", subject.name()));
-            let route = state.route().cloned();
-            state.pending = Some(Pending {
-                action,
-                subject,
-                route,
-            });
-            return state.ensure(need, false);
-        }
+        Ok(Plan::Load) => return wait(state, action, subject, act_on),
     };
     take(state, step)
+}
+
+/// Loads what `action` is about, then does it (`then`), if you're still
+/// on the page: with what's loaded, or saying why it couldn't be.
+#[must_use]
+pub fn wait(
+    state: &mut State,
+    action: Action,
+    subject: Subject,
+    then: fn(&mut State, Subject, Action) -> Vec<Cmd>,
+) -> Vec<Cmd> {
+    state.info(format!("Loading {}…", subject.name()));
+    let need = subject.need();
+    state.pending = Some(Pending {
+        action,
+        subject,
+        route: state.route().cloned(),
+        then,
+    });
+    state.ensure(need, false)
 }
 
 /// What an action changes: a pull request, an issue, a run, a job, a
@@ -466,14 +479,14 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         Subject::Pr(pr) => {
             let loaded = loaded(state.pr_remote(pr), &name)?;
             let Some(detail) = loaded.and_then(PrDetail::pick) else {
-                return Ok(Plan::Load(subject.need()));
+                return Ok(Plan::Load);
             };
             pr_plan(state, pr, detail, action)
         }
         Subject::Issue(repo, number) => {
             let key = DataKey::Issue(repo.clone(), *number);
             let Some(data) = loaded(state.remote(&key), &name)? else {
-                return Ok(Plan::Load(subject.need()));
+                return Ok(Plan::Load);
             };
             // A number that's a pull request is one.
             let crate::data::Data::Issue(Some(issue)) = data else {
@@ -528,7 +541,7 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         Subject::Run(repo, run, attempt) => {
             let key = DataKey::Run(repo.clone(), *run, *attempt);
             if loaded(state.remote(&key), &name)?.is_none() {
-                return Ok(Plan::Load(subject.need()));
+                return Ok(Plan::Load);
             }
             let run = state
                 .picked::<WorkflowRun>(&key)
@@ -543,7 +556,7 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         Subject::Job(repo, _, job) => {
             let key = DataKey::Job(repo.clone(), *job);
             if loaded(state.remote(&key), &name)?.is_none() {
-                return Ok(Plan::Load(subject.need()));
+                return Ok(Plan::Load);
             }
             let job = state
                 .picked::<Job>(&key)
@@ -560,7 +573,7 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         Subject::Thread { id, query } => {
             let key = DataKey::Notifications(query.clone());
             if loaded(state.remote(&key), &name)?.is_none() {
-                return Ok(Plan::Load(subject.need()));
+                return Ok(Plan::Load);
             }
             let n = state
                 .picked::<Inbox>(&key)
@@ -577,7 +590,7 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         Subject::Inbox { query } => {
             let key = DataKey::Notifications(query.clone());
             let Some(data) = loaded(state.remote(&key), &name)? else {
-                return Ok(Plan::Load(subject.need()));
+                return Ok(Plan::Load);
             };
             let crate::data::Data::Notifications(list) = data else {
                 return Err("GitHub sent something else for your notifications".into());
@@ -587,9 +600,10 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         }
         Subject::Alert(a) => crate::security::plan(state, a),
         Subject::Discussion(of, number) => {
+            loaded(state.remote(&subject.need()), &name)?;
             match crate::manage::discussion_close(state, of, *number)? {
                 Some((title, facts, choices)) => Ok(Plan::Ask(title, facts, choices)),
-                None => Ok(Plan::Load(subject.need())),
+                None => Ok(Plan::Load),
             }
         }
         Subject::Project(..) | Subject::Settings(..) => Err(elsewhere(action).to_owned()),
@@ -1132,9 +1146,9 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
     if let Some(p) = state.pending.clone() {
         if state.route() != p.route.as_ref() {
             state.pending = None;
-        } else if !matches!(plan_for(state, &p.subject, p.action), Ok(Plan::Load(_))) {
+        } else if !matches!(loaded(state.remote(&p.subject.need()), ""), Ok(None)) {
             state.pending = None;
-            cmds.extend(act_on(state, p.subject, p.action));
+            cmds.extend((p.then)(state, p.subject, p.action));
         }
     }
     let Some(Overlay::Confirm(confirm)) = &state.overlay else {

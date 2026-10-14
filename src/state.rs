@@ -428,8 +428,6 @@ pub struct State {
     pub focused: bool,
     /// The forms being written, by their page: leaving one keeps it.
     pub forms: crate::forms::Forms,
-    /// A pull request to check out once it's loaded.
-    pub checkout: Option<crate::api::model::PrRef>,
     /// What housekeeping's question is about, and a branch to delete.
     pub housekeeping: crate::housekeeping::Housekeeping,
     /// Conversations: long reviews unfolded, and the like.
@@ -484,7 +482,6 @@ impl State {
             page_watch: None,
             focused: true,
             forms: crate::forms::Forms::default(),
-            checkout: None,
             housekeeping: crate::housekeeping::Housekeeping::default(),
             talk: crate::talk::Talk::default(),
             offline: crate::offline::Offline::default(),

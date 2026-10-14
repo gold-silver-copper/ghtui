@@ -37,12 +37,12 @@ pub(crate) fn plan(state: &State, a: &AlertRef) -> Result<Plan, String> {
         .get(&key)
         .filter(|r| r.data.is_some() || !r.loading)
     else {
-        return Ok(Plan::Load(key));
+        return Ok(Plan::Load);
     };
     let Some(alert) = state.picked::<Alert>(&key) else {
         return match &remote.error {
             Some(err) => Err(format!("Couldn't load the alert: {err}")),
-            None => Ok(Plan::Load(key)),
+            None => Ok(Plan::Load),
         };
     };
     if state.overview(&a.repo).is_some_and(|o| !o.can_write) {

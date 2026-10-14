@@ -4,7 +4,7 @@
 use crate::api::model::{PrDetail, PrRef, RepoId};
 use crate::git::local;
 
-use crate::data::DataKey;
+use crate::act::Subject;
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
 use crate::state::{Cmd, State};
@@ -15,7 +15,6 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
     owns: &[Action::Checkout],
     act: |state, _| checkout(state),
     offers: |state, out| out.extend(doable(state)),
-    follow: waiting_checkout,
     ..crate::features::Feature::NONE
 };
 
@@ -89,7 +88,7 @@ impl Job for Checkout {
 /// it's loaded.
 #[must_use]
 fn checkout(state: &mut State) -> Vec<Cmd> {
-    let Some(crate::act::Subject::Pr(pr)) = crate::act::subject(state, Action::Checkout) else {
+    let Some(Subject::Pr(pr)) = crate::act::subject(state, Action::Checkout) else {
         return state.just_say("Checking out works on a pull request (or its row in a list)");
     };
     if let Some(None) = state.clone_of(&pr.repo) {
@@ -97,37 +96,23 @@ fn checkout(state: &mut State) -> Vec<Cmd> {
     }
     match state.pr(&pr) {
         Some(d) => start_checkout(state, pr.clone(), &d.clone()),
-        None => {
-            state.info(format!("Loading {pr}…"));
-            state.checkout = Some(pr.clone());
-            state.ensure(DataKey::Pr(pr), false)
-        }
+        None => crate::act::wait(state, Action::Checkout, Subject::Pr(pr), loaded),
     }
 }
 
-/// A pull request that was waiting to load before it's checked out.
+/// The pull request waited for has loaded, or couldn't be.
 #[must_use]
-fn waiting_checkout(state: &mut State) -> Vec<Cmd> {
-    let Some(pr) = state.checkout.clone() else {
+fn loaded(state: &mut State, about: Subject, _: Action) -> Vec<Cmd> {
+    let Subject::Pr(pr) = about else {
         return Vec::new();
     };
-    let Some(remote) = state.pr_remote(&pr) else {
-        return Vec::new();
-    };
-    match (state.pr(&pr), &remote.error) {
-        (Some(d), _) => {
-            let d = d.clone();
-            state.checkout = None;
-            start_checkout(state, pr, &d)
-        }
-        (None, Some(err)) if !remote.loading => {
-            let text = format!("Couldn't load {pr}: {err}");
-            state.checkout = None;
-            state.error(text);
-            Vec::new()
-        }
-        _ => Vec::new(),
+    if let Some(d) = state.pr(&pr) {
+        let d = d.clone();
+        return start_checkout(state, pr, &d);
     }
+    let err = state.pr_remote(&pr).and_then(|r| r.error.clone());
+    state.error(format!("Couldn't load {pr}: {}", err.unwrap_or_default()));
+    Vec::new()
 }
 
 /// Checks out `pr`: on its own branch's name when it's from this

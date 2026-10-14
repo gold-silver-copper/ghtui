@@ -283,6 +283,20 @@ fn checkout_says_what_branch_or_why_not() {
     says(&s, "isn't running in a clone of gold-silver-copper/ghtui");
 }
 
+/// On a list, `,c` waits for the row's pull request to load, then
+/// checks it out.
+#[test]
+fn checkout_on_a_row_waits_for_its_pull_request() {
+    let mut s = with_home();
+    s.data.retain(|key, _| !matches!(key, DataKey::Pr(_)));
+    press(&mut s, "jj");
+    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    assert_eq!(press(&mut s, ",c"), [fixtures::fetch_pr(&pr)]);
+    says(&s, "Loading gold-silver-copper/ghtui#12");
+    let cmds = fixtures::pr_fetched(&mut s, &pr, Ok(fixtures::pr_detail()));
+    assert_eq!(fixtures::sent::<crate::clone::Checkout>(&cmds).pr, Some(12));
+}
+
 /// A new issue's form, written, its composer closed.
 pub(super) fn with_new_issue() -> State {
     let mut s = bug_report();
