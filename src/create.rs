@@ -20,7 +20,7 @@ use std::path::Path;
 use crate::api::create::{NewForm, NewIssue, NewPr};
 use crate::api::model::{Capped, NodeId, PrDetail, PrRef, RepoId};
 use crate::api::{ApiError, GitHub};
-use crate::git::local::{self, Branch, Checkout, Clone, CommitMessage};
+use crate::git::local::{self, Branch, Checkout, CommitMessage};
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::data::{Data, DataKey};
@@ -34,21 +34,11 @@ use crate::ui::page::FormLink;
 pub use page::build;
 use templates::Chooser;
 
-/// What git or GitHub answers, while it's on its way.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Look<T> {
-    Asking,
-    Found(T),
-    Failed(String),
-}
-
-/// What's being made, and what's known of the clones ghtui runs in.
+/// What's being made.
 #[derive(Debug, Default)]
 pub struct Creating {
     /// The forms being written, by their page: leaving one keeps it.
     pub forms: HashMap<Route, Form>,
-    /// Whether ghtui runs in a clone of each repository asked about.
-    pub clones: HashMap<RepoId, Look<Option<Clone>>>,
     /// A pull request to check out once it's loaded.
     pub checkout: Option<PrRef>,
 }
@@ -73,17 +63,30 @@ pub struct Form {
     /// A pull request's branches: into `base` from `head`.
     pub base: Option<String>,
     pub head: Option<String>,
-    /// What's known of `head` against `base`, for the two it was asked for.
-    pub branch: Option<(String, String, Look<HeadState>)>,
+    /// The base and head its text was last filled in for.
+    pub filled_for: Option<(String, String)>,
     pub sending: bool,
     pub error: Option<String>,
 }
 
 impl Form {
-    /// What's known of its head against its base, if it's for them.
-    fn head_state(&self) -> Option<&Look<HeadState>> {
-        let (base, head, look) = self.branch.as_ref()?;
-        (Some(base) == self.base.as_ref() && Some(head) == self.head.as_ref()).then_some(look)
+    /// Where its head stands against its base, as it's read.
+    fn head_key(&self, repo: &RepoId) -> Option<DataKey> {
+        let (base, head) = (self.base.clone()?, self.head.clone()?);
+        (base != head).then(|| DataKey::Head {
+            repo: repo.clone(),
+            base,
+            head,
+        })
+    }
+
+    /// Where its head stands against its base, once it's read.
+    fn head_state<'a>(
+        &self,
+        state: &'a State,
+        repo: &RepoId,
+    ) -> Option<Result<&'a HeadState, &'a str>> {
+        state.answer(&self.head_key(repo)?)
     }
 
     /// Text you haven't written yourself.
@@ -103,14 +106,6 @@ pub struct HeadState {
 /// Work in the background.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Work {
-    /// Whether ghtui runs in a clone of the repository.
-    Clone(RepoId),
-    /// Where `head` stands against `base`: here and on GitHub.
-    Head {
-        repo: RepoId,
-        base: String,
-        head: String,
-    },
     /// `git push` the branch, from the repository's clone.
     Push { repo: RepoId, branch: String },
     /// Make it on GitHub; the form's page asked.
@@ -132,13 +127,6 @@ pub enum Submission {
 /// Work's answer.
 #[derive(Debug)]
 pub enum Done {
-    Clone(RepoId, Result<Option<Clone>, Failure>),
-    Head {
-        repo: RepoId,
-        base: String,
-        head: String,
-        result: Result<HeadState, Failure>,
-    },
     Pushed(RepoId, String, Result<(), Failure>),
     Created(Route, Result<u64, ApiError>),
     CheckedOut(PrRef, Result<Checkout, Failure>),
@@ -149,13 +137,6 @@ impl Work {
     pub fn failed(&self) -> Done {
         let bug = || Failure::msg("ghtui hit a bug");
         match self.clone() {
-            Work::Clone(repo) => Done::Clone(repo, Err(bug())),
-            Work::Head { repo, base, head } => Done::Head {
-                repo,
-                base,
-                head,
-                result: Err(bug()),
-            },
             Work::Push { repo, branch } => Done::Pushed(repo, branch, Err(bug())),
             Work::Submit(route, _) => {
                 Done::Created(route, Err(ApiError::Internal("ghtui hit a bug".into())))
@@ -167,39 +148,6 @@ impl Work {
     /// Does it, with `gh` and the clone `cwd` is in.
     pub async fn run(self, gh: &GitHub, cwd: &Path) -> Done {
         match self {
-            Work::Clone(repo) => {
-                let result = local::clone_of(cwd, &repo.owner, &repo.name)
-                    .await
-                    .map_err(Failure::from);
-                Done::Clone(repo, result)
-            }
-            Work::Head { repo, base, head } => {
-                let result = async {
-                    let mut local = None;
-                    if let Some(c) = local::clone_of(cwd, &repo.owner, &repo.name).await? {
-                        local = local::branch(&c.top, &c.remote, &head).await?;
-                        // Commits GitHub doesn't have yet are this clone's
-                        // to tell.
-                        if local.as_ref().is_some_and(|b| !b.pushed()) {
-                            let commits = local::commits(&c.top, &c.remote, &base, &head).await?;
-                            return Ok(HeadState {
-                                local,
-                                commits: commits.into(),
-                            });
-                        }
-                    }
-                    let spec = head_spec(&repo, &head, local.as_ref());
-                    let commits = gh.commit_messages(&repo, &base, &spec).await?;
-                    Ok(HeadState { local, commits })
-                }
-                .await;
-                Done::Head {
-                    repo,
-                    base,
-                    head,
-                    result,
-                }
-            }
             Work::Push { repo, branch } => {
                 let result = async {
                     let c = local::clone_of(cwd, &repo.owner, &repo.name)
@@ -235,6 +183,32 @@ impl Work {
             }
         }
     }
+}
+
+/// Where `head` stands against `base`: in the clone ghtui runs in, if
+/// it's one of `repo`'s, and on GitHub.
+pub async fn head_state(
+    gh: &GitHub,
+    cwd: &Path,
+    repo: &RepoId,
+    base: &str,
+    head: &str,
+) -> Result<HeadState, ApiError> {
+    let mut local = None;
+    if let Some(c) = local::clone_of(cwd, &repo.owner, &repo.name).await? {
+        local = local::branch(&c.top, &c.remote, head).await?;
+        // Commits GitHub doesn't have yet are this clone's to tell.
+        if local.as_ref().is_some_and(|b| !b.pushed()) {
+            let commits = local::commits(&c.top, &c.remote, base, head).await?;
+            return Ok(HeadState {
+                local,
+                commits: commits.into(),
+            });
+        }
+    }
+    let spec = head_spec(repo, head, local.as_ref());
+    let commits = gh.commit_messages(repo, base, &spec).await?;
+    Ok(HeadState { local, commits })
 }
 
 fn not_a_clone(repo: &RepoId) -> Failure {
@@ -374,13 +348,15 @@ fn open(state: &mut State, pr: bool) -> Vec<Cmd> {
         return compose(state);
     }
     // The clone may have moved on since: its branch is looked at again.
+    let mut cmds = Vec::new();
     if pr {
-        state.creating.clones.remove(&repo);
-        if let Some(form) = state.creating.forms.get_mut(&route) {
-            form.branch = None;
+        cmds.extend(state.ensure(DataKey::Clone(repo.clone()), true));
+        let form = state.creating.forms.get(&route);
+        if let Some(key) = form.and_then(|f| f.head_key(&repo)) {
+            cmds.extend(state.ensure(key, true));
         }
     }
-    let mut cmds = state.push(route);
+    cmds.extend(state.push(route));
     cmds.extend(follow(state));
     cmds
 }
@@ -397,10 +373,9 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
     let Some(repo) = form_repo(&route).cloned() else {
         return cmds;
     };
-    let pr = matches!(route, Route::Pulls(pulls::NewPr(_)));
-    if pr && !state.creating.clones.contains_key(&repo) {
-        state.creating.clones.insert(repo.clone(), Look::Asking);
-        cmds.push(Cmd::Create(Work::Clone(repo.clone())));
+    if let Route::Pulls(pulls::NewPr(_)) = route {
+        cmds.extend(follow_pr(state, &route, &repo));
+        return cmds;
     }
     let State {
         creating,
@@ -412,26 +387,6 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
     let Some(d) = form_data(data, &repo) else {
         return cmds;
     };
-    if pr {
-        if form.base.is_none() {
-            form.base.clone_from(&d.default_branch);
-        }
-        // Inside a clone, its branch is the one to propose.
-        if form.head.is_none()
-            && let Some(Look::Found(Some(clone))) = creating.clones.get(&repo)
-            && clone.branch != form.base
-        {
-            form.head.clone_from(&clone.branch);
-        }
-        if form.head_state().is_none()
-            && let (Some(base), Some(head)) = (form.base.clone(), form.head.clone())
-            && base != head
-        {
-            form.branch = Some((base.clone(), head.clone(), Look::Asking));
-            cmds.push(Cmd::Create(Work::Head { repo, base, head }));
-        }
-        return cmds;
-    }
     let chooser = form
         .chooser
         .get_or_insert_with(|| templates::chooser(&d.issue_templates));
@@ -573,6 +528,49 @@ fn sending(state: &mut State, on: bool) {
     }
 }
 
+/// A new pull request's form: its base the default branch and its head
+/// the clone's, until they're chosen, and its text from the head's
+/// commits once they're in, unless you've written it.
+#[must_use]
+fn follow_pr(state: &mut State, route: &Route, repo: &RepoId) -> Vec<Cmd> {
+    let Some(d) = form_data(&state.data, repo) else {
+        return Vec::new();
+    };
+    let (default, template) = (d.default_branch.clone(), d.pr_template.clone());
+    let checked_out = state
+        .clone_of(repo)
+        .flatten()
+        .and_then(|c| c.branch.clone());
+    let form = state.creating.forms.entry(route.clone()).or_default();
+    if form.base.is_none() {
+        form.base = default;
+    }
+    // Inside a clone, its branch is the one to propose.
+    if form.head.is_none() && checked_out.is_some() && checked_out != form.base {
+        form.head = checked_out;
+    }
+    let Some(key) = form.head_key(repo) else {
+        return Vec::new();
+    };
+    let (Some(base), Some(head)) = (form.base.clone(), form.head.clone()) else {
+        return Vec::new();
+    };
+    let filled = form.filled_for.as_ref() == Some(&(base.clone(), head.clone()));
+    let cmds = state.ensure(key.clone(), false);
+    if !filled && let Some(Ok(hs)) = state.answer::<HeadState>(&key) {
+        let text = templates::pr_text(&head, &hs.commits, template.as_deref());
+        let form = state.creating.forms.entry(route.clone()).or_default();
+        // Filled in as GitHub would, unless you've written.
+        if form.untouched() {
+            form.filled.clone_from(&text);
+            form.text = text;
+        }
+        form.filled_for = Some((base, head));
+        state.shown_gen += 1;
+    }
+    cmds
+}
+
 /// A pull request's head as `createPullRequest` takes it: a fork's
 /// branch is `owner:branch`.
 fn head_spec(repo: &RepoId, head: &str, local: Option<&Branch>) -> String {
@@ -585,7 +583,7 @@ fn head_spec(repo: &RepoId, head: &str, local: Option<&Branch>) -> String {
 
 /// Why the form's head can't be proposed yet, if it can't: it isn't
 /// chosen, isn't on GitHub as it is here, or brings nothing.
-fn head_problem(state: &State, form: &Form) -> Result<HeadState, String> {
+fn head_problem(state: &State, repo: &RepoId, form: &Form) -> Result<HeadState, String> {
     let push = state.first_key(Action::PushBranch);
     let (Some(base), Some(head)) = (&form.base, &form.head) else {
         return Err("Choose the branch with the changes: Enter on “compare”".into());
@@ -595,11 +593,10 @@ fn head_problem(state: &State, form: &Form) -> Result<HeadState, String> {
             "{head} is the base too: choose another branch to compare"
         ));
     }
-    let look = form.head_state().unwrap_or(&Look::Asking);
-    let hs = match look {
-        Look::Asking => return Err(format!("Still comparing {head} with {base}")),
-        Look::Failed(why) => return Err(format!("Couldn't compare {head} with {base}: {why}")),
-        Look::Found(hs) => hs,
+    let hs = match form.head_state(state, repo) {
+        None => return Err(format!("Still comparing {head} with {base}")),
+        Some(Err(why)) => return Err(format!("Couldn't compare {head} with {base}: {why}")),
+        Some(Ok(hs)) => hs,
     };
     if let Some(b) = &hs.local
         && !b.pushed()
@@ -632,7 +629,7 @@ fn ask_create(state: &mut State, route: &Route) -> Vec<Cmd> {
     let Some(repo) = form_repo(route) else {
         return Vec::new();
     };
-    let hs = match head_problem(state, form) {
+    let hs = match head_problem(state, repo, form) {
         Ok(hs) => hs,
         Err(why) => {
             say(state, why);
@@ -690,28 +687,28 @@ fn ask_push(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     };
     let why = match (
-        state.creating.clones.get(&repo),
-        form.head_state(),
+        state.clone_of(&repo),
+        form.head_state(state, &repo),
         &form.head,
     ) {
         (_, _, None) => Some("Choose the branch to push first".to_owned()),
-        (Some(Look::Found(None)), ..) => Some(format!(
+        (Some(None), ..) => Some(format!(
             "ghtui isn't running in a clone of {repo}: push it with git"
         )),
-        (_, Some(Look::Found(HeadState { local: None, .. })), Some(head)) => Some(format!(
+        (_, Some(Ok(HeadState { local: None, .. })), Some(head)) => Some(format!(
             "{head} isn't a branch of this clone: there's nothing here to push"
         )),
-        (_, Some(Look::Found(HeadState { local: Some(b), .. })), _) if b.pushed() => {
+        (_, Some(Ok(HeadState { local: Some(b), .. })), _) if b.pushed() => {
             Some(format!("GitHub has every commit of {} already", b.name))
         }
-        (_, Some(Look::Found(_)), _) => None,
+        (_, Some(Ok(_)), _) => None,
         _ => Some("Still comparing the branch with GitHub's".to_owned()),
     };
     if let Some(why) = why {
         state.info(why);
         return Vec::new();
     }
-    let Some(Look::Found(HeadState { local: Some(b), .. })) = form.head_state() else {
+    let Some(Ok(HeadState { local: Some(b), .. })) = form.head_state(state, &repo) else {
         return Vec::new();
     };
     let upstream = if b.tracked { "" } else { " --set-upstream" };
@@ -790,7 +787,7 @@ fn answer_ask(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
         Answer::Write(_) => return Vec::new(),
         Answer::Push => Work::Push { repo, branch: head },
         Answer::Create { draft } => {
-            let hs = match head_problem(state, form) {
+            let hs = match head_problem(state, &repo, form) {
                 Ok(hs) => hs,
                 Err(why) => {
                     say(state, why);
@@ -822,59 +819,22 @@ fn answer_ask(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
 #[must_use]
 pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
     match done {
-        Done::Clone(repo, result) => {
-            let look = match result {
-                Ok(clone) => Look::Found(clone),
-                Err(err) => Look::Failed(err.to_string()),
-            };
-            state.creating.clones.insert(repo, look);
-            Vec::new()
-        }
-        Done::Head {
-            repo,
-            base,
-            head,
-            result,
-        } => {
-            let route = Route::Pulls(pulls::NewPr(repo.clone()));
-            let template = form_data(&state.data, &repo).and_then(|d| d.pr_template.clone());
-            let Some(form) = state.creating.forms.get_mut(&route) else {
-                return Vec::new();
-            };
-            if form
-                .branch
-                .as_ref()
-                .is_none_or(|(b, h, _)| (b, h) != (&base, &head))
-            {
-                return Vec::new();
-            }
-            let look = match result {
-                Ok(hs) => {
-                    // Filled in as GitHub would, unless you've written.
-                    if form.untouched() {
-                        form.text = templates::pr_text(&head, &hs.commits, template.as_deref());
-                        form.filled = form.text.clone();
-                    }
-                    Look::Found(hs)
-                }
-                Err(err) => Look::Failed(err.to_string()),
-            };
-            form.branch = Some((base, head, look));
-            Vec::new()
-        }
         Done::Pushed(repo, branch, result) => {
-            let route = Route::Pulls(pulls::NewPr(repo));
+            let route = Route::Pulls(pulls::NewPr(repo.clone()));
             match result {
                 Ok(()) => {
                     if matches!(&state.overlay, Some(Overlay::Ask(a)) if a.route == route) {
                         state.overlay = None;
                     }
-                    if let Some(form) = state.creating.forms.get_mut(&route) {
-                        form.sending = false;
-                        form.branch = None;
-                    }
                     state.info(format!("Pushed {branch}"));
-                    Vec::new()
+                    // Compared again, now GitHub has it.
+                    let Some(form) = state.creating.forms.get_mut(&route) else {
+                        return Vec::new();
+                    };
+                    form.sending = false;
+                    form.filled_for = None;
+                    let key = form.head_key(&repo);
+                    key.map_or_else(Vec::new, |key| state.ensure(key, true))
                 }
                 Err(err) => {
                     if let Some(form) = state.creating.forms.get_mut(&route) {
@@ -994,7 +954,7 @@ fn checkout(state: &mut State) -> Vec<Cmd> {
         state.info("Checking out works on a pull request (or its row in a list)");
         return Vec::new();
     };
-    if let Some(Look::Found(None)) = state.creating.clones.get(&pr.repo) {
+    if let Some(None) = state.clone_of(&pr.repo) {
         state.info(format!("ghtui isn't running in a clone of {}", pr.repo));
         return Vec::new();
     }
@@ -1217,10 +1177,10 @@ pub fn picker_rows(state: &State, pick: Pick, q: &str) -> Vec<(PaletteItem, Opti
         } else {
             &form.head
         };
-        let current = match state.creating.clones.get(repo) {
-            Some(Look::Found(Some(c))) => c.branch.clone(),
-            _ => None,
-        };
+        let current = state
+            .clone_of(repo)
+            .flatten()
+            .and_then(|c| c.branch.clone());
         let default = form_data(&state.data, repo).and_then(|d| d.default_branch.clone());
         let mut names: Vec<&String> = refs.branches.iter().collect();
         // A branch only this clone has can be compared (and pushed).
@@ -1341,7 +1301,7 @@ pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
         out.push(write);
         let why = match (pr, refused(state, repo, pr)) {
             (_, Some(why)) => Some(why),
-            (true, None) => head_problem(state, form).err(),
+            (true, None) => head_problem(state, repo, form).err(),
             (false, None) => templates::split(&form.text)
                 .0
                 .is_empty()
@@ -1357,12 +1317,12 @@ pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
         out.push(create);
         if pr {
             let push = state.first_key(Action::PushBranch);
-            let why = match form.head_state() {
-                Some(Look::Found(HeadState { local: Some(b), .. })) if !b.pushed() => None,
-                Some(Look::Found(HeadState { local: Some(_), .. })) => {
+            let why = match form.head_state(state, repo) {
+                Some(Ok(HeadState { local: Some(b), .. })) if !b.pushed() => None,
+                Some(Ok(HeadState { local: Some(_), .. })) => {
                     Some("GitHub has all of it already".into())
                 }
-                Some(Look::Found(_)) => Some("it isn't a branch of this clone".into()),
+                Some(Ok(_)) => Some("it isn't a branch of this clone".into()),
                 _ => Some(format!("no branch here to push ({push})")),
             };
             out.push(row(
@@ -1392,10 +1352,8 @@ pub fn checkout_doable(state: &State) -> Option<Doable> {
     let Some(crate::act::Subject::Pr(pr)) = crate::act::subject(state, Action::Checkout) else {
         return None;
     };
-    let why = match state.creating.clones.get(&pr.repo) {
-        Some(Look::Found(None)) => Some(format!("ghtui isn't running in a clone of {}", pr.repo)),
-        _ => None,
-    };
+    let why = matches!(state.clone_of(&pr.repo), Some(None))
+        .then(|| format!("ghtui isn't running in a clone of {}", pr.repo));
     Some(Doable {
         section: "Change",
         action: Action::Checkout,

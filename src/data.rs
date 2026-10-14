@@ -20,18 +20,21 @@ use crate::api::commit_comments::CommitComment;
 use crate::api::create::NewForm;
 use crate::api::edit::Sidebar;
 use crate::api::explore::{Topic, Topics};
-use crate::api::housekeeping::{LabelInfo, Owners, Templates};
+use crate::api::housekeeping::{BranchRules, FileLook, LabelInfo, Owners, Templates};
 use crate::api::insights::{Activity, Dependencies, Traffic};
 use crate::api::lists::{ListPage, MyLists, StarList};
+use crate::api::manage::{Categories, Target};
 use crate::api::model::{Capped, PrDetail, PrRef, RepoId};
 use crate::api::notifications::Inbox;
 use crate::api::packages::{PackageDetail, PackageList, PackageRef, PackagesOf};
 use crate::api::project::{InProject, Project, ProjectRef, ProjectSummary, ProjectsOf};
+use crate::api::release::TagLook;
 use crate::api::replies::SavedReply;
 use crate::api::security::{Alert, AlertKind, AlertList, AlertRef};
 use crate::api::settings::{Settings, SettingsPage};
 use crate::api::timeline::Review;
 use crate::api::watch::{Subscription, Watched};
+use crate::create::HeadState;
 
 /// One piece of GitHub data a page shows.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -147,6 +150,27 @@ pub enum DataKey {
     Owners,
     /// GitHub's `.gitignore` and licence templates.
     Templates,
+    /// A repository's open issues, for a picker.
+    OpenIssues(RepoId),
+    /// An owner's repositories an issue can move to.
+    MoveTargets(String),
+    /// Where a repository's new discussions go.
+    Categories(RepoId),
+    /// The clone ghtui runs in, if it's one of the repository's: from git.
+    Clone(RepoId),
+    /// Where a new pull request's head stands against its base: in the
+    /// clone ghtui runs in, and on GitHub.
+    Head {
+        repo: RepoId,
+        base: String,
+        head: String,
+    },
+    /// What GitHub has of a tag.
+    TagLook(RepoId, String),
+    /// What GitHub's rules say of deleting a branch.
+    BranchRules(RepoId, String),
+    /// A file at a revision, where its form starts.
+    FileLook(RepoId, String, String),
 }
 
 impl DataKey {
@@ -175,6 +199,15 @@ impl DataKey {
                 | DataKey::MyLists(..)
                 | DataKey::Owners
                 | DataKey::Templates
+                | DataKey::OpenIssues(_)
+                | DataKey::MoveTargets(_)
+                | DataKey::Categories(_)
+                | DataKey::TagLook(..)
+                | DataKey::BranchRules(..)
+                | DataKey::FileLook(..)
+                // Git answers these.
+                | DataKey::Clone(_)
+                | DataKey::Head { .. }
         )
     }
 
@@ -298,6 +331,23 @@ data! {
     Labels(Box<Results<LabelInfo>>) => Results<LabelInfo>,
     Owners(Box<Owners>) => Owners,
     Templates(Box<Templates>) => Templates,
+    #[serde(skip)]
+    OpenIssues(Box<Capped<(u64, String)>>) => Capped<(u64, String)>,
+    #[serde(skip)]
+    MoveTargets(Box<Capped<Target>>) => Capped<Target>,
+    #[serde(skip)]
+    Categories(Box<Categories>) => Categories,
+    /// `None`: ghtui doesn't run in a clone of it.
+    #[serde(skip)]
+    Clone(Option<Box<crate::git::local::Clone>>) => Option<Box<crate::git::local::Clone>>,
+    #[serde(skip)]
+    Head(Box<HeadState>) => HeadState,
+    #[serde(skip)]
+    TagLook(Box<TagLook>) => TagLook,
+    #[serde(skip)]
+    BranchRules(Box<BranchRules>) => BranchRules,
+    #[serde(skip)]
+    FileLook(Box<FileLook>) => FileLook,
 }
 
 impl Data {

@@ -234,13 +234,14 @@ fn every_route_says_why_when_its_needs_fail() {
 
 /// A need whose page leaves it out until it loads, saying nothing when it
 /// fails: what the header or the chrome shows (counts, tabs, a branch, a
-/// commit's title), or the latest commit beside each file.
+/// commit's title), the latest commit beside each file, or whether ghtui
+/// runs in a clone (when git can't tell, it doesn't).
 fn decoration(route: &Route, need: &DataKey) -> bool {
     use DataKey as K;
     crate::browse::is_header(route, need)
         || matches!(
             (route, need),
-            (_, K::LastCommits(..))
+            (_, K::LastCommits(..) | K::Clone(_))
                 | (Route::Code(code::CommitChecks { .. }), K::Commit(..))
                 | (
                     Route::Pulls(pulls::Pr {

@@ -11,7 +11,6 @@
 //! what it made.
 
 use crate::route::{Route, discussions, issues, pulls};
-use std::collections::HashMap;
 
 use crate::api::GitHub;
 use crate::api::browse::{DiscussionDetail, DiscussionsOf, IssueDetail, IssueState, PrState};
@@ -44,16 +43,6 @@ pub const ACTIONS: [Action; 10] = [
     Action::BlockedBy,
     Action::NewDiscussion,
 ];
-
-/// What the pickers list, fetched when they open.
-#[derive(Debug, Default)]
-pub struct Managing {
-    /// A repository's open issues: number and title.
-    pub issues: HashMap<RepoId, Result<Capped<(u64, String)>, String>>,
-    /// An owner's repositories an issue can move to.
-    pub targets: HashMap<String, Result<Capped<Target>, String>>,
-    pub categories: HashMap<RepoId, Result<Categories, String>>,
-}
 
 // ---- where you are ------------------------------------------------------------------
 
@@ -610,26 +599,14 @@ impl Pick {
     }
 
     /// What it lists, loaded when it opens.
-    fn need(&self) -> Option<DataKey> {
+    pub fn need(&self) -> Option<DataKey> {
         match self {
             Pick::Base { pr, .. } => Some(DataKey::Refs(pr.repo.clone())),
-            _ => None,
-        }
-    }
-
-    /// The work that fetches what it lists, if that isn't here.
-    fn load(&self, state: &State) -> Option<Work> {
-        match self {
             Pick::Duplicate { issue, .. }
             | Pick::SubIssues { issue, .. }
-            | Pick::BlockedBy { issue, .. } => (!state.managing.issues.contains_key(&issue.repo))
-                .then(|| Work::Issues(issue.repo.clone())),
-            Pick::Transfer { issue, .. } => {
-                (!state.managing.targets.contains_key(&issue.repo.owner))
-                    .then(|| Work::Targets(issue.repo.owner.clone()))
-            }
-            Pick::Category { repo } => (!state.managing.categories.contains_key(repo))
-                .then(|| Work::Categories(repo.clone())),
+            | Pick::BlockedBy { issue, .. } => Some(DataKey::OpenIssues(issue.repo.clone())),
+            Pick::Transfer { issue, .. } => Some(DataKey::MoveTargets(issue.repo.owner.clone())),
+            Pick::Category { repo } => Some(DataKey::Categories(repo.clone())),
             _ => None,
         }
     }
@@ -681,17 +658,11 @@ pub enum Chosen {
 
 #[must_use]
 fn open(state: &mut State, pick: Pick) -> Vec<Cmd> {
-    let load = pick.load(state);
     let start = pick.start();
-    let need = pick.need();
-    let mut cmds = state.open_picker(crate::picker::Kind::Manage(pick));
+    let cmds = state.open_picker(crate::picker::Kind::Manage(pick));
     if let (Some(start), Some(Overlay::Picker(p))) = (start, &mut state.overlay) {
         p.input.insert_str(start);
     }
-    if let Some(key) = need {
-        cmds.extend(state.ensure(key, false));
-    }
-    cmds.extend(load.map(|w| Cmd::Write(crate::writes::Work::Manage(w))));
     cmds
 }
 
@@ -711,8 +682,12 @@ fn item(
 
 /// A list fetched for a picker: its rows, or a row saying why there are
 /// none yet.
-fn fetched<'a, T>(found: Option<&'a Result<T, String>>, what: &str) -> Result<&'a T, Rows> {
-    match found {
+fn fetched<'a, T: crate::data::Picked>(
+    state: &'a State,
+    key: &DataKey,
+    what: &str,
+) -> Result<&'a T, Rows> {
+    match state.answer(key) {
         None => Err(vec![item(format!("Loading {what}…"), "", None)]),
         Some(Err(why)) => Err(vec![item(format!("Couldn't load {what}: {why}"), "", None)]),
         Some(Ok(found)) => Ok(found),
@@ -883,7 +858,8 @@ fn base_rows(state: &State, pr: &PrRef, id: &NodeId, from: &str, head: &str, q: 
 
 fn transfer_rows(state: &State, issue: &IssueAt, id: &NodeId, q: &str) -> Rows {
     let owner = &issue.repo.owner;
-    let targets = match fetched(state.managing.targets.get(owner), "the repositories") {
+    let key = DataKey::MoveTargets(owner.clone());
+    let targets = match fetched::<Capped<Target>>(state, &key, "the repositories") {
         Ok(t) => t,
         Err(rows) => return rows,
     };
@@ -941,7 +917,8 @@ fn issue_rows(
     if let Some(t) = &typed {
         rows.push(row(t.clone(), ""));
     }
-    match fetched(state.managing.issues.get(&issue.repo), "its open issues") {
+    let key = DataKey::OpenIssues(issue.repo.clone());
+    match fetched::<Capped<(u64, String)>>(state, &key, "its open issues") {
         Ok(open) => {
             let listed = (open.iter())
                 .map(|(n, title)| {
@@ -1038,7 +1015,8 @@ fn relation_rows(state: &State, at: &IssueAt, id: &NodeId, q: &str, sub: bool) -
 }
 
 fn category_rows(state: &State, repo: &RepoId, q: &str) -> Rows {
-    let found = match fetched(state.managing.categories.get(repo), "its categories") {
+    let key = DataKey::Categories(repo.clone());
+    let found = match fetched::<Categories>(state, &key, "its categories") {
         Ok(c) => c,
         Err(rows) => return rows,
     };
@@ -1257,7 +1235,7 @@ pub fn after(state: &mut State, change: &Change) -> Vec<Cmd> {
     let Change::Manage(Manage::LinkBranch { repo, name, .. }) = change else {
         return Vec::new();
     };
-    if let Some(crate::create::Look::Found(None)) = state.creating.clones.get(repo) {
+    if let Some(None) = state.clone_of(repo) {
         state.info(format!(
             "Made {name}; ghtui isn't running in a clone of {repo} to check it out"
         ));
@@ -1324,11 +1302,6 @@ pub fn start(state: &mut State, s: &Starting, text: &str) -> Vec<Cmd> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Work {
-    /// A repository's open issues, for a picker.
-    Issues(RepoId),
-    /// An owner's repositories an issue can move to.
-    Targets(String),
-    Categories(RepoId),
     Revert {
         pr: PrRef,
         id: NodeId,
@@ -1355,9 +1328,6 @@ pub enum Work {
 
 #[derive(Debug)]
 pub enum Done {
-    Issues(RepoId, Result<Capped<(u64, String)>, String>),
-    Targets(String, Result<Capped<Target>, String>),
-    Categories(RepoId, Result<Categories, String>),
     Reverted(PrRef, Result<u64, String>),
     Transferred(IssueAt, Result<IssueAt, String>),
     Started(RepoId, Result<u64, String>),
@@ -1370,7 +1340,7 @@ impl Done {
         match self {
             Done::Reverted(_, made) | Done::Started(_, made) => made.is_ok(),
             Done::Transferred(_, moved) => moved.is_ok(),
-            _ => false,
+            Done::CheckedOut(..) => false,
         }
     }
 }
@@ -1378,9 +1348,6 @@ impl Done {
 impl Work {
     pub fn failed(&self, why: String) -> Done {
         match self.clone() {
-            Work::Issues(repo) => Done::Issues(repo, Err(why)),
-            Work::Targets(owner) => Done::Targets(owner, Err(why)),
-            Work::Categories(repo) => Done::Categories(repo, Err(why)),
             Work::Revert { pr, .. } => Done::Reverted(pr, Err(why)),
             Work::Transfer { from, .. } => Done::Transferred(from, Err(why)),
             Work::Start { repo, .. } => Done::Started(repo, Err(why)),
@@ -1391,18 +1358,6 @@ impl Work {
     pub async fn run(self, gh: &GitHub, cwd: &std::path::Path) -> Done {
         let reason = |e: crate::api::ApiError| crate::writes::reason(&e);
         match self {
-            Work::Issues(repo) => {
-                let found = gh.open_issues(&repo).await.map_err(reason);
-                Done::Issues(repo, found)
-            }
-            Work::Targets(owner) => {
-                let found = gh.transfer_targets(&owner).await.map_err(reason);
-                Done::Targets(owner, found)
-            }
-            Work::Categories(repo) => {
-                let found = gh.categories(&repo).await.map_err(reason);
-                Done::Categories(repo, found)
-            }
             Work::Revert { pr, id } => Done::Reverted(pr, gh.revert(&id).await.map_err(reason)),
             Work::Transfer {
                 from, issue, to, ..
@@ -1443,18 +1398,6 @@ impl Work {
 pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
     state.shown_gen += 1;
     match done {
-        Done::Issues(repo, found) => {
-            state.managing.issues.insert(repo, found);
-            Vec::new()
-        }
-        Done::Targets(owner, found) => {
-            state.managing.targets.insert(owner, found);
-            Vec::new()
-        }
-        Done::Categories(repo, found) => {
-            state.managing.categories.insert(repo, found);
-            Vec::new()
-        }
         Done::Reverted(pr, made) => match made {
             Ok(number) => {
                 close_confirm(state);

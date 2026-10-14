@@ -58,14 +58,13 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
         "the tag first"
     );
     let cmds = press(&mut s, "v9.0<Enter>");
-    let look = fixtures::start(crate::release::Work::Look(repo.clone(), "v9.0".into()));
-    assert!(cmds.contains(&look), "{cmds:?}");
+    let look = DataKey::TagLook(repo.clone(), "v9.0".into());
+    assert!(fixtures::asks(&cmds, &look), "{cmds:?}");
     let new_tag = TagLook {
         exists: false,
         release: None,
     };
-    let looked = crate::release::Done::Looked(repo.clone(), "v9.0".into(), Ok(new_tag));
-    fixtures::done::<crate::release::Work>(&mut s, looked);
+    fixtures::fetched(&mut s, look, Data::TagLook(Box::new(new_tag)));
     write(&mut s, "Nine\n\nWhat changed.");
     press(&mut s, "<Esc>");
     assert!(page_text(&s).contains("v9.0 is a new tag"));
@@ -121,8 +120,8 @@ fn a_tag_with_a_release_is_refused() {
         exists: true,
         release: Some((false, String::new())),
     };
-    let looked = crate::release::Done::Looked(ghtui(), "v0.2.0".into(), Ok(taken));
-    fixtures::done::<crate::release::Work>(&mut s, looked);
+    let look = DataKey::TagLook(ghtui(), "v0.2.0".into());
+    fixtures::fetched(&mut s, look, Data::TagLook(Box::new(taken)));
     let sent = press(&mut s, "<C-s>");
     assert_eq!(sent, []);
     assert_eq!(

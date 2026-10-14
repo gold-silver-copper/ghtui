@@ -47,7 +47,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
         Some(named.map_or("Blank issue", |t| t.name.as_str()))
     });
     let problem = if pr {
-        head_problem(state, form).err()
+        head_problem(state, repo, form).err()
     } else {
         None
     };
@@ -55,11 +55,11 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
     let mut commits = None;
     if pr && form.head.is_some() {
         let pushing = matches!(
-            form.head_state(),
-            Some(Look::Found(HeadState { local: Some(b), .. })) if !b.pushed()
+            form.head_state(state, repo),
+            Some(Ok(HeadState { local: Some(b), .. })) if !b.pushed()
         );
-        match (&problem, form.head_state()) {
-            (Some(why), Some(Look::Asking) | None) => {
+        match (&problem, form.head_state(state, repo)) {
+            (Some(why), None) => {
                 status.push((why.clone(), Mark::Waiting, None));
             }
             (Some(why), _) => {
@@ -68,7 +68,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
             }
             (None, _) => {}
         }
-        if let Some(Look::Found(hs)) = form.head_state() {
+        if let Some(Ok(hs)) = form.head_state(state, repo) {
             if let Some(b) = hs.local.as_ref().filter(|b| b.pushed()) {
                 let text = match b.behind {
                     Some(n) if n > 0 => format!(

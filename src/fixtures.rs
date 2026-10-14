@@ -2410,5 +2410,49 @@ pub(crate) fn sample(key: &DataKey) -> Data {
         K::Owners => Data::Owners(Box::new(housekeeping::owners())),
         K::Templates => Data::Templates(Box::new(housekeeping::templates())),
         K::Settings(_, page) => Data::Settings(Box::new(crate::settings::fixtures::page(*page))),
+        K::OpenIssues(_) => Data::OpenIssues(Box::new(vec![(7, "Wrapping".into())].into())),
+        K::MoveTargets(_) => Data::MoveTargets(Box::default()),
+        K::Categories(_) => Data::Categories(Box::new(crate::api::manage::Categories {
+            repo: NodeId::new("R_1"),
+            categories: Capped::default(),
+        })),
+        K::Clone(_) => Data::Clone(None),
+        K::Head { .. } => Data::Head(Box::new(crate::create::HeadState {
+            local: None,
+            commits: Capped::default(),
+        })),
+        K::TagLook(..) => Data::TagLook(Box::new(crate::api::release::TagLook {
+            exists: true,
+            release: None,
+        })),
+        K::BranchRules(..) => Data::BranchRules(Box::new(crate::api::housekeeping::BranchRules {
+            protected: false,
+            undeletable: false,
+        })),
+        K::FileLook(..) => Data::FileLook(Box::new(file_look())),
     }
+}
+
+/// Where a file's form starts: the README on main.
+pub fn file_look() -> crate::api::housekeeping::FileLook {
+    let oid = "8d1a76430406c877b35d0b627e7f796dcf0dfeca";
+    crate::api::housekeeping::FileLook {
+        repo_id: NodeId::new("R_1"),
+        branch_head: Some(oid.into()),
+        commit: oid.into(),
+        file: Some(crate::api::housekeeping::FileAt {
+            oid: "b10b".into(),
+            text: blob().text,
+        }),
+    }
+}
+
+/// Git's answer to whether ghtui runs in a clone of `repo`.
+pub(crate) fn cloned(
+    state: &mut State,
+    repo: &crate::api::model::RepoId,
+    clone: Option<crate::git::local::Clone>,
+) -> Vec<Cmd> {
+    let key = DataKey::Clone(repo.clone());
+    fetched(state, key, Data::Clone(clone.map(Box::new)))
 }

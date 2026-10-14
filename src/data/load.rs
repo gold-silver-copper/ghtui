@@ -216,6 +216,24 @@ async fn answer(
         K::Labels(repo) => Data::Labels(Box::new(gh.labels(repo, after).await?)),
         K::Owners => Data::Owners(Box::new(gh.owners().await?)),
         K::Templates => Data::Templates(Box::new(gh.templates().await?)),
+        K::OpenIssues(repo) => Data::OpenIssues(Box::new(gh.open_issues(repo).await?)),
+        K::MoveTargets(owner) => Data::MoveTargets(Box::new(gh.transfer_targets(owner).await?)),
+        K::Categories(repo) => Data::Categories(Box::new(gh.categories(repo).await?)),
+        K::Clone(repo) => {
+            let clone = crate::git::local::clone_of(&git.cwd, &repo.owner, &repo.name).await?;
+            Data::Clone(clone.map(Box::new))
+        }
+        K::Head { repo, base, head } => {
+            let found = crate::create::head_state(gh, &git.cwd, repo, base, head).await;
+            Data::Head(Box::new(found?))
+        }
+        K::TagLook(repo, tag) => Data::TagLook(Box::new(gh.tag_look(repo, tag).await?)),
+        K::BranchRules(repo, name) => {
+            Data::BranchRules(Box::new(gh.branch_rules(repo, name).await?))
+        }
+        K::FileLook(repo, rev, path) => {
+            Data::FileLook(Box::new(gh.file_look(repo, rev, path).await?))
+        }
     })
 }
 

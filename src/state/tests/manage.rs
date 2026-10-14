@@ -282,9 +282,10 @@ fn an_issue_closes_as_a_duplicate_of_one_chosen() {
         ["Close as completed", "Close as not planned", "Duplicate…"]
     );
     let cmds = press(&mut s, "<Tab><Tab><Enter>");
-    assert_eq!(work(&cmds), Work::Issues(ghtui()));
+    let key = DataKey::OpenIssues(ghtui());
+    assert_eq!(fixtures::asked(&cmds), std::slice::from_ref(&key));
     let open = Capped::new(vec![(3, "Wrap long lines".into())], 1);
-    done(&mut s, Done::Issues(ghtui(), Ok(open)));
+    fixtures::fetched(&mut s, key, Data::OpenIssues(Box::new(open)));
     let cmds = press(&mut s, "wrap<Enter>");
     let close = Change::Manage(Manage::CloseAsDuplicate {
         issue: NodeId::new("I_14"),
@@ -341,7 +342,8 @@ fn sub_issues_and_what_blocks_an_issue_change_in_their_pickers() {
         d.sub_issues = vec![linked(2, "First"), linked(3, "Second")].into();
     });
     press(&mut s, ",S");
-    done(&mut s, Done::Issues(ghtui(), Ok(Capped::default())));
+    let none = Data::OpenIssues(Box::default());
+    fixtures::fetched(&mut s, DataKey::OpenIssues(ghtui()), none);
     let cmds = press(&mut s, "<A-Down>");
     let moved = Change::Manage(Manage::MoveSubIssue {
         parent: NodeId::new("I_14"),
@@ -439,16 +441,14 @@ fn an_issue_is_pinned_and_transferred() {
     assert!(screen_text(&s).contains("Pinned"));
 
     let cmds = from_menu(&mut s, "transfer");
-    assert_eq!(work(&cmds), Work::Targets("gold-silver-copper".into()));
+    let key = DataKey::MoveTargets("gold-silver-copper".into());
+    assert_eq!(fixtures::asked(&cmds), std::slice::from_ref(&key));
     let to = RepoId::new("gold-silver-copper", "elsewhere");
     let targets = vec![Target {
         repo: to.clone(),
         id: NodeId::new("R_2"),
     }];
-    done(
-        &mut s,
-        Done::Targets("gold-silver-copper".into(), Ok(targets.into())),
-    );
+    fixtures::fetched(&mut s, key, Data::MoveTargets(Box::new(targets.into())));
     press(&mut s, "<Enter>");
     assert_eq!(
         confirm(&s).title,
@@ -520,7 +520,8 @@ fn a_discussion_closes_with_a_reason() {
 fn a_new_discussion_starts_from_its_categorys_form() {
     let mut s = with_discussions();
     let cmds = from_menu(&mut s, "new discussion");
-    assert_eq!(work(&cmds), Work::Categories(ghtui()));
+    let key = DataKey::Categories(ghtui());
+    assert_eq!(fixtures::asked(&cmds), std::slice::from_ref(&key));
     let form = "title: \"[Idea] \"\nbody:\n  - type: textarea\n    attributes:\n      label: What would it do\n";
     let ideas = Category {
         id: NodeId::new("DIC_1"),
@@ -534,7 +535,7 @@ fn a_new_discussion_starts_from_its_categorys_form() {
         repo: NodeId::new("R_1"),
         categories: vec![ideas].into(),
     };
-    done(&mut s, Done::Categories(ghtui(), Ok(found)));
+    fixtures::fetched(&mut s, key, Data::Categories(Box::new(found)));
     press(&mut s, "<Enter>");
     let Some(Overlay::Compose(c)) = &s.overlay else {
         panic!("no composer");

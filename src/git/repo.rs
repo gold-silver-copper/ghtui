@@ -18,7 +18,7 @@ use tokio::task::JoinHandle;
 use crate::git::blobs::BlobReader;
 use crate::git::credentials::Credentials;
 use crate::git::files::{ChangedFile, parse_raw};
-use crate::git::{GitError, Oid, Version, git, github_repo_from_url, piped, stdout};
+use crate::git::{GitError, Oid, Version, git, piped, stdout};
 
 /// `GIT_NO_LAZY_FETCH` lets us ask which objects are missing without
 /// fetching them.
@@ -75,19 +75,10 @@ impl Repo {
     /// The user's clone containing `dir`, if it has a remote for
     /// `owner/name`.
     pub async fn find_local(dir: &Path, owner: &str, name: &str) -> Result<Option<Repo>, GitError> {
-        let Ok(top) = crate::git::run(Some(dir), &["rev-parse", "--show-toplevel"]).await else {
-            return Ok(None);
-        };
-        let top = PathBuf::from(top.trim());
-        let remotes = crate::git::remotes(&top).await?;
-        let Some(remote) = remotes.iter().find(|r| {
-            github_repo_from_url(&r.url).is_some_and(|repo| {
-                repo.owner.eq_ignore_ascii_case(owner) && repo.name.eq_ignore_ascii_case(name)
-            })
-        }) else {
-            return Ok(None);
-        };
-        Self::open_local(&top, &remote.name).await.map(Some)
+        match crate::git::local::clone_of(dir, owner, name).await? {
+            Some(clone) => Self::open_local(&clone.top, &clone.remote).await.map(Some),
+            None => Ok(None),
+        }
     }
 
     /// The user's clone at `top`, fetching from `remote`.

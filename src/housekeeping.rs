@@ -19,11 +19,9 @@ use std::path::PathBuf;
 use crate::api::GitHub;
 use crate::api::browse::Results;
 use crate::api::housekeeping::{
-    BranchRules, FileLook, LabelChange, LabelInfo, MadeRepo, MilestoneChange, NewFork, NewRepo,
-    RefKind,
+    LabelChange, LabelInfo, MadeRepo, MilestoneChange, NewFork, NewRepo, RefKind,
 };
 use crate::api::model::RepoId;
-use crate::create::Look;
 use crate::git::local::Clone;
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{Link, Page, WriteLink};
@@ -185,7 +183,14 @@ impl Family for FormOf {
             } => vec![DataKey::Milestone(repo.clone(), *n)],
             FormOf::Fork(_) => vec![DataKey::Owners],
             FormOf::NewRepo => vec![DataKey::Owners, DataKey::Templates],
-            FormOf::Milestone { number: None, .. } | FormOf::File { .. } => Vec::new(),
+            // Whether ghtui runs in a clone says how it's committed.
+            FormOf::File {
+                repo, rev, path, ..
+            } => vec![
+                DataKey::Clone(repo.clone()),
+                DataKey::FileLook(repo.clone(), rev.clone(), path.clone()),
+            ],
+            FormOf::Milestone { number: None, .. } => Vec::new(),
         };
         header.into_iter().chain(own).collect()
     }
@@ -326,8 +331,6 @@ pub struct Form {
     pub text: String,
     /// Filled in from what GitHub has, once.
     pub started: bool,
-    /// A file's form: where it starts on GitHub.
-    pub look: Option<Look<FileLook>>,
     pub sending: bool,
     pub error: Option<String>,
 }
@@ -358,8 +361,9 @@ pub struct Housekeeping {
     pub forms: HashMap<Route, Form>,
     /// What the question open is about.
     pub asked: Option<Subject>,
-    /// What GitHub's rules say of deleting each branch asked about.
-    pub rules: HashMap<(RepoId, String), Look<BranchRules>>,
+    /// The branch to ask about deleting once GitHub says whether its
+    /// rules protect it.
+    pub deleting: Option<(RepoId, String)>,
 }
 
 /// What a question, or a change of a list's row, is about.
@@ -423,38 +427,30 @@ fn refused(state: &State, repo: &RepoId, what: &str) -> Option<String> {
 /// Opens a form's page, started again from what GitHub has.
 #[must_use]
 fn open(state: &mut State, of: FormOf) -> Vec<Cmd> {
+    let file = match &of {
+        FormOf::File {
+            repo, rev, path, ..
+        } => Some(DataKey::FileLook(repo.clone(), rev.clone(), path.clone())),
+        _ => None,
+    };
     let route = Route::Housekeeping(of);
     if state.route() == Some(&route) {
         return compose(state);
     }
     state.writing.housekeeping.forms.remove(&route);
-    let mut cmds = state.push(route);
+    let mut cmds = file.map_or_else(Vec::new, |file| state.ensure(file, true));
+    cmds.extend(state.push(route));
     cmds.extend(follow(state));
     cmds
 }
 
-/// The clone ghtui runs in, of `repo`: asked for once.
-fn clone_of(state: &mut State, repo: &RepoId) -> (Option<Look<Option<Clone>>>, Vec<Cmd>) {
-    match state.creating.clones.get(repo) {
-        Some(look) => (Some(look.clone()), Vec::new()),
-        None => {
-            state.creating.clones.insert(repo.clone(), Look::Asking);
-            let ask = Cmd::Create(crate::create::Work::Clone(repo.clone()));
-            (None, vec![ask])
-        }
-    }
-}
-
 /// Your clone of `repo`, once known: `Err` while it's being looked for.
 fn clone_here(state: &mut State, repo: &RepoId) -> Result<Option<Clone>, Vec<Cmd>> {
-    match clone_of(state, repo) {
-        (Some(Look::Found(clone)), _) => Ok(clone),
-        (Some(Look::Failed(_)), _) => Ok(None),
-        (_, cmds) => {
-            state.info("Looking for your clone of the repository: a moment");
-            Err(cmds)
-        }
+    if let Some(clone) = state.clone_of(repo) {
+        return Ok(clone.cloned());
     }
+    state.info("Looking for your clone of the repository: a moment");
+    Err(state.ensure(DataKey::Clone(repo.clone()), false))
 }
 
 // ---- the actions ----------------------------------------------------------------------
@@ -763,34 +759,24 @@ fn problem(state: &State, route: &Route, of: &FormOf) -> Option<String> {
 // ---- following GitHub ----------------------------------------------------------------------
 
 /// Brings housekeeping's pages up to date with what's arrived: a form
-/// filled in from GitHub's data once, a file's looked up, your clone
-/// looked for where git may do the work.
+/// filled in from GitHub's data once, and a branch's deletion asked about
+/// once GitHub says whether it's protected.
 #[must_use]
 pub fn follow(state: &mut State) -> Vec<Cmd> {
-    let mut cmds = Vec::new();
-    match state.route().cloned() {
-        Some(Route::Code(code::Branches(repo)) | Route::Code(code::Tags(repo))) => {
-            cmds.extend(clone_of(state, &repo).1);
-        }
-        Some(route @ Route::Housekeeping(_)) => {
-            let Route::Housekeeping(of) = &route else {
-                return cmds;
-            };
-            if let Some(repo) = of.repo().filter(|_| matches!(of, FormOf::File { .. })) {
-                cmds.extend(clone_of(state, repo).1);
-            }
-            cmds.extend(match of {
-                FormOf::Label { repo, name } => labels::follow(state, &route, repo, name.as_ref()),
-                FormOf::Milestone { repo, number } => {
-                    milestones::follow(state, &route, repo, *number)
-                }
-                FormOf::Fork(repo) => repos::follow_fork(state, &route, repo),
-                FormOf::NewRepo => repos::follow_new(state, &route),
-                FormOf::File { .. } => files::follow(state, &route, of),
-            });
-        }
-        _ => {}
-    }
+    let mut cmds = refs::follow(state);
+    let Some(route @ Route::Housekeeping(_)) = state.route().cloned() else {
+        return cmds;
+    };
+    let Route::Housekeeping(of) = &route else {
+        return cmds;
+    };
+    cmds.extend(match of {
+        FormOf::Label { repo, name } => labels::follow(state, &route, repo, name.as_ref()),
+        FormOf::Milestone { repo, number } => milestones::follow(state, &route, repo, *number),
+        FormOf::Fork(repo) => repos::follow_fork(state, &route, repo),
+        FormOf::NewRepo => repos::follow_new(state, &route),
+        FormOf::File { .. } => files::follow(state, &route, of),
+    });
     cmds
 }
 
@@ -1387,8 +1373,6 @@ pub enum Work {
         number: Option<u64>,
         write: MilestoneWrite,
     },
-    /// What GitHub's rules say of deleting a branch.
-    Rules(RepoId, String),
     Ref {
         repo: RepoId,
         kind: RefKind,
@@ -1402,13 +1386,6 @@ pub enum Work {
         url: String,
         dir: PathBuf,
     },
-    /// Where a file's form starts.
-    FileLook {
-        route: Route,
-        repo: RepoId,
-        rev: String,
-        path: String,
-    },
     Commit(Route, Box<FileWrite>),
 }
 
@@ -1418,12 +1395,10 @@ pub enum Done {
     Label(Work, Result<(), String>),
     /// A new milestone's number.
     Milestone(Work, Result<Option<u64>, String>),
-    Rules(RepoId, String, Result<BranchRules, String>),
     Ref(Work, Result<(), String>),
     Forked(Route, Result<MadeRepo, String>),
     Made(Route, Result<MadeRepo, String>),
     Cloned(PathBuf, Result<(), String>),
-    Looked(Route, Result<FileLook, String>),
     Committed(Route, Box<FileWrite>, Result<(), String>),
 }
 
@@ -1433,7 +1408,7 @@ impl Done {
             Done::Label(_, r) | Done::Ref(_, r) | Done::Committed(_, _, r) => r.is_ok(),
             Done::Milestone(_, r) => r.is_ok(),
             Done::Forked(_, r) | Done::Made(_, r) => r.is_ok(),
-            Done::Rules(..) | Done::Cloned(..) | Done::Looked(..) => false,
+            Done::Cloned(..) => false,
         }
     }
 }
@@ -1443,12 +1418,10 @@ impl Work {
         match self.clone() {
             w @ Work::Label { .. } => Done::Label(w, Err(why)),
             w @ Work::Milestone { .. } => Done::Milestone(w, Err(why)),
-            Work::Rules(repo, name) => Done::Rules(repo, name, Err(why)),
             w @ Work::Ref { .. } => Done::Ref(w, Err(why)),
             Work::Fork(route, _) => Done::Forked(route, Err(why)),
             Work::Repo(route, _) => Done::Made(route, Err(why)),
             Work::Clone { dir, .. } => Done::Cloned(dir, Err(why)),
-            Work::FileLook { route, .. } => Done::Looked(route, Err(why)),
             Work::Commit(route, write) => Done::Committed(route, write, Err(why)),
         }
     }
@@ -1492,10 +1465,6 @@ impl Work {
                 };
                 Done::Milestone(self, result.map_err(why))
             }
-            Work::Rules(repo, name) => {
-                let rules = gh.branch_rules(&repo, &name).await.map_err(why);
-                Done::Rules(repo, name, rules)
-            }
             Work::Ref {
                 ref repo,
                 kind,
@@ -1512,15 +1481,6 @@ impl Work {
                 let result = git::clone(&url, &dir).await;
                 Done::Cloned(dir, result)
             }
-            Work::FileLook {
-                route,
-                repo,
-                rev,
-                path,
-            } => {
-                let look = gh.file_look(&repo, &rev, &path).await.map_err(why);
-                Done::Looked(route, look)
-            }
             Work::Commit(route, write) => {
                 let result = files::run(gh, &write).await;
                 Done::Committed(route, write, result)
@@ -1535,12 +1495,10 @@ pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
     match done {
         Done::Label(work, result) => labels::on_done(state, work, result),
         Done::Milestone(work, result) => milestones::on_done(state, work, result),
-        Done::Rules(repo, name, result) => refs::on_rules(state, &repo, &name, result),
         Done::Ref(work, result) => refs::on_done(state, work, result),
         Done::Forked(route, result) => repos::on_forked(state, &route, result),
         Done::Made(route, result) => repos::on_made(state, &route, result),
         Done::Cloned(dir, result) => repos::on_cloned(state, &dir, result),
-        Done::Looked(route, result) => files::on_looked(state, &route, result),
         Done::Committed(route, write, result) => files::on_committed(state, &route, write, result),
     }
 }

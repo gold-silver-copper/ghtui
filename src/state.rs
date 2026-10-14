@@ -520,7 +520,6 @@ pub struct State {
     /// waits to see.
     pub writing: crate::writes::Writing,
     /// What the pickers that manage an issue or pull request list.
-    pub managing: crate::manage::Managing,
     /// A settings form sent and not yet taken.
     pub settings: crate::settings::Kept,
     /// Workflows being run by hand: their forms.
@@ -580,7 +579,6 @@ impl State {
             mentionable: HashMap::new(),
             creating: crate::create::Creating::default(),
             writing: crate::writes::Writing::default(),
-            managing: crate::manage::Managing::default(),
             settings: crate::settings::Kept::default(),
             dispatching: crate::actions::Dispatching::default(),
             talk: crate::talk::Talk::default(),

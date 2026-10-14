@@ -93,7 +93,12 @@ impl Family for Page {
             Pulls { repo, query } => std::iter::once(K::Repo(repo.clone()))
                 .chain(list_needs(repo, "pr", query))
                 .collect(),
-            NewPr(repo) => vec![K::Repo(repo.clone()), K::NewForm(repo.clone())],
+            // Whether ghtui runs in its clone says the branch to propose.
+            NewPr(repo) => vec![
+                K::Repo(repo.clone()),
+                K::Clone(repo.clone()),
+                K::NewForm(repo.clone()),
+            ],
             Pr { pr, tab } => {
                 let (detail, activity) = (K::Pr(pr.clone()), K::PrActivity(pr.clone()));
                 match tab {
@@ -112,9 +117,15 @@ impl Family for Page {
         }
     }
 
-    /// The lines its threads are on, read from the clone.
+    /// The lines its threads are on, read from the clone; a new pull
+    /// request's head against its base.
     fn also_reads(&self, key: &DataKey) -> bool {
-        matches!((self, key), (Pr { pr, .. }, DataKey::Lines(repo, ..)) if *repo == pr.repo)
+        match (self, key) {
+            (Pr { pr, .. }, DataKey::Lines(repo, ..)) => *repo == pr.repo,
+            // Where the head chosen stands against the base chosen.
+            (NewPr(repo), DataKey::Head { repo: of, .. }) => of == repo,
+            _ => false,
+        }
     }
 
     fn paged(&self) -> Option<DataKey> {

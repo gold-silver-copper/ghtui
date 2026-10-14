@@ -43,6 +43,13 @@ pub enum GitError {
     Parse(String),
 }
 
+/// Git's failure, where git answers a read ([`crate::data::load`]).
+impl From<GitError> for crate::api::ApiError {
+    fn from(err: GitError) -> Self {
+        crate::api::ApiError::Git(err.to_string())
+    }
+}
+
 pub use oid::Oid;
 
 mod oid {

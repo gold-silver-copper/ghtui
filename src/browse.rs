@@ -93,6 +93,26 @@ impl State {
         self.get(key).and_then(T::pick)
     }
 
+    /// `key`'s data once it's in, or why it couldn't be read: `None`
+    /// while it's on its way (or wasn't asked for).
+    pub fn answer<T: Picked + ?Sized>(&self, key: &DataKey) -> Option<Result<&T, &str>> {
+        let remote = self.remote(key)?;
+        match (remote.data.as_ref().and_then(T::pick), &remote.error) {
+            (Some(data), _) => Some(Ok(data)),
+            (None, Some(why)) if !remote.loading => Some(Err(why)),
+            _ => None,
+        }
+    }
+
+    /// The clone ghtui runs in, if it's `repo`'s, once git has said
+    /// ([`DataKey::Clone`]): `Some(None)` when it isn't, or git couldn't
+    /// tell.
+    pub fn clone_of(&self, repo: &RepoId) -> Option<Option<&crate::git::local::Clone>> {
+        let found =
+            self.answer::<Option<Box<crate::git::local::Clone>>>(&DataKey::Clone(repo.clone()));
+        found.map(|c| c.ok().and_then(|c| c.as_deref()))
+    }
+
     /// Where commit `oid` is among pull request `number`'s commits, once
     /// they're in, with links to the ones either side.
     pub fn pr_commit_at(&self, repo: &RepoId, number: u64, oid: &str) -> Option<pages::PrCommitAt> {

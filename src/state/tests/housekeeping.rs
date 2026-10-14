@@ -7,8 +7,7 @@ use crate::route::{code, issues, pulls};
 use std::path::PathBuf;
 
 use crate::api::housekeeping::{
-    BranchRules, FileAt, FileLook, LabelChange, MadeRepo, MilestoneChange, NewFork, NewRepo,
-    RefKind,
+    BranchRules, FileLook, LabelChange, MadeRepo, MilestoneChange, NewFork, NewRepo, RefKind,
 };
 use crate::housekeeping::{
     Done as HDone, FileChange, FormOf, MilestoneWrite, RefWrite, Work as HWork,
@@ -253,10 +252,7 @@ fn milestones_are_closed_edited_and_deleted() {
 fn branches_are_made_and_protected_ones_kept() {
     let mut s = with_branches();
     let repo = ghtui();
-    let cmds = fixtures::done::<crate::create::Work>(
-        &mut s,
-        crate::create::Done::Clone(repo.clone(), Ok(None)),
-    );
+    let cmds = fixtures::cloned(&mut s, &repo, None);
     assert!(cmds.is_empty(), "{cmds:?}");
     select(&mut s, "tabs");
     press(&mut s, ",o");
@@ -281,12 +277,13 @@ fn branches_are_made_and_protected_ones_kept() {
 
     select(&mut s, "links");
     let cmds = press(&mut s, ",D");
-    assert_eq!(sent(&cmds), HWork::Rules(repo.clone(), "links".into()));
+    let key = DataKey::BranchRules(repo.clone(), "links".into());
+    assert_eq!(fixtures::asked(&cmds), std::slice::from_ref(&key));
     let rules = BranchRules {
         protected: false,
         undeletable: true,
     };
-    done(&mut s, HDone::Rules(repo, "links".into(), Ok(rules)));
+    fixtures::fetched(&mut s, key, Data::BranchRules(Box::new(rules)));
     says(
         &s,
         "a ruleset of the repository's keeps it from being deleted",
@@ -305,16 +302,16 @@ fn in_a_clone_git_pushes_after_asking() {
         remote: "origin".into(),
         branch: Some("main".into()),
     };
-    let found = Ok(Some(clone.clone()));
-    fixtures::done::<crate::create::Work>(&mut s, crate::create::Done::Clone(repo.clone(), found));
+    fixtures::cloned(&mut s, &repo, Some(clone.clone()));
     select(&mut s, "tabs");
     let cmds = press(&mut s, ",D");
     let rules = BranchRules {
         protected: false,
         undeletable: false,
     };
-    done(&mut s, HDone::Rules(repo.clone(), "tabs".into(), Ok(rules)));
-    assert_eq!(sent(&cmds), HWork::Rules(repo.clone(), "tabs".into()));
+    let key = DataKey::BranchRules(repo.clone(), "tabs".into());
+    fixtures::fetched(&mut s, key.clone(), Data::BranchRules(Box::new(rules)));
+    assert_eq!(fixtures::asked(&cmds), [key]);
     let ask = asked(&s);
     assert_eq!(ask.title, "Delete the branch tabs?");
     assert!(
@@ -443,15 +440,7 @@ fn picked(s: &State) -> crate::writes::Pick {
 
 /// What GitHub has of `src/main.rs` on main.
 fn look() -> FileLook {
-    FileLook {
-        repo_id: NodeId::new("R_1"),
-        branch_head: Some("8d1a76430406c877b35d0b627e7f796dcf0dfeca".into()),
-        commit: "8d1a76430406c877b35d0b627e7f796dcf0dfeca".into(),
-        file: Some(FileAt {
-            oid: "b10b".into(),
-            text: fixtures::blob().text,
-        }),
-    }
+    fixtures::file_look()
 }
 
 /// `,e` on a file reads it from GitHub and opens the composer on it; a
@@ -461,7 +450,7 @@ fn look() -> FileLook {
 #[test]
 fn a_file_is_edited_and_committed_on_a_new_branch() {
     let mut s = with_file();
-    fixtures::done::<crate::create::Work>(&mut s, crate::create::Done::Clone(ghtui(), Ok(None)));
+    fixtures::cloned(&mut s, &ghtui(), None);
     let cmds = press(&mut s, ",e");
     let form = Route::Housekeeping(FormOf::File {
         repo: ghtui(),
@@ -470,8 +459,9 @@ fn a_file_is_edited_and_committed_on_a_new_branch() {
         change: FileChange::Edit,
     });
     assert_eq!(s.route(), Some(&form));
-    assert!(matches!(sent(&cmds), HWork::FileLook { .. }), "{cmds:?}");
-    done(&mut s, HDone::Looked(form.clone(), Ok(look())));
+    let file = DataKey::FileLook(ghtui(), "main".into(), "src/main.rs".into());
+    assert!(fixtures::asks(&cmds, &file), "{cmds:?}");
+    read(&mut s);
     let Some(Overlay::Compose(c)) = &mut s.overlay else {
         panic!("no composer");
     };
@@ -518,7 +508,7 @@ fn a_file_is_edited_and_committed_on_a_new_branch() {
 #[test]
 fn a_file_changed_meanwhile_keeps_your_text() {
     let mut s = with_file();
-    fixtures::done::<crate::create::Work>(&mut s, crate::create::Done::Clone(ghtui(), Ok(None)));
+    fixtures::cloned(&mut s, &ghtui(), None);
     press(&mut s, ",e");
     let form = Route::Housekeeping(FormOf::File {
         repo: ghtui(),
@@ -526,7 +516,7 @@ fn a_file_changed_meanwhile_keeps_your_text() {
         path: "src/main.rs".into(),
         change: FileChange::Edit,
     });
-    done(&mut s, HDone::Looked(form.clone(), Ok(look())));
+    read(&mut s);
     let Some(Overlay::Compose(c)) = &mut s.overlay else {
         panic!("no composer");
     };
@@ -553,7 +543,7 @@ fn a_file_changed_meanwhile_keeps_your_text() {
 #[test]
 fn a_file_is_deleted_with_a_commit() {
     let mut s = with_file();
-    fixtures::done::<crate::create::Work>(&mut s, crate::create::Done::Clone(ghtui(), Ok(None)));
+    fixtures::cloned(&mut s, &ghtui(), None);
     press(&mut s, ",D");
     let form = Route::Housekeeping(FormOf::File {
         repo: ghtui(),
@@ -562,7 +552,7 @@ fn a_file_is_deleted_with_a_commit() {
         change: FileChange::Delete,
     });
     assert_eq!(s.route(), Some(&form));
-    done(&mut s, HDone::Looked(form.clone(), Ok(look())));
+    read(&mut s);
     press(&mut s, ",s");
     assert_eq!(asked(&s).title, "Delete src/main.rs?");
     let cmds = press(&mut s, "<Enter>");
@@ -613,7 +603,12 @@ fn a_file_form_opened_from_a_page_reads_the_file() {
         &mut s,
         "g/gold-silver-copper/ghtui/edit/main/README.md<Enter>",
     );
-    let looks =
-        (fixtures::jobs::<HWork>(&cmds).iter()).any(|w| matches!(w, HWork::FileLook { .. }));
-    assert!(looks, "{cmds:?}");
+    let file = DataKey::FileLook(ghtui(), "main".into(), "README.md".into());
+    assert!(fixtures::asks(&cmds, &file), "{cmds:?}");
+}
+
+/// GitHub's src/main.rs on main, read for its form.
+fn read(s: &mut State) -> Vec<Cmd> {
+    let file = DataKey::FileLook(ghtui(), "main".into(), "src/main.rs".into());
+    fixtures::fetched(s, file, Data::FileLook(Box::new(look())))
 }

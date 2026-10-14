@@ -161,28 +161,28 @@ fn head(s: &mut State, on_github: Option<&str>) -> Vec<Cmd> {
         )]
         .into(),
     };
-    let done = Done::Head {
+    fixtures::fetched(s, compare(), Data::Head(Box::new(hs)))
+}
+
+/// Where `fix-parser` stands against main, as it's asked for.
+fn compare() -> DataKey {
+    DataKey::Head {
         repo: ghtui(),
         base: "main".into(),
         head: "fix-parser".into(),
-        result: Ok(hs),
-    };
-    fixtures::done::<crate::create::Work>(s, done)
+    }
 }
 
 /// A new pull request inside a clone, on branch `fix-parser`.
 fn in_clone() -> (State, Vec<Cmd>) {
     let (mut s, cmds) = form(",p");
-    assert!(
-        cmds.contains(&fixtures::start(Work::Clone(ghtui()))),
-        "{cmds:?}"
-    );
+    assert!(fixtures::asks(&cmds, &DataKey::Clone(ghtui())), "{cmds:?}");
     let clone = Clone {
         top: PathBuf::from("/src/ghtui"),
         remote: "origin".into(),
         branch: Some("fix-parser".into()),
     };
-    let cmds = fixtures::done::<crate::create::Work>(&mut s, Done::Clone(ghtui(), Ok(Some(clone))));
+    let cmds = fixtures::cloned(&mut s, &ghtui(), Some(clone));
     (s, cmds)
 }
 
@@ -193,12 +193,7 @@ fn in_clone() -> (State, Vec<Cmd>) {
 #[test]
 fn a_pull_request_from_the_clones_branch_is_pushed_then_made() {
     let (mut s, cmds) = in_clone();
-    let compare = Work::Head {
-        repo: ghtui(),
-        base: "main".into(),
-        head: "fix-parser".into(),
-    };
-    assert_eq!(cmds, [fixtures::start(compare.clone())]);
+    assert_eq!(fixtures::asked(&cmds), [compare()]);
     head(&mut s, None);
     let route = Route::Pulls(pulls::NewPr(ghtui()));
     let text = "Fix the parser\n\nIt dropped the last line.\n\n## Checklist\n\n- [ ] Tests";
@@ -220,7 +215,7 @@ fn a_pull_request_from_the_clones_branch_is_pushed_then_made() {
     );
     assert!(s.overlay.is_none());
     says(&s, "Pushed fix-parser");
-    assert_eq!(again, [fixtures::start(compare)], "compared again");
+    assert_eq!(fixtures::asked(&again), [compare()], "compared again");
     head(&mut s, Some("a"));
 
     press(&mut s, ",s");
@@ -276,7 +271,7 @@ fn checkout_says_what_branch_or_why_not() {
     fixtures::done::<crate::create::Work>(&mut s, Done::CheckedOut(pr, Ok(made)));
     says(&s, "you're on octocat/syntax-palette");
     // Outside a clone of it, it says so.
-    fixtures::done::<crate::create::Work>(&mut s, Done::Clone(ghtui(), Ok(None)));
+    fixtures::cloned(&mut s, &ghtui(), None);
     assert!(press(&mut s, ",c").is_empty());
     says(&s, "isn't running in a clone of gold-silver-copper/ghtui");
 }

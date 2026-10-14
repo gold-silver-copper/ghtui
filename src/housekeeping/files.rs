@@ -9,7 +9,6 @@
 use crate::api::GitHub;
 use crate::api::housekeeping::{FileCommit, FileLook, RefKind};
 use crate::api::model::RepoId;
-use crate::create::Look;
 use crate::route::{Route, code, pulls};
 use crate::ui::page::{Link, Page};
 use crate::ui::pages::{Mark, TextBox, WriteFormView};
@@ -18,6 +17,7 @@ use super::{
     Chosen, Expected, Field, FileChange, FileWrite, Form, FormOf, Subject, Work, ask, clone_here,
     expect, failed, form, form_mut, form_row, item, refused,
 };
+use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::state::{Cmd, State};
@@ -70,47 +70,35 @@ fn parts(of: &FormOf) -> Option<(&RepoId, &str, &str, FileChange)> {
     }
 }
 
-/// What the form has read from GitHub.
-fn looked(f: &Form) -> Option<&FileLook> {
-    match &f.look {
-        Some(Look::Found(look)) => Some(look),
-        _ => None,
-    }
+/// What GitHub has where the file's form starts, once it's read.
+fn looked<'a>(state: &'a State, of: &FormOf) -> Option<Result<&'a FileLook, &'a str>> {
+    let (repo, rev, path, _) = parts(of)?;
+    let key = DataKey::FileLook(repo.clone(), rev.to_owned(), path.to_owned());
+    state.answer(&key)
 }
 
-/// Reads the file from GitHub, once; then fills the form and opens the
+/// Once the file is read from GitHub, fills the form and opens the
 /// composer on its text.
 #[must_use]
 pub(super) fn follow(state: &mut State, route: &Route, of: &FormOf) -> Vec<Cmd> {
-    let Some((repo, rev, path, change)) = parts(of) else {
+    let Some((_, _, path, change)) = parts(of) else {
         return Vec::new();
     };
-    let f = form(state, route);
-    if f.look.is_none() {
+    if !form(state, route).values.contains_key(&Field::Path) {
         let f = form_mut(state, route);
-        f.look = Some(Look::Asking);
         match change {
             FileChange::New if path.is_empty() => f.set(Field::Path, ""),
             FileChange::New => f.set(Field::Path, format!("{path}/")),
             FileChange::Edit | FileChange::Delete => f.set(Field::Path, path),
         }
-        return vec![Cmd::Write(Writes::Housekeeping(Work::FileLook {
-            route: route.clone(),
-            repo: repo.clone(),
-            rev: rev.to_owned(),
-            path: path.to_owned(),
-        }))];
     }
-    if f.started || looked(f).is_none() {
+    let Some(Ok(look)) = looked(state, of).filter(|_| !form(state, route).started) else {
         return Vec::new();
-    }
-    let look = looked(f).cloned();
+    };
+    let look = look.clone();
     let login = state.viewer.clone().unwrap_or_else(|| "patch".into());
     let f = form_mut(state, route);
     f.started = true;
-    let Some(look) = look else {
-        return Vec::new();
-    };
     if change == FileChange::Edit {
         f.text = look.file.and_then(|file| file.text).unwrap_or_default();
     }
@@ -129,25 +117,6 @@ pub(super) fn follow(state: &mut State, route: &Route, of: &FormOf) -> Vec<Cmd> 
         }
         _ => Vec::new(),
     }
-}
-
-/// GitHub's answer to where the file starts.
-#[must_use]
-pub(super) fn on_looked(
-    state: &mut State,
-    route: &Route,
-    result: Result<FileLook, String>,
-) -> Vec<Cmd> {
-    let look = match result {
-        Ok(look) => Look::Found(look),
-        Err(why) => Look::Failed(why),
-    };
-    form_mut(state, route).look = Some(look);
-    state.shown_gen += 1;
-    if state.route() == Some(route) {
-        return super::follow(state);
-    }
-    Vec::new()
 }
 
 /// Why `path` can't name a file in a repository, if it can't.
@@ -178,10 +147,10 @@ pub(super) fn problem(state: &State, route: &Route, of: &FormOf) -> Option<Strin
         return Some(why);
     }
     let f = form(state, route);
-    let look = match &f.look {
-        None | Some(Look::Asking) => return Some("Still reading the file from GitHub".into()),
-        Some(Look::Failed(why)) => return Some(format!("Couldn't read it from GitHub: {why}")),
-        Some(Look::Found(look)) => look,
+    let look = match looked(state, of) {
+        None => return Some("Still reading the file from GitHub".into()),
+        Some(Err(why)) => return Some(format!("Couldn't read it from GitHub: {why}")),
+        Some(Ok(look)) => look,
     };
     match (change, &look.file) {
         (FileChange::Edit | FileChange::Delete, None) => {
@@ -244,7 +213,6 @@ pub(super) fn branch_rows(
         return Vec::new();
     };
     let set = |b: &str| Some(Chosen::Field(route.clone(), Field::Branch, b.to_owned()));
-    let f = form(state, route);
     let mut rows = Vec::new();
     if !q.is_empty() {
         rows.push(match super::refs::name_problem(q) {
@@ -256,7 +224,9 @@ pub(super) fn branch_rows(
             ),
         });
     }
-    if looked(f).is_some_and(|l| l.branch_head.is_some()) {
+    if let Some(Ok(look)) = looked(state, of)
+        && look.branch_head.is_some()
+    {
         rows.push(item(format!("Commit directly to {rev}"), "", set("")));
     }
     let login = state.viewer.as_deref().unwrap_or("patch");
@@ -358,7 +328,7 @@ pub(super) fn commit(state: &mut State, route: &Route) -> Vec<Cmd> {
         return Vec::new();
     }
     let f = form(state, route);
-    let Some(look) = looked(f) else {
+    let Some(Ok(look)) = looked(state, of) else {
         return Vec::new();
     };
     let now = path(f).to_owned();
@@ -392,10 +362,7 @@ pub(super) fn commit(state: &mut State, route: &Route) -> Vec<Cmd> {
     } else {
         (new_branch, Some(look.commit.clone()), look.commit.clone())
     };
-    let clone = match state.creating.clones.get(repo) {
-        Some(Look::Found(clone)) => clone.clone(),
-        _ => None,
-    };
+    let clone = state.clone_of(repo).flatten().cloned();
     let base = look.branch_head.is_some().then(|| rev.to_owned());
     let write = FileWrite {
         repo: repo.clone(),
@@ -581,7 +548,6 @@ pub(super) fn propose(
     if base.is_some() {
         form.base = base;
     }
-    form.branch = None;
     let mut cmds = state.push(route);
     cmds.extend(crate::create::follow(state));
     cmds
@@ -633,12 +599,12 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
         FileChange::New => format!("New file in {repo}"),
     };
     let mut status = Vec::new();
-    match &f.look {
-        None | Some(Look::Asking) => {
+    match looked(state, of) {
+        None => {
             status.push((format!("Reading {rev} from GitHub…"), Mark::Waiting));
         }
-        Some(Look::Failed(why)) => status.push((format!("Couldn't read it: {why}"), Mark::Problem)),
-        Some(Look::Found(look)) => {
+        Some(Err(why)) => status.push((format!("Couldn't read it: {why}"), Mark::Problem)),
+        Some(Ok(look)) => {
             let at = crate::ui::text::short_sha(&look.commit);
             let what = if change == FileChange::New {
                 format!("On {rev} as GitHub had it at {at}")
@@ -650,15 +616,15 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
             status.push((what, Mark::Fine));
         }
     }
-    match state.creating.clones.get(repo) {
-        Some(Look::Found(Some(c))) => status.push((
+    match state.clone_of(repo) {
+        Some(Some(c)) => status.push((
             format!(
                 "Will be committed with git in your clone ({}) and pushed",
                 c.top.display()
             ),
             Mark::Fine,
         )),
-        Some(Look::Asking) => status.push(("Looking for your clone…".into(), Mark::Waiting)),
+        None => status.push(("Looking for your clone…".into(), Mark::Waiting)),
         _ => status.push(("Will be committed on GitHub, as you".into(), Mark::Fine)),
     }
     let composing = matches!(

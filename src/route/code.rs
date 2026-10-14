@@ -352,9 +352,12 @@ impl Family for Page {
                 K::Commit(repo.clone(), oid.clone()),
                 K::CommitChecks(repo.clone(), oid.clone()),
             ],
-            Commits { .. } | Compare { .. } | Branches(_) | Tags(_) => {
-                self.paged().into_iter().collect()
-            }
+            // Whether ghtui runs in a clone says how one is made or
+            // deleted.
+            Branches(repo) | Tags(repo) => std::iter::once(K::Clone(repo.clone()))
+                .chain(self.paged())
+                .collect(),
+            Commits { .. } | Compare { .. } => self.paged().into_iter().collect(),
         };
         std::iter::once(self.header()).chain(own).collect()
     }

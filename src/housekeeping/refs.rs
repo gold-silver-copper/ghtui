@@ -7,7 +7,6 @@ use crate::api::GitHub;
 use crate::api::browse::{BranchInfo, Results, TagInfo};
 use crate::api::housekeeping::{BranchRules, RefKind};
 use crate::api::model::RepoId;
-use crate::create::Look;
 use crate::git::local::Clone;
 use crate::picker::fuzzy_score;
 use crate::route::{Route, code};
@@ -236,27 +235,25 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec
     }
     let mut facts = Vec::new();
     if kind == RefKind::Branch {
-        let key = (repo.clone(), name.clone());
-        match state.writing.housekeeping.rules.get(&key) {
+        let key = DataKey::BranchRules(repo.clone(), name.clone());
+        match state.answer::<BranchRules>(&key) {
             None => {
-                state.writing.housekeeping.rules.insert(key, Look::Asking);
-                state.info(format!("Asking GitHub whether {name} is protected…"));
-                return vec![Cmd::Write(Writes::Housekeeping(Work::Rules(
-                    repo.clone(),
-                    name,
-                )))];
+                let cmds = state.ensure(key, false);
+                state.info(if cmds.is_empty() {
+                    format!("Still asking GitHub whether {name} is protected")
+                } else {
+                    format!("Asking GitHub whether {name} is protected…")
+                });
+                state.writing.housekeeping.deleting = Some((repo.clone(), name));
+                return cmds;
             }
-            Some(Look::Asking) => {
-                state.info(format!("Still asking GitHub whether {name} is protected"));
-                return Vec::new();
-            }
-            Some(Look::Failed(why)) => {
+            Some(Err(why)) => {
                 facts.push((
                     format!("GitHub didn't say whether it's protected: {why}"),
                     true,
                 ));
             }
-            Some(Look::Found(BranchRules {
+            Some(Ok(BranchRules {
                 protected: true, ..
             })) => {
                 state.info(format!(
@@ -264,7 +261,7 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec
                 ));
                 return Vec::new();
             }
-            Some(Look::Found(BranchRules {
+            Some(Ok(BranchRules {
                 undeletable: true, ..
             })) => {
                 state.info(format!(
@@ -272,7 +269,7 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec
                 ));
                 return Vec::new();
             }
-            Some(Look::Found(_)) => {}
+            Some(Ok(_)) => {}
         }
     }
     let clone = match clone_here(state, repo) {
@@ -318,29 +315,23 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec
     Vec::new()
 }
 
-/// GitHub's rules for a branch: asked again, if it's still the one
-/// selected.
+/// Once GitHub says whether the branch asked about is protected: its
+/// deletion is asked about, if it's still the one selected.
 #[must_use]
-pub(super) fn on_rules(
-    state: &mut State,
-    repo: &RepoId,
-    name: &str,
-    result: Result<BranchRules, String>,
-) -> Vec<Cmd> {
-    let look = match result {
-        Ok(rules) => Look::Found(rules),
-        Err(why) => Look::Failed(why),
+pub(super) fn follow(state: &mut State) -> Vec<Cmd> {
+    let Some((repo, name)) = state.writing.housekeeping.deleting.clone() else {
+        return Vec::new();
     };
-    state
-        .writing
-        .housekeeping
-        .rules
-        .insert((repo.clone(), name.to_owned()), look);
+    let key = DataKey::BranchRules(repo.clone(), name.clone());
+    if state.answer::<BranchRules>(&key).is_none() {
+        return Vec::new();
+    }
+    state.writing.housekeeping.deleting = None;
     let still = state.route() == Some(&Route::Code(code::Branches(repo.clone())))
         && picked(state, RefKind::Branch).is_some_and(|(n, _)| n == name)
         && state.overlay.is_none();
     if still {
-        return ask_delete(state, repo, RefKind::Branch);
+        return ask_delete(state, &repo, RefKind::Branch);
     }
     Vec::new()
 }
@@ -355,10 +346,7 @@ pub(super) fn send(
     name: String,
     from: Option<String>,
 ) -> Vec<Cmd> {
-    let clone = match state.creating.clones.get(&repo) {
-        Some(Look::Found(clone)) => clone.clone(),
-        _ => None,
-    };
+    let clone = state.clone_of(&repo).flatten().cloned();
     let write = match from {
         Some(from) => RefWrite::Create(from),
         None => RefWrite::Delete,
@@ -433,11 +421,8 @@ pub(super) fn on_done(state: &mut State, work: Work, result: Result<(), String>)
     };
     crate::writes::close_sender(state, &page);
     let there = matches!(write, RefWrite::Create(_));
-    state
-        .writing
-        .housekeeping
-        .rules
-        .remove(&(repo.clone(), name.clone()));
+    // A branch made again with its name is asked about again.
+    (state.data).remove(&DataKey::BranchRules(repo.clone(), name.clone()));
     state.info(format!(
         "{} the {} {name}",
         if there { "Created" } else { "Deleted" },

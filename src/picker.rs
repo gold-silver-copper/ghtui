@@ -204,6 +204,7 @@ impl State {
             Kind::Branches { repo, .. } => Some(DataKey::Refs(repo.clone())),
             Kind::Edit(c) => c.need(),
             Kind::Write(pick) => pick.need(),
+            Kind::Manage(pick) => pick.need(),
             Kind::Form(crate::create::Pick::Base | crate::create::Pick::Head) => self
                 .route()
                 .and_then(Route::repo)
