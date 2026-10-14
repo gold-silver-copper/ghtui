@@ -1179,71 +1179,72 @@ kind of github.com link is listed with what it must open in
 
 ### The live check
 
-`cargo xtask live` runs ghtui for real, against real GitHub, and checks
-every write and live update against GitHub's own answer (`gh api`), not
-only the screen. It's run by hand, not in CI, and takes about eight
-minutes. `cargo xtask live --list` names the checks; `cargo xtask live
-issue inbox` runs only those.
+`cargo xtask live` runs ghtui for real, against real GitHub: it opens
+each kind of page, and makes one write of each kind, checked against
+GitHub's own answer (`gh api`), not only the screen. What a write sends
+and what the app does with each key are tested above; this checks that
+the real app does it against real GitHub. It's run by hand, not in CI,
+and takes about five minutes. `cargo xtask live --list` names the
+checks; `cargo xtask live issue offline` runs only those.
 
+- **The checks:**
+  - `pages` opens each kind of page on its own and checks it shows what
+    GitHub says it has, finishes loading, and says "Couldn't load"
+    nowhere: the repository, a folder, a file, its blame, main's
+    commits, a commit, branches, tags, issues, issue #8, milestones,
+    pull requests, PR #5's conversation and PR #11's files, Actions, a
+    workflow and the latest run, releases, discussions and the first
+    one, the wiki, security, code scanning and its alert #1, settings,
+    projects, Insights, Explore, a topic, the owner's profile and
+    gists, home and the inbox. It only reads.
+  - `issue` creates an issue with `,i`, comments with `c`, sees a
+    comment made on GitHub show without a refresh, and closes it with
+    `,x`.
+  - `pull`, in a fresh clone, proposes a new branch (`,p`), pushes it
+    (`,P`), creates a draft pull request (`,s`) and marks it ready
+    (`,r`).
+  - `release` makes a release with a new tag with `,V`.
+  - `labels` makes a label on the labels page with `,o`, and deletes it
+    with `,D`.
+  - `settings` writes a protection rule for `ghtui-live-` branches in
+    its form (with `$EDITOR` set to a `sed` script) and saves it, then
+    deletes it with `,D`, and checks `main`'s rule ends as it began.
+  - `actions` runs `actions.yml` by hand with `,E`, with its `seconds`
+    input set, and follows the run until it fails, as it does on
+    purpose.
+  - `offline` runs ghtui against a stand-in Enterprise Server (below)
+    on port 8451, and stops it to make GitHub go away, without touching
+    the machine's network: the page stays, marked offline; a comment
+    written meanwhile is queued, still queued after ghtui restarts, and
+    sent exactly once when the stand-in starts again.
 - **What it needs:** `gh`, logged in as the owner of
   `gold-silver-copper/ghtui-test-writes`, with a classic token's `repo`
-  and `gist` scopes, and `workflow` to run workflows by hand. Checks
-  that need more are skipped without it, and say so: `project` for the
-  Projects checks (`gh auth refresh -s project`), `notifications` for
-  subscribing to a thread (without it, the check sees ghtui name the
-  scope), `delete_repo` for transferring an issue (`manage-transfer`
-  makes a `ghtui-live-` repository to move it to, and deletes it), for
-  the fork and new-repository checks, which delete what they make,
-  and for archiving (`settings-archive` archives and unarchives a scratch
-  `ghtui-live-` repository it deletes; without it, it only asks twice on
-  the test repository and cancels); `admin:repo_hook` for webhooks
-  where `repo` doesn't reach them. `settings-access` sends an invitation
-  only to the account `GHTUI_LIVE_INVITEE` names (one that agreed to be
-  invited); otherwise it asks and cancels. `read:user` for saved replies,
-  and `read:packages`,
-  `write:packages` and `delete:packages` for the packages check, which
-  pushes a tiny `ghtui-live-` image to ghcr.io (with curl) and deletes a
-  version of it with `,D`; without them, the check sees ghtui name the
-  scope it lacks. The starred lists check, with `user`, makes a
-  `ghtui-live-` list of the owner's and deletes it; without it, it sees
-  ghtui name the scope. It also needs git; openssl; and a fux that speaks fuxth (`fux help-agents`) (on `PATH`, or `~/code/fux`'s release build,
-  or `--fux PATH`). It builds `target/release/ghtui` unless given
+  and `workflow` scopes. Without `read:project` (or `project`),
+  `pages` leaves the Projects tab out, and says so. It also needs git,
+  openssl (for the stand-in's certificates), and a fux that speaks
+  fuxth (`fux help-agents`): on `PATH`, `~/code/fux`'s release build,
+  or `--fux PATH`. It builds `target/release/ghtui` unless given
   `--ghtui PATH`.
+- **What the test repository needs:** issue #8 open; PR #5 open; PR #11
+  with `bot-bot-1791523358.txt` in its files; `actions.yml`, a workflow
+  run by hand with a `seconds` input whose job fails; a protection rule
+  on `main`; and, for `pages`, code scanning alert #1 and a discussion
+  if those pages are to be opened (they're left out otherwise).
 - **Where it runs:** ghtui runs in a private fux server, one pane at a
-  time, at 216 or 90 columns, with its own socket and `XDG_RUNTIME_DIR`
-  and a scratch cache, config and clones, all under
-  `~/.cache/claude-tmp/ghtui-live` (`GHTUI_LIVE_DIR`), which a run empties
-  when it starts. A failing check leaves its last screen in `failures/`.
-- **What it touches:** it writes only to the test repository (and a
-  secret gist of the owner's, deleted at once; and, with `delete_repo`,
-  a fork of `octocat/Spoon-Knife` and a private repository under the
-  owner's account, named `ghtui-live-…`, deleted at once). The checks rely on the
-  repository's workflows, run by hand: `mention.yml` (the Actions bot
-  mentions the owner on an issue), `botreview.yml` (it leaves a review
-  comment on PR #11, or, given `review`, submits a review with a summary
-  and an inline comment on the pull request it's given) and
-  `actions.yml` (a job that fails with annotations and uploads an
-  artifact); on its code scanning alerts (from an uploaded SARIF), its
-  Discussions (turned on) and its protected `main`. Its wiki has no
-  page, so the wiki check is skipped until one is made on github.com.
-  The inbox is filtered to that repository before anything is marked. A
-  stand-in `xdg-open`, first on the server's `PATH`, writes down the
-  URLs ghtui opens instead of opening a browser.
-- **Cleaning up:** each check undoes what it made, pass or fail (issues,
-  comments, pull requests, branches, releases with their assets and
-  tags, workflow runs, gists, discussions, projects, repository and
-  watch settings, a dismissed alert, labels, milestones, forks and
-  repositories, protection rules, rulesets, invitations, webhooks and
-  deploy keys), and the fux server and the stand-in server are
-  stopped. A submitted review can't be deleted, so the reviews check's
-  stay on its pull request, closed. ctrl-c stops the run after cleaning
-  up. A run that was killed is swept up by the next one: issues, pull
-  requests, discussions, gists, projects and milestones titled
-  `[ghtui live]`, `ghtui-live-` branches, tags, releases, labels and (with
-  `delete_repo`) the owner's repositories, protection rules, webhooks
-  and deploy keys, `[ghtui live]` rulesets, and settings put back. The
-  settings checks never touch `main`'s protection, and check it ends as
-  it began.
+  time, at 216 columns, with its own socket and `XDG_RUNTIME_DIR` and a
+  scratch cache, config and clone, all under
+  `~/.cache/claude-tmp/ghtui-live` (`GHTUI_LIVE_DIR`), which a run
+  empties when it starts. A failing check leaves its last screen in
+  `failures/`. A stand-in `xdg-open`, first on the server's `PATH`,
+  writes down the URLs ghtui opens instead of opening a browser.
+- **What it touches and cleans up:** it writes only to the test
+  repository. Each check undoes what it made, pass or fail: the issues
+  (deleted), the pull request (closed) and its branch, the release and
+  its tag, the label, the protection rule and the workflow run; and the
+  fux server and the stand-in are stopped. ctrl-c stops the run after
+  cleaning up. A run that was killed is swept up by the next one:
+  issues and pull requests titled `[ghtui live]`, and `ghtui-live-`
+  branches, releases, tags, labels and protection rules.
 - **Enterprise Server:** `cargo xtask ghes` serves a stand-in on
   `https://localhost:8443` that relays an Enterprise Server's paths to
   github.com (`/api/v3`, `/api/graphql`, `/raw`, git) and rewrites
@@ -1257,30 +1258,20 @@ issue inbox` runs only those.
   cargo test what_an_enterprise_schema_lacks -- --ignored --nocapture`
   (with `GHTUI_GHES_VERSION=3.N`, after ghtui leaves out what it knows
   that version lacks: nothing should be left).
-- **Offline:** the `offline` check runs ghtui against the stand-in (on
-  port 8451), keeps the repository offline (`:keep offline`) and stops
-  keeping it, and stops the stand-in to make GitHub go away, without touching the
-  machine's network: it writes a comment and a reaction while it's
-  gone, restarts ghtui, starts the stand-in again, and asks GitHub that
-  each arrived exactly once; a comment on an issue it deletes meanwhile
-  must come back refused.
-- **GitHub's own delays:** a notification can take GitHub many minutes
-  to deliver, so the inbox check runs last, and is skipped (not failed)
-  when no unread thread has arrived; the mention it asked for serves the
-  next run.
 
 Adding a check: write a `Check` (a name, what it shows, and a function)
-in a file under `xtask/src/live/checks/`, and list it in `ALL` there.
-The function starts ghtui (`cx.ghtui(&[…])`, or `cx.launch` for a size,
-a directory or environment), presses keys (`ghtui.keys(", m")`,
-`ghtui.type_text(…)`), waits for the screen (`wait_for`, `wait_gone`,
-`wait_followed`, `select`), asks GitHub (`gh::get`, `gh::send`,
-`gh::graphql`, retried with `until`), and registers what to undo with
-`cx.defer` as soon as it has made something. Assert behaviour: "the
-comment shows", "GitHub shows it read", "this text ends in `…`"
-(`expect_whole_or_cut`), never whole screens. `.prepare(…)` starts
-something slow (a workflow) before any check runs; `.sweep(…)` puts
-back what a killed run may have left.
+in a file under `xtask/src/live/checks/`, and list it in `ALL` there. A
+new kind of page is a line in `pages` instead. The function starts
+ghtui (`cx.ghtui(&[…])`, or `cx.launch` for a directory or
+environment), presses keys (`ghtui.keys(", m")`, `ghtui.type_text(…)`),
+waits for the screen (`wait_for`, `wait_gone`, `wait_followed`,
+`select`), asks GitHub (`gh::get`, `gh::send`, `gh::graphql`, retried
+with `until`), and registers what to undo with `cx.defer` as soon as it
+has made something. Name what it makes `[ghtui live] …` (`cx.mark`) or
+`ghtui-live-…`, and give the check a `.sweep(…)` for what the run's own
+sweep doesn't already find. Assert behaviour ("the comment shows",
+"GitHub has it closed"), never whole screens. Add a check only for a
+new kind of page or write: a variation of one is a test above.
 
 `demo/record.sh` records a captioned tour of ghtui to a video, on a hidden
 Hyprland monitor (it needs foot, grim and ffmpeg, and an unlocked session). It

@@ -164,26 +164,6 @@ pub fn delete_branch(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Starts a workflow on `main` by hand.
-pub fn dispatch(workflow: &str) -> Result<()> {
-    send(
-        "POST",
-        &format!("repos/{REPO}/actions/workflows/{workflow}/dispatches"),
-        Some(&json!({"ref": "main"})),
-    )?;
-    Ok(())
-}
-
-/// Starts a workflow on `main` by hand, with its inputs.
-pub fn dispatch_with(workflow: &str, inputs: &Value) -> Result<()> {
-    send(
-        "POST",
-        &format!("repos/{REPO}/actions/workflows/{workflow}/dispatches"),
-        Some(&json!({"ref": "main", "inputs": inputs})),
-    )?;
-    Ok(())
-}
-
 /// A new issue; its number.
 pub fn create_issue(title: &str, body: &str) -> Result<u64> {
     let issue = send(
@@ -192,50 +172,6 @@ pub fn create_issue(title: &str, body: &str) -> Result<u64> {
         Some(&json!({"title": title, "body": body})),
     )?;
     issue["number"].as_u64().context("no issue number")
-}
-
-/// A new branch off `main`, with `file` written on it in one commit; the
-/// commit.
-pub fn branch_with_file(branch: &str, file: &str, text: &str) -> Result<String> {
-    let main = get(&format!("repos/{REPO}/git/ref/heads/main"))?;
-    send(
-        "POST",
-        &format!("repos/{REPO}/git/refs"),
-        Some(&json!({"ref": format!("refs/heads/{branch}"), "sha": main["object"]["sha"]})),
-    )?;
-    write_file(branch, file, text)
-}
-
-/// Writes `file` on `branch` (a branch the check made) in one commit;
-/// the commit.
-pub fn write_file(branch: &str, file: &str, text: &str) -> Result<String> {
-    let path = format!("repos/{REPO}/contents/{file}");
-    let sha = get(&format!("{path}?ref={branch}"))
-        .ok()
-        .and_then(|f| f["sha"].as_str().map(str::to_owned));
-    let mut body = json!({
-        "message": format!("{file} from the live check"),
-        "content": base64(text.as_bytes()),
-        "branch": branch,
-    });
-    if let Some(sha) = sha {
-        body["sha"] = json!(sha);
-    }
-    let made = send("PUT", &path, Some(&body))?;
-    made["commit"]["sha"]
-        .as_str()
-        .map(str::to_owned)
-        .context("no commit")
-}
-
-/// A pull request from `branch` into `main`; its number.
-pub fn create_pr(title: &str, branch: &str, body: &str) -> Result<u64> {
-    let pr = send(
-        "POST",
-        &format!("repos/{REPO}/pulls"),
-        Some(&json!({"title": title, "head": branch, "base": "main", "body": body})),
-    )?;
-    pr["number"].as_u64().context("no pull request number")
 }
 
 /// Closes the branch's open pull requests and deletes it, if it's there.
@@ -251,33 +187,6 @@ pub fn drop_branch(branch: &str) -> Result<()> {
         Ok(_) => delete_branch(branch),
         Err(_) => Ok(()),
     }
-}
-
-fn base64(bytes: &[u8]) -> String {
-    const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::new();
-    for chunk in bytes.chunks(3) {
-        let b = [
-            chunk.first().copied().unwrap_or_default(),
-            chunk.get(1).copied().unwrap_or_default(),
-            chunk.get(2).copied().unwrap_or_default(),
-        ];
-        let n = u32::from(b[0]) << 16 | u32::from(b[1]) << 8 | u32::from(b[2]);
-        for i in 0..4 {
-            if i <= chunk.len() {
-                let at = (n >> (18 - 6 * i)) & 63;
-                out.push(char::from(ABC.get(at as usize).copied().unwrap_or(b'A')));
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
-}
-
-/// A commit's short name, as GitHub and ghtui show it.
-pub fn short(sha: &str) -> String {
-    sha.chars().take(7).collect()
 }
 
 /// Seconds since 1970, now.
@@ -316,13 +225,5 @@ mod tests {
     fn iso8601() {
         assert_eq!(super::iso8601(0), "1970-01-01T00:00:00Z");
         assert_eq!(super::iso8601(1_791_813_836), "2026-10-12T14:03:56Z");
-    }
-
-    #[test]
-    fn base64() {
-        assert_eq!(super::base64(b""), "");
-        assert_eq!(super::base64(b"f"), "Zg==");
-        assert_eq!(super::base64(b"fo"), "Zm8=");
-        assert_eq!(super::base64(b"foobar"), "Zm9vYmFy");
     }
 }
