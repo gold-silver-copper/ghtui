@@ -184,9 +184,7 @@ fn a_reviews_summary_is_edited() {
         id: NodeId::new("PRR_2000002"),
         body: "Yes: every role is checked at both depths.!".into(),
     };
-    let [Cmd::Api(Api::Change(change, by))] = cmds.as_slice() else {
-        panic!("{cmds:?}")
-    };
+    let (change, by) = fixtures::sent_change(&cmds);
     assert_eq!(
         (change, by),
         (&Change::Edit(edit), &By::Edit(Subject::Pr(pr())))

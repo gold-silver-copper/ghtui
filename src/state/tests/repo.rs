@@ -167,7 +167,7 @@ fn repo_tabs_filters_state_sort_and_star() {
         id: NodeId::new("R_ghtui"),
         starred: true,
     };
-    assert_eq!(cmds, vec![Cmd::Api(Api::Change(star, act::By::Star))]);
+    assert_eq!(cmds, vec![fixtures::change(star, act::By::Star)]);
     assert!(state.overview(&ghtui()).unwrap().starred);
     assert_eq!(state.overview(&ghtui()).unwrap().summary.stars, 1235);
     answer(&mut state, &cmds, Err(ApiError::Network("down".into())));

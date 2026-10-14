@@ -117,7 +117,7 @@ fn an_alert_is_dismissed_with_a_reason_and_followed() {
         dismiss: Some(("used in tests".into(), "only in fixtures".into())),
     });
     let about = Subject::Alert(a.clone());
-    assert_eq!(sent, vec![Cmd::Api(Api::Change(change, By::Act(about)))]);
+    assert_eq!(sent, vec![crate::fixtures::change(change, By::Act(about))]);
     answer(&mut s, &sent, Ok(()));
     says(&s, "Alert dismissed: Used in tests");
     let key = DataKey::Alert(a);
@@ -144,10 +144,7 @@ fn a_closed_alert_reopens_after_asking() {
         alert: alert_ref(AlertKind::SecretScanning, 2),
         dismiss: None,
     });
-    let [Cmd::Api(Api::Change(sent_change, _))] = sent.as_slice() else {
-        panic!("{sent:?}");
-    };
-    assert_eq!(*sent_change, change);
+    assert_eq!(*crate::fixtures::sent_change(&sent).0, change);
     let mut s = with_alert(AlertKind::SecretScanning, false);
     press(&mut s, ",x");
     let Some(Overlay::Picker(picker)) = &s.overlay else {

@@ -95,7 +95,7 @@ fn an_extended_list_is_kept_until_asked() {
         id: NodeId::new("R_1"),
         starred: true,
     };
-    update(&mut state, Msg::Changed(star, act::By::Star, Ok(())));
+    fixtures::changed(&mut state, star, act::By::Star, Ok(()));
     assert!(!state.load_visible(false).contains(&refetch));
     let Some(Data::Runs(runs)) = state.get(&key) else {
         panic!()

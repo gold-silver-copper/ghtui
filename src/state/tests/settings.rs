@@ -38,8 +38,8 @@ fn deliver(s: &mut State, at: SettingsPage, data: Settings) -> Vec<Cmd> {
 
 /// The one change `cmds` sends.
 fn sent(cmds: &[Cmd]) -> (&SettingsChange, &By) {
-    match cmds {
-        [Cmd::Api(Api::Change(Change::Settings(c), by))] => (c, by),
+    match fixtures::sent_change(cmds) {
+        (Change::Settings(c), by) => (c, by),
         _ => panic!("{cmds:?}"),
     }
 }

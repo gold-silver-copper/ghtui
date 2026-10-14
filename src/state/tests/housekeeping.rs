@@ -16,25 +16,14 @@ use crate::housekeeping::{
 
 use super::*;
 use crate::fixtures::{self};
-use crate::writes::{Done, Work};
 
 /// The one housekeeping work `cmds` hold.
 fn sent(cmds: &[Cmd]) -> HWork {
-    let found: Vec<&HWork> = cmds
-        .iter()
-        .filter_map(|c| match c {
-            Cmd::Write(Work::Housekeeping(w)) => Some(w),
-            _ => None,
-        })
-        .collect();
-    let [one] = found.as_slice() else {
-        panic!("{cmds:?}");
-    };
-    (*one).clone()
+    fixtures::sent(cmds)
 }
 
 fn done(s: &mut State, done: HDone) -> Vec<Cmd> {
-    update(s, Msg::Write(Done::Housekeeping(Box::new(done))))
+    fixtures::done::<HWork>(s, done)
 }
 
 fn asked(s: &State) -> &crate::create::Ask {
@@ -264,9 +253,9 @@ fn milestones_are_closed_edited_and_deleted() {
 fn branches_are_made_and_protected_ones_kept() {
     let mut s = with_branches();
     let repo = ghtui();
-    let cmds = update(
+    let cmds = fixtures::done::<crate::create::Work>(
         &mut s,
-        Msg::Create(crate::create::Done::Clone(repo.clone(), Ok(None))),
+        crate::create::Done::Clone(repo.clone(), Ok(None)),
     );
     assert!(cmds.is_empty(), "{cmds:?}");
     select(&mut s, "tabs");
@@ -317,10 +306,7 @@ fn in_a_clone_git_pushes_after_asking() {
         branch: Some("main".into()),
     };
     let found = Ok(Some(clone.clone()));
-    update(
-        &mut s,
-        Msg::Create(crate::create::Done::Clone(repo.clone(), found)),
-    );
+    fixtures::done::<crate::create::Work>(&mut s, crate::create::Done::Clone(repo.clone(), found));
     select(&mut s, "tabs");
     let cmds = press(&mut s, ",D");
     let rules = BranchRules {
@@ -475,10 +461,7 @@ fn look() -> FileLook {
 #[test]
 fn a_file_is_edited_and_committed_on_a_new_branch() {
     let mut s = with_file();
-    update(
-        &mut s,
-        Msg::Create(crate::create::Done::Clone(ghtui(), Ok(None))),
-    );
+    fixtures::done::<crate::create::Work>(&mut s, crate::create::Done::Clone(ghtui(), Ok(None)));
     let cmds = press(&mut s, ",e");
     let form = Route::Housekeeping(FormOf::File {
         repo: ghtui(),
@@ -535,10 +518,7 @@ fn a_file_is_edited_and_committed_on_a_new_branch() {
 #[test]
 fn a_file_changed_meanwhile_keeps_your_text() {
     let mut s = with_file();
-    update(
-        &mut s,
-        Msg::Create(crate::create::Done::Clone(ghtui(), Ok(None))),
-    );
+    fixtures::done::<crate::create::Work>(&mut s, crate::create::Done::Clone(ghtui(), Ok(None)));
     press(&mut s, ",e");
     let form = Route::Housekeeping(FormOf::File {
         repo: ghtui(),
@@ -573,10 +553,7 @@ fn a_file_changed_meanwhile_keeps_your_text() {
 #[test]
 fn a_file_is_deleted_with_a_commit() {
     let mut s = with_file();
-    update(
-        &mut s,
-        Msg::Create(crate::create::Done::Clone(ghtui(), Ok(None))),
-    );
+    fixtures::done::<crate::create::Work>(&mut s, crate::create::Done::Clone(ghtui(), Ok(None)));
     press(&mut s, ",D");
     let form = Route::Housekeeping(FormOf::File {
         repo: ghtui(),
@@ -636,8 +613,7 @@ fn a_file_form_opened_from_a_page_reads_the_file() {
         &mut s,
         "g/gold-silver-copper/ghtui/edit/main/README.md<Enter>",
     );
-    let looks = cmds
-        .iter()
-        .any(|c| matches!(c, Cmd::Write(Work::Housekeeping(HWork::FileLook { .. }))));
+    let looks =
+        (fixtures::jobs::<HWork>(&cmds).iter()).any(|w| matches!(w, HWork::FileLook { .. }));
     assert!(looks, "{cmds:?}");
 }

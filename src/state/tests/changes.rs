@@ -72,7 +72,7 @@ fn merging_asks_first_and_ends_up_as_github_has_it() {
     let sent = press(&mut s, "<Enter>");
     assert_eq!(
         sent,
-        vec![Cmd::Api(Api::Change(merge, By::Confirm(Subject::Pr(pr()))))]
+        vec![fixtures::change(merge, By::Confirm(Subject::Pr(pr())))]
     );
     assert!(confirm(&s).sending);
     // Keys wait while it's sent.
@@ -300,7 +300,7 @@ fn a_draft_is_marked_ready_at_once_and_hears_back_alone() {
     let sent = press(&mut s, ",r");
     assert_eq!(
         sent,
-        vec![Cmd::Api(Api::Change(ready, By::Act(Subject::Pr(pr()))))]
+        vec![fixtures::change(ready, By::Act(Subject::Pr(pr())))]
     );
     press(&mut s, ",x");
     let refused = ApiError::GraphQl(vec!["Not now".into()]);
@@ -419,14 +419,14 @@ fn runs_rerun_and_cancel() {
     assert_eq!(choices, ["Re-run failed jobs", "Re-run all jobs"]);
     assert_eq!(
         press(&mut s, "<Enter>"),
-        vec![Cmd::Api(Api::Change(
+        vec![fixtures::change(
             Change::Rerun {
                 repo: ghtui(),
                 run: 7,
                 failed_only: true
             },
             By::Confirm(Subject::Run(ghtui(), 7, None))
-        ))]
+        )]
     );
     let mut s = with_run();
     press(&mut s, ",x");
@@ -454,10 +454,7 @@ fn notifications_are_marked_read_and_done() {
     let read = Change::MarkRead {
         thread: "101".into(),
     };
-    assert_eq!(
-        sent,
-        vec![Cmd::Api(Api::Change(read, By::Act(thread("101"))))]
-    );
+    assert_eq!(sent, vec![fixtures::change(read, By::Act(thread("101")))]);
     answer(&mut s, &sent, Ok(()));
     says(&s, "Marked read");
     // Until GitHub shows it read, the inbox is fetched again.
@@ -489,10 +486,7 @@ fn notifications_are_marked_read_and_done() {
             updated_at: "2026-10-02T12:00:00Z".into(),
         },
     };
-    assert_eq!(
-        sent,
-        vec![Cmd::Api(Api::Change(done, By::Act(thread("103"))))]
-    );
+    assert_eq!(sent, vec![fixtures::change(done, By::Act(thread("103")))]);
     answer(&mut s, &sent, Ok(()));
     says(&s, "Marked done");
     assert!(s.awaiting.is_some());
@@ -528,10 +522,7 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
         last_read_at: "2026-10-03T12:00:00Z".into(),
     };
     let sent = press(&mut s, "<Enter>");
-    assert_eq!(
-        sent,
-        vec![Cmd::Api(Api::Change(read, By::Confirm(all.clone())))]
-    );
+    assert_eq!(sent, vec![fixtures::change(read, By::Confirm(all.clone()))]);
     let cmds = answer(&mut s, &sent, Ok(()));
     says(&s, "Marked read");
     assert!(cmds.contains(&Cmd::Api(Api::FetchUnread)), "{cmds:?}");
@@ -563,7 +554,7 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
         threads: threads.clone(),
         done: true,
     };
-    assert_eq!(sent, vec![Cmd::Api(Api::Change(done, By::Confirm(all)))]);
+    assert_eq!(sent, vec![fixtures::change(done, By::Confirm(all))]);
     answer(&mut s, &sent, Ok(()));
     says(&s, "Marked 4 notifications done");
     (inbox.list.items, inbox.list.next) = (Vec::new(), None);
@@ -607,10 +598,10 @@ fn a_finished_job_in_a_running_run_cancels_the_run() {
     let sent = press(&mut s, "<Enter>");
     assert_eq!(
         sent,
-        vec![Cmd::Api(Api::Change(
+        vec![fixtures::change(
             cancel,
             By::Confirm(Subject::Job(ghtui(), Some(7), 2))
-        ))]
+        )]
     );
     answer(&mut s, &sent, Ok(()));
     // GitHub takes a while to stop it: it's asked for once.
@@ -632,7 +623,7 @@ fn a_rerun_job_is_followed_to_its_new_attempt() {
         job: 2,
     };
     let by = By::Confirm(Subject::Job(ghtui(), Some(7), 2));
-    update(&mut s, Msg::Changed(rerun, by, Ok(())));
+    fixtures::changed(&mut s, rerun, by, Ok(()));
     let (mut job, _) = crate::fixtures::job();
     job.run.attempt = 2;
     job.run.outcome = CheckOutcome::Pending;

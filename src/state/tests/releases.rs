@@ -12,7 +12,6 @@ use ratatui_textarea::CursorMove;
 use super::*;
 use crate::fixtures::{self};
 use crate::ui::page::{Link, WriteLink};
-use crate::writes::{Done, Work};
 
 const ID: u64 = 272_100_001;
 
@@ -43,14 +42,11 @@ fn select_link(s: &mut State, link: &Link) {
 }
 
 fn release_work(cmds: &[Cmd]) -> ReleaseWork {
-    match cmds {
-        [Cmd::Write(Work::Release(w))] => w.clone(),
-        _ => panic!("not one release write: {cmds:?}"),
-    }
+    fixtures::sent(cmds)
 }
 
 fn done(s: &mut State, d: ReleaseDone) -> Vec<Cmd> {
-    update(s, Msg::Write(Done::Release(d)))
+    fixtures::done::<ReleaseWork>(s, d)
 }
 
 /// `,e` on a release opens it as the form, filled from it; saving asks

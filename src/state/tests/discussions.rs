@@ -37,10 +37,7 @@ fn select(s: &mut State, author: &str, text: &str) {
 }
 
 fn sent(cmds: &[Cmd]) -> (&Change, &By) {
-    match cmds {
-        [Cmd::Api(Api::Change(change, by))] => (change, by),
-        _ => panic!("{cmds:?}"),
-    }
+    fixtures::sent_change(cmds)
 }
 
 /// `c` with no comment selected writes an answer (it's a Q&A); on a

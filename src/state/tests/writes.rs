@@ -58,17 +58,14 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
         "the tag first"
     );
     let cmds = press(&mut s, "v9.0<Enter>");
-    let look = Cmd::Write(Work::Release(crate::release::Work::Look(
-        repo.clone(),
-        "v9.0".into(),
-    )));
+    let look = fixtures::start(crate::release::Work::Look(repo.clone(), "v9.0".into()));
     assert!(cmds.contains(&look), "{cmds:?}");
     let new_tag = TagLook {
         exists: false,
         release: None,
     };
     let looked = crate::release::Done::Looked(repo.clone(), "v9.0".into(), Ok(new_tag));
-    update(&mut s, Msg::Write(Done::Release(looked)));
+    fixtures::done::<crate::release::Work>(&mut s, looked);
     write(&mut s, "Nine\n\nWhat changed.");
     press(&mut s, "<Esc>");
     assert!(page_text(&s).contains("v9.0 is a new tag"));
@@ -87,11 +84,11 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
         latest: true,
     };
     let route = Route::Releases(releases::NewRelease(repo.clone()));
-    let create = Cmd::Write(Work::Release(crate::release::Work::Save {
+    let create = fixtures::start(crate::release::Work::Save {
         route: route.clone(),
         id: None,
         new,
-    }));
+    });
     assert_eq!(sent, [create]);
 
     let made = Made {
@@ -100,7 +97,7 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
         html_url: String::new(),
     };
     let done = crate::release::Done::Saved(route, Ok(made));
-    update(&mut s, Msg::Write(Done::Release(done)));
+    fixtures::done::<crate::release::Work>(&mut s, done);
     let page = Route::Releases(releases::Release {
         repo: repo.clone(),
         tag: "v9.0".into(),
@@ -125,7 +122,7 @@ fn a_tag_with_a_release_is_refused() {
         release: Some((false, String::new())),
     };
     let looked = crate::release::Done::Looked(ghtui(), "v0.2.0".into(), Ok(taken));
-    update(&mut s, Msg::Write(Done::Release(looked)));
+    fixtures::done::<crate::release::Work>(&mut s, looked);
     let sent = press(&mut s, "<C-s>");
     assert_eq!(sent, []);
     assert_eq!(
@@ -158,11 +155,8 @@ fn a_thread_is_unsubscribed_and_followed() {
         id: crate::api::model::NodeId::new("I_sub"),
         state: SubscriptionState::Unsubscribed,
     };
-    assert_eq!(sent, [Cmd::Write(Work::Watch(work.clone()))]);
-    let cmds = update(
-        &mut s,
-        Msg::Write(Done::Watch(crate::watch::Done(work, Ok(())))),
-    );
+    assert_eq!(sent, [fixtures::start(work.clone())]);
+    let cmds = fixtures::done::<crate::watch::Work>(&mut s, crate::watch::Done(work, Ok(())));
     says(&s, "Unsubscribed from gold-silver-copper/ghtui#14");
     assert!(
         crate::fixtures::asks(&cmds, &DataKey::Subscription(of.clone())),
@@ -201,10 +195,10 @@ fn your_gist_is_edited_and_its_page_follows() {
     composer(&mut s).input.move_cursor(CursorMove::End);
     composer(&mut s).input.insert_str("\n// more");
     let sent = press(&mut s, "<C-s>");
-    let [Cmd::Write(Work::Gist(crate::gist::Work::Update(r, change)))] = sent.as_slice() else {
+    let crate::gist::Work::Update(r, change) = fixtures::sent(&sent) else {
         panic!("{sent:?}");
     };
-    assert_eq!(*r, route);
+    assert_eq!(r, route);
     let text = "fn main() {\n    println!(\"hello\");\n}\n// more";
     assert_eq!(
         change.changed,
@@ -214,8 +208,8 @@ fn your_gist_is_edited_and_its_page_follows() {
         }]
     );
     assert!(change.added.is_empty());
-    let done = crate::gist::Done::Updated(route, change.clone(), Ok(()));
-    update(&mut s, Msg::Write(Done::Gist(done)));
+    let done = crate::gist::Done::Updated(route, change, Ok(()));
+    fixtures::done::<crate::gist::Work>(&mut s, done);
     let page = Route::Gists(gists::Gist {
         owner: Some("octocat".into()),
         id: "6cad326836d38bd3a7ae".into(),
@@ -253,17 +247,14 @@ fn a_gist_is_made_then_deleted() {
         files: vec![("gistfile1.txt".into(), "hi".into())],
     };
     let create = crate::gist::Work::Create(Route::Gists(gists::NewGist), new);
-    assert_eq!(sent, [Cmd::Write(Work::Gist(create))]);
+    assert_eq!(sent, [fixtures::start(create)]);
     let made = MadeGist {
         id: "aa5a315d61ae9438b18d".into(),
         owner: None,
     };
-    update(
+    fixtures::done::<crate::gist::Work>(
         &mut s,
-        Msg::Write(Done::Gist(crate::gist::Done::Created(
-            Route::Gists(gists::NewGist),
-            Ok(made),
-        ))),
+        crate::gist::Done::Created(Route::Gists(gists::NewGist), Ok(made)),
     );
     assert_eq!(
         s.route(),
@@ -281,13 +272,13 @@ fn a_gist_is_made_then_deleted() {
         id: "6cad326836d38bd3a7ae".into(),
         owner: "octocat".into(),
     };
-    assert_eq!(sent, [Cmd::Write(Work::Gist(delete))]);
+    assert_eq!(sent, [fixtures::start(delete)]);
     let deleted = crate::gist::Done::Deleted {
         id: "6cad326836d38bd3a7ae".into(),
         owner: "octocat".into(),
         result: Ok(()),
     };
-    update(&mut s, Msg::Write(Done::Gist(deleted)));
+    fixtures::done::<crate::gist::Work>(&mut s, deleted);
     assert_eq!(
         s.route(),
         Some(&Route::Gists(gists::Gists("octocat".into())))
@@ -321,18 +312,15 @@ fn a_wiki_page_is_edited_never_over_a_newer_one() {
         text: "Welcome, all.".into(),
         login: Some("octocat".into()),
     };
-    assert_eq!(sent, [Cmd::Write(Work::Wiki(route.clone(), save))]);
+    assert_eq!(sent, [fixtures::start(Work::Wiki(route.clone(), save))]);
     let changed = "Home changed on GitHub since you opened it".to_owned();
-    update(
-        &mut s,
-        Msg::Write(Done::Wiki(route.clone(), Err(changed.clone()))),
-    );
+    fixtures::done::<crate::writes::Work>(&mut s, Done::Wiki(route.clone(), Err(changed.clone())));
     let c = composer(&mut s);
     assert!(!c.sending);
     assert_eq!(c.error.as_deref(), Some(changed.as_str()));
     assert_eq!(c.text(), "Welcome, all.");
 
-    update(&mut s, Msg::Write(Done::Wiki(route, Ok("Home".into()))));
+    fixtures::done::<crate::writes::Work>(&mut s, Done::Wiki(route, Ok("Home".into())));
     let home = Route::Wiki(wiki::Wiki {
         repo: ghtui(),
         page: None,

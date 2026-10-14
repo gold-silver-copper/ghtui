@@ -87,10 +87,10 @@ fn what_can_t_wait_isn_t_queued() {
         head: "abc".into(),
     };
     let err = Err(ApiError::Offline("not sent while offline".into()));
-    let sent = [Cmd::Api(Api::Change(
+    let sent = [fixtures::change(
         merge,
         act::By::Act(act::Subject::Issue(ghtui(), 14)),
-    ))];
+    )];
     let cmds = answer(&mut state, &sent, err);
     assert!(cmds.is_empty(), "{cmds:?}");
     warns(&state, "can't be reached");

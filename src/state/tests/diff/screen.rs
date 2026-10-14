@@ -610,7 +610,7 @@ fn a_review_comment_is_edited_in_its_thread() {
         id: crate::api::model::NodeId::new("c2"),
         body: "Good point, I'll spell it out.!".into(),
     };
-    let sent = Cmd::Api(Api::Change(Change::Edit(edit), By::Edit(Subject::Pr(pr()))));
+    let sent = crate::fixtures::change(Change::Edit(edit), By::Edit(Subject::Pr(pr())));
     assert_eq!(cmds, [sent]);
     let after = crate::fixtures::answer(&mut s, &cmds, Ok(()));
     assert!(

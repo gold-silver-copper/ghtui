@@ -122,10 +122,7 @@ fn merging_while_checks_run_offers_merge_when_ready() {
     let sent = press(&mut s, "<Enter>");
     assert_eq!(
         sent,
-        vec![Cmd::Api(Api::Change(
-            enable,
-            By::Confirm(Subject::Pr(pr()))
-        ))]
+        vec![fixtures::change(enable, By::Confirm(Subject::Pr(pr())))]
     );
     answer(&mut s, &sent, Ok(()));
     says(&s, "Auto-merge enabled");

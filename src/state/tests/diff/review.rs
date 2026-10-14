@@ -293,7 +293,7 @@ fn replies_post_right_away() {
     press(&mut s, "Fixed");
     let cmds = press(&mut s, "<C-s>");
     assert!(
-        matches!(&cmds[..], [Cmd::Api(Api::Change(Change::Reply { body, .. }, _))] if body == "Fixed")
+        matches!(fixtures::sent_change(&cmds), (Change::Reply { body, .. }, _) if body == "Fixed")
     );
     answer(&mut s, &cmds, Err(ApiError::Network("down".into())));
     assert!(

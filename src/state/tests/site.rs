@@ -5,7 +5,6 @@ use crate::route::people;
 use super::*;
 use crate::site::{Page, fixtures};
 use crate::ui::pages::InsightsTab;
-use crate::writes::{Done, Work};
 
 pub(super) fn insights(tab: InsightsTab) -> State {
     let mut s = with_repo();
@@ -179,9 +178,9 @@ fn a_repository_is_put_in_a_list_and_followed() {
         add: true,
     };
     let lists = crate::site::Work::Lists(work.clone());
-    assert_eq!(sent, [Cmd::Write(Work::Site(lists))]);
+    assert_eq!(sent, [crate::fixtures::start(lists)]);
     let done = crate::site::Done::Lists(work, Ok(()));
-    let cmds = update(&mut s, Msg::Write(Done::Site(done)));
+    let cmds = crate::fixtures::done::<crate::site::Work>(&mut s, done);
     says(&s, "Added gold-silver-copper/ghtui to “To read”");
     assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
     assert!(s.writing.expect.is_some());
@@ -195,7 +194,7 @@ fn a_repository_is_put_in_a_list_and_followed() {
     // A new name makes the list, and puts the repository in it too.
     press(&mut s, ",B");
     let sent = press(&mut s, "Rust<Enter>");
-    let [Cmd::Write(Work::Site(crate::site::Work::Lists(w)))] = sent.as_slice() else {
+    let crate::site::Work::Lists(w) = crate::fixtures::sent(&sent) else {
         panic!("{sent:?}");
     };
     assert_eq!(w.create.as_deref(), Some("Rust"));
@@ -219,9 +218,9 @@ fn a_packages_version_is_deleted_after_asking() {
         name: "sha256:3a7b55e1".into(),
     };
     let work = crate::site::Work::DeleteVersion(delete.clone());
-    assert_eq!(sent, [Cmd::Write(Work::Site(work))]);
+    assert_eq!(sent, [crate::fixtures::start(work)]);
     let done = crate::site::Done::DeleteVersion(delete, Ok(()));
-    update(&mut s, Msg::Write(Done::Site(done)));
+    crate::fixtures::done::<crate::site::Work>(&mut s, done);
     says(&s, "Deleted version sha256:3a7b55e1 of ghtui");
     assert!(s.writing.expect.is_some());
     let mut detail = fixtures::package_detail();

@@ -47,10 +47,7 @@ fn on_hubot(s: &mut State) {
 }
 
 fn sent(cmds: &[Cmd]) -> (&Change, &By) {
-    match cmds {
-        [Cmd::Api(Api::Change(change, by))] => (change, by),
-        _ => panic!("{cmds:?}"),
-    }
+    fixtures::sent_change(cmds)
 }
 
 fn hooray(count: u64, mine: bool) -> Reaction {

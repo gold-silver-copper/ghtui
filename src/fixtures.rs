@@ -23,6 +23,8 @@ use std::sync::Arc;
 use crate::store::{DraftComment, DraftSide};
 use crate::ui::bars::Notice;
 
+use crate::act::By;
+use crate::api::change::Change;
 use crate::data::{Data, DataKey};
 use crate::diff_screen::DiffOf;
 use crate::state::{Api, Cmd, DiffMsg, Msg, State, update};
@@ -59,10 +61,125 @@ pub(crate) fn press(state: &mut State, keys: &str) -> Vec<Cmd> {
 
 /// GitHub's answer to the one change `sent` holds.
 pub(crate) fn answer(state: &mut State, sent: &[Cmd], result: Result<(), ApiError>) -> Vec<Cmd> {
-    let [Cmd::Api(Api::Change(change, by))] = sent else {
-        panic!("{sent:?}")
+    let (change, by) = sent_change(sent);
+    let (change, by) = (change.clone(), by.clone());
+    changed(state, change, by, result)
+}
+
+/// Sending `change` to GitHub, from `by`.
+pub(crate) fn change(change: Change, by: By) -> Cmd {
+    Cmd::Api(Api::Change(change, by))
+}
+
+/// The changes `cmds` send.
+pub(crate) fn changes(cmds: &[Cmd]) -> Vec<(&Change, &By)> {
+    (cmds.iter())
+        .filter_map(|c| match c {
+            Cmd::Api(Api::Change(change, by)) => Some((change, by)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The one change `cmds` hold, and nothing else.
+#[track_caller]
+pub(crate) fn sent_change(cmds: &[Cmd]) -> (&Change, &By) {
+    match (changes(cmds).as_slice(), cmds.len()) {
+        ([one], 1) => *one,
+        _ => panic!("not one change: {cmds:?}"),
+    }
+}
+
+/// GitHub's answer to `change`, sent from `by`.
+pub(crate) fn changed(
+    state: &mut State,
+    change: Change,
+    by: By,
+    result: Result<(), ApiError>,
+) -> Vec<Cmd> {
+    update(state, Msg::Changed(change, by, result))
+}
+
+/// Work in the background, as tests send and answer it.
+pub(crate) trait Work: Clone + std::fmt::Debug {
+    type Done;
+    fn cmd(self) -> Cmd;
+    fn of(cmd: &Cmd) -> Option<&Self>;
+    fn msg(done: Self::Done) -> Msg;
+}
+
+macro_rules! jobs {
+    ($($work:ty, $done:ty: |$w:ident| $cmd:expr, $pat:pat => $found:ident, |$d:ident| $msg:expr;)*) => {
+        $(impl Work for $work {
+            type Done = $done;
+            fn cmd(self) -> Cmd {
+                let $w = self;
+                $cmd
+            }
+            fn of(cmd: &Cmd) -> Option<&Self> {
+                match cmd {
+                    $pat => Some($found),
+                    _ => None,
+                }
+            }
+            fn msg(done: $done) -> Msg {
+                let $d = done;
+                $msg
+            }
+        })*
     };
-    update(state, Msg::Changed(change.clone(), by.clone(), result))
+}
+
+use crate::writes::{Done as W, Work as Ww};
+jobs! {
+    Ww, W: |w| Cmd::Write(w), Cmd::Write(w) => w, |d| Msg::Write(d);
+    crate::release::Work, crate::release::Done:
+        |w| Cmd::Write(Ww::Release(w)), Cmd::Write(Ww::Release(w)) => w,
+        |d| Msg::Write(W::Release(d));
+    crate::release::assets::Work, crate::release::assets::Done:
+        |w| Cmd::Write(Ww::Release(crate::release::Work::Asset(w))),
+        Cmd::Write(Ww::Release(crate::release::Work::Asset(w))) => w,
+        |d| Msg::Write(W::Release(crate::release::Done::Asset(d)));
+    crate::gist::Work, crate::gist::Done:
+        |w| Cmd::Write(Ww::Gist(w)), Cmd::Write(Ww::Gist(w)) => w, |d| Msg::Write(W::Gist(d));
+    crate::watch::Work, crate::watch::Done:
+        |w| Cmd::Write(Ww::Watch(w)), Cmd::Write(Ww::Watch(w)) => w, |d| Msg::Write(W::Watch(d));
+    crate::manage::Work, crate::manage::Done:
+        |w| Cmd::Write(Ww::Manage(w)), Cmd::Write(Ww::Manage(w)) => w,
+        |d| Msg::Write(W::Manage(d));
+    crate::site::Work, crate::site::Done:
+        |w| Cmd::Write(Ww::Site(w)), Cmd::Write(Ww::Site(w)) => w, |d| Msg::Write(W::Site(d));
+    crate::housekeeping::Work, crate::housekeeping::Done:
+        |w| Cmd::Write(Ww::Housekeeping(w)), Cmd::Write(Ww::Housekeeping(w)) => w,
+        |d| Msg::Write(W::Housekeeping(Box::new(d)));
+    crate::create::Work, crate::create::Done:
+        |w| Cmd::Create(w), Cmd::Create(w) => w, |d| Msg::Create(d);
+    crate::actions::Work, crate::actions::Done:
+        |w| Cmd::Api(Api::Actions(w)), Cmd::Api(Api::Actions(w)) => w, |d| Msg::Actions(d);
+}
+
+/// Starting `work`.
+pub(crate) fn start<J: Work>(work: J) -> Cmd {
+    work.cmd()
+}
+
+/// The work of `J`'s kind `cmds` start.
+pub(crate) fn jobs<J: Work>(cmds: &[Cmd]) -> Vec<J> {
+    cmds.iter().filter_map(J::of).cloned().collect()
+}
+
+/// The one work of `J`'s kind `cmds` start.
+#[track_caller]
+pub(crate) fn sent<J: Work>(cmds: &[Cmd]) -> J {
+    match jobs::<J>(cmds).as_slice() {
+        [one] => one.clone(),
+        _ => panic!("not one {}: {cmds:?}", std::any::type_name::<J>()),
+    }
+}
+
+/// Work's answer, delivered.
+pub(crate) fn done<J: Work>(state: &mut State, done: J::Done) -> Vec<Cmd> {
+    update(state, J::msg(done))
 }
 
 /// Delivers freshly fetched page data.

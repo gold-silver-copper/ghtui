@@ -148,16 +148,11 @@ fn urls_never_run_page_actions() {
     let mut state = with_repo();
     let cmds = state.follow(&crate::ui::page::Link::from("ghtui:star"));
     assert!(
-        !cmds
-            .iter()
-            .any(|c| matches!(c, Cmd::Api(Api::Change(Change::Star { .. }, _)))),
+        !(fixtures::changes(&cmds).iter()).any(|(c, _)| matches!(c, Change::Star { .. })),
         "{cmds:?}"
     );
     let cmds = state.follow(&crate::ui::page::Link::Star);
-    assert!(
-        cmds.iter()
-            .any(|c| matches!(c, Cmd::Api(Api::Change(Change::Star { .. }, _))))
-    );
+    assert!((fixtures::changes(&cmds).iter()).any(|(c, _)| matches!(c, Change::Star { .. })));
 }
 
 /// Saying the same thing again shows it for its whole time again; the

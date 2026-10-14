@@ -247,7 +247,7 @@ fn moving_a_card_sets_its_column_and_the_board_follows() {
         said: "Status to Done".into(),
     };
     let about = Subject::Project(roadmap(), None);
-    assert_eq!(sent, vec![Cmd::Api(Api::Change(change, By::Act(about)))]);
+    assert_eq!(sent, vec![fixtures::change(change, By::Act(about))]);
     answer(&mut s, &sent, Ok(()));
     says(&s, "Set Status to Done");
     // Until GitHub shows it moved, the board is fetched again.
@@ -292,8 +292,7 @@ fn setting_a_field_sends_its_value() {
     );
     assert!(rows.first().is_some_and(|(_, chosen)| chosen.is_none()));
     let sent = press(&mut s, "<BS>8<Enter>");
-    let [Cmd::Api(Api::Change(Change::SetProjectField { field, value, .. }, _))] = sent.as_slice()
-    else {
+    let (Change::SetProjectField { field, value, .. }, _) = fixtures::sent_change(&sent) else {
         panic!("{sent:?}");
     };
     assert_eq!(field.as_str(), "F_estimate");
@@ -317,10 +316,7 @@ fn a_project_you_cant_change_says_so() {
 }
 
 fn change_sent(cmds: &[Cmd]) -> &Change {
-    match cmds {
-        [Cmd::Api(Api::Change(change, _))] => change,
-        _ => panic!("{cmds:?}"),
-    }
+    fixtures::sent_change(cmds).0
 }
 
 /// `,i` adds what's typed: an issue or pull request by its reference
@@ -473,7 +469,7 @@ fn an_issues_field_is_set_from_its_sidebar() {
         said: "Status to Done".into(),
     };
     let about = Subject::Issue(super::ghtui(), 14);
-    assert_eq!(sent, vec![Cmd::Api(Api::Change(change, By::Act(about)))]);
+    assert_eq!(sent, vec![fixtures::change(change, By::Act(about))]);
     answer(&mut s, &sent, Ok(()));
     let key = DataKey::InProjects(super::ghtui(), 14);
     let polled = crate::act::poll(&mut s);

@@ -114,7 +114,7 @@ fn issue_comments_post_and_refresh() {
         subject: NodeId::new("I_14"),
         body: "Thanks!".into(),
     };
-    let sent = vec![Cmd::Api(Api::Change(comment, act::By::Compose))];
+    let sent = vec![fixtures::change(comment, act::By::Compose)];
     assert_eq!(cmds, sent);
     let cmds = answer(&mut state, &sent, Ok(()));
     assert!(state.overlay.is_none());

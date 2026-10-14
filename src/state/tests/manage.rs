@@ -68,24 +68,17 @@ fn linked(number: u64, title: &str) -> Linked {
 
 /// The one change `cmds` sends.
 fn sent(cmds: &[Cmd]) -> (&Change, &By) {
-    match cmds {
-        [Cmd::Api(Api::Change(change, by))] => (change, by),
-        _ => panic!("{cmds:?}"),
-    }
+    fixtures::sent_change(cmds)
 }
 
 /// The work `cmds` starts.
 fn work(cmds: &[Cmd]) -> Work {
-    let found = cmds.iter().find_map(|c| match c {
-        Cmd::Write(crate::writes::Work::Manage(w)) => Some(w.clone()),
-        _ => None,
-    });
-    found.unwrap_or_else(|| panic!("no work in {cmds:?}"))
+    fixtures::sent(cmds)
 }
 
 /// Work's answer.
 fn done(s: &mut State, done: Done) -> Vec<Cmd> {
-    update(s, Msg::Write(crate::writes::Done::Manage(done)))
+    fixtures::done::<Work>(s, done)
 }
 
 fn pick(s: &State) -> &Pick {

@@ -20,16 +20,7 @@ fn select_link(s: &mut State, link: &Link) {
 
 /// The one write `cmds` holds.
 fn work(cmds: &[Cmd]) -> Work {
-    let works: Vec<&Work> = (cmds.iter())
-        .filter_map(|c| match c {
-            Cmd::Api(Api::Actions(work)) => Some(work),
-            _ => None,
-        })
-        .collect();
-    match works[..] {
-        [work] => work.clone(),
-        _ => panic!("{cmds:?}"),
-    }
+    crate::fixtures::sent(cmds)
 }
 
 const WORKFLOW: &str = "name: CI\non:\n  workflow_dispatch:\n    inputs:\n      outcome:\n        type: choice\n        options: [fail, pass]\n        default: fail\n      seconds:\n        type: string\n        default: \"60\"\n";
@@ -95,7 +86,7 @@ fn a_workflow_runs_by_hand_with_its_inputs_and_is_followed() {
         file: "ci.yml".into(),
         result: Ok(Some(55)),
     };
-    update(&mut s, Msg::Actions(done));
+    crate::fixtures::done::<Work>(&mut s, done);
     let run = Route::Runs(runs::WorkflowRun {
         repo: ghtui(),
         run: 55,
