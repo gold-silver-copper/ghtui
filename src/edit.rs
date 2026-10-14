@@ -15,7 +15,7 @@ use crate::api::edit::{Edit, Editable, Named, ReactionContent, Sidebar, Written}
 use crate::api::model::{Capped, NodeId, PrRef, RepoId};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::act::{By, Confirm, Step, Subject};
+use crate::act::{By, Step, Subject};
 use crate::compose;
 use crate::data::{Data, DataKey};
 use crate::keymap::Action;
@@ -411,7 +411,7 @@ fn plan(state: &State, action: Action) -> Result<Step, String> {
                 of: spot.of,
                 id: spot.editable.id.clone(),
             });
-            Ok(Step::Ask(Box::new(Confirm::new(
+            Ok(Step::Ask(Box::new(crate::act::confirm(
                 action,
                 spot.about,
                 title,

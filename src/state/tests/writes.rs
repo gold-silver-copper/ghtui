@@ -26,13 +26,6 @@ fn write(s: &mut State, text: &str) {
     c.input.insert_str(text);
 }
 
-fn asked(s: &State) -> &crate::forms::Ask {
-    match &s.overlay {
-        Some(Overlay::Ask(a)) => a,
-        _ => panic!("nothing asked"),
-    }
-}
-
 /// `,V` opens a repository's new release on its tag; a new tag is looked
 /// for on GitHub, then the composer takes the title and notes. Making it
 /// asks whether to publish or save a draft; once made, its page opens
@@ -69,7 +62,7 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
     assert!(page_text(&s).contains("v9.0 is a new tag"));
 
     press(&mut s, ",s");
-    assert_eq!(asked(&s).choices.len(), 2, "publish or save a draft");
+    assert_eq!(overlay!(s, Ask).choices.len(), 2, "publish or save a draft");
     let sent = press(&mut s, "<Enter>");
     let new = NewRelease {
         repo: repo.clone(),
@@ -233,7 +226,11 @@ fn a_gist_is_made_then_deleted() {
     assert_eq!(s.route(), Some(&Route::Gists(gists::NewGist)));
     write(&mut s, "hi");
     press(&mut s, "<C-s>");
-    let labels: Vec<&str> = asked(&s).choices.iter().map(|(l, _)| l.as_str()).collect();
+    let labels: Vec<&str> = overlay!(s, Ask)
+        .choices
+        .iter()
+        .map(|(l, _)| l.as_str())
+        .collect();
     assert_eq!(labels, ["Create secret gist", "Create public gist"]);
     let sent = press(&mut s, "l<Enter>");
     let new = crate::api::gist::NewGist {
@@ -261,7 +258,7 @@ fn a_gist_is_made_then_deleted() {
 
     let mut s = with_gist();
     press(&mut s, ",D");
-    assert_eq!(asked(&s).title, "Delete this gist?");
+    assert_eq!(overlay!(s, Ask).title, "Delete this gist?");
     let sent = press(&mut s, "<Enter>");
     let delete = crate::gist::Delete {
         id: "6cad326836d38bd3a7ae".into(),

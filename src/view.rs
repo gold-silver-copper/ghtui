@@ -254,20 +254,6 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             }
             .render(area, buf);
         }
-        Some(Overlay::Confirm(confirm)) => {
-            let choices: Vec<String> = confirm.choices.iter().map(|(l, _)| l.clone()).collect();
-            let busy = confirm.busy();
-            ConfirmSheet {
-                ctx,
-                title: &confirm.title,
-                facts: &confirm.facts,
-                choices: &choices,
-                selected: confirm.selected,
-                error: confirm.sent.error.as_deref(),
-                sending: busy.as_deref(),
-            }
-            .render(area, buf);
-        }
         Some(Overlay::Ask(ask)) => {
             let choices: Vec<String> = ask.choices.iter().map(|(l, _)| l.clone()).collect();
             ConfirmSheet {
@@ -277,7 +263,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 choices: &choices,
                 selected: ask.selected,
                 error: ask.sent.error.as_deref(),
-                sending: ask.busy(),
+                sending: ask.busy().as_deref(),
             }
             .render(area, buf);
         }

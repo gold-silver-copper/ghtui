@@ -81,13 +81,6 @@ fn pick(s: &State) -> &Pick {
     }
 }
 
-fn confirm(s: &State) -> &crate::act::Confirm {
-    match &s.overlay {
-        Some(Overlay::Confirm(c)) => c,
-        _ => panic!("no confirmation"),
-    }
-}
-
 /// Moves the selection, comment by comment, to the first where `is`.
 fn select(s: &mut State, is: impl Fn(&Link) -> bool) {
     let selected = |s: &State| match s.screen() {
@@ -138,7 +131,10 @@ fn a_conversation_is_locked_with_a_reason_and_unlocked_after_asking() {
     assert!(screen_text(&s).contains("Locked as too heated"));
 
     press(&mut s, ",L");
-    assert_eq!(confirm(&s).title, "Unlock the conversation on this issue?");
+    assert_eq!(
+        overlay!(s, Ask).title,
+        "Unlock the conversation on this issue?"
+    );
     let cmds = press(&mut s, "<Enter>");
     let unlock = Change::Manage(Manage::Unlock {
         subject: NodeId::new("I_14"),
@@ -198,7 +194,7 @@ fn a_merged_pull_requests_branch_is_deleted_and_restored() {
 fn a_pull_request_converts_back_to_a_draft_after_asking() {
     let mut s = pr_with(|_| {});
     press(&mut s, ",r");
-    assert!(confirm(&s).title.ends_with("to a draft?"));
+    assert!(overlay!(s, Ask).title.ends_with("to a draft?"));
     let cmds = press(&mut s, "<Enter>");
     let draft = Change::Manage(Manage::ConvertToDraft {
         pr: NodeId::new("PR_12"),
@@ -221,7 +217,7 @@ fn a_new_base_is_picked_from_the_branches() {
     };
     fetched(&mut s, DataKey::Refs(ghtui()), Data::Refs(Box::new(refs)));
     press(&mut s, "next<Enter>");
-    assert_eq!(confirm(&s).title, "Change #12's base to next?");
+    assert_eq!(overlay!(s, Ask).title, "Change #12's base to next?");
     let cmds = press(&mut s, "<Enter>");
     let base = Change::Manage(Manage::ChangeBase {
         pr: NodeId::new("PR_12"),
@@ -235,14 +231,14 @@ fn a_new_base_is_picked_from_the_branches() {
 fn a_revert_opens_the_pull_request_github_makes() {
     let mut s = pr_with(|d| d.state = PrState::Merged);
     from_menu(&mut s, "revert");
-    assert_eq!(confirm(&s).title, "Revert #12?");
+    assert_eq!(overlay!(s, Ask).title, "Revert #12?");
     let cmds = press(&mut s, "<Enter>");
     let revert = Revert {
         pr: pr(),
         id: NodeId::new("PR_12"),
     };
     assert_eq!(fixtures::sent::<Revert>(&cmds), revert);
-    assert!(confirm(&s).sent.sending);
+    assert!(overlay!(s, Ask).sent.sending);
     fixtures::done(&mut s, revert, Ok(20));
     assert!(s.overlay.is_none());
     assert_eq!(
@@ -260,7 +256,7 @@ fn a_revert_opens_the_pull_request_github_makes() {
 fn an_issue_closes_as_a_duplicate_of_one_chosen() {
     let mut s = issue_with(|_| {});
     press(&mut s, ",x");
-    let labels: Vec<&str> = confirm(&s)
+    let labels: Vec<&str> = overlay!(s, Ask)
         .choices
         .iter()
         .map(|(l, _)| l.as_str())
@@ -442,7 +438,7 @@ fn an_issue_is_pinned_and_transferred() {
     fixtures::fetched(&mut s, key, Data::MoveTargets(Box::new(targets.into())));
     press(&mut s, "<Enter>");
     assert_eq!(
-        confirm(&s).title,
+        overlay!(s, Ask).title,
         "Transfer #14 to gold-silver-copper/elsewhere?"
     );
     let cmds = press(&mut s, "<Enter>");
@@ -471,7 +467,7 @@ fn an_issue_is_pinned_and_transferred() {
 fn a_discussion_closes_with_a_reason() {
     let mut s = with_discussion();
     press(&mut s, ",x");
-    let labels: Vec<&str> = confirm(&s)
+    let labels: Vec<&str> = overlay!(s, Ask)
         .choices
         .iter()
         .map(|(l, _)| l.as_str())

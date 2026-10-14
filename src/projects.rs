@@ -456,8 +456,8 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
             )];
             let title = format!("Archive “{title}”?");
             let choices = vec![("Archive".into(), change)];
-            let confirm = crate::act::Confirm::new(action, about, title, facts, choices);
-            state.overlay = Some(crate::state::Overlay::Confirm(Box::new(confirm)));
+            let confirm = crate::act::confirm(action, about, title, facts, choices);
+            state.overlay = Some(crate::state::Overlay::Ask(Box::new(confirm)));
             Vec::new()
         }
         (Action::EditComment | Action::EditTitle, _) => {

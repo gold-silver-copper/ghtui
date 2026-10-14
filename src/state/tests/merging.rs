@@ -3,6 +3,7 @@ use crate::api::model::{AutoMerge, MergeState, Mergeable, QueueState, Queued};
 
 use super::*;
 use crate::act::{By, Subject};
+use crate::forms::Answer;
 
 fn pr() -> PrRef {
     PrRef::parse("gold-silver-copper/ghtui#12").unwrap()
@@ -30,7 +31,12 @@ fn github_shows(s: &mut State, f: impl FnOnce(&mut PrDetail)) {
 
 fn choices(s: &State) -> Vec<(&str, &Change)> {
     match &s.overlay {
-        Some(Overlay::Confirm(c)) => c.choices.iter().map(|(l, c)| (l.as_str(), c)).collect(),
+        Some(Overlay::Ask(c)) => (c.choices.iter())
+            .filter_map(|(l, a)| match a {
+                Answer::Change(c) => Some((l.as_str(), c)),
+                _ => None,
+            })
+            .collect(),
         _ => panic!("no confirmation"),
     }
 }

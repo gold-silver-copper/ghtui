@@ -13,7 +13,7 @@ use crate::api::edit::{Edit, Editable};
 use crate::api::model::NodeId;
 use crate::route::{Route, discussions};
 
-use crate::act::{By, Confirm, Step, Subject};
+use crate::act::{By, Step, Subject};
 use crate::compose;
 use crate::data::DataKey;
 use crate::edit::Choosing;
@@ -356,7 +356,7 @@ fn plan(state: &State, h: &Here<'_>, action: Action) -> Result<Step, String> {
             }
             facts.push(("Deleting it can't be undone".to_owned(), true));
             let delete = Change::Discussion(Discuss::Delete { id: e.id.clone() });
-            Ok(Step::Ask(Box::new(Confirm::new(
+            Ok(Step::Ask(Box::new(crate::act::confirm(
                 action,
                 about,
                 format!("Delete {name}?"),

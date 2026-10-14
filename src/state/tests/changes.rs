@@ -7,16 +7,10 @@ use crate::store::DraftSide;
 
 use super::*;
 use crate::act::{By, Subject};
+use crate::forms::{About, Answer};
 
 fn pr() -> PrRef {
     PrRef::parse("gold-silver-copper/ghtui#12").unwrap()
-}
-
-fn confirm(s: &State) -> &crate::act::Confirm {
-    match &s.overlay {
-        Some(Overlay::Confirm(c)) => c,
-        _ => panic!("no confirmation"),
-    }
 }
 
 /// A pull request whose state is `state`.
@@ -48,7 +42,7 @@ fn mergeable(f: impl FnOnce(&mut crate::api::model::PrDetail)) -> crate::api::mo
 fn merging_asks_first_and_ends_up_as_github_has_it() {
     let mut s = pr_with(|_| {});
     assert!(press(&mut s, ",m").is_empty());
-    let c = confirm(&s);
+    let c = overlay!(s, Ask);
     let problems: Vec<&str> = (c.facts.iter())
         .filter(|(_, p)| *p)
         .map(|(f, _)| f.as_str())
@@ -74,16 +68,16 @@ fn merging_asks_first_and_ends_up_as_github_has_it() {
         sent,
         vec![fixtures::change(merge, By::Confirm(Subject::Pr(pr())))]
     );
-    assert!(confirm(&s).sent.sending);
+    assert!(overlay!(s, Ask).sent.sending);
     // Keys wait while it's sent.
     assert!(press(&mut s, "<Enter>").is_empty());
 
     let refused = ApiError::GraphQl(vec!["Must have push access to repository".into()]);
     answer(&mut s, &sent, Err(refused));
-    let error = confirm(&s).sent.error.clone().unwrap_or_default();
+    let error = overlay!(s, Ask).sent.error.clone().unwrap_or_default();
     assert!(error.contains("Must have push access"), "{error}");
     assert!(error.contains("Contents: write"), "{error}");
-    assert!(!confirm(&s).sent.sending);
+    assert!(!overlay!(s, Ask).sent.sending);
 
     press(&mut s, "<Enter>");
     let cmds = answer(&mut s, &sent, Ok(()));
@@ -114,9 +108,12 @@ fn acting_on_a_homes_row_is_about_that_row() {
     assert_eq!(cmds, vec![crate::fixtures::fetch_pr(&pr())]);
     says(&s, "Loading gold-silver-copper/ghtui#12");
     crate::fixtures::pr_fetched(&mut s, &pr(), Ok(mergeable(|_| {})));
-    assert_eq!(confirm(&s).about, Subject::Pr(pr()));
+    assert_eq!(
+        overlay!(s, Ask).about,
+        About::Act(Action::Merge, Subject::Pr(pr()))
+    );
     assert!(
-        confirm(&s)
+        overlay!(s, Ask)
             .title
             .starts_with("Merge gold-silver-copper/ghtui#12")
     );
@@ -125,7 +122,10 @@ fn acting_on_a_homes_row_is_about_that_row() {
     press(&mut s, ",m");
     let mine = crate::fixtures::found_prs(Vec::new(), 0);
     crate::fixtures::section(&mut s, 1, mine);
-    assert_eq!(confirm(&s).about, Subject::Pr(pr()));
+    assert_eq!(
+        overlay!(s, Ask).about,
+        About::Act(Action::Merge, Subject::Pr(pr()))
+    );
     let sent = press(&mut s, "<Enter>");
     answer(&mut s, &sent, Ok(()));
     assert_eq!(s.route(), Some(&Route::App(app::Home)));
@@ -171,9 +171,9 @@ fn after_updating_the_branch_merging_waits_for_the_new_head() {
         rebase: false,
         head: pr_detail().head_oid,
     };
-    assert_eq!(confirm(&s).choices[0].1, update_branch);
+    assert_eq!(overlay!(s, Ask).choices[0].1, Answer::Change(update_branch));
     assert_eq!(
-        confirm(&s).facts[0].0,
+        overlay!(s, Ask).facts[0].0,
         "Its branch, syntax-palette, is 2 commits behind main; updating pushes to it"
     );
     let sent = press(&mut s, "<Enter>");
@@ -192,8 +192,8 @@ fn after_updating_the_branch_merging_waits_for_the_new_head() {
     });
     crate::fixtures::pr_fetched(&mut s, &pr(), Ok(moved));
     press(&mut s, ",m");
-    let head = match &confirm(&s).choices[0].1 {
-        Change::Merge { head, .. } => head.clone(),
+    let head = match &overlay!(s, Ask).choices[0].1 {
+        Answer::Change(Change::Merge { head, .. }) => head.clone(),
         other => panic!("{other:?}"),
     };
     assert_eq!(head, "1".repeat(40));
@@ -232,7 +232,7 @@ fn what_github_forbids_is_refused() {
         (d.may.enable_auto_merge, d.auto_merge_allowed) = (true, true);
     });
     press(&mut s, ",m");
-    let c = confirm(&s);
+    let c = overlay!(s, Ask);
     assert!(
         c.choices
             .iter()
@@ -303,7 +303,7 @@ fn a_draft_is_marked_ready_at_once_and_hears_back_alone() {
     press(&mut s, ",x");
     let refused = ApiError::GraphQl(vec!["Not now".into()]);
     answer(&mut s, &sent, Err(refused));
-    assert_eq!(confirm(&s).sent.error, None);
+    assert_eq!(overlay!(s, Ask).sent.error, None);
     warns(&s, "Not now");
     press(&mut s, "<Esc>WcLGTM");
     answer(&mut s, &sent, Ok(()));
@@ -407,7 +407,7 @@ fn approving_from_the_page_takes_your_saved_drafts() {
 fn runs_rerun_and_cancel() {
     let mut s = with_run();
     press(&mut s, ",R");
-    let choices: Vec<&str> = confirm(&s)
+    let choices: Vec<&str> = overlay!(s, Ask)
         .choices
         .iter()
         .map(|(l, _)| l.as_str())
@@ -430,8 +430,8 @@ fn runs_rerun_and_cancel() {
 
     let mut s = with_job(None);
     press(&mut s, ",R");
-    assert_eq!(confirm(&s).title, "Re-run CI #412?");
-    let first = confirm(&s).choices.first().map(|(l, _)| l.clone());
+    assert_eq!(overlay!(s, Ask).title, "Re-run CI #412?");
+    let first = overlay!(s, Ask).choices.first().map(|(l, _)| l.clone());
     assert_eq!(first.as_deref(), Some("Re-run this job"));
 }
 
@@ -509,7 +509,7 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
         query: String::new(),
     };
     assert!(press(&mut s, ",N").is_empty());
-    let c = confirm(&s);
+    let c = overlay!(s, Ask);
     assert_eq!(c.title, "Mark 2 notifications read?");
     let older = "And the older ones further down, not loaded yet";
     assert!(c.facts.iter().any(|(f, _)| f == older), "{:?}", c.facts);
@@ -538,7 +538,7 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
 
     // Done: each thread loaded, and only those.
     press(&mut s, ",D");
-    let c = confirm(&s);
+    let c = overlay!(s, Ask);
     assert_eq!(c.title, "Mark 4 notifications done?");
     let loaded = "Only the 4 loaded: those further down stay as they are";
     assert!(c.facts.iter().any(|(f, _)| f == loaded), "{:?}", c.facts);
@@ -569,7 +569,10 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
         threads: threads[..2].to_vec(),
         done: false,
     };
-    assert_eq!(confirm(&s).choices.first().map(|(_, c)| c), Some(&each));
+    assert_eq!(
+        overlay!(s, Ask).choices.first().map(|(_, c)| c),
+        Some(&Answer::Change(each))
+    );
 }
 
 /// A job that ended in a run still going is the run's to cancel, and
@@ -587,7 +590,7 @@ fn a_finished_job_in_a_running_run_cancels_the_run() {
     press(&mut s, ",R");
     says(&s, "The run is still going: ,x cancels it");
     press(&mut s, ",x");
-    assert_eq!(confirm(&s).title, "Cancel CI #412?");
+    assert_eq!(overlay!(s, Ask).title, "Cancel CI #412?");
     let cancel = Change::CancelRun {
         repo: ghtui(),
         run: 7,

@@ -30,13 +30,6 @@ fn composer(s: &mut State) -> &mut crate::compose::Compose {
     }
 }
 
-fn asked(s: &State) -> &crate::forms::Ask {
-    match &s.overlay {
-        Some(Overlay::Ask(a)) => a,
-        _ => panic!("nothing asked"),
-    }
-}
-
 /// The new issue's form, from the bug report template, its composer open.
 fn bug_report() -> State {
     let (mut s, _) = form(",i");
@@ -213,7 +206,7 @@ fn a_pull_request_from_the_clones_branch_is_pushed_then_made() {
     assert!(press(&mut s, ",s").is_empty());
     fixtures::warns(&s, "fix-parser isn't on GitHub: ,P pushes it to origin");
     assert!(press(&mut s, ",P").is_empty());
-    assert_eq!(asked(&s).title, "Push fix-parser to origin?");
+    assert_eq!(overlay!(s, Ask).title, "Push fix-parser to origin?");
     let push = press(&mut s, "<Enter>");
     let pushed = Push {
         repo: ghtui(),
@@ -227,7 +220,11 @@ fn a_pull_request_from_the_clones_branch_is_pushed_then_made() {
     head(&mut s, Some("a"));
 
     press(&mut s, ",s");
-    let choices: Vec<&str> = asked(&s).choices.iter().map(|(l, _)| l.as_str()).collect();
+    let choices: Vec<&str> = overlay!(s, Ask)
+        .choices
+        .iter()
+        .map(|(l, _)| l.as_str())
+        .collect();
     assert_eq!(
         choices,
         ["Create pull request", "Create draft pull request"]

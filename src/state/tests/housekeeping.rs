@@ -15,13 +15,6 @@ use crate::housekeeping::{files, labels, milestones, refs, repos};
 use super::*;
 use crate::fixtures::{self};
 
-fn asked(s: &State) -> &crate::forms::Ask {
-    match &s.overlay {
-        Some(Overlay::Ask(a)) => a,
-        _ => panic!("nothing asked"),
-    }
-}
-
 fn picker(s: &State) -> bool {
     matches!(&s.overlay, Some(Overlay::Picker(_)))
 }
@@ -136,7 +129,7 @@ fn a_label_is_edited_and_deleted() {
 
     select(&mut s, "bug");
     press(&mut s, ",D");
-    let ask = asked(&s);
+    let ask = overlay!(s, Ask);
     assert_eq!(ask.title, "Delete the label bug?");
     assert!(
         ask.facts
@@ -214,7 +207,7 @@ fn milestones_are_closed_edited_and_deleted() {
 
     select(&mut s, "Links");
     press(&mut s, ",D");
-    assert_eq!(asked(&s).title, "Delete the milestone Links?");
+    assert_eq!(overlay!(s, Ask).title, "Delete the milestone Links?");
     let cmds = press(&mut s, "<Enter>");
     let delete = milestones::Save {
         repo: ghtui(),
@@ -291,7 +284,7 @@ fn in_a_clone_git_pushes_after_asking() {
     let key = DataKey::BranchRules(repo.clone(), "tabs".into());
     fixtures::fetched(&mut s, key.clone(), Data::BranchRules(Box::new(rules)));
     assert_eq!(fixtures::asked(&cmds), [key]);
-    let ask = asked(&s);
+    let ask = overlay!(s, Ask);
     assert_eq!(ask.title, "Delete the branch tabs?");
     assert!(
         ask.facts
@@ -397,7 +390,7 @@ fn a_new_repository_is_made_and_cloning_offered() {
     fixtures::done(&mut s, make, Ok(made));
     let repo = crate::api::model::RepoId::new("ghtui-org", "tools");
     assert_eq!(s.route(), Some(&Route::Code(code::Repo(repo))));
-    assert_eq!(asked(&s).title, "Clone ghtui-org/tools?");
+    assert_eq!(overlay!(s, Ask).title, "Clone ghtui-org/tools?");
     let cmds = press(&mut s, "<Enter>");
     assert_eq!(
         fixtures::sent::<repos::CloneTo>(&cmds),
@@ -452,7 +445,7 @@ fn a_file_is_edited_and_committed_on_a_new_branch() {
     select(&mut s, "Commit to");
     press(&mut s, "<Enter>octocat-patch-1<Enter>");
     press(&mut s, ",s");
-    let ask = asked(&s);
+    let ask = overlay!(s, Ask);
     assert_eq!(ask.title, "Commit changes?");
     assert!(
         ask.facts
@@ -476,7 +469,10 @@ fn a_file_is_edited_and_committed_on_a_new_branch() {
     fixtures::done(&mut s, commit, Ok(()));
     let page = Route::blob(ghtui(), "octocat-patch-1".into(), "src/main.rs".into());
     assert_eq!(s.route(), Some(&page));
-    assert_eq!(asked(&s).title, "Open a pull request for octocat-patch-1?");
+    assert_eq!(
+        overlay!(s, Ask).title,
+        "Open a pull request for octocat-patch-1?"
+    );
     press(&mut s, "<Enter>");
     assert_eq!(s.route(), Some(&Route::Pulls(pulls::NewPr(ghtui()))));
     let pr = (s
@@ -537,7 +533,7 @@ fn a_file_is_deleted_with_a_commit() {
     assert_eq!(s.route(), Some(&form));
     read(&mut s);
     press(&mut s, ",s");
-    assert_eq!(asked(&s).title, "Delete src/main.rs?");
+    assert_eq!(overlay!(s, Ask).title, "Delete src/main.rs?");
     let cmds = press(&mut s, "<Enter>");
     let commit = fixtures::sent::<files::Commit>(&cmds);
     let write = &commit.write;

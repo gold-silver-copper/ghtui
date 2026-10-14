@@ -173,12 +173,7 @@ pub fn queue_change(
         _ => here(state),
     };
     // What sent it is done with it: it's in the queue now.
-    if sender
-        && matches!(
-            state.overlay,
-            Some(Overlay::Compose(_) | Overlay::Confirm(_))
-        )
-    {
+    if sender && matches!(state.overlay, Some(Overlay::Compose(_) | Overlay::Ask(_))) {
         state.overlay = None;
     }
     state.info(format!(

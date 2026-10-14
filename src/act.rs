@@ -16,10 +16,10 @@ use crate::api::model::{
 use crate::api::notifications::Inbox;
 use crate::api::project::ProjectRef;
 use crate::route::{Route, discussions, issues, projects, pulls, runs, search, security, settings};
-use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::data::{DataKey, Picked};
 use crate::follow::{Expectation, Shown};
+use crate::forms::{About, Answer, Ask};
 use crate::keymap::Action;
 use crate::nav;
 use crate::state::{Api, Cmd, Overlay, Screen, State};
@@ -42,54 +42,23 @@ pub const ACTIONS: [Action; 10] = [
     Action::Close,
 ];
 
-/// A change to confirm: what it is, what's worth knowing first, and the
-/// ways to make it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Confirm {
-    /// What asked for it: planned again as GitHub's answers arrive, so
-    /// the facts stay true and a change that no longer applies closes.
-    pub action: Action,
-    /// What it changes, kept: on a list, the selection may move on.
-    pub about: Subject,
-    pub title: String,
-    /// Each with whether it's a problem.
-    pub facts: Vec<(String, bool)>,
-    pub choices: Vec<(String, Change)>,
-    pub selected: usize,
-    pub sent: crate::forms::Sent,
-    /// The composer it was asked from, with its text: if GitHub refuses,
-    /// it opens again.
-    pub back: Option<(crate::compose::Target, String)>,
+/// A question before an action's change ([`Ask`]): what it is, what's
+/// worth knowing first, and the ways to make it.
+pub fn confirm(
+    action: Action,
+    about: Subject,
+    title: String,
+    facts: Vec<(String, bool)>,
+    choices: Vec<(String, Change)>,
+) -> Ask {
+    Ask::new(About::Act(action, about), title, facts, answers(choices))
 }
 
-impl Confirm {
-    pub fn new(
-        action: Action,
-        about: Subject,
-        title: String,
-        facts: Vec<(String, bool)>,
-        choices: Vec<(String, Change)>,
-    ) -> Self {
-        Self {
-            action,
-            about,
-            title,
-            facts,
-            choices,
-            selected: 0,
-            sent: crate::forms::Sent::default(),
-            back: None,
-        }
-    }
-
-    /// What's happening while GitHub answers.
-    pub fn busy(&self) -> Option<String> {
-        let (_, change) = self
-            .choices
-            .get(self.selected)
-            .filter(|_| self.sent.sending)?;
-        Some(format!("{}…", doing(change)))
-    }
+/// Ways to make a change, as a question's answers.
+fn answers(choices: Vec<(String, Change)>) -> Vec<(String, Answer)> {
+    (choices.into_iter())
+        .map(|(label, change)| (label, Answer::Change(change)))
+        .collect()
 }
 
 /// What sent a change: GitHub's answer goes back there, and only there.
@@ -150,7 +119,7 @@ pub enum Step {
     /// Say what's being done, and send it.
     Send(Change, Subject),
     /// Ask first.
-    Ask(Box<Confirm>),
+    Ask(Box<Ask>),
     /// Choose in a picker.
     Pick(crate::picker::Kind),
     /// Write it in the composer, starting with this text.
@@ -166,8 +135,8 @@ pub fn take(state: &mut State, planned: Result<Step, String>) -> Vec<Cmd> {
             state.info(format!("{}…", doing(&change)));
             vec![send(change, By::Act(about))]
         }
-        Ok(Step::Ask(confirm)) => {
-            state.overlay = Some(Overlay::Confirm(confirm));
+        Ok(Step::Ask(ask)) => {
+            state.overlay = Some(Overlay::Ask(ask));
             Vec::new()
         }
         Ok(Step::Pick(kind)) => state.open_picker(kind),
@@ -210,7 +179,7 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
 fn act_on(state: &mut State, subject: Subject, action: Action) -> Vec<Cmd> {
     let step = match plan_for(state, &subject, action) {
         Err(why) => Err(why),
-        Ok(Plan::Ask(title, facts, choices)) => Ok(Step::Ask(Box::new(Confirm::new(
+        Ok(Plan::Ask(title, facts, choices)) => Ok(Step::Ask(Box::new(confirm(
             action, subject, title, facts, choices,
         )))),
         Ok(Plan::Do(change)) => Ok(Step::Send(change, subject)),
@@ -837,39 +806,16 @@ fn run_plan(
     }
 }
 
-/// Keys in the confirmation: choose, do it, or cancel.
+/// The change chosen in a question about what an action changes.
 #[must_use]
-pub fn on_confirm_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
-    let Some(Overlay::Confirm(confirm)) = &mut state.overlay else {
-        return Vec::new();
-    };
-    let n = confirm.choices.len().max(1);
-    match key.code {
-        KeyCode::Esc => state.overlay = None,
-        _ if confirm.sent.sending => {}
-        KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
-            confirm.selected = (confirm.selected + 1) % n;
-        }
-        KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
-            confirm.selected = (confirm.selected + n - 1) % n;
-        }
-        KeyCode::Enter => {
-            if let Some((_, change)) = confirm.choices.get(confirm.selected) {
-                let (change, about) = (change.clone(), confirm.about.clone());
-                // A revert or a transfer answers with what it made; a
-                // duplicate is chosen first.
-                if let Some(cmds) = crate::manage::confirmed(state, &change, &about) {
-                    return cmds;
-                }
-                if let Some(Overlay::Confirm(confirm)) = &mut state.overlay {
-                    confirm.sent.start();
-                }
-                return vec![send(change, By::Confirm(about))];
-            }
-        }
-        _ => {}
+pub fn confirmed(state: &mut State, change: Change, about: Subject) -> Vec<Cmd> {
+    // A revert or a transfer answers with what it made; a duplicate is
+    // chosen first.
+    if let Some(cmds) = crate::manage::confirmed(state, &change, &about) {
+        return cmds;
     }
-    Vec::new()
+    crate::forms::sending(state);
+    vec![send(change, By::Confirm(about))]
 }
 
 /// A change sent to GitHub, and what sent it.
@@ -903,11 +849,10 @@ impl work::Job for Changing {
 fn on_changed(state: &mut State, change: &Change, by: By, result: Result<(), Failure>) -> Vec<Cmd> {
     // The dialog or the composer that sent it, if it's still waiting.
     let sender = match (&by, &state.overlay) {
-        (By::Confirm(_), Some(Overlay::Confirm(c))) => {
+        (By::Confirm(_), Some(Overlay::Ask(c))) => {
             c.sent.sending
-                && c.choices
-                    .get(c.selected)
-                    .is_some_and(|(_, sent)| sent == change)
+                && (c.choices.get(c.selected))
+                    .is_some_and(|(_, sent)| matches!(sent, Answer::Change(c) if c == change))
         }
         (By::Compose | By::Reply(_) | By::Edit(_), Some(Overlay::Compose(c))) => c.sent.sending,
         _ => false,
@@ -955,7 +900,7 @@ fn on_changed(state: &mut State, change: &Change, by: By, result: Result<(), Fai
             // What was written comes back to edit.
             let mut cmds = Vec::new();
             if sender
-                && let Some(Overlay::Confirm(confirm)) = &mut state.overlay
+                && let Some(Overlay::Ask(confirm)) = &mut state.overlay
                 && let Some((target, written)) = confirm.back.take()
             {
                 cmds = state.compose(target, &written);
@@ -1151,22 +1096,25 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
             cmds.extend((p.then)(state, p.subject, p.action));
         }
     }
-    let Some(Overlay::Confirm(confirm)) = &state.overlay else {
+    let Some(Overlay::Ask(ask)) = &state.overlay else {
         return cmds;
     };
-    // Another module's confirmation (deleting a comment) is its own.
-    if confirm.sent.sending || !ACTIONS.contains(&confirm.action) {
+    // Another module's question (deleting a comment, a form's) is its own.
+    let About::Act(action, about) = &ask.about else {
+        return cmds;
+    };
+    if ask.sent.sending || !ACTIONS.contains(action) {
         return cmds;
     }
-    let planned = plan_for(state, &confirm.about, confirm.action);
+    let planned = plan_for(state, about, *action);
     match (planned, &mut state.overlay) {
         (Err(why), _) => {
             state.overlay = None;
             state.info(why);
         }
-        (Ok(Plan::Ask(title, facts, choices)), Some(Overlay::Confirm(confirm))) => {
-            confirm.selected = confirm.selected.min(choices.len().saturating_sub(1));
-            (confirm.title, confirm.facts, confirm.choices) = (title, facts, choices);
+        (Ok(Plan::Ask(title, facts, choices)), Some(Overlay::Ask(ask))) => {
+            ask.selected = ask.selected.min(choices.len().saturating_sub(1));
+            (ask.title, ask.facts, ask.choices) = (title, facts, answers(choices));
         }
         _ => {}
     }
@@ -1185,7 +1133,7 @@ fn notifies(change: &Change) -> bool {
 }
 
 /// What a change is doing while GitHub answers: "Merging".
-fn doing(change: &Change) -> &'static str {
+pub(crate) fn doing(change: &Change) -> &'static str {
     match change {
         Change::Comment { .. } | Change::CommitComment { .. } | Change::Reply { .. } => "Posting",
         Change::Star { starred: true, .. } => "Starring",

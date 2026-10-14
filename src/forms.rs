@@ -8,10 +8,10 @@
 //! leaving one keeps it, each with what it [`Sent`]. A change to one is
 //! a new version of it, which is what its page is built again for.
 //!
-//! A form's write may ask first ([`Ask`], answered with an [`Answer`]).
-//! The composer, a question and a confirmation say what they sent the
-//! same way; [`say`], [`sending`] and [`close_sender`] reach whichever
-//! one is open.
+//! A write may ask first ([`Ask`], answered with an [`Answer`]): a
+//! form's, or a change an action makes. The composer and a question say
+//! what they sent the same way; [`say`], [`sending`] and [`close_sender`]
+//! reach whichever one is open.
 
 use std::any::Any;
 use std::borrow::Cow;
@@ -370,7 +370,6 @@ impl Overlay {
         match self {
             Overlay::Compose(c) => Some(&mut c.sent),
             Overlay::Ask(a) => Some(&mut a.sent),
-            Overlay::Confirm(c) => Some(&mut c.sent),
             Overlay::Submit(d) => Some(&mut d.sent),
             Overlay::Find(_)
             | Overlay::Search(_)
@@ -382,8 +381,8 @@ impl Overlay {
 }
 
 /// Says `text` where it'll be seen: in what sent it when that's open
-/// (the composer, a question, a confirmation), else in the status bar;
-/// and does nothing else.
+/// (the composer, a question, the review's dialog), else in the status
+/// bar; and does nothing else.
 #[must_use]
 pub(crate) fn say(state: &mut State, text: String) -> Vec<Cmd> {
     match state.overlay.as_mut().and_then(Overlay::sent_mut) {
@@ -393,8 +392,8 @@ pub(crate) fn say(state: &mut State, text: String) -> Vec<Cmd> {
     Vec::new()
 }
 
-/// Marks what sent something (the composer, a question, a
-/// confirmation) as waiting for GitHub.
+/// Marks what sent something (the composer, a question, the review's
+/// dialog) as waiting for GitHub.
 pub(crate) fn sending(state: &mut State) {
     if let Some(sent) = state.overlay.as_mut().and_then(Overlay::sent_mut) {
         sent.start();
@@ -422,7 +421,7 @@ pub(crate) fn failed(state: &mut State, route: &Route, why: String) -> Vec<Cmd> 
 pub(crate) fn close_sender(state: &mut State, route: &Route) {
     let ours = match &state.overlay {
         Some(Overlay::Compose(c)) => matches!(&c.target, Target::Form(t) if t.route == *route),
-        Some(Overlay::Ask(a)) => a.route == *route,
+        Some(Overlay::Ask(a)) => matches!(&a.about, About::Form(r) if r == route),
         _ => false,
     };
     if ours {
@@ -439,37 +438,54 @@ pub(crate) fn done<F: Fields + Default>(state: &mut State, route: &Route) -> F {
 
 // ---- questions -------------------------------------------------------------------
 
-/// A question before a form's write is made: what, what's worth knowing,
-/// and the ways to go ahead.
+/// A question before a write is made: what, what's worth knowing, and
+/// the ways to go ahead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ask {
-    pub route: Route,
+    pub about: About,
     pub title: String,
+    /// Each with whether it's a problem.
     pub facts: Vec<(String, bool)>,
     pub choices: Vec<(String, Answer)>,
     pub selected: usize,
     pub sent: Sent,
+    /// The composer it was asked from, with its text: if GitHub refuses,
+    /// it opens again.
+    pub back: Option<(Target, String)>,
+}
+
+/// What a question is about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum About {
+    /// The form on this page.
+    Form(Route),
+    /// What an action changes ([`crate::act`]), kept (on a list, the
+    /// selection may move on), and the action: planned again as GitHub's
+    /// answers arrive, so the facts stay true and a change that no
+    /// longer applies closes.
+    Act(Action, crate::act::Subject),
 }
 
 impl Ask {
     pub fn new(
-        route: Route,
+        about: About,
         title: String,
         facts: Vec<(String, bool)>,
         choices: Vec<(String, Answer)>,
     ) -> Self {
         Self {
-            route,
+            about,
             title,
             facts,
             choices,
             selected: 0,
             sent: Sent::default(),
+            back: None,
         }
     }
 
     /// What's happening while git or GitHub answers.
-    pub fn busy(&self) -> Option<&'static str> {
+    pub fn busy(&self) -> Option<String> {
         let (_, answer) = self
             .choices
             .get(self.selected)
@@ -503,12 +519,15 @@ pub enum Answer {
     DeleteGist,
     Site(crate::site::Answer),
     Housekeeping(crate::housekeeping::Answer),
+    /// A change to GitHub, about what [`About::Act`] says.
+    Change(crate::api::change::Change),
 }
 
 impl Answer {
     /// What's happening while git or GitHub answers.
-    pub fn busy(&self) -> &'static str {
-        match self {
+    pub fn busy(&self) -> String {
+        let busy = match self {
+            Answer::Change(change) => return format!("{}…", crate::act::doing(change)),
             Answer::Push => "Pushing…",
             Answer::CreatePr { .. } => "Creating the pull request…",
             Answer::Release { draft: true } => "Saving the draft…",
@@ -521,7 +540,8 @@ impl Answer {
             Answer::DeleteGist => "Deleting the gist…",
             Answer::Site(a) => a.busy(),
             Answer::Housekeeping(a) => a.busy(),
-        }
+        };
+        busy.to_owned()
     }
 }
 
@@ -534,7 +554,7 @@ pub(crate) fn ask(
     facts: Vec<(String, bool)>,
     choices: Vec<(String, Answer)>,
 ) {
-    let ask = Ask::new(route, title, facts, choices);
+    let ask = Ask::new(About::Form(route), title, facts, choices);
     state.overlay = Some(Overlay::Ask(Box::new(ask)));
 }
 
@@ -556,8 +576,13 @@ pub fn on_ask_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             let Some((_, answer)) = ask.choices.get(ask.selected).cloned() else {
                 return Vec::new();
             };
-            let route = ask.route.clone();
-            return answered(state, &route, answer);
+            return match (ask.about.clone(), answer) {
+                (About::Act(_, about), Answer::Change(change)) => {
+                    crate::act::confirmed(state, change, about)
+                }
+                (About::Form(route), answer) => answered(state, &route, answer),
+                (About::Act(..), _) => Vec::new(),
+            };
         }
         _ => {}
     }
@@ -585,5 +610,6 @@ fn answered(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
         Answer::DeleteGist => crate::gist::delete(state, route),
         Answer::Site(a) => crate::site::answer(state, route, a),
         Answer::Housekeeping(a) => crate::housekeeping::answer(state, route, a),
+        Answer::Change(_) => Vec::new(),
     }
 }

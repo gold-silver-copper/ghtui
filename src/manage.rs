@@ -22,7 +22,7 @@ use crate::api::model::{Capped, NodeId, PrDetail, PrRef, RepoId};
 use crate::ui::overlays::PaletteItem;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::act::{Confirm, Step, Subject};
+use crate::act::{Step, Subject};
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
@@ -171,8 +171,13 @@ fn selected_comment(state: &State, about: &Subject) -> Result<Said, String> {
 
 // ---- what a key does --------------------------------------------------------------
 
-fn ask(action: Action, about: Subject, title: String, facts: Vec<(String, bool)>) -> Confirm {
-    Confirm::new(action, about, title, facts, Vec::new())
+fn ask(
+    action: Action,
+    about: Subject,
+    title: String,
+    facts: Vec<(String, bool)>,
+) -> crate::forms::Ask {
+    crate::act::confirm(action, about, title, facts, Vec::new())
 }
 
 /// Where `action` works, for when it doesn't here.
@@ -265,7 +270,10 @@ fn lock_plan(
     let unlock = Change::Manage(Manage::Unlock {
         subject: id.clone(),
     });
-    confirm.choices = vec![("Unlock conversation".into(), unlock)];
+    confirm.choices = vec![(
+        "Unlock conversation".into(),
+        crate::forms::Answer::Change(unlock),
+    )];
     Ok(Step::Ask(Box::new(confirm)))
 }
 
@@ -341,7 +349,7 @@ fn pr_plan(state: &State, r: &PrRef, action: Action, about: Subject) -> Result<S
                 ],
             );
             let revert = Change::Manage(Manage::Revert { pr: d.id.clone() });
-            confirm.choices = vec![("Revert".into(), revert)];
+            confirm.choices = vec![("Revert".into(), crate::forms::Answer::Change(revert))];
             Ok(Step::Ask(Box::new(confirm)))
         }
         _ => Err(elsewhere(action)),
@@ -627,7 +635,7 @@ pub enum Chosen {
     /// Send this change, about this.
     Send(Change, Subject),
     /// Ask first.
-    Ask(Box<Confirm>),
+    Ask(Box<crate::forms::Ask>),
     /// Check out a branch in your clone.
     Checkout(crate::clone::Checkout),
     /// Write the new discussion in the composer, starting with this.
@@ -809,7 +817,7 @@ fn base_rows(state: &State, pr: &PrRef, id: &NodeId, from: &str, head: &str, q: 
                 pr: id.clone(),
                 base: base.clone(),
             });
-            confirm.choices = vec![("Change base".into(), change)];
+            confirm.choices = vec![("Change base".into(), crate::forms::Answer::Change(change))];
             crate::picker::entry(base.clone(), "", Some(Chosen::Ask(Box::new(confirm))))
         })
         .collect();
@@ -855,7 +863,10 @@ fn transfer_rows(state: &State, issue: &IssueAt, id: &NodeId, q: &str) -> Rows {
                 to: t.id.clone(),
                 repo: t.repo.clone(),
             });
-            confirm.choices = vec![("Transfer issue".into(), change)];
+            confirm.choices = vec![(
+                "Transfer issue".into(),
+                crate::forms::Answer::Change(change),
+            )];
             crate::picker::entry(t.repo.to_string(), "", Some(Chosen::Ask(Box::new(confirm))))
         })
         .collect();
@@ -1143,7 +1154,7 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
     match chosen {
         Chosen::Send(change, about) => send(state, change, about),
         Chosen::Ask(confirm) => {
-            state.overlay = Some(Overlay::Confirm(confirm));
+            state.overlay = Some(Overlay::Ask(confirm));
             Vec::new()
         }
         Chosen::Checkout(checkout) => {
@@ -1192,7 +1203,7 @@ pub fn confirmed(state: &mut State, change: &Change, about: &Subject) -> Option<
         .into(),
         _ => return None,
     };
-    if let Some(Overlay::Confirm(c)) = &mut state.overlay {
+    if let Some(Overlay::Ask(c)) = &mut state.overlay {
         c.sent.sending = true;
         c.sent.error = None;
     }
@@ -1386,7 +1397,7 @@ impl Job for Start {
 }
 
 fn close_confirm(state: &mut State) {
-    if let Some(Overlay::Confirm(_)) = state.overlay {
+    if let Some(Overlay::Ask(_)) = state.overlay {
         state.overlay = None;
     }
 }
@@ -1395,7 +1406,7 @@ fn close_confirm(state: &mut State) {
 /// still open.
 fn refused(state: &mut State, text: String) -> Vec<Cmd> {
     match &mut state.overlay {
-        Some(Overlay::Confirm(c)) if c.sent.sending => {
+        Some(Overlay::Ask(c)) if c.sent.sending => {
             c.sent.sending = false;
             c.sent.error = Some(text);
         }

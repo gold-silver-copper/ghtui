@@ -173,7 +173,7 @@ fn comments_are_reacted_to_edited_and_deleted() {
     assert_eq!(c.text(), "That works, thanks!");
     s.overlay = None;
     press(&mut s, ",D");
-    let Some(Overlay::Confirm(c)) = &s.overlay else {
+    let Some(Overlay::Ask(c)) = &s.overlay else {
         panic!("not asked");
     };
     assert_eq!(c.title, "Delete octocat's reply?");

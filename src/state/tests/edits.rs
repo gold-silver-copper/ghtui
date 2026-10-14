@@ -159,13 +159,13 @@ fn deleting_a_comment_asks_first() {
     let mut s = issue_with(|_| {});
     on_hubot(&mut s);
     assert!(press(&mut s, ",D").is_empty());
-    let Some(Overlay::Confirm(c)) = &s.overlay else {
+    let Some(Overlay::Ask(c)) = &s.overlay else {
         panic!(",D asks first")
     };
     assert!(c.title.starts_with("Delete hubot's comment"), "{}", c.title);
     // Data arriving doesn't close or change it.
     deliver(&mut s, |_| {});
-    assert!(matches!(s.overlay, Some(Overlay::Confirm(_))));
+    assert!(matches!(s.overlay, Some(Overlay::Ask(_))));
     let cmds = press(&mut s, "<Enter>");
     let delete = Edit::Delete {
         of: Written::IssueComment,

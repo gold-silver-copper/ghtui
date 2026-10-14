@@ -22,13 +22,6 @@ fn page() -> Route {
     })
 }
 
-fn asked(s: &State) -> &crate::forms::Ask {
-    match &s.overlay {
-        Some(Overlay::Ask(a)) => a,
-        _ => panic!("nothing asked"),
-    }
-}
-
 fn select_link(s: &mut State, link: &Link) {
     let height = s.page_height();
     let Screen::Page(p) = s.screen_mut() else {
@@ -64,7 +57,7 @@ fn a_release_is_edited_and_its_page_follows() {
     c.input.insert_str(", fixed");
     press(&mut s, "<Esc>");
     press(&mut s, ",s");
-    let choices: Vec<&str> = (asked(&s).choices.iter())
+    let choices: Vec<&str> = (overlay!(s, Ask).choices.iter())
         .map(|(l, _)| l.as_str())
         .collect();
     assert_eq!(choices, ["Update release", "Make it a draft again"]);
@@ -113,11 +106,11 @@ fn a_release_is_edited_and_its_page_follows() {
 fn a_release_is_deleted_then_its_tag_asked_about() {
     let mut s = with_release();
     press(&mut s, ",D");
-    assert_eq!(asked(&s).title, "Delete the release ghtui 0.2.0?");
+    assert_eq!(overlay!(s, Ask).title, "Delete the release ghtui 0.2.0?");
     assert!(
-        (asked(&s).facts.iter()).any(|(f, _)| f.contains("2 assets go with it")),
+        (overlay!(s, Ask).facts.iter()).any(|(f, _)| f.contains("2 assets go with it")),
         "{:?}",
-        asked(&s).facts
+        overlay!(s, Ask).facts
     );
     let sent = fixtures::sent::<Delete>(&press(&mut s, "<Enter>"));
     let want = Delete {
@@ -131,7 +124,7 @@ fn a_release_is_deleted_then_its_tag_asked_about() {
         s.route(),
         Some(&Route::Releases(releases::Releases(ghtui())))
     );
-    assert_eq!(asked(&s).title, "Delete the tag v0.2.0 as well?");
+    assert_eq!(overlay!(s, Ask).title, "Delete the tag v0.2.0 as well?");
     let sent = fixtures::sent::<DeleteTag>(&press(&mut s, "<Enter>"));
     let tag = "v0.2.0".to_owned();
     assert_eq!(sent, DeleteTag { repo: ghtui(), tag });
@@ -223,7 +216,7 @@ fn assets_are_uploaded_and_deleted() {
     let name = "ghtui-aarch64-macos.tar.gz";
     select_link(&mut s, &Link::Asset(name.into()));
     press(&mut s, ",D");
-    assert_eq!(asked(&s).title, format!("Delete {name}?"));
+    assert_eq!(overlay!(s, Ask).title, format!("Delete {name}?"));
     let sent = fixtures::sent::<assets::Delete>(&press(&mut s, "<Enter>"));
     let of = Of {
         repo: ghtui(),

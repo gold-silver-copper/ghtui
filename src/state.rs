@@ -351,9 +351,7 @@ pub enum Overlay {
     Compose(Box<Compose>),
     /// Submitting the review.
     Submit(Box<SubmitDialog>),
-    /// Asking before a change to GitHub.
-    Confirm(Box<act::Confirm>),
-    /// Asking before pushing a branch or opening a pull request.
+    /// Asking before a write: a form's, or an action's change.
     Ask(Box<crate::forms::Ask>),
 }
 

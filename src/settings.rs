@@ -1,7 +1,8 @@
 //! A repository's Settings tab, for its admins: branch protection rules
 //! and rulesets, collaborators, webhooks, deploy keys, and archiving.
 //! These change a repository for everyone, so every change asks first
-//! and names what it changes: a [`Confirm`] lists it, line by line.
+//! and names what it changes: a question ([`crate::forms::Ask`]) lists
+//! it, line by line.
 //! Rules, webhooks and deploy keys are written in the composer as a form
 //! of `Name: value` lines ([`Form`]); a role is picked ([`Pick`]);
 //! archiving asks twice, the second time for the repository's name, as
@@ -19,7 +20,7 @@ use crate::route::{Route, settings};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::pages::{SettingKeys, SettingLink};
 
-use crate::act::{Confirm, Step, Subject};
+use crate::act::{Step, Subject};
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
@@ -81,8 +82,8 @@ fn asking(
     title: String,
     facts: Vec<(String, bool)>,
     choice: (&str, SettingsChange),
-) -> Box<Confirm> {
-    Box::new(Confirm::new(
+) -> Box<crate::forms::Ask> {
+    Box::new(crate::act::confirm(
         action,
         Subject::Settings(at.0.clone(), at.1),
         title,
@@ -924,7 +925,7 @@ fn differences(old: &[(&str, String)], new: &[(&str, String)]) -> Vec<(String, b
 
 /// What a form asks GitHub: the confirmation naming what changes, or why
 /// the form can't be sent.
-fn confirm(form: &Form, text: &str) -> Result<Confirm, String> {
+fn confirm(form: &Form, text: &str) -> Result<crate::forms::Ask, String> {
     let repo = form.repo().clone();
     let (action, title, facts, choice, change) = match form {
         Form::Rule { repo_id, rule, .. } => match rule {
@@ -1047,7 +1048,7 @@ fn confirm(form: &Form, text: &str) -> Result<Confirm, String> {
             )
         }
     };
-    Ok(Confirm::new(
+    Ok(crate::act::confirm(
         action,
         Subject::Settings(repo, form.page()),
         title,
@@ -1152,7 +1153,7 @@ impl Pick {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Chosen {
     Pick(Pick),
-    Ask(Box<Confirm>),
+    Ask(Box<crate::forms::Ask>),
 }
 
 /// Whether `s` can be a GitHub login.
@@ -1308,7 +1309,7 @@ pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
     match chosen {
         Chosen::Pick(pick) => state.open_picker(crate::picker::Kind::Settings(pick)),
         Chosen::Ask(confirm) => {
-            state.overlay = Some(Overlay::Confirm(confirm));
+            state.overlay = Some(Overlay::Ask(confirm));
             Vec::new()
         }
     }

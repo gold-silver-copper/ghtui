@@ -376,7 +376,7 @@ fn items_are_archived_and_restored() {
     let mut s = with_project(None);
     press(&mut s, "l");
     assert!(press(&mut s, ",X").is_empty());
-    let Some(Overlay::Confirm(c)) = &s.overlay else {
+    let Some(Overlay::Ask(c)) = &s.overlay else {
         panic!("not asked");
     };
     assert_eq!(c.title, "Archive “Projects aren't there yet”?");

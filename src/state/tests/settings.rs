@@ -2,7 +2,7 @@ use crate::api::settings::{Enforcement, Permission, Settings, SettingsChange, Se
 use crate::route::settings;
 
 use super::*;
-use crate::act::{By, Confirm, Subject};
+use crate::act::{By, Subject};
 use crate::fixtures::{self};
 use crate::settings::fixtures::page;
 use crate::ui::page::Link;
@@ -44,16 +44,9 @@ fn sent(cmds: &[Cmd]) -> (&SettingsChange, &By) {
     }
 }
 
-fn confirm(s: &State) -> &Confirm {
-    match &s.overlay {
-        Some(Overlay::Confirm(c)) => c,
-        other => panic!("no confirmation: {}", other.is_some()),
-    }
-}
-
 /// What the confirmation says, its facts one a line.
 fn asked(s: &State) -> String {
-    let c = confirm(s);
+    let c = overlay!(s, Ask);
     let facts: Vec<&str> = c.facts.iter().map(|(f, _)| f.as_str()).collect();
     format!("{}\n{}", c.title, facts.join("\n"))
 }
@@ -310,7 +303,7 @@ fn a_deploy_key_with_write_access_says_so() {
         "Title: deploy\nAllow write access: yes\nKey: ssh-ed25519 AAAAC3Nz me@x",
     );
     press(&mut s, "<C-s>");
-    let c = confirm(&s);
+    let c = overlay!(s, Ask);
     assert_eq!(
         c.title,
         "Add deploy key “deploy” to gold-silver-copper/ghtui?"
@@ -336,7 +329,7 @@ fn archiving_asks_twice() {
     press(&mut s, "ghtui");
     assert!(press(&mut s, "<Enter>").is_empty());
     assert!(
-        !matches!(s.overlay, Some(Overlay::Confirm(_))),
+        !matches!(s.overlay, Some(Overlay::Ask(_))),
         "the wrong name asks nothing"
     );
     press(&mut s, "<Esc>,x");

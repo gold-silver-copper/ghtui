@@ -135,7 +135,7 @@ fn an_alert_is_dismissed_with_a_reason_and_followed() {
 fn a_closed_alert_reopens_after_asking() {
     let mut s = with_alert(AlertKind::SecretScanning, true);
     press(&mut s, ",x");
-    let Some(Overlay::Confirm(confirm)) = &s.overlay else {
+    let Some(Overlay::Ask(confirm)) = &s.overlay else {
         panic!("no confirmation");
     };
     assert_eq!(confirm.title, "Reopen secret scanning alert #2?");
