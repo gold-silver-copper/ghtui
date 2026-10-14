@@ -232,6 +232,9 @@ pub fn target(
 ) -> Result<Comment, String> {
     let file = doc.files().get(cursor.file).ok_or("No file here")?;
     let path = file.meta.path().to_owned();
+    if selection.is_none() && doc.row(cursor) == Some(Row::Spacer) {
+        return Err("This is between files: move into one to comment".into());
+    }
     let from = match selection {
         Some(anchor) if anchor.file == cursor.file => anchor,
         Some(_) => return Err("A selection can't span files".into()),

@@ -1165,7 +1165,10 @@ impl Doc {
             self.starts.push(total);
             total += file.rows.len();
         }
-        self.total = total;
+        // The space after each file separates it from the next: the last
+        // file has none, so the document ends on a row of the file.
+        let trailing = (self.files.last()).is_some_and(|f| f.rows.last() == Some(&Row::Spacer));
+        self.total = total - usize::from(trailing);
     }
 
     pub fn set_diff(&mut self, index: usize, diff: Arc<FileDiff>) {
@@ -1349,12 +1352,10 @@ impl Doc {
 
     /// Clamps a position to an existing row.
     pub fn clamp(&self, pos: Pos) -> Pos {
-        let Some(last) = self.files.len().checked_sub(1) else {
-            return Pos::default();
-        };
-        let file = pos.file.min(last);
-        let rows = self.files.get(file).map_or(0, |f| f.rows.len());
-        let row = pos.row.min(rows.saturating_sub(1));
+        let file = pos.file.min(self.files.len().saturating_sub(1));
+        let start = self.starts.get(file).copied().unwrap_or_default();
+        let end = self.starts.get(file + 1).copied().unwrap_or(self.total);
+        let row = pos.row.min(end.saturating_sub(start).saturating_sub(1));
         Pos { file, row }
     }
 

@@ -461,7 +461,7 @@ fn a_draft_is_edited_and_deleted_by_the_comment_keys() {
 }
 
 /// Resolving a thread folds it, and the cursor stays on it, so the same
-/// key unresolves it.
+/// key, offered as unresolve, unresolves it.
 #[test]
 fn the_cursor_stays_on_a_thread_it_resolves() {
     let (mut s, pr) = diff_state(120);
@@ -491,8 +491,34 @@ fn the_cursor_stays_on_a_thread_it_resolves() {
             Some(ann),
             "resolved: {resolved}"
         );
+        // The status bar offers what the key does now.
+        assert_eq!(screen_text(&s).contains("unresolve"), resolved);
         fixtures::done(&mut s, job, Ok(()));
     }
+}
+
+/// `G` goes to the last file's last row, not the space after it, and `c`
+/// on the space between two files says so instead of commenting.
+#[test]
+fn g_ends_in_the_last_file_and_c_between_files_says_why() {
+    let (mut s, pr) = diff_state(120);
+    press(&mut s, "G");
+    let doc = &s.diffs[&DiffOf::Pr(pr)].doc;
+    let at = screen(&s).cursor;
+    assert_eq!(at.file, doc.files().len() - 1);
+    assert_ne!(doc.row(at), Some(Row::Spacer));
+    press(&mut s, "j");
+    assert_eq!(screen(&s).cursor, at);
+    if let Screen::Diff(d) = s.screens.last_mut() {
+        d.cursor = Pos { file: 0, row: 0 };
+    }
+    press(&mut s, "]f");
+    press(&mut s, "k");
+    let doc = &s.diffs[&DiffOf::Pr(PrRef::parse("o/r#7").unwrap())].doc;
+    assert_eq!(doc.row(screen(&s).cursor), Some(Row::Spacer));
+    press(&mut s, "c");
+    assert!(s.overlay.is_none());
+    fixtures::warns(&s, "between files");
 }
 
 /// A search's match off screen comes into view with the thread under

@@ -616,9 +616,15 @@ impl State {
                 out.push((Action::Open, "edit".to_owned()));
                 out.push((Action::Delete, "delete".to_owned()));
             }
-            Some(_) => {
-                out.push((Action::Comment, "reply".to_owned()));
-                out.push((Action::ResolveThread, "resolve".to_owned()));
+            Some(a) => {
+                if a.can_reply {
+                    out.push((Action::Comment, "reply".to_owned()));
+                }
+                if a.resolved && a.can_unresolve {
+                    out.push((Action::ResolveThread, "unresolve".to_owned()));
+                } else if !a.resolved && a.can_resolve {
+                    out.push((Action::ResolveThread, "resolve".to_owned()));
+                }
             }
             None => {}
         }
