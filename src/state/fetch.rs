@@ -1,9 +1,7 @@
 //! Data from GitHub: what's fetched, when, and what's still running.
 
 use super::*;
-use crate::route::app;
-use crate::route::issues;
-use crate::route::pulls;
+use crate::route::{app, issues, pulls};
 
 /// Data that comes from GitHub: what we have (possibly cached), whether a
 /// refresh is in flight, and the last refresh error.
@@ -134,7 +132,7 @@ impl State {
     pub fn needs(&self, route: &Route) -> Vec<DataKey> {
         match route {
             Route::App(app::Home) => self.home_needs(),
-            _ => route.needs(),
+            _ => route.family().needs(),
         }
     }
 

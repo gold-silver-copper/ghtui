@@ -4,7 +4,7 @@
 use crate::api::browse::Results;
 use crate::api::housekeeping::{LabelChange, LabelInfo};
 use crate::api::model::RepoId;
-use crate::route::issues;
+use crate::route::{Route, issues};
 use crate::ui::page::Page;
 use crate::ui::pages::{Mark, WriteFormView};
 
@@ -14,7 +14,6 @@ use super::{
 };
 use crate::data::DataKey;
 use crate::keymap::Action;
-use crate::route::Route;
 use crate::state::{Cmd, State};
 use crate::writes::Work as Writes;
 

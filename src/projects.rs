@@ -17,8 +17,7 @@ use crate::api::project::{
     ProjectRef, grouped,
 };
 use crate::review::ComposeTarget;
-use crate::route::issues;
-use crate::route::pulls;
+use crate::route::{Route, issues, projects, pulls};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::Link;
 use crate::ui::pages::item_link;
@@ -28,7 +27,6 @@ use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::{Kind, fuzzy_score};
-use crate::route::Route;
 use crate::state::{Api, Cmd, Screen, State};
 
 /// The actions on a project's pages.
@@ -232,12 +230,12 @@ fn here(state: &State) -> Option<Here<'_>> {
         return None;
     };
     let (project, view, number) = match &p.route {
-        Route::Project { project, view } => (project, *view, None),
-        Route::ProjectItem {
+        Route::Projects(projects::Project { project, view }) => (project, *view, None),
+        Route::Projects(projects::ProjectItem {
             project,
             view,
             item,
-        } => (project, *view, Some(*item)),
+        }) => (project, *view, Some(*item)),
         _ => return None,
     };
     let data = state.picked::<Project>(&DataKey::Project(project.clone(), view));

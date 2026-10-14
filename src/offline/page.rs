@@ -2,8 +2,7 @@
 //! written on.
 
 use crate::keymap::Action;
-use crate::route::Route;
-use crate::route::app;
+use crate::route::{Route, app};
 use crate::state::State;
 use crate::theme::Bg;
 use crate::ui::page::{Frame, Link, Page, Role, Seg};

@@ -2,7 +2,7 @@
 //! then the new repository's page, which follows GitHub until it's
 //! there, and (for a new one) an offer to clone it.
 
-use crate::route::code;
+use crate::route::{Route, code};
 use std::path::Path;
 
 use crate::api::housekeeping::{MadeRepo, NewFork, NewRepo, Owners, Templates};
@@ -17,7 +17,6 @@ use super::{
 };
 use crate::data::DataKey;
 use crate::keymap::Action;
-use crate::route::Route;
 use crate::state::{Cmd, State};
 use crate::writes::Work as Writes;
 

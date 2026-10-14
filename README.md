@@ -1120,6 +1120,20 @@ says so. A failed connect never left, so only a write that failed that
 way is queued (`offline::queue`): each is written down as being sent
 before it goes, and its answer settles it, so none is sent twice.
 
+**A page says what it is in one place.** Pages come in families, one
+enum each in `src/route/` (code, issues, pull requests, Actions and so
+on; Insights and the like are `src/site.rs`'s, housekeeping's forms
+`src/housekeeping.rs`'s). A family says, for each of its pages, its URL
+and title, the page above it, what it needs fetched, what it loads more
+of, how wide it is, its crumbs and tabs, how it's built, and how its
+URLs read (`route::Family`). What a page needs is the one list of what
+building it reads: a test builds every page the fixtures reach and
+checks it reads nothing else. Data is fetched and cached by its key, not
+by the page, since pages share it (`data::load`). Adding a page is a
+variant in its family's file, its arms in that file's methods, and, if
+it shows new data, a `DataKey` with its fetch; a new family is one more
+file, a `Route` variant and its place in the order URLs are read.
+
 **Colors from one seed.** Light and dark schemes are generated with
 Material 3's tonal palettes. Every foreground and background pair the UI
 uses is tested for contrast in both schemes, in truecolor and 256 colors.

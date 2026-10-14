@@ -1,7 +1,5 @@
 use super::*;
-use crate::route::code;
-use crate::route::issues;
-use crate::route::releases;
+use crate::route::{code, issues, releases};
 
 /// Two routes to tell tabs apart by.
 fn issue(n: u64) -> Route {

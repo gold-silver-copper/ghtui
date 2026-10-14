@@ -10,7 +10,7 @@
 //! gh-dash's history is full of these: crashes on empty or missing data,
 //! duplicate rows after a quick refresh, the wrong row acted on.
 
-use crate::route::code;
+use crate::route::{Route, code, search};
 use std::collections::{HashMap, HashSet};
 
 use proptest::prelude::*;
@@ -23,7 +23,6 @@ use crate::api::model::RepoId;
 
 use crate::data::{Data, DataKey};
 use crate::fixtures::{self, press};
-use crate::route::Route;
 use crate::state::{Msg, Remote, Screen, State, update};
 
 /// Totals at or above this mark fresh data; below, cached copies.
@@ -36,10 +35,10 @@ fn repo() -> RepoId {
 /// The list pages the sequences visit.
 fn routes() -> [Route; 3] {
     [
-        Route::Search {
+        Route::Search(search::Search {
             kind: SearchKind::Issues,
             query: "repo:o/r".into(),
-        },
+        }),
         Route::Code(code::Branches(repo())),
         Route::Code(code::Repo(repo())),
     ]
@@ -47,7 +46,7 @@ fn routes() -> [Route; 3] {
 
 fn key_of(route: &Route) -> DataKey {
     match route {
-        Route::Search { kind, query } => DataKey::Search(*kind, query.clone()),
+        Route::Search(search::Search { kind, query }) => DataKey::Search(*kind, query.clone()),
         Route::Code(code::Branches(repo)) => DataKey::Branches(repo.clone()),
         _ => DataKey::Repo(repo()),
     }
@@ -58,7 +57,7 @@ fn key_of(route: &Route) -> DataKey {
 fn page(route: &Route, start: u64, len: u8, total: u64, next: bool) -> Data {
     let next = next.then(|| format!("c{start}"));
     match route {
-        Route::Search { .. } => {
+        Route::Search(search::Search { .. }) => {
             let items = (start..start + u64::from(len))
                 .map(|n| {
                     fixtures::issue_summary(

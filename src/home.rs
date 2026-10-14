@@ -8,9 +8,7 @@
 //! its count, its order and the list its last row opens can't disagree:
 //! they're one fetch.
 
-use crate::route::app;
-use crate::route::issues;
-use crate::route::pulls;
+use crate::route::{Route, app, issues, pulls, search};
 use std::path::{Path, PathBuf};
 
 use crate::api::browse::SearchKind;
@@ -20,7 +18,6 @@ use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::picker::{self, Titling};
-use crate::route::Route;
 use crate::state::{Cmd, Overlay, Screen, State};
 
 /// Rows a section shows unless it says.
@@ -77,10 +74,10 @@ impl Search {
 
     /// The page with all of it.
     pub fn route(&self) -> Route {
-        Route::Search {
+        Route::Search(search::Search {
             kind: self.kind,
             query: self.query.clone(),
-        }
+        })
     }
 }
 
@@ -475,7 +472,7 @@ fn plan(state: &State, action: Action) -> Result<(&Path, Plan<'_>), String> {
                 return Err("Type a search first: an empty one would list all of GitHub".into());
             }
             let name = match state.route() {
-                Some(Route::Search { query, .. }) => query.clone(),
+                Some(Route::Search(search::Search { query, .. })) => query.clone(),
                 Some(Route::Issues(issues::Issues { repo, .. })) => format!("Issues in {repo}"),
                 Some(Route::Pulls(pulls::Pulls { repo, .. })) => format!("Pull requests in {repo}"),
                 Some(route) => route.title(),

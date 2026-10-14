@@ -1,4 +1,7 @@
 use super::*;
+use crate::api::explore::Since;
+use crate::api::packages::{PackageRef, PackagesOf};
+use crate::api::project::ProjectRef;
 
 /// The website of the GitHub ghtui works with.
 pub fn base() -> String {
@@ -117,4 +120,55 @@ fn escape(s: &str, safe: &[u8], plus: bool) -> String {
         }
     }
     out
+}
+
+/// A repository's Insights, at a tab.
+pub fn insights(repo: &RepoId, tab: InsightsTab) -> String {
+    format!("{}/{}", self::repo(repo), tab.path())
+}
+/// Trending: new repositories, in a language if given.
+pub fn explore(language: Option<&str>, since: Since) -> String {
+    let mut url = format!("{}/trending", base());
+    if let Some(language) = language {
+        // As GitHub's Trending URLs write it (`c++`, `visual-basic-.net`).
+        url.push('/');
+        url.push_str(&encode_path(
+            &language.trim().to_lowercase().replace(' ', "-"),
+        ));
+    }
+    if since != Since::Daily {
+        url.push_str(&format!("?since={}", since.slug()));
+    }
+    url
+}
+pub fn topic(name: &str) -> String {
+    format!("{}/topics/{}", base(), encode_path(name))
+}
+pub fn star_list(login: &str, slug: &str) -> String {
+    format!("{}/stars/{login}/lists/{}", base(), encode_path(slug))
+}
+pub fn packages(of: &PackagesOf) -> String {
+    match of {
+        PackagesOf::Owner(login) => format!("{}?tab=packages", user(login)),
+        PackagesOf::Repo(repo) => format!("{}/packages", self::repo(repo)),
+    }
+}
+/// A package, at one of its versions (else its newest).
+pub fn package(at: &PackageRef, version: Option<u64>) -> String {
+    let (owner, kind, name) = (&at.owner, at.kind.slug(), encode_path(&at.name));
+    match version {
+        None => format!("{}/users/{owner}/packages/{kind}/package/{name}", base()),
+        Some(id) => format!("{}/users/{owner}/packages/{kind}/{name}/{id}", base()),
+    }
+}
+/// A project at one of its views (the project, without one).
+pub fn project_view(project: &ProjectRef, view: Option<u64>) -> String {
+    match view {
+        Some(n) => format!("{}/views/{n}", project.url()),
+        None => project.url(),
+    }
+}
+/// An item in a project's view's side pane.
+pub fn project_item(project: &ProjectRef, view: Option<u64>, item: u64) -> String {
+    format!("{}?pane=issue&itemId={item}", project_view(project, view))
 }

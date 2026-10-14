@@ -1,8 +1,7 @@
 //! Home.
 
 use super::*;
-use crate::route::app;
-use crate::route::code;
+use crate::route::{app, code, search};
 
 #[test]
 fn home_selects_the_first_row_and_opens_it() {
@@ -76,7 +75,7 @@ fn a_section_opens_the_rest_of_its_list() {
     let DataKey::Search(kind, query) = key.clone() else {
         panic!("{key:?}")
     };
-    assert_eq!(route(&state), Route::Search { kind, query });
+    assert_eq!(route(&state), Route::Search(search::Search { kind, query }));
     assert!(selected_text(&state).contains("PR 1"), "the same list");
     press(&mut state, "<C-o>");
     let cmds = press(&mut state, "o");
@@ -162,10 +161,10 @@ fn home_sections_are_changed_in_the_config() {
 #[test]
 fn a_list_is_saved_to_home() {
     let mut state = state();
-    let _ = state.push(Route::Search {
+    let _ = state.push(Route::Search(search::Search {
         kind: crate::api::browse::SearchKind::Issues,
         query: "repo:o/r is:pr label:bug".into(),
-    });
+    }));
     let _ = act(&mut state, Action::SaveSection);
     let cmds = press(&mut state, "<C-u>Bugs<Enter>");
     assert!(state.overlay.is_none(), "the prompt closed");

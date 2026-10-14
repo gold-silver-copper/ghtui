@@ -1,8 +1,7 @@
 //! Keys on pages: moving, scrolling, following links, cancelling.
 
 use super::*;
-use crate::route::code;
-use crate::route::runs;
+use crate::route::{code, runs};
 
 /// Actions on a page screen. Those that don't work on pages say where
 /// they do.

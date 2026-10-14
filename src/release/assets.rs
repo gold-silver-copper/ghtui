@@ -5,7 +5,7 @@
 //! asking. The page follows GitHub until it shows an upload or a
 //! deletion.
 
-use crate::route::releases;
+use crate::route::{Route, releases};
 use std::path::{Path, PathBuf};
 
 use crate::api::GitHub;
@@ -13,7 +13,6 @@ use crate::api::browse::{Asset, Release};
 use crate::api::model::RepoId;
 use crate::data::DataKey;
 use crate::keymap::Action;
-use crate::route::Route;
 use crate::state::{Cmd, Screen, State};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{Link, WriteLink};

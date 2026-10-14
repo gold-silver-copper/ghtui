@@ -10,8 +10,7 @@ use crate::api::GitHub;
 use crate::api::housekeeping::{FileCommit, FileLook, RefKind};
 use crate::api::model::RepoId;
 use crate::create::Look;
-use crate::route::code;
-use crate::route::pulls;
+use crate::route::{Route, code, pulls};
 use crate::ui::page::{Link, Page};
 use crate::ui::pages::{Mark, TextBox, WriteFormView};
 
@@ -21,7 +20,6 @@ use super::{
 };
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::route::Route;
 use crate::state::{Cmd, State};
 use crate::writes::{Work as Writes, row};
 

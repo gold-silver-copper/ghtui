@@ -5,8 +5,7 @@ use crate::api::manage::{
 };
 use crate::api::model::Capped;
 use crate::api::timeline::{Linked, LinkedState};
-use crate::route::discussions;
-use crate::route::issues;
+use crate::route::{discussions, issues};
 
 use super::*;
 use crate::fixtures::{self};

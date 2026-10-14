@@ -1,9 +1,7 @@
 //! The palette, the search box and pickers.
 
 use super::*;
-use crate::route::app;
-use crate::route::code;
-use crate::route::issues;
+use crate::route::{app, code, issues, search};
 
 #[test]
 fn palette_goes_places_and_runs_actions() {
@@ -390,10 +388,10 @@ fn a_link_typed_after_a_scope_or_a_filter_opens() {
     );
     assert_eq!(route(&state), pr);
 
-    let search = Route::Search {
+    let search = Route::Search(search::Search {
         kind: crate::api::browse::SearchKind::Issues,
         query: "repo:gold-silver-copper/ghtui bug".into(),
-    };
+    });
     let _ = state.push(search.clone());
     press(&mut state, "/");
     assert!(overlay!(state, Search).filter);
@@ -403,7 +401,7 @@ fn a_link_typed_after_a_scope_or_a_filter_opens() {
     // Words stay a filter.
     let _ = state.push(search);
     press(&mut state, "/label:bug<Enter>");
-    let Route::Search { query, .. } = route(&state) else {
+    let Route::Search(search::Search { query, .. }) = route(&state) else {
         panic!("not a search");
     };
     assert_eq!(query, "repo:gold-silver-copper/ghtui bug label:bug");
@@ -414,10 +412,10 @@ fn a_link_typed_after_a_scope_or_a_filter_opens() {
 #[test]
 fn a_people_search_has_no_open_or_closed() {
     let mut state = with_repo();
-    let route = Route::Search {
+    let route = Route::Search(search::Search {
         kind: crate::api::browse::SearchKind::Users,
         query: "octo".into(),
-    };
+    });
     let _ = state.push(route.clone());
     assert!(press(&mut state, "t").is_empty());
     assert_eq!(super::route(&state), route);

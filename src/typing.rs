@@ -1,8 +1,7 @@
 //! Typing into ghtui's boxes: a paste arrives whole, as text rather than
 //! keys, and the comment box completes `@` mentions and `#` references.
 
-use crate::route::issues;
-use crate::route::pulls;
+use crate::route::{Route, issues, pulls};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui_textarea::TextArea;
 
@@ -13,7 +12,6 @@ use crate::api::model::{PrRef, RepoId};
 use crate::data::DataKey;
 use crate::diff_screen::DiffOf;
 use crate::picker;
-use crate::route::Route;
 use crate::state::{Api, Cmd, Overlay, Screen, State};
 
 /// Choices the completion list shows at most.

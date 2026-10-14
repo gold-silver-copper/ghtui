@@ -11,8 +11,7 @@ use crate::data::Picked;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::fuzzy_score;
-use crate::route::Route;
-use crate::route::people;
+use crate::route::{Route, people};
 use crate::state::{Cmd, Remote, State};
 use crate::writes::{Chosen, Pick, item, row};
 
@@ -290,7 +289,7 @@ fn refused(what: &str, why: &str) -> String {
 fn yours<'a>(state: &'a State, login: &str) -> Result<&'a ListPage, String> {
     let route = state.route().cloned();
     let list = route
-        .and_then(|r| crate::browse::paged(&r))
+        .and_then(|r| r.family().paged())
         .and_then(|k| state.picked::<ListPage>(&k));
     let Some(list) = list else {
         return Err("it hasn't loaded yet".into());

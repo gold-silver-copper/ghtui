@@ -15,16 +15,12 @@ use crate::api::model::{
 };
 use crate::api::notifications::Inbox;
 use crate::api::project::ProjectRef;
-use crate::route::discussions;
-use crate::route::issues;
-use crate::route::pulls;
-use crate::route::runs;
+use crate::route::{Route, discussions, issues, projects, pulls, runs, search, security, settings};
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::data::{DataKey, Picked};
 use crate::keymap::Action;
 use crate::nav;
-use crate::route::Route;
 use crate::state::{Api, Cmd, Overlay, Screen, State};
 
 mod inbox;
@@ -225,11 +221,13 @@ impl Subject {
                 Subject::Run(repo.clone(), *run, *attempt)
             }
             Route::Runs(runs::Job { repo, run, job, .. }) => Subject::Job(repo.clone(), *run, *job),
-            Route::Alert { repo, kind, number } => Subject::Alert(crate::api::security::AlertRef {
-                repo: repo.clone(),
-                kind: *kind,
-                number: *number,
-            }),
+            Route::Security(security::Alert { repo, kind, number }) => {
+                Subject::Alert(crate::api::security::AlertRef {
+                    repo: repo.clone(),
+                    kind: *kind,
+                    number: *number,
+                })
+            }
             Route::Discussions(discussions::Discussion { of, number }) => {
                 Subject::Discussion(of.clone(), *number)
             }
@@ -257,26 +255,28 @@ impl Subject {
                 step: None,
                 query: String::new(),
             }),
-            Subject::Thread { query, .. } | Subject::Inbox { query } => Route::Notifications {
-                query: query.clone(),
-            },
-            Subject::Project(project, view) => Route::Project {
+            Subject::Thread { query, .. } | Subject::Inbox { query } => {
+                Route::Search(search::Notifications {
+                    query: query.clone(),
+                })
+            }
+            Subject::Project(project, view) => Route::Projects(projects::Project {
                 project: project.clone(),
                 view: *view,
-            },
-            Subject::Alert(a) => Route::Alert {
+            }),
+            Subject::Alert(a) => Route::Security(security::Alert {
                 repo: a.repo.clone(),
                 kind: a.kind,
                 number: a.number,
-            },
+            }),
             Subject::Discussion(of, number) => Route::Discussions(discussions::Discussion {
                 of: of.clone(),
                 number: *number,
             }),
-            Subject::Settings(repo, page) => Route::Settings {
+            Subject::Settings(repo, page) => Route::Settings(settings::Page {
                 repo: repo.clone(),
                 page: *page,
-            },
+            }),
         }
     }
 
@@ -341,7 +341,7 @@ pub(crate) fn subject(state: &State, action: Action) -> Option<Subject> {
     }
     if matches!(action, Action::MarkAllRead | Action::MarkAllDone) {
         let query = state.route().and_then(|r| match r {
-            Route::Notifications { query } => Some(query.clone()),
+            Route::Search(search::Notifications { query }) => Some(query.clone()),
             _ => None,
         });
         return query.map(|query| Subject::Inbox { query });
@@ -365,7 +365,7 @@ fn thread(state: &State) -> Option<Subject> {
     let Screen::Page(p) = state.screen() else {
         return None;
     };
-    let Route::Notifications { query } = &p.route else {
+    let Route::Search(search::Notifications { query }) = &p.route else {
         return None;
     };
     let key = DataKey::Notifications(query.clone());

@@ -12,8 +12,7 @@
 //! git ([`git`]); elsewhere GitHub's API does it. Then the page follows
 //! GitHub until it shows the change, as [`crate::writes`] does.
 
-use crate::route::code;
-use crate::route::issues;
+use crate::route::{Family, Route, Target, Url, code, issues};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
@@ -34,7 +33,6 @@ use crate::chrome::Section;
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::route::{Family, Route, Target, Url};
 use crate::state::{Cmd, Screen, State};
 use crate::writes::{Expected as Expects, Work as Writes, row};
 

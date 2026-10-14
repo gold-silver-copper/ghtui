@@ -11,9 +11,7 @@
 //! What another author wrote since you started looking is marked New and
 //! said in the status bar; what you wrote isn't.
 
-use crate::route::discussions;
-use crate::route::issues;
-use crate::route::runs;
+use crate::route::{Route, discussions, issues, runs};
 use std::collections::HashSet;
 
 use crate::api::browse::{
@@ -23,7 +21,6 @@ use crate::api::browse::{
 use crate::api::model::RepoId;
 use crate::api::{ApiError, Polled};
 use crate::data::DataKey;
-use crate::route::Route;
 use crate::state::{Api, Cmd, Screen, State};
 use crate::ui::text::noun;
 

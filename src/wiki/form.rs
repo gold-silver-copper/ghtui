@@ -8,7 +8,7 @@
 use crate::api::browse::WikiPage;
 use crate::api::model::RepoId;
 use crate::create::templates;
-use crate::route::wiki;
+use crate::route::{Route, wiki};
 use crate::ui::page::{Link, Page, WriteLink};
 use crate::ui::pages::{Mark, TextBox, WriteFormView};
 
@@ -16,7 +16,6 @@ use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::review::ComposeTarget;
-use crate::route::Route;
 use crate::state::{Cmd, Overlay, State};
 use crate::writes::{Expected, Text, Work as Writes, row};
 

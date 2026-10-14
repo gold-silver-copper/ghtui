@@ -2,14 +2,13 @@
 //! unfolded, and a review's rows leading to the changes it reviewed (from
 //! git, as they were at its commit) and to what changed since.
 
-use crate::route::pulls;
+use crate::route::{Route, pulls};
 use std::collections::HashSet;
 
 use crate::api::model::PrRef;
 use crate::data::DataKey;
 use crate::diff_screen::{DiffOf, RangeView};
 use crate::keymap::Action;
-use crate::route::Route;
 use crate::state::{Cmd, Git, Screen, State};
 use crate::ui::page::{Link, ReviewLink};
 use crate::ui::pages::{LinesAt, Marks, PrTab};

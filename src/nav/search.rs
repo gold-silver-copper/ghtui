@@ -1,9 +1,7 @@
 //! The search box, with its suggestions.
 
 use super::*;
-use crate::route::code;
-use crate::route::people;
-use crate::route::runs;
+use crate::route::{code, people, runs, search, security};
 
 pub struct SearchBox {
     pub input: TextArea<'static>,
@@ -63,7 +61,7 @@ impl State {
         let filter_query = match self.route() {
             _ if github => None,
             Some(Route::Runs(runs::Job { query, .. })) => Some(query.clone()),
-            route => route.and_then(Route::list_query).map(str::to_owned),
+            route => route.and_then(|r| r.family().query()).map(str::to_owned),
         };
         let mut input = new_input(&self.theme, Bg::ContainerHighest);
         if let Some(q) = &filter_query {
@@ -166,7 +164,7 @@ impl State {
             }
             out.push(heading("Quick filters"));
             // Alerts filter by their own words, and aren't searched.
-            if let Some(Route::Alerts { repo, kind, .. }) = self.route() {
+            if let Some(Route::Security(security::Alerts { repo, kind, .. })) = self.route() {
                 let branch = (self.overview(repo).and_then(|o| o.default_branch.as_ref()))
                     .filter(|_| *kind == crate::api::security::AlertKind::CodeScanning);
                 if let Some(b) = branch {
@@ -198,7 +196,7 @@ impl State {
                 }
                 return out;
             }
-            if let Some(Route::Notifications { .. }) = self.route() {
+            if let Some(Route::Search(search::Notifications { .. })) = self.route() {
                 for (f, what) in [
                     ("is:unread", "unread"),
                     ("reason:review-requested", "review requested"),
@@ -403,17 +401,20 @@ pub fn search_box_changed(sb: &mut SearchBox) -> Vec<Cmd> {
 pub(super) fn choose(state: &mut State, pick: Pick) -> Vec<Cmd> {
     match pick {
         Pick::Go(dest) => state.go(dest),
-        Pick::Search(kind, query) => state.push(Route::Search { kind, query }),
+        Pick::Search(kind, query) => state.push(Route::Search(search::Search { kind, query })),
         Pick::Filter(query) if matches!(state.route(), Some(Route::Runs(runs::Job { .. }))) => {
             search_log(state, &query);
             Vec::new()
         }
-        Pick::Filter(query) => match state.route().and_then(|r| r.with_query(query.clone())) {
+        Pick::Filter(query) => match state
+            .route()
+            .and_then(|r| r.family().with_query(query.clone()))
+        {
             Some(route) => state.replace(route, true, None),
-            None => state.push(Route::Search {
+            None => state.push(Route::Search(search::Search {
                 kind: SearchKind::Issues,
                 query,
-            }),
+            })),
         },
     }
 }

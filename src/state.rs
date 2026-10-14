@@ -2,9 +2,7 @@
 //! results arrive as [`Msg`]s; [`update`] mutates [`State`] and returns
 //! [`Cmd`]s for the runtime to execute in the background.
 
-use crate::route::app;
-use crate::route::code;
-use crate::route::runs;
+use crate::route::{Route, Target, app, code, projects, runs, settings};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -37,7 +35,6 @@ use crate::review::{
     Compose, ComposeTarget, EditPurpose, SubmitDialog, SubmitOutcome, on_compose_key, on_edited,
     on_submit_key, review_action,
 };
-use crate::route::{Route, Target};
 use crate::store::DraftComment;
 use crate::tabs::Tab;
 
@@ -622,9 +619,10 @@ impl State {
             Screen::Page(p) => match &p.route {
                 Route::Runs(runs::Job { .. }) => Context::Log,
                 Route::Code(code::Blob { .. }) | Route::Code(code::Blame { .. }) => Context::File,
-                Route::Project { .. } | Route::ProjectItem { .. } => Context::Project,
-                Route::Settings { .. } => Context::Settings,
-                route if route.list_query().is_some() => Context::List,
+                Route::Projects(projects::Project { .. })
+                | Route::Projects(projects::ProjectItem { .. }) => Context::Project,
+                Route::Settings(settings::Page { .. }) => Context::Settings,
+                route if route.family().query().is_some() => Context::List,
                 _ => Context::Page,
             },
         };
@@ -651,7 +649,7 @@ impl State {
         cmds
     }
 
-    /// Opens the page an [`Route::Unsplit`] one is, once where its ref
+    /// Opens the page an unsplit one ([`code::Unsplit`]) is, once where its ref
     /// ends is known.
     #[must_use]
     fn settle_ref(&mut self) -> Vec<Cmd> {
@@ -675,7 +673,7 @@ impl State {
         self.split(&route, rev).unwrap_or(route)
     }
 
-    /// The page an [`Route::Unsplit`] one is, if where its ref ends is
+    /// The page an unsplit one ([`code::Unsplit`]) is, if where its ref ends is
     /// known here: GitHub said, or its ref-and-path starts with the
     /// repository's default branch or with `rev` (the revision of the page
     /// that links to it). Git keeps a branch from being the start of

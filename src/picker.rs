@@ -4,7 +4,7 @@
 
 use crate::api::browse::SearchKind;
 use crate::api::model::RepoId;
-use crate::route::code;
+use crate::route::{self, Dest, Route, Target, code, search};
 use crate::theme::Bg;
 use crate::ui::bars::Notice;
 use crate::ui::diff_doc::Pos;
@@ -17,7 +17,6 @@ use crate::data::{Data, DataKey};
 use crate::keymap::Action;
 use crate::nav::new_input;
 use crate::review::apply_commit_choice;
-use crate::route::{self, Dest, Route, Target};
 use crate::state::{Cmd, Overlay, Remote, Screen, State, apply};
 
 pub enum Kind {
@@ -681,14 +680,14 @@ fn search_route(query: &str) -> Route {
     let issues = query
         .split_whitespace()
         .any(|w| ISSUE_QUALIFIERS.iter().any(|p| w.starts_with(p)));
-    Route::Search {
+    Route::Search(search::Search {
         kind: if issues {
             SearchKind::Issues
         } else {
             SearchKind::Repos
         },
         query: query.to_owned(),
-    }
+    })
 }
 
 #[cfg(test)]

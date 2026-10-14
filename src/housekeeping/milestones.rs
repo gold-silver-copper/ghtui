@@ -4,7 +4,7 @@
 use crate::api::browse::{MilestoneDetail, MilestoneInfo, MilestoneList};
 use crate::api::housekeeping::MilestoneChange;
 use crate::api::model::RepoId;
-use crate::route::issues;
+use crate::route::{Route, issues};
 use crate::ui::page::{Link, Page};
 use crate::ui::pages::{Mark, TextBox, WriteFormView};
 
@@ -15,7 +15,6 @@ use super::{
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::route::Route;
 use crate::state::{Cmd, State};
 use crate::writes::{Work as Writes, row};
 

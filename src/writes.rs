@@ -7,9 +7,7 @@
 //! until the page shows what changed, as [`crate::act`] does for its
 //! changes.
 
-use crate::route::gists;
-use crate::route::releases;
-use crate::route::wiki;
+use crate::route::{Route, gists, releases, wiki};
 use std::collections::HashMap;
 
 use crate::api::GitHub;
@@ -22,7 +20,6 @@ use crate::data::DataKey;
 use crate::diff_job::GitContext;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::route::Route;
 use crate::state::{Cmd, Overlay, State};
 
 /// The actions these writes add.

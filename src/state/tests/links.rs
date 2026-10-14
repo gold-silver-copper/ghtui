@@ -1,9 +1,7 @@
 //! Following links: by keys, letters, comment links and the mouse.
 
 use super::*;
-use crate::route::code;
-use crate::route::issues;
-use crate::route::pulls;
+use crate::route::{code, issues, pulls, search};
 
 #[test]
 fn browser_and_copy_use_the_selection_or_the_page() {
@@ -196,9 +194,9 @@ fn the_mouse_follows_links_switches_tabs_and_scrolls() {
 fn the_header_counts_the_unread_and_opens_the_inbox() {
     use crate::api::notifications::Unread;
     let mut state = with_repo();
-    let inbox = Route::Notifications {
+    let inbox = Route::Search(search::Notifications {
         query: String::new(),
-    };
+    });
     let header =
         |s: &State| -> Vec<String> { s.chrome().right.into_iter().map(|(t, _)| t).collect() };
     let polled = |count, more, poll_secs| {

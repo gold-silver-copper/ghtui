@@ -1,8 +1,7 @@
 //! New issues and pull requests, and checking one out: what each asks
 //! first, what it sends, and the page following GitHub after.
 
-use crate::route::issues;
-use crate::route::pulls;
+use crate::route::{issues, pulls};
 use std::path::PathBuf;
 
 use crate::api::create::{NewIssue, NewPr};

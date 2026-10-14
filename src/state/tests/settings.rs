@@ -1,4 +1,5 @@
 use crate::api::settings::{Enforcement, Permission, Settings, SettingsChange, SettingsPage};
+use crate::route::settings;
 
 use super::*;
 use crate::act::{By, Confirm, Subject};
@@ -10,10 +11,10 @@ use crate::ui::pages::SettingLink;
 /// A settings page of a repository you administer, with its data in.
 pub(super) fn on(at: SettingsPage) -> State {
     let mut s = sized(state(), 100, 40);
-    let _ = s.push(Route::Settings {
+    let _ = s.push(Route::Settings(settings::Page {
         repo: ghtui(),
         page: at,
-    });
+    }));
     let overview = crate::api::browse::RepoOverview {
         can_admin: true,
         ..fixtures::overview()
@@ -290,10 +291,10 @@ fn webhooks_are_added_disabled_redelivered_and_deleted() {
     answer(&mut s, &cmds, Ok(()));
     assert_eq!(
         s.route(),
-        Some(&Route::Settings {
+        Some(&Route::Settings(settings::Page {
             repo: ghtui(),
             page: SettingsPage::Hooks
-        })
+        }))
     );
 }
 

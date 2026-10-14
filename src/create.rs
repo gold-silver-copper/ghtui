@@ -1,8 +1,8 @@
 //! Making issues and pull requests, and checking a pull request out in
 //! the clone ghtui runs in.
 //!
-//! A new issue or pull request is a page ([`Route::NewIssue`],
-//! [`Route::NewPr`]) holding a [`Form`]: its title and description are
+//! A new issue or pull request is a page (`issues::NewIssue`,
+//! `pulls::NewPr`) holding a [`Form`]: its title and description are
 //! written in the comment composer, which opens in place of the form's
 //! text box, with the title on the first line. A new issue starts from the
 //! repository's templates when it has some; a new pull request from its
@@ -13,8 +13,7 @@ mod page;
 pub mod templates;
 pub(crate) mod yaml;
 
-use crate::route::issues;
-use crate::route::pulls;
+use crate::route::{Route, issues, pulls};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -29,7 +28,6 @@ use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::Choice;
 use crate::review::ComposeTarget;
-use crate::route::Route;
 use crate::state::{Cmd, Failure, Overlay, State};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::FormLink;

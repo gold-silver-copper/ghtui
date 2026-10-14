@@ -48,7 +48,7 @@ impl PageScreen {
         // Lists start on their first row, a job on a step and a file on the
         // lines linked; reading pages (issues, pull requests, files) start
         // with nothing selected.
-        let list = route.starts_on_row();
+        let list = route.family().starts_on_row();
         Self {
             route,
             scroll: 0,

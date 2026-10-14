@@ -20,16 +20,14 @@ use crate::api::explore::{Since, Topic};
 use crate::api::lists::ListPage;
 use crate::api::model::RepoId;
 use crate::api::packages::{Kind, PackageRef, PackagesOf};
-use crate::route::code;
-use crate::route::people;
+use crate::route::{Family, Route, Target, app, code, people};
 use crate::ui::pages::url as links;
 
 use crate::browse::{Build, Width};
 use crate::chrome::{Chrome, Section};
 use crate::data::DataKey;
-use crate::route::{Family, Route, Target, app};
 use crate::state::State;
-use crate::ui::pages::ProfileTab;
+use crate::ui::pages::{InsightsTab, ProfileTab};
 
 /// One of these pages.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -55,87 +53,15 @@ pub enum Page {
     },
 }
 
-/// Insights' tabs, as GitHub's sidebar lists them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum InsightsTab {
-    Contributors,
-    Commits,
-    Traffic,
-    Dependencies,
-}
-
-impl InsightsTab {
-    pub const ALL: [InsightsTab; 4] = [
-        InsightsTab::Contributors,
-        InsightsTab::Commits,
-        InsightsTab::Traffic,
-        InsightsTab::Dependencies,
-    ];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            InsightsTab::Contributors => "Contributors",
-            InsightsTab::Commits => "Commit activity",
-            InsightsTab::Traffic => "Traffic",
-            InsightsTab::Dependencies => "Dependency graph",
-        }
-    }
-
-    /// Its path under the repository.
-    fn path(self) -> &'static str {
-        match self {
-            InsightsTab::Contributors => "graphs/contributors",
-            InsightsTab::Commits => "graphs/commit-activity",
-            InsightsTab::Traffic => "graphs/traffic",
-            InsightsTab::Dependencies => "network/dependencies",
-        }
-    }
-}
-
 impl Family for Page {
     fn url(&self) -> String {
         match self {
-            Page::Insights { repo, tab } => format!("{}/{}", links::repo(repo), tab.path()),
-            Page::Explore { language, since } => {
-                let mut url = format!("{}/trending", links::base());
-                if let Some(language) = language {
-                    url.push('/');
-                    url.push_str(&links::encode_path(&language_slug(language)));
-                }
-                if *since != Since::Daily {
-                    url.push_str(&format!("?since={}", since.slug()));
-                }
-                url
-            }
-            Page::Topic(name) => format!("{}/topics/{}", links::base(), links::encode_path(name)),
-            Page::StarList { login, slug } => {
-                format!(
-                    "{}/stars/{login}/lists/{}",
-                    links::base(),
-                    links::encode_path(slug)
-                )
-            }
-            Page::Packages(PackagesOf::Owner(login)) => {
-                format!("{}?tab=packages", links::user(login))
-            }
-            Page::Packages(PackagesOf::Repo(repo)) => format!("{}/packages", links::repo(repo)),
-            Page::Package { at, version: None } => format!(
-                "{}/users/{}/packages/{}/package/{}",
-                links::base(),
-                at.owner,
-                at.kind.slug(),
-                links::encode_path(&at.name)
-            ),
-            Page::Package {
-                at,
-                version: Some(id),
-            } => format!(
-                "{}/users/{}/packages/{}/{}/{id}",
-                links::base(),
-                at.owner,
-                at.kind.slug(),
-                links::encode_path(&at.name)
-            ),
+            Page::Insights { repo, tab } => links::insights(repo, *tab),
+            Page::Explore { language, since } => links::explore(language.as_deref(), *since),
+            Page::Topic(name) => links::topic(name),
+            Page::StarList { login, slug } => links::star_list(login, slug),
+            Page::Packages(of) => links::packages(of),
+            Page::Package { at, version } => links::package(at, *version),
         }
     }
 
@@ -375,11 +301,6 @@ impl Family for Page {
             }
         }
     }
-}
-
-/// A language as GitHub's Trending URLs write it (`c++`, `visual-basic-.net`).
-fn language_slug(language: &str) -> String {
-    language.trim().to_lowercase().replace(' ', "-")
 }
 
 /// A language from a Trending URL.

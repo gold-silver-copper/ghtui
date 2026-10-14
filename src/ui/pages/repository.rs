@@ -66,11 +66,11 @@ pub(super) fn about(page: &mut Page, repo: &RepoId, o: &RepoOverview, compact_la
     if !o.topics.is_empty() {
         let mut topics = Vec::new();
         for t in &o.topics {
-            let target = crate::route::Route::Site(crate::site::Page::Topic(t.to_lowercase()));
+            let target = url::topic(&t.to_lowercase());
             let topic = link_seg(
                 page,
                 format!(" {t} "),
-                target.url(),
+                target,
                 Role::Chip(Bg::PrimaryContainer),
             );
             topics.push(topic);

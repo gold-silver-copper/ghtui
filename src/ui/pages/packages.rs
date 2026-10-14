@@ -3,8 +3,6 @@
 
 use super::*;
 use crate::api::packages::{PackageDetail, PackageList, PackagesOf, install};
-use crate::route::Route;
-use crate::site::Page as Site;
 
 fn visibility(v: &str) -> Option<Seg> {
     match v {
@@ -36,11 +34,7 @@ pub fn packages(page: &mut Page, of: &PackagesOf, list: &PackageList, now: u64) 
         &Whole(&list.items),
         empty,
         |page, p| {
-            let target = Route::Site(Site::Package {
-                at: p.at.clone(),
-                version: None,
-            });
-            item(page, target.url(), |page, link| {
+            item(page, url::package(&p.at, None), |page, link| {
                 let mut segs = vec![
                     Seg::linked(p.at.name.clone(), Role::Link, link),
                     space(),
@@ -139,11 +133,7 @@ pub fn package(
         &d.versions,
         "No versions.",
         |page, v| {
-            let target = Route::Site(Site::Package {
-                at: p.at.clone(),
-                version: Some(v.id),
-            });
-            item(page, target.url(), |page, link| {
+            item(page, url::package(&p.at, Some(v.id)), |page, link| {
                 let role = if shown.is_some_and(|s| s.id == v.id) {
                     Role::Strong
                 } else {

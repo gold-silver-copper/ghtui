@@ -6,7 +6,7 @@
 use super::*;
 use crate::api::security::AlertKind;
 use crate::api::settings::SettingsPage;
-use crate::site::InsightsTab;
+use crate::ui::pages::InsightsTab;
 
 fn pressed(mut s: State, keys: &str) -> State {
     press(&mut s, keys);
@@ -115,7 +115,7 @@ fn every_page_reads_only_what_it_needs() {
         let (_, reads) = crate::browse::reads::during(|| s.build_page(route, 100, NOW));
         let needs = s.needs(route);
         for key in reads {
-            if !needs.contains(&key) && !route.also_reads(&key) {
+            if !needs.contains(&key) && !route.family().also_reads(&key) {
                 wrong.push(format!("{name} ({route:?}) reads {key:?}"));
             }
         }

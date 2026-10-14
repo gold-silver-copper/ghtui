@@ -7,16 +7,13 @@
 use crate::api::GitHub;
 use crate::api::model::NodeId;
 use crate::api::watch::{Subscription, SubscriptionState, Watched};
-use crate::route::discussions;
-use crate::route::issues;
-use crate::route::pulls;
+use crate::route::{Dest, Route, Target, discussions, issues, pulls};
 use crate::ui::overlays::PaletteItem;
 
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::fuzzy_score;
-use crate::route::{Dest, Route, Target};
 use crate::state::{Cmd, Remote, Screen, State};
 use crate::writes::{Chosen, Expected, Pick, Work as Writes, item, row};
 

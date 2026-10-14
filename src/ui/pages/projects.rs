@@ -47,14 +47,7 @@ pub fn projects(
 pub fn item_link(project: &ProjectRef, view: Option<u64>, it: &ProjectItem) -> Option<String> {
     match &it.content {
         ItemContent::Issue(l, _) | ItemContent::Pr(l, _) => Some(l.url.clone()),
-        ItemContent::Draft(_) => {
-            let route = crate::route::Route::ProjectItem {
-                project: project.clone(),
-                view,
-                item: it.number,
-            };
-            Some(route.url())
-        }
+        ItemContent::Draft(_) => Some(url::project_item(project, view, it.number)),
         ItemContent::Redacted => None,
     }
 }
@@ -918,12 +911,9 @@ pub fn project_item(
     number: u64,
     cx: PageCtx<'_>,
 ) {
-    let back = crate::route::Route::Project {
-        project: project.clone(),
-        view,
-    };
+    let back = url::project_view(project, view);
     let Some(it) = p.item(number) else {
-        let link = link_seg(page, p.title.clone(), back.url(), Role::Link);
+        let link = link_seg(page, p.title.clone(), back, Role::Link);
         let why = "This item isn't among those loaded from ";
         page.wrapped(vec![Seg::new(why, Role::Meta), link], 0, Frame::None);
         page.wrapped(
@@ -951,7 +941,7 @@ pub fn project_item(
     }
     hanging(page, Seg::new(format!("{icon} "), role), title, Frame::None);
     let mut place = vec![Seg::new("In ", Role::Meta)];
-    place.push(link_seg(page, p.title.clone(), back.url(), Role::Link));
+    place.push(link_seg(page, p.title.clone(), back, Role::Link));
     if let ItemContent::Issue(l, _) | ItemContent::Pr(l, _) = &it.content {
         place.push(Seg::new(" · ", Role::Meta));
         let name = format!("{}#{}", l.repo, l.number);

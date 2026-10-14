@@ -59,8 +59,7 @@ mod watch;
 pub mod wiki;
 mod writes;
 
-use crate::route::issues;
-use crate::route::pulls;
+use crate::route::{Dest, Route, Target, issues, pulls};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -77,7 +76,6 @@ use crate::data::DataKey;
 use crate::diff_job::GitContext;
 use crate::diff_screen::DiffOf;
 use crate::keymap::Keymap;
-use crate::route::{Dest, Route, Target};
 use crate::state::{Api, Remote, State};
 
 /// How long to wait for the terminal to report its background color.

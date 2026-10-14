@@ -11,7 +11,7 @@
 //! was there" when it shows nothing the page doesn't: one newer than what
 //! the page loaded is a change.
 
-use crate::route::pulls;
+use crate::route::{Route, pulls};
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -22,7 +22,6 @@ use crate::api::{ApiError, Polled};
 use crate::data::DataKey;
 use crate::diff_screen::{DiffOf, LastReview};
 use crate::keymap::Action;
-use crate::route::Route;
 use crate::state::{Api, Cmd, Screen, State, Timer};
 use crate::ui::pages::PrTab;
 use crate::ui::text::{noun, short_sha};

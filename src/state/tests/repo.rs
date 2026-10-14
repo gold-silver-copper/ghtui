@@ -1,12 +1,7 @@
 //! A repository's pages.
 
 use super::*;
-use crate::route::code;
-use crate::route::discussions;
-use crate::route::issues;
-use crate::route::pulls;
-use crate::route::runs;
-use crate::route::wiki;
+use crate::route::{code, discussions, issues, pulls, runs, security, wiki};
 
 /// An empty repository says what it's about, in its sidebar on a
 /// wide screen and above its note on a narrow one.
@@ -51,11 +46,14 @@ fn a_repositorys_pages_are_under_their_tabs() {
             }),
             "Discussions",
         ),
-        (Route::Advisories(Some(ghtui())), "Security"),
+        (
+            Route::Security(security::Advisories(Some(ghtui()))),
+            "Security",
+        ),
         (
             Route::Site(crate::site::Page::Insights {
                 repo: ghtui(),
-                tab: crate::site::InsightsTab::Traffic,
+                tab: crate::ui::pages::InsightsTab::Traffic,
             }),
             "Insights",
         ),
@@ -93,7 +91,10 @@ fn a_repositorys_pages_are_under_their_tabs() {
     press(&mut state, "5gt");
     assert_eq!(route(&state), Route::actions(ghtui()));
     press(&mut state, "8gt");
-    assert_eq!(route(&state), Route::Advisories(Some(ghtui())));
+    assert_eq!(
+        route(&state),
+        Route::Security(security::Advisories(Some(ghtui())))
+    );
 }
 
 #[test]

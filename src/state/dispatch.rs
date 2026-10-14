@@ -1,9 +1,7 @@
 //! Messages and keys: what each one does to the state.
 
 use super::*;
-use crate::route::app;
-use crate::route::issues;
-use crate::route::runs;
+use crate::route::{app, issues, runs, search};
 
 /// Handles a message and settles the screen.
 #[cfg(test)]
@@ -468,9 +466,9 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::RepoSymbols => return crate::code_nav::repo_symbols(state),
         Action::References => return crate::code_nav::references(state),
         Action::Notifications => {
-            let inbox = Route::Notifications {
+            let inbox = Route::Search(search::Notifications {
                 query: String::new(),
-            };
+            });
             if state.route() == Some(&inbox) {
                 state.info("Already in your notifications");
             } else {

@@ -6,7 +6,7 @@
 //! used (`gR`). GitHub's code search is asked only when there's no clone
 //! to read, or it can't be read in time.
 
-use crate::route::code;
+use crate::route::{Route, Target, code};
 use std::time::Duration;
 
 use crate::api::browse::Blob;
@@ -20,7 +20,6 @@ use crate::diff::scope::{self, Scope};
 use crate::diff::text::Text;
 use crate::git::index::grep_word;
 use crate::picker::{Choice, Kind};
-use crate::route::{Route, Target};
 use crate::state::{Cmd, Git, Screen, State};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::text;

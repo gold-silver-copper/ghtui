@@ -1,8 +1,7 @@
 //! Actions jobs and their logs.
 
 use super::*;
-use crate::route::code;
-use crate::route::runs;
+use crate::route::{code, runs};
 
 /// On a wide screen, output (a job's log) takes the whole width, lists
 /// grow to 200 columns, and reading (an issue) stays at 160 with a

@@ -9,10 +9,7 @@
 //! when GitHub is back) what changed since is fetched again: an item
 //! updated since it was kept, and the lists.
 
-use crate::route::code;
-use crate::route::discussions;
-use crate::route::issues;
-use crate::route::pulls;
+use crate::route::{Route, code, discussions, issues, pulls};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,7 +23,6 @@ use crate::api::model::{PrRef, RepoId};
 use crate::api::{ApiError, GitHub};
 use crate::data::DataKey;
 use crate::diff_job::GitContext;
-use crate::route::Route;
 use crate::ui::pages::PrTab;
 
 /// How much is kept, from `config.toml`'s `[offline]`.
@@ -257,7 +253,7 @@ async fn refresh(
             category: None,
         }),
     ];
-    let pages = tabs.iter().flat_map(Route::needs);
+    let pages = tabs.iter().flat_map(|r| r.family().needs());
     tracing::info!(%repo, "keeping offline: its tabs");
     if let Err(err) = fetch_all(gh, local.git(), pages.collect()).await {
         kept.problem = Some(err.to_string());
@@ -283,7 +279,10 @@ async fn refresh(
             .into_iter()
             .filter(|(key, updated, _)| kept.seen.get(key) != Some(updated))
             .collect();
-        let needs: Vec<DataKey> = changed.iter().flat_map(|(_, _, r)| r.needs()).collect();
+        let needs: Vec<DataKey> = changed
+            .iter()
+            .flat_map(|(_, _, r)| r.family().needs())
+            .collect();
         if let Err(err) = fetch_all(gh, local.git(), needs).await {
             kept.problem = Some(err.to_string());
             return kept;
@@ -455,14 +454,16 @@ pub fn disk_size(path: &std::path::Path) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::route::Family;
 
     #[test]
     fn what_is_kept_is_what_the_cache_keeps() {
         let repo = RepoId::new("o", "r");
-        let issue = Route::needs(&Route::Issues(issues::Issue {
+        let issue = issues::Issue {
             repo: repo.clone(),
             number: 1,
-        }));
+        }
+        .needs();
         let kept: Vec<&DataKey> = issue.iter().filter(|n| worth_keeping(n)).collect();
         assert_eq!(
             kept,

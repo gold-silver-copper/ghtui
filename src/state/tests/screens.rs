@@ -2,15 +2,9 @@
 //! the keys and replies that lead there had happened.
 
 use super::*;
-use crate::route::code;
-use crate::route::discussions;
-use crate::route::gists;
-use crate::route::issues;
-use crate::route::people;
-use crate::route::pulls;
-use crate::route::releases;
-use crate::route::runs;
-use crate::route::wiki;
+use crate::route::{
+    code, discussions, gists, issues, people, pulls, releases, runs, search, security, wiki,
+};
 
 /// A pull request as Home's sections list it.
 pub(crate) fn row(
@@ -228,7 +222,7 @@ pub(crate) fn with_team() -> State {
 /// A repository's security advisories.
 pub(crate) fn with_advisories() -> State {
     let mut state = with_repo();
-    let route = Route::Advisories(Some(ghtui()));
+    let route = Route::Security(security::Advisories(Some(ghtui())));
     let items = fixtures::advisories();
     let list = crate::fixtures::page(items.len() as u64, items, None);
     open(&mut state, route, Data::Advisories(Box::new(list)));
@@ -238,10 +232,10 @@ pub(crate) fn with_advisories() -> State {
 /// A security advisory from GitHub's database.
 pub(crate) fn with_advisory() -> State {
     let mut state = state();
-    let route = Route::Advisory {
+    let route = Route::Security(security::Advisory {
         repo: None,
         ghsa: "GHSA-6r3q-mjv7-xr8m".into(),
-    };
+    });
     open(
         &mut state,
         route,
@@ -359,9 +353,9 @@ pub(crate) fn with_actions() -> State {
 /// Your inbox, from Home.
 pub(crate) fn with_notifications() -> State {
     let mut state = with_home();
-    let route = Route::Notifications {
+    let route = Route::Search(search::Notifications {
         query: String::new(),
-    };
+    });
     let inbox = Data::Notifications(Box::new(fixtures::notifications()));
     open(&mut state, route, inbox);
     state
@@ -665,7 +659,7 @@ pub(crate) fn with_profile(tab: ProfileTab) -> State {
     let profile = Data::Profile(Box::new(fixtures::profile()));
     fetched(&mut state, DataKey::Profile("octocat".into()), profile);
     // The tab's own list.
-    if let Some(key) = crate::browse::paged(&route) {
+    if let Some(key) = route.family().paged() {
         let list = match key {
             DataKey::Users(_) => Data::Users(Box::new(fixtures::people())),
             _ => Data::RepoPage(Box::new(fixtures::profile_repos())),
@@ -680,7 +674,7 @@ pub(crate) fn with_search(kind: SearchKind, query: &str, results: SearchResults)
     let query = query.to_owned();
     open(
         &mut state,
-        Route::Search { kind, query },
+        Route::Search(search::Search { kind, query }),
         Data::Search(Box::new(results)),
     );
     state

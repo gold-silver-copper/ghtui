@@ -1,8 +1,8 @@
 //! Your gists: making one, changing one (its description and files),
 //! and deleting one, as gist.github.com does.
 //!
-//! A new gist's form is a page ([`Route::NewGist`]), as is an edit's
-//! ([`Route::EditGist`]): the description, then each file's name and
+//! A new gist's form is a page (`gists::NewGist`), as is an edit's
+//! (`gists::EditGist`): the description, then each file's name and
 //! text, written in the composer. Making one asks whether it's secret or
 //! public, as GitHub's two buttons do; GitHub's API can't change that
 //! afterwards. Deleting asks first. Then the gist's page (or, once it's
@@ -11,9 +11,7 @@
 use crate::api::GitHub;
 use crate::api::browse::Gist;
 use crate::api::gist::{FileChange, GistChange, MadeGist, NewGist};
-use crate::route::app;
-use crate::route::gists;
-use crate::route::people;
+use crate::route::{Route, app, gists, people};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{Link, Page, WriteLink};
 use crate::ui::pages::{FormRow, Mark, TextBox, WriteFormView};
@@ -22,7 +20,6 @@ use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::review::ComposeTarget;
-use crate::route::Route;
 use crate::state::{Cmd, Overlay, State};
 use crate::writes::{Answer, Chosen, Expected, Pick, Text, Work as Writes, item, row};
 

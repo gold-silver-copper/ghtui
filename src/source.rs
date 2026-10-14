@@ -24,7 +24,6 @@ use crate::diff_job::GitContext;
 use crate::git::read::{self, Grep, ReadError, RemoteRefs};
 use crate::git::repo::Repo;
 use crate::git::{GitError, Oid};
-use crate::route::{Family, Route};
 
 /// How long what GitHub says its branches and tags are is taken as true.
 const REFS_FRESH: Duration = Duration::from_secs(30);
@@ -125,26 +124,6 @@ pub fn by_git(key: &DataKey, after: Option<&str>) -> bool {
         DataKey::Search(SearchKind::Code, query) => code_search(query).is_some(),
         _ => false,
     }
-}
-
-/// The data a page reads that git can answer, whose source it says.
-pub fn shown(route: &Route) -> Option<DataKey> {
-    let key = match route {
-        Route::Site(p) => return p.shown_source(),
-        Route::Code(p) => return p.shown_source(),
-        Route::Wiki(p) => return p.shown_source(),
-        Route::Discussions(p) => return p.shown_source(),
-        Route::Gists(p) => return p.shown_source(),
-        Route::People(p) => return p.shown_source(),
-        Route::Releases(p) => return p.shown_source(),
-        Route::Runs(p) => return p.shown_source(),
-        Route::Search {
-            kind: SearchKind::Code,
-            query,
-        } => DataKey::Search(SearchKind::Code, query.clone()),
-        _ => return None,
-    };
-    Some(key)
 }
 
 /// The repository a key reads.

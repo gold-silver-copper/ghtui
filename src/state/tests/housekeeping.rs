@@ -3,9 +3,7 @@
 //! change (to GitHub, or to git in your clone), and the page follows
 //! GitHub until it shows it.
 
-use crate::route::code;
-use crate::route::issues;
-use crate::route::pulls;
+use crate::route::{code, issues, pulls};
 use std::path::PathBuf;
 
 use crate::api::housekeeping::{

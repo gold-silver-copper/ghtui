@@ -1,8 +1,7 @@
 //! Finding text on the page, and marks.
 
 use super::*;
-use crate::route::people;
-use crate::route::runs;
+use crate::route::{people, runs};
 
 /// Whether `/` here is the page's own search box: a list's filter, a
 /// job's log search, a profile's repositories.
@@ -15,7 +14,7 @@ pub fn searches_itself(state: &State) -> bool {
                 ..
             }),
         ) => true,
-        Some(route) => route.list_query().is_some(),
+        Some(route) => route.family().query().is_some(),
         None => false,
     }
 }

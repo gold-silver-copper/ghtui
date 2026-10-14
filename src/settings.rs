@@ -15,6 +15,7 @@ use crate::api::settings::{
     Checks, Enforcement, HookForm, Permission, Reviews, Role as Given, RuleForm, Settings,
     SettingsChange, SettingsPage,
 };
+use crate::route::{Route, settings};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::pages::{SettingKeys, SettingLink};
 
@@ -22,7 +23,6 @@ use crate::act::{Confirm, Subject};
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::route::Route;
 use crate::state::{Cmd, Overlay, Screen, State};
 use crate::ui::page::{Link, Page};
 
@@ -47,7 +47,7 @@ pub struct Kept {
 /// The settings page on screen.
 fn here(state: &State) -> Option<(RepoId, SettingsPage)> {
     match state.route()? {
-        Route::Settings { repo, page } => Some((repo.clone(), *page)),
+        Route::Settings(settings::Page { repo, page }) => Some((repo.clone(), *page)),
         _ => None,
     }
 }
@@ -551,10 +551,10 @@ pub fn follow_link(state: &mut State, link: &SettingLink) -> Vec<Cmd> {
             state.push(Route::user(login))
         }
         SettingLink::Hook(id) => match here(state) {
-            Some((repo, _)) => state.push(Route::Settings {
+            Some((repo, _)) => state.push(Route::Settings(settings::Page {
                 repo,
                 page: SettingsPage::Hook(*id),
-            }),
+            })),
             None => Vec::new(),
         },
         SettingLink::Ruleset(_) | SettingLink::Delivery(_) | SettingLink::Key(_) => {
@@ -1137,17 +1137,17 @@ pub fn after(state: &mut State, change: &Change) -> Vec<Cmd> {
     let SettingsChange::DeleteHook { repo, id, .. } = c else {
         return Vec::new();
     };
-    let on_it = Route::Settings {
+    let on_it = Route::Settings(settings::Page {
         repo: repo.clone(),
         page: SettingsPage::Hook(*id),
-    };
+    });
     if state.route() != Some(&on_it) {
         return Vec::new();
     }
-    let list = Route::Settings {
+    let list = Route::Settings(settings::Page {
         repo: repo.clone(),
         page: SettingsPage::Hooks,
-    };
+    });
     state.replace(list, true, None)
 }
 

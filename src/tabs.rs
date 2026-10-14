@@ -5,15 +5,12 @@
 //! requests and diffs are shared: two tabs on one pull request share its
 //! fetch, its diff and its review drafts.
 
-use crate::route::code;
-use crate::route::issues;
-use crate::route::pulls;
+use crate::route::{Dest, Route, Target, code, issues, pulls, search};
 use crate::ui::page::Link;
 use crate::ui::text::short_sha;
 
 use crate::diff_screen::{DiffOf, DiffPrefs, DiffScreen};
 use crate::nav::PageScreen;
-use crate::route::{Dest, Route, Target};
 use crate::state::{Cmd, Screen, Screens, State};
 
 /// An open tab off screen: its history as it was left.
@@ -59,7 +56,7 @@ pub fn title(screen: &Screen) -> String {
                 path.rsplit('/').next().unwrap_or(path).to_owned()
             }
             Route::Code(code::Commit { oid, .. }) => short_sha(oid).to_owned(),
-            Route::Search { query, .. } => format!("⌕ {query}"),
+            Route::Search(search::Search { query, .. }) => format!("⌕ {query}"),
             Route::Code(code::Repo(repo)) => repo.to_string(),
             // A repository's other pages, without the owner.
             route => match route.repo() {

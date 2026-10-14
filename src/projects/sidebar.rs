@@ -12,9 +12,7 @@ use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::{Kind, fuzzy_score};
-use crate::route::Route;
-use crate::route::issues;
-use crate::route::pulls;
+use crate::route::{Route, issues, pulls};
 use crate::state::{Cmd, State};
 use crate::ui::overlays::PaletteItem;
 

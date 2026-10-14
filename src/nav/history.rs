@@ -2,9 +2,7 @@
 //! page's tabs.
 
 use super::*;
-use crate::api::project::ProjectsOf;
-use crate::route::code;
-use crate::route::{Family, app};
+use crate::route::{app, code};
 
 /// A page you visited, for "jump to" suggestions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,7 +159,7 @@ impl State {
 
     #[must_use]
     pub(super) fn load_more(&mut self) -> Vec<Cmd> {
-        let Some(key) = self.route().and_then(browse::paged) else {
+        let Some(key) = self.route().and_then(|r| r.family().paged()) else {
             return Vec::new();
         };
         let after = self.data.get_mut(&key).and_then(Remote::ask_more);
@@ -177,58 +175,13 @@ pub fn up_level(state: &mut State) -> Vec<Cmd> {
     let Some(route) = state.route().cloned() else {
         return Vec::new();
     };
-    match up(state, &route) {
+    match route.family().up(state) {
         Some(parent) => state.push(parent),
         None => {
             state.info("Already at the top");
             Vec::new()
         }
     }
-}
-
-/// The page above this one, like GitHub's breadcrumbs.
-pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
-    Some(match route {
-        Route::App(p) => return p.up(state),
-        Route::Code(p) => return p.up(state),
-        Route::Wiki(p) => return p.up(state),
-        Route::Discussions(p) => return p.up(state),
-        Route::Gists(p) => return p.up(state),
-        Route::People(p) => return p.up(state),
-        Route::Releases(p) => return p.up(state),
-        Route::Runs(p) => return p.up(state),
-        Route::Issues(p) => return p.up(state),
-        Route::Pulls(p) => return p.up(state),
-        Route::Settings {
-            repo,
-            page: crate::api::settings::SettingsPage::Hook(_),
-        } => Route::Settings {
-            repo: repo.clone(),
-            page: crate::api::settings::SettingsPage::Hooks,
-        },
-        Route::Settings { repo, .. } | Route::Projects(ProjectsOf::Repo(repo)) => {
-            Route::Code(code::Repo(repo.clone()))
-        }
-        Route::Housekeeping(p) => return p.up(state),
-        Route::Search { .. } | Route::Notifications { .. } => Route::App(app::Home),
-        Route::Advisory { repo, .. } => Route::Advisories(repo.clone()),
-        Route::Alert { repo, kind, .. } => Route::Alerts {
-            repo: repo.clone(),
-            kind: *kind,
-            query: crate::route::OPEN.into(),
-        },
-        Route::Alerts { repo, .. } => Route::Advisories(Some(repo.clone())),
-        Route::Advisories(repo) => repo
-            .clone()
-            .map_or(Route::App(app::Home), |x| Route::Code(code::Repo(x))),
-        Route::Projects(ProjectsOf::Owner(owner)) => Route::user(owner.login()),
-        Route::Project { project, .. } => Route::Projects(ProjectsOf::Owner(project.owner.clone())),
-        Route::ProjectItem { project, view, .. } => Route::Project {
-            project: project.clone(),
-            view: *view,
-        },
-        Route::Site(p) => return p.up(state),
-    })
 }
 
 /// Switches to the chrome's tab `n` (1-based).

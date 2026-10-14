@@ -10,9 +10,7 @@
 //! (a revert, a transfer, a discussion) is [`Work`], whose answer opens
 //! what it made.
 
-use crate::route::discussions;
-use crate::route::issues;
-use crate::route::pulls;
+use crate::route::{Route, discussions, issues, pulls};
 use std::collections::HashMap;
 
 use crate::api::GitHub;
@@ -30,7 +28,6 @@ use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::fuzzy_score;
-use crate::route::Route;
 use crate::state::{Api, Cmd, Overlay, Screen, State};
 use crate::ui::page::Link;
 

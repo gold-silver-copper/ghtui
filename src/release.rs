@@ -1,7 +1,7 @@
 //! Making a release, as GitHub's "Draft a new release" does, editing
 //! one, and deleting one (then, asked again, its tag).
 //!
-//! The form is a page ([`Route::NewRelease`], or [`Route::EditRelease`]
+//! The form is a page (`releases::NewRelease`, or `releases::EditRelease`
 //! filled from the release): a tag (one GitHub has, or a new one GitHub
 //! makes at a branch or commit when the release is published), a title
 //! and notes written in the composer (the title on the first line),
@@ -19,7 +19,7 @@ use crate::api::model::RepoId;
 use crate::api::release::{Made, NewRelease, Notes, TagLook};
 use crate::create::Look;
 use crate::create::templates;
-use crate::route::releases;
+use crate::route::{Route, releases};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{Link, Page, WriteLink};
 use crate::ui::pages::{FormRow, Mark, TextBox, WriteFormView};
@@ -29,7 +29,6 @@ use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::fuzzy_score;
 use crate::review::ComposeTarget;
-use crate::route::Route;
 use crate::state::{Cmd, Overlay, State};
 use crate::writes::{Answer, Chosen, Expected, Pick, Text, Work as Writes, item, row};
 

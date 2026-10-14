@@ -10,7 +10,7 @@ use crate::api::model::RepoId;
 use crate::create::Look;
 use crate::git::local::Clone;
 use crate::picker::fuzzy_score;
-use crate::route::code;
+use crate::route::{Route, code};
 
 use super::{
     Chosen, Expected, Pick, RefWrite, Subject, Work, ask, clone_here, expect, item, refused,
@@ -19,7 +19,6 @@ use super::{
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::route::Route;
 use crate::state::{Cmd, State};
 use crate::writes::{Work as Writes, row};
 

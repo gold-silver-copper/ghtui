@@ -5,9 +5,7 @@
 use crate::api::gist::{FileChange, MadeGist};
 use crate::api::release::{Made, NewRelease, TagLook};
 use crate::api::watch::{Subscription, SubscriptionState, Watched};
-use crate::route::gists;
-use crate::route::releases;
-use crate::route::wiki;
+use crate::route::{gists, releases, wiki};
 use ratatui_textarea::CursorMove;
 
 use super::*;

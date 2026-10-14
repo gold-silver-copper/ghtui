@@ -1,4 +1,5 @@
 use crate::api::security::{AlertChange, AlertKind, AlertRef};
+use crate::route::security;
 
 use super::*;
 use crate::act::{By, Subject};
@@ -15,11 +16,11 @@ fn alert_ref(kind: AlertKind, number: u64) -> AlertRef {
 /// A repository's alerts of `kind`, open ones first.
 pub(super) fn with_alerts(kind: AlertKind) -> State {
     let mut s = with_repo();
-    let route = Route::Alerts {
+    let route = Route::Security(security::Alerts {
         repo: ghtui(),
         kind,
         query: OPEN.into(),
-    };
+    });
     open(
         &mut s,
         route,
@@ -31,11 +32,11 @@ pub(super) fn with_alerts(kind: AlertKind) -> State {
 /// An alert's page.
 pub(super) fn with_alert(kind: AlertKind, dismissed: bool) -> State {
     let mut s = with_repo();
-    let route = Route::Alert {
+    let route = Route::Security(security::Alert {
         repo: ghtui(),
         kind,
         number: 2,
-    };
+    });
     let alert = if dismissed {
         fixtures::dismissed(kind, 2)
     } else {
@@ -84,11 +85,11 @@ fn alert_lists_are_reached_from_the_security_tab_and_filter() {
     press(&mut s2, "t");
     assert_eq!(
         s2.route(),
-        Some(&Route::Alerts {
+        Some(&Route::Security(security::Alerts {
             repo: ghtui(),
             kind: AlertKind::CodeScanning,
             query: "is:closed".into(),
-        })
+        }))
     );
     let mut s3 = with_alerts(AlertKind::Dependabot);
     press(&mut s3, "S");

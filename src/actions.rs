@@ -3,7 +3,7 @@
 //! (`workflow_dispatch`) from a form of its inputs, read from its file,
 //! then following the run it started.
 
-use crate::route::runs;
+use crate::route::{Route, runs};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -14,7 +14,6 @@ use crate::api::{ApiError, GitHub};
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::route::Route;
 use crate::state::{Api, Cmd, State};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::{DispatchLink, Link, Page};

@@ -3,7 +3,8 @@ use crate::api::packages::PackagesOf;
 use crate::route::people;
 
 use super::*;
-use crate::site::{InsightsTab, Page, fixtures};
+use crate::site::{Page, fixtures};
+use crate::ui::pages::InsightsTab;
 use crate::writes::{Done, Work};
 
 pub(super) fn insights(tab: InsightsTab) -> State {

@@ -7,8 +7,7 @@
 //! GitHub as a [`Change::Edit`], and the page follows GitHub until it
 //! shows it (see [`crate::act`]).
 
-use crate::route::issues;
-use crate::route::pulls;
+use crate::route::{Route, issues, pulls};
 use std::collections::BTreeSet;
 
 use crate::api::change::Change;
@@ -22,7 +21,6 @@ use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::{self, Choice};
 use crate::review::ComposeTarget;
-use crate::route::Route;
 use crate::state::{Api, Cmd, Overlay, Remote, Screen, State};
 use crate::ui::annotations::{AnnotationKey, ThreadRowKind};
 use crate::ui::diff_doc::{Pos, Row};

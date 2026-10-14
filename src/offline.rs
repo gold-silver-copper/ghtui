@@ -19,8 +19,7 @@ use crate::api::ApiError;
 use crate::api::change::Change;
 use crate::api::model::PrRef;
 use crate::keymap::Action;
-use crate::route::app;
-use crate::route::{Dest, Route};
+use crate::route::{Dest, Route, app};
 use crate::state::{Cmd as Do, Overlay, Screen, State, Timer};
 use crate::ui::page::Link;
 

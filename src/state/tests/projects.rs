@@ -1,4 +1,5 @@
 use crate::api::project::{FieldValue, Project, ProjectOwner, ProjectRef, ProjectsOf};
+use crate::route::projects;
 
 use super::*;
 use crate::act::{By, Subject};
@@ -21,10 +22,10 @@ pub(super) fn with_project(view: Option<u64>) -> State {
         p.items.items.retain(|it| it.number != 1004);
         p.items.total = 4;
     }
-    let route = Route::Project {
+    let route = Route::Projects(projects::Project {
         project: roadmap(),
         view,
-    };
+    });
     open(&mut s, route, Data::Project(Box::new(p)));
     s
 }
@@ -57,10 +58,12 @@ fn projects_are_reached_from_profiles_and_repositories() {
     let user = ProjectsOf::Owner(ProjectOwner::User("octocat".into()));
     assert_eq!(
         projects(&s),
-        Some(crate::route::Target::Page(Route::Projects(user)))
+        Some(crate::route::Target::Page(Route::Projects(
+            projects::Projects(user)
+        )))
     );
     let mut s = with_repo();
-    let linked = Route::Projects(ProjectsOf::Repo(super::ghtui()));
+    let linked = Route::Projects(projects::Projects(ProjectsOf::Repo(super::ghtui())));
     assert_eq!(
         projects(&s),
         Some(crate::route::Target::Page(linked.clone()))
@@ -81,10 +84,10 @@ fn projects_are_reached_from_profiles_and_repositories() {
         "{text}"
     );
     press(&mut s, "<Enter>");
-    let expect = Route::Project {
+    let expect = Route::Projects(projects::Project {
         project: roadmap(),
         view: None,
-    };
+    });
     assert_eq!(s.route(), Some(&expect));
 }
 
@@ -124,10 +127,10 @@ fn with_lanes() -> State {
     let mut s = sized(state(), 100, 60);
     let mut p = fixtures::project();
     p.views.items[0].group = Some(NodeId::new("F_assignees"));
-    let route = Route::Project {
+    let route = Route::Projects(projects::Project {
         project: roadmap(),
         view: None,
-    };
+    });
     open(&mut s, route, Data::Project(Box::new(p)));
     s
 }
@@ -171,10 +174,10 @@ fn a_roadmap_puts_items_on_a_timeline() {
     let date = |d: &str| (NodeId::new("F_start"), FieldValue::Date(d.into()));
     p.items.items[0].values.push(date("2026-10-05"));
     p.items.items[1].values.push(date("2026-10-12"));
-    let route = Route::Project {
+    let route = Route::Projects(projects::Project {
         project: roadmap(),
         view: Some(2),
-    };
+    });
     open(&mut s, route, Data::Project(Box::new(p)));
     let text = page_text(&s);
     assert!(text.contains("On a timeline by Start date → Due"), "{text}");
@@ -192,11 +195,11 @@ fn a_roadmap_puts_items_on_a_timeline() {
 fn a_draft_shows_its_body() {
     let mut s = with_project(None);
     press(&mut s, "lj<Enter>");
-    let expect = Route::ProjectItem {
+    let expect = Route::Projects(projects::ProjectItem {
         project: roadmap(),
         view: None,
         item: 1003,
-    };
+    });
     assert_eq!(s.route(), Some(&expect));
     let text = page_text(&s);
     assert!(text.contains("Write the board's docs"), "{text}");
@@ -303,10 +306,10 @@ fn a_project_you_cant_change_says_so() {
     let mut s = state();
     let mut p = fixtures::project();
     p.can_update = false;
-    let route = Route::Project {
+    let route = Route::Projects(projects::Project {
         project: roadmap(),
         view: None,
-    };
+    });
     open(&mut s, route, Data::Project(Box::new(p)));
     assert!(press(&mut s, ",c").is_empty());
     says(&s, "GitHub doesn't let you change this project");

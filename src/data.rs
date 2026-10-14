@@ -44,7 +44,7 @@ pub enum DataKey {
     Blob(RepoId, String, String),
     Search(SearchKind, String),
     /// A filtered list's open and closed counts
-    /// ([`Route::state_counts`](crate::route::Route::state_counts)).
+    /// ([`crate::route::issues`]).
     StateCounts(String),
     Issue(RepoId, u64),
     Pr(PrRef),
@@ -63,7 +63,7 @@ pub enum DataKey {
     /// Branches and tags.
     Refs(RepoId),
     /// The ref a plain URL's ref-and-path starts with (see
-    /// [`Route::Unsplit`](crate::route::Route::Unsplit)).
+    /// [`code::Unsplit`](crate::route::code::Page::Unsplit)).
     RefIn(RepoId, String),
     /// The latest commit of each entry in a directory.
     LastCommits(RepoId, String, String),

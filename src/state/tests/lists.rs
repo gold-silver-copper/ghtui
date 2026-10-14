@@ -1,9 +1,7 @@
 //! Lists and their next pages.
 
 use super::*;
-use crate::route::issues;
-use crate::route::people;
-use crate::route::runs;
+use crate::route::{issues, people, runs, security};
 
 /// A branch's commits page: the code toolbar's link opens it, and it
 /// loads more like any list.
@@ -232,7 +230,7 @@ fn a_next_page_survives_a_failed_refresh() {
 #[test]
 fn advisories_load_more() {
     let mut state = with_repo();
-    let route = Route::Advisories(Some(ghtui()));
+    let route = Route::Security(security::Advisories(Some(ghtui())));
     let key = DataKey::Advisories(Some(ghtui()));
     let cmds = state.push(route);
     assert!(cmds.contains(&fetch(key.clone())), "{cmds:?}");

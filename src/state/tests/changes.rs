@@ -2,8 +2,7 @@ use crate::api::browse::CheckOutcome;
 use crate::api::change::MergeMethod;
 use crate::api::model::MergeState;
 use crate::api::notifications::ThreadAt;
-use crate::route::app;
-use crate::route::runs;
+use crate::route::{app, runs, search};
 use crate::store::DraftSide;
 
 use super::*;
@@ -573,9 +572,9 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
 
     // REST can't mark read by a reason: what's shown is marked thread
     // by thread.
-    let route = Route::Notifications {
+    let route = Route::Search(search::Notifications {
         query: "reason:mention".to_owned(),
-    };
+    });
     super::screens::open(&mut s, route, shown(&crate::fixtures::notifications()));
     press(&mut s, ",N");
     let each = Change::MarkEach {

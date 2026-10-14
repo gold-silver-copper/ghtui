@@ -1,10 +1,7 @@
 //! Writing: star and comment.
 
 use super::*;
-use crate::route::code;
-use crate::route::discussions;
-use crate::route::issues;
-use crate::route::pulls;
+use crate::route::{code, discussions, issues, pulls};
 
 #[must_use]
 pub fn star(state: &mut State) -> Vec<Cmd> {

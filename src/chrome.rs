@@ -7,23 +7,18 @@ use crate::api::browse::{
     CommitDetail, Comparison, DiscussionsOf, Profile, RepoSort, SearchKind, SearchResults,
 };
 use crate::api::model::{PrRef, RepoId};
-use crate::api::project::{self, Project, ProjectOwner, ProjectRef, ProjectsOf};
+use crate::api::project::{ProjectOwner, ProjectsOf};
 use crate::git::Oid;
-use crate::route::app;
-use crate::route::code;
-use crate::route::discussions;
-use crate::route::issues;
-use crate::route::people;
-use crate::route::pulls;
-use crate::route::wiki;
+use crate::route::{
+    OPEN, Route, Target, app, code, discussions, issues, people, projects, pulls, search, security,
+    settings, wiki,
+};
 use crate::ui::chrome::{Crumb, PageTab};
 use crate::ui::pages::{PrTab, ProfileTab};
 use ratatui::layout::Rect;
 
-use crate::browse::paged;
 use crate::data::DataKey;
 use crate::diff_screen::DiffOf;
-use crate::route::{Family, OPEN, Route, Target};
 use crate::state::{Screen, State};
 
 /// What the chrome shows.
@@ -53,7 +48,7 @@ pub struct Layout {
     pub status: Rect,
 }
 
-fn new_tab(icon: &'static str, label: &str, count: Option<u64>) -> PageTab {
+pub(crate) fn new_tab(icon: &'static str, label: &str, count: Option<u64>) -> PageTab {
     PageTab {
         icon,
         label: label.to_owned(),
@@ -78,16 +73,16 @@ impl State {
         {
             c.right.push((
                 format!("⇄ {} to review", r.total),
-                Target::Page(Route::Search {
+                Target::Page(Route::Search(search::Search {
                     kind: SearchKind::Pulls,
                     query: crate::home::REVIEW_REQUESTS.into(),
-                }),
+                })),
             ));
         }
         if let Some(unread) = self.unread_label() {
-            let inbox = Route::Notifications {
+            let inbox = Route::Search(search::Notifications {
                 query: String::new(),
-            };
+            });
             c.right.push((unread, Target::Page(inbox)));
         }
         if let Some(login) = &self.viewer {
@@ -102,7 +97,7 @@ impl State {
     fn screen_chrome(&self) -> Chrome {
         let mut c = Chrome::default();
         match self.screen() {
-            Screen::Page(p) => self.page_chrome(&p.route, &mut c),
+            Screen::Page(p) => p.route.family().chrome(self, &mut c),
             Screen::Diff(d) => {
                 repo_crumbs(d.of.repo(), &mut c);
                 let pr = match &d.of {
@@ -148,79 +143,13 @@ impl State {
         c
     }
 
-    fn page_chrome(&self, route: &Route, c: &mut Chrome) {
-        match route {
-            Route::App(p) => p.chrome(self, c),
-            Route::Code(p) => p.chrome(self, c),
-            Route::Wiki(p) => p.chrome(self, c),
-            Route::Discussions(p) => p.chrome(self, c),
-            Route::Gists(p) => p.chrome(self, c),
-            Route::People(p) => p.chrome(self, c),
-            Route::Releases(p) => p.chrome(self, c),
-            Route::Runs(p) => p.chrome(self, c),
-            Route::Issues(p) => p.chrome(self, c),
-            Route::Pulls(p) => p.chrome(self, c),
-            Route::Housekeeping(p) => p.chrome(self, c),
-            Route::Notifications { .. } => c.crumb("Notifications", None),
-            Route::Advisories(None) => c.crumb("Advisories", None),
-            Route::Advisory { repo: None, ghsa } => {
-                c.crumb("Advisories", Some(Target::Page(Route::Advisories(None))));
-                c.crumb(ghsa, None);
-            }
-            Route::Projects(ProjectsOf::Owner(owner)) => {
-                let login = owner.login();
-                c.crumb(login, Some(Target::Page(Route::user(login))));
-                let org = matches!(owner, ProjectOwner::Org(_));
-                self.profile_tabs(login, None, Some(org), c);
-            }
-            Route::Project { project, view } | Route::ProjectItem { project, view, .. } => {
-                self.project_chrome(project, *view, c);
-            }
-            Route::Site(p) => p.chrome(self, c),
-            Route::Search { kind, query } => {
-                c.crumb("Search", None);
-                let results = paged(route).and_then(|key| self.picked::<SearchResults>(&key));
-                let total = results.map(|r| r.counts().0);
-                let kinds = [
-                    // Short, so all seven fit.
-                    (SearchKind::Repos, "▤", "Repos"),
-                    (SearchKind::Issues, "◉", "Issues"),
-                    (SearchKind::Pulls, "⇄", "PRs"),
-                    (SearchKind::Users, "⚇", "Users"),
-                    (SearchKind::Discussions, "◈", "Discussions"),
-                    (SearchKind::Commits, "◷", "Commits"),
-                    (SearchKind::Code, "<>", "Code"),
-                ];
-                for (i, (k, icon, label)) in kinds.into_iter().enumerate() {
-                    if k == *kind {
-                        c.active = Some(i);
-                    }
-                    let count = (k == *kind).then_some(total).flatten();
-                    c.tabs.push((
-                        new_tab(icon, label, count),
-                        Target::Page(Route::Search {
-                            kind: k,
-                            query: query.clone(),
-                        }),
-                    ));
-                }
-            }
-            // The rest are a repository's pages, under its tabs.
-            _ => {
-                if let Some(repo) = route.repo() {
-                    self.repo_chrome(repo, section(route), c);
-                }
-            }
-        }
-    }
-
     /// A repository's page's chrome: under its repository's tabs, `here`
     /// active.
     pub(crate) fn repo_chrome(&self, repo: &RepoId, here: Section, c: &mut Chrome) {
         repo_crumbs(repo, c);
         self.repo_tabs(repo, c);
         c.active = c.tabs.iter().position(|(_, t)| match t {
-            Target::Page(r) => section(r) == here,
+            Target::Page(r) => r.family().section() == here,
             _ => false,
         });
     }
@@ -328,7 +257,9 @@ impl State {
             } else {
                 ProjectOwner::User(login.to_owned())
             };
-            Target::Page(Route::Projects(ProjectsOf::Owner(owner)))
+            Target::Page(Route::Projects(projects::Projects(ProjectsOf::Owner(
+                owner,
+            ))))
         });
         if let Some(projects) = &projects {
             tabs.push(("▥", "Projects", None, projects.clone()));
@@ -370,38 +301,6 @@ impl State {
         for (icon, label, count, target) in tabs {
             c.tabs.push((new_tab(icon, label, count), target));
         }
-    }
-
-    /// A project's chrome: its owner and their projects, and its views as
-    /// tabs.
-    fn project_chrome(&self, project: &ProjectRef, view: Option<u64>, c: &mut Chrome) {
-        let login = project.owner.login();
-        c.crumb(login, Some(Target::Page(Route::user(login))));
-        let list = Route::Projects(ProjectsOf::Owner(project.owner.clone()));
-        c.crumb("Projects", Some(Target::Page(list)));
-        let data = self.picked::<Project>(&DataKey::Project(project.clone(), view));
-        let title = data.map_or_else(
-            || format!("Project {}", project.number),
-            |p| p.title.clone(),
-        );
-        c.crumb(&title, None);
-        let Some(p) = data else {
-            return;
-        };
-        for v in &p.views {
-            let icon = match v.layout {
-                project::Layout::Board => "▥",
-                project::Layout::Table => "▤",
-                project::Layout::Roadmap => "▬",
-            };
-            let route = Route::Project {
-                project: project.clone(),
-                view: Some(v.number),
-            };
-            c.tabs
-                .push((new_tab(icon, &v.name, None), Target::Page(route)));
-        }
-        c.active = p.views.iter().position(|v| v.number == p.view);
     }
 
     /// A commit's tabs: the commit, and its files.
@@ -469,7 +368,9 @@ impl State {
         ));
         c.tabs.push((
             new_tab("▥", "Projects", None),
-            Target::Page(Route::Projects(ProjectsOf::Repo(repo.clone()))),
+            Target::Page(Route::Projects(projects::Projects(ProjectsOf::Repo(
+                repo.clone(),
+            )))),
         ));
         if o.is_some_and(|o| o.has_wiki) {
             c.tabs.push((
@@ -482,23 +383,23 @@ impl State {
         }
         c.tabs.push((
             new_tab("⛨", "Security", None),
-            Target::Page(Route::Advisories(Some(repo.clone()))),
+            Target::Page(Route::Security(security::Advisories(Some(repo.clone())))),
         ));
         c.tabs.push((
             new_tab("⌁", "Insights", None),
             Target::Page(Route::Site(crate::site::Page::Insights {
                 repo: repo.clone(),
-                tab: crate::site::InsightsTab::Contributors,
+                tab: crate::ui::pages::InsightsTab::Contributors,
             })),
         ));
         // GitHub shows the Settings tab only to admins.
         if o.is_some_and(|o| o.can_admin) {
             c.tabs.push((
                 new_tab("⚙", "Settings", None),
-                Target::Page(Route::Settings {
+                Target::Page(Route::Settings(settings::Page {
                     repo: repo.clone(),
                     page: crate::api::settings::SettingsPage::General,
-                }),
+                })),
             ));
         }
     }
@@ -587,30 +488,6 @@ pub enum Section {
     Security,
     Insights,
     Settings,
-}
-
-fn section(route: &Route) -> Section {
-    match route {
-        Route::Projects(_) => Section::Projects,
-        Route::Advisories(_)
-        | Route::Advisory { .. }
-        | Route::Alerts { .. }
-        | Route::Alert { .. } => Section::Security,
-        Route::App(p) => p.section(),
-        Route::Code(p) => p.section(),
-        Route::Wiki(p) => p.section(),
-        Route::Discussions(p) => p.section(),
-        Route::Gists(p) => p.section(),
-        Route::People(p) => p.section(),
-        Route::Releases(p) => p.section(),
-        Route::Runs(p) => p.section(),
-        Route::Issues(p) => p.section(),
-        Route::Pulls(p) => p.section(),
-        Route::Site(p) => p.section(),
-        Route::Housekeeping(p) => p.section(),
-        Route::Settings { .. } => Section::Settings,
-        _ => Section::Code,
-    }
 }
 
 /// A comparison's tabs: its commits, and (once its ends are known) the

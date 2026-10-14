@@ -1,9 +1,7 @@
 //! What pages say when their data fails or is still on its way.
 
 use super::*;
-use crate::route::code;
-use crate::route::pulls;
-use crate::route::runs;
+use crate::route::{code, pulls, runs, search};
 
 /// Delivers a failed fetch of `key`.
 fn failed(state: &mut State, key: DataKey) {
@@ -97,10 +95,10 @@ fn a_loading_conversation_stays_on_the_timeline() {
 #[test]
 fn a_search_in_flight_says_searching() {
     let mut state = with_repo();
-    let route = Route::Search {
+    let route = Route::Search(search::Search {
         kind: SearchKind::Repos,
         query: "ghtui".into(),
-    };
+    });
     let _ = state.push(route.clone());
     let page = state.build_page(&route, 100, NOW);
     let text: Vec<String> = page

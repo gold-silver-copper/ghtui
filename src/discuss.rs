@@ -11,7 +11,7 @@ use crate::api::change::Change;
 use crate::api::discussion::Discuss;
 use crate::api::edit::{Edit, Editable};
 use crate::api::model::NodeId;
-use crate::route::discussions;
+use crate::route::{Route, discussions};
 
 use crate::act::{By, Confirm, Subject};
 use crate::data::DataKey;
@@ -19,7 +19,6 @@ use crate::edit::Choosing;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::review::ComposeTarget;
-use crate::route::Route;
 use crate::state::{Api, Cmd, Overlay, Screen, State};
 use crate::ui::page::Link;
 

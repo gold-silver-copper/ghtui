@@ -4,8 +4,6 @@
 
 use super::*;
 use crate::api::explore::{Since, Topic, Topics};
-use crate::route::Route;
-use crate::site::Page as Site;
 
 /// What Explore's list is, and why it isn't Trending.
 fn not_trending(since: Since) -> String {
@@ -30,12 +28,8 @@ pub fn explore(
         if !tabs.is_empty() {
             tabs.push(Seg::new(" · ", Role::Meta));
         }
-        let target = Route::Site(Site::Explore {
-            language: language.map(str::to_owned),
-            since: s,
-        });
         let role = if s == since { Role::Strong } else { Role::Link };
-        tabs.push(link_seg(page, s.label(), target.url(), role));
+        tabs.push(link_seg(page, s.label(), url::explore(language, s), role));
     }
     page.wrapped(tabs, 0, Frame::None);
     languages(page, language, since);
@@ -109,12 +103,9 @@ fn languages(page: &mut Page, language: Option<&str>, since: Since) {
         if segs.len() > 1 {
             segs.push(Seg::new(" · ", Role::Meta));
         }
-        let target = Route::Site(Site::Explore {
-            language: l.map(str::to_lowercase),
-            since,
-        });
+        let target = url::explore(l.map(str::to_lowercase).as_deref(), since);
         let role = if here(l) { Role::Strong } else { Role::Link };
-        segs.push(link_seg(page, l.unwrap_or("Any"), target.url(), role));
+        segs.push(link_seg(page, l.unwrap_or("Any"), target, role));
     };
     add(page, &mut segs, None);
     for l in LANGUAGES {
@@ -132,7 +123,7 @@ fn languages(page: &mut Page, language: Option<&str>, since: Since) {
 
 /// A topic's row: its name and what it is.
 fn topic_row(page: &mut Page, topic: &Topic) {
-    let target = Route::Site(Site::Topic(topic.name.clone())).url();
+    let target = url::topic(&topic.name);
     item(page, target, |page, link| {
         let mut segs = vec![Seg::linked(topic.title().to_owned(), Role::Link, link)];
         segs.push(Seg::new(format!("  #{}", topic.name), Role::Meta));
@@ -178,7 +169,7 @@ pub fn topic(page: &mut Page, t: &Topic, repos: Fetched<'_, SearchResults>, now:
             if i > 0 {
                 segs.push(Seg::new(" · ", Role::Meta));
             }
-            let target = Route::Site(Site::Topic(name.clone())).url();
+            let target = url::topic(name);
             segs.push(link_seg(page, format!("#{name}"), target, Role::Link));
         }
         page.wrapped(segs, 0, Frame::None);

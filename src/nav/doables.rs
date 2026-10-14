@@ -2,11 +2,7 @@
 //! the status bar.
 
 use super::*;
-use crate::route::app;
-use crate::route::code;
-use crate::route::issues;
-use crate::route::pulls;
-use crate::route::runs;
+use crate::route::{app, code, issues, pulls, runs, search};
 
 /// Something you can do here.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -300,7 +296,7 @@ impl State {
                 out.push(here(Action::Search, "Search the log", "search"));
                 Some(query.clone())
             }
-            _ if route.list_query().is_some() => {
+            _ if route.family().query().is_some() => {
                 out.push(here(Action::Search, "Filter this list", "filter"));
                 None
             }
@@ -345,7 +341,7 @@ impl State {
                 "",
             ));
         }
-        if let Route::Notifications { query } = route {
+        if let Route::Search(search::Notifications { query }) = route {
             let show = format!("Show {}", next_list_state(route, query));
             out.push(here(Action::ToggleState, &show, "unread/read"));
         }

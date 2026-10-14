@@ -3,9 +3,7 @@
 
 use super::*;
 use crate::api::model::Capped;
-use crate::route::issues;
-use crate::route::people;
-use crate::route::pulls;
+use crate::route::{issues, people, pulls};
 
 /// A conversation longer than what's fetched (its newest comments,
 /// reviews and commits) says how much is left out, and its tabs count it
@@ -191,7 +189,7 @@ fn a_filter_is_edited_in_place() {
     assert!(row(field).contains("⌕ is:open label:bug"), "{}", row(field));
     assert!(!row(state.header_search()).contains("label:bug"));
     press(&mut state, "<Enter>");
-    let query = state.route().and_then(Route::list_query);
+    let query = state.route().and_then(|r| r.family().query());
     assert_eq!(query, Some("is:open label:bug"));
 }
 
