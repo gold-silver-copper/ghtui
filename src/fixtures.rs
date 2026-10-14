@@ -530,6 +530,20 @@ pub fn commit() -> CommitDetail {
     }
 }
 
+/// A comment on a line of [`commit`].
+pub fn commit_comment() -> crate::api::commit_comments::CommitComment {
+    crate::api::commit_comments::CommitComment {
+        id: 7,
+        node_id: "CC_7".into(),
+        author: "hubot".into(),
+        body: "This one broke the 256-color theme.".into(),
+        created_at: "2026-10-02T12:00:00Z".into(),
+        path: Some("src/theme.rs".into()),
+        line: Some(12),
+        url: String::new(),
+    }
+}
+
 /// A page of a branch's history.
 pub fn history(next: Option<&str>) -> Results<CommitInfo> {
     let commits = activity().commits;
@@ -2280,6 +2294,19 @@ pub(crate) fn page<T>(total: u64, items: Vec<T>, next: Option<&str>) -> Results<
     Results { total, items, next }
 }
 
+/// Answers every fetch `cmds` start, and every fetch those answers
+/// start, with its [`sample`].
+pub(crate) fn served(state: &mut State, cmds: &[Cmd]) {
+    let mut asked = asked(cmds);
+    let mut answered = std::collections::HashSet::new();
+    while let Some(key) = asked.pop() {
+        if answered.insert(key.clone()) {
+            let data = sample(&key);
+            asked.extend(self::asked(&fetched(state, key, data)));
+        }
+    }
+}
+
 /// What GitHub might answer for `key`.
 pub(crate) fn sample(key: &DataKey) -> Data {
     use crate::housekeeping::fixtures as housekeeping;
@@ -2287,7 +2314,7 @@ pub(crate) fn sample(key: &DataKey) -> Data {
     use DataKey as K;
     let search = |kind: &SearchKind| match kind {
         SearchKind::Repos => repo_results(),
-        SearchKind::Issues | SearchKind::Pulls => issue_results(None),
+        SearchKind::Issues | SearchKind::Pulls => issue_results(Some("c1")),
         SearchKind::Users => user_results(),
         SearchKind::Discussions => discussion_results(),
         SearchKind::Commits => commit_results(),
@@ -2306,9 +2333,10 @@ pub(crate) fn sample(key: &DataKey) -> Data {
         K::Pr(_) => Data::Pr(Box::new(pr_detail())),
         K::PrActivity(_) => Data::PrActivity(Box::new(activity())),
         K::Reviews(_) => Data::Reviews(Box::new(reviews())),
-        K::CommitComments(..) => Data::CommitComments(Box::default()),
+        K::CommitComments(..) => Data::CommitComments(Box::new(vec![commit_comment()].into())),
         K::Lines(..) => Data::Lines(Arc::default()),
-        K::InProjects(..) => Data::InProjects(Box::default()),
+        K::InProjects(..) => Data::InProjects(Box::new(in_projects())),
+        K::Profile(login) if login == "ratatui" => Data::Profile(Box::new(org_profile())),
         K::Profile(_) => Data::Profile(Box::new(profile())),
         K::Files(..) => Data::Files(Arc::new(vec!["README.md".into()]), false),
         K::Refs(_) => Data::Refs(Box::default()),
@@ -2316,10 +2344,11 @@ pub(crate) fn sample(key: &DataKey) -> Data {
         K::RefIn(..) => Data::RefIn(None),
         K::LastCommits(..) => Data::LastCommits(Arc::new(last_commits())),
         K::Commit(..) => Data::Commit(Box::new(commit())),
-        K::History(..) => Data::History(Box::new(history(None))),
+        K::History(..) => Data::History(Box::new(history(Some("h1")))),
         K::PrChecks(_) | K::CommitChecks(..) => Data::Checks(Box::new(checks())),
         K::Users(_) => Data::Users(Box::new(people())),
-        K::Forks(_) | K::OwnerRepos(..) | K::Stars(_) => Data::RepoPage(Box::new(profile_repos())),
+        K::Forks(_) => Data::RepoPage(Box::new(forks())),
+        K::OwnerRepos(..) | K::Stars(_) => Data::RepoPage(Box::new(profile_repos())),
         K::Releases(_) => Data::Releases(Box::new(releases())),
         K::Release(..) => Data::Release(Box::new(release(true))),
         K::Tags(_) => Data::Tags(Box::new(tags())),

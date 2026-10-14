@@ -340,14 +340,7 @@ pub(super) fn screens() -> [(&'static str, Make); 31] {
         ("project table", || {
             mid(super::projects::with_project(Some(2)))
         }),
-        ("code search", || {
-            let results = crate::fixtures::code_results();
-            mid(with_search(
-                crate::api::browse::SearchKind::Code,
-                "q",
-                results,
-            ))
-        }),
+        ("code search", || mid(with_search(SearchKind::Code, "q"))),
     ]
 }
 

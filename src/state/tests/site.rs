@@ -1,55 +1,31 @@
 use crate::api::explore::Since;
 use crate::api::packages::PackagesOf;
-use crate::route::people;
 
 use super::*;
 use crate::site::{Page, fixtures};
 use crate::ui::pages::InsightsTab;
 
 pub(super) fn insights(tab: InsightsTab) -> State {
-    let mut s = with_repo();
-    let route = Route::Site(Page::Insights { repo: ghtui(), tab });
-    let key = match tab {
-        InsightsTab::Contributors | InsightsTab::Commits => DataKey::Activity(ghtui()),
-        InsightsTab::Traffic => DataKey::Traffic(ghtui()),
-        InsightsTab::Dependencies => DataKey::Dependencies(ghtui()),
-    };
-    open(&mut s, route, crate::fixtures::sample(&key));
-    s
+    at(
+        with_repo(),
+        Route::Site(Page::Insights { repo: ghtui(), tab }),
+    )
 }
 
 pub(super) fn explore() -> State {
-    let mut s = state();
-    let page = Page::Explore {
-        language: Some("rust".into()),
-        since: Since::Weekly,
-    };
-    let Some(key) = page.paged() else {
-        panic!("Explore lists repositories");
-    };
-    let _ = s.push(Route::Site(page));
-    let repos = Data::Search(Box::new(crate::fixtures::repo_results()));
-    fetched(&mut s, key, repos);
-    fetched(
-        &mut s,
-        DataKey::Featured,
-        crate::fixtures::sample(&DataKey::Featured),
-    );
-    s
+    let (language, since) = (Some("rust".into()), Since::Weekly);
+    at(state(), Route::Site(Page::Explore { language, since }))
 }
 
 pub(super) fn package() -> State {
-    let mut s = state();
-    let route = Route::Site(Page::Package {
-        at: fixtures::package_ref(),
-        version: None,
-    });
-    open(
-        &mut s,
-        route,
-        crate::fixtures::sample(&DataKey::Package(fixtures::package_ref())),
-    );
-    s
+    let at_ = fixtures::package_ref();
+    at(
+        state(),
+        Route::Site(Page::Package {
+            at: at_,
+            version: None,
+        }),
+    )
 }
 
 /// Each Insights tab says its numbers beside its bars: the year's
@@ -100,22 +76,7 @@ fn insights_tabs_say_their_numbers() {
 /// stars shows its repositories, and their Stars tab their lists.
 #[test]
 fn topics_and_starred_lists_read_as_on_github() {
-    let mut s = state();
-    let page = Page::Topic("rust".into());
-    let _ = s.push(Route::Site(page.clone()));
-    fetched(
-        &mut s,
-        DataKey::Topic("rust".into()),
-        crate::fixtures::sample(&DataKey::Topic("rust".into())),
-    );
-    let Some(key) = page.paged() else {
-        panic!("a topic lists repositories");
-    };
-    fetched(
-        &mut s,
-        key,
-        Data::Search(Box::new(crate::fixtures::repo_results())),
-    );
+    let s = at(state(), Route::Site(Page::Topic("rust".into())));
     let text = page_text(&s);
     for part in [
         "Created by Graydon Hoare · Released July 7, 2010 · ☆ 1.2k stars",
@@ -124,26 +85,13 @@ fn topics_and_starred_lists_read_as_on_github() {
         assert!(text.contains(part), "{part} in {text}");
     }
 
-    let mut s = state();
-    let route = Route::Site(Page::StarList {
-        login: "octocat".into(),
-        slug: "terminal-tools".into(),
-    });
-    let key = DataKey::StarList("octocat".into(), "terminal-tools".into());
-    open(&mut s, route, crate::fixtures::sample(&key));
+    let (login, slug) = ("octocat".into(), "terminal-tools".into());
+    let s = at(state(), Route::Site(Page::StarList { login, slug }));
     let text = page_text(&s);
     assert!(text.contains("Terminal tools  2 repositories"), "{text}");
     assert!(text.contains("Repositories  2"), "{text}");
 
-    let mut s = state();
-    let _ = s.push(Route::People(people::User {
-        login: "octocat".into(),
-        tab: crate::ui::pages::ProfileTab::Stars,
-    }));
-    let profile = Data::Profile(Box::new(crate::fixtures::profile()));
-    fetched(&mut s, DataKey::Profile("octocat".into()), profile);
-    let lists = DataKey::StarLists("octocat".into());
-    fetched(&mut s, lists.clone(), crate::fixtures::sample(&lists));
+    let s = with_profile(crate::ui::pages::ProfileTab::Stars);
     let text = page_text(&s);
     assert!(text.contains("Lists  2"), "{text}");
     assert!(text.contains("To read  0 repositories  Private"), "{text}");
@@ -158,11 +106,7 @@ fn a_repository_is_put_in_a_list_and_followed() {
     let key = DataKey::MyLists(ghtui());
     let cmds = press(&mut s, ",B");
     assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
-    fetched(
-        &mut s,
-        key.clone(),
-        crate::fixtures::sample(&DataKey::MyLists(ghtui())),
-    );
+    crate::fixtures::served(&mut s, &cmds);
     let Some(Overlay::Picker(p)) = &s.overlay else {
         panic!("no picker");
     };

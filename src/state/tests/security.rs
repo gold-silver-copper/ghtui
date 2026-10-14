@@ -15,18 +15,11 @@ fn alert_ref(kind: AlertKind, number: u64) -> AlertRef {
 
 /// A repository's alerts of `kind`, open ones first.
 pub(super) fn with_alerts(kind: AlertKind) -> State {
-    let mut s = with_repo();
-    let route = Route::Security(security::Alerts {
-        repo: ghtui(),
-        kind,
-        query: OPEN.into(),
-    });
-    open(
-        &mut s,
-        route,
-        Data::Alerts(Box::new(fixtures::alerts(kind))),
-    );
-    s
+    let (repo, query) = (ghtui(), OPEN.into());
+    at(
+        with_repo(),
+        Route::Security(security::Alerts { repo, kind, query }),
+    )
 }
 
 /// An alert's page.

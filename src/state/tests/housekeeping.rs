@@ -47,14 +47,7 @@ fn select(s: &mut State, text: &str) {
 
 /// The labels page, with GitHub's labels.
 fn with_labels() -> State {
-    let mut s = with_repo();
-    let labels = crate::housekeeping::fixtures::labels();
-    open(
-        &mut s,
-        Route::Issues(issues::Labels(ghtui())),
-        Data::Labels(Box::new(labels)),
-    );
-    s
+    at(with_repo(), Route::Issues(issues::Labels(ghtui())))
 }
 
 fn labels_key() -> DataKey {

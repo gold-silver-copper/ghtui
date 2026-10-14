@@ -101,21 +101,8 @@ pub(crate) fn with_home() -> State {
 }
 
 pub(crate) fn with_pr() -> State {
-    let mut state = with_home();
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
-    let _ = state.push(Route::pr(pr.clone()));
-    crate::fixtures::pr_fetched(&mut state, &pr, Ok(pr_detail()));
-    fetched(
-        &mut state,
-        DataKey::InProjects(pr.repo.clone(), pr.number),
-        Data::InProjects(Box::default()),
-    );
-    fetched(
-        &mut state,
-        DataKey::PrActivity(pr),
-        Data::PrActivity(Box::new(fixtures::activity())),
-    );
-    state
+    at(with_home(), Route::pr(pr))
 }
 
 /// Pushes `route` and delivers `data` for its page's own fetch (its last).
@@ -127,188 +114,132 @@ pub(crate) fn open(state: &mut State, route: Route, data: Data) {
     fetched(state, key, data);
 }
 
+/// `state` gone to `route`, what it fetches answered as by
+/// [`fixtures::served`].
+pub(crate) fn at(mut state: State, route: Route) -> State {
+    let cmds = state.push(route);
+    fixtures::served(&mut state, &cmds);
+    state
+}
+
 pub(crate) fn ghtui() -> RepoId {
     RepoId::new("gold-silver-copper", "ghtui")
 }
 
 /// A repository's Code tab with everything it asked for delivered.
 pub(crate) fn with_repo() -> State {
-    let mut state = state();
-    let _ = state.push(Route::Code(code::Repo(ghtui())));
-    fetched(
-        &mut state,
-        DataKey::Repo(ghtui()),
-        Data::Repo(Box::new(fixtures::overview())),
-    );
-    fetched(
-        &mut state,
-        DataKey::Readme(ghtui()),
-        Data::Readme(Some(Box::new(fixtures::readme()))),
-    );
-    fetched(
-        &mut state,
-        DataKey::LastCommits(ghtui(), "HEAD".into(), String::new()),
-        Data::LastCommits(std::sync::Arc::new(fixtures::last_commits())),
-    );
-    state
+    at(state(), Route::Code(code::Repo(ghtui())))
 }
 
 /// A file in the repository.
 pub(crate) fn with_file() -> State {
-    let mut state = with_repo();
-    let route = Route::blob(ghtui(), "main".into(), "src/main.rs".into());
-    open(&mut state, route, Data::Blob(Box::new(fixtures::blob())));
-    state
+    at(
+        with_repo(),
+        Route::blob(ghtui(), "main".into(), "src/main.rs".into()),
+    )
 }
 
 /// A file's blame.
 pub(crate) fn with_blame() -> State {
-    let mut state = with_repo();
     let (repo, rev, path) = (ghtui(), "main".to_owned(), "src/main.rs".to_owned());
-    let blob = DataKey::Blob(repo.clone(), rev.clone(), path.clone());
-    let route = Route::Code(code::Blame {
-        repo,
-        rev,
-        path,
-        lines: Some((5, 5)),
-    });
-    let _ = state.push(route.clone());
-    fetched(&mut state, blob, Data::Blob(Box::new(fixtures::blob())));
-    let Some(key) = state.needs(&route).pop() else {
-        panic!("a blame fetches its blame");
-    };
-    fetched(&mut state, key, Data::Blame(Box::new(fixtures::blame())));
-    state
+    let lines = Some((5, 5));
+    at(
+        with_repo(),
+        Route::Code(code::Blame {
+            repo,
+            rev,
+            path,
+            lines,
+        }),
+    )
 }
+
 /// A gist.
 pub(crate) fn with_gist() -> State {
-    let mut state = state();
-    let route = Route::Gists(gists::Gist {
-        owner: Some("octocat".into()),
-        id: "6cad326836d38bd3a7ae".into(),
-    });
-    open(&mut state, route, Data::Gist(Box::new(fixtures::gist())));
-    state
+    let owner = Some("octocat".into());
+    let id = "6cad326836d38bd3a7ae".into();
+    at(state(), Route::Gists(gists::Gist { owner, id }))
 }
 
 /// Someone's gists.
 pub(crate) fn with_gists() -> State {
-    let mut state = state();
-    let route = Route::Gists(gists::Gists("octocat".into()));
-    open(&mut state, route, Data::Gists(Box::new(fixtures::gists())));
-    state
+    at(state(), Route::Gists(gists::Gists("octocat".into())))
 }
+
 /// An organization's teams.
 pub(crate) fn with_teams() -> State {
-    let mut state = state();
-    open(
-        &mut state,
-        Route::People(people::Teams("github".into())),
-        Data::Teams(Box::new(fixtures::teams())),
-    );
-    state
+    at(state(), Route::People(people::Teams("github".into())))
 }
 
 /// A team.
 pub(crate) fn with_team() -> State {
-    let mut state = state();
-    let route = Route::People(people::Team {
-        org: "github".into(),
-        slug: "core".into(),
-    });
-    open(&mut state, route, Data::Team(Box::new(fixtures::team())));
-    state
+    let (org, slug) = ("github".into(), "core".into());
+    at(state(), Route::People(people::Team { org, slug }))
 }
+
 /// A repository's security advisories.
 pub(crate) fn with_advisories() -> State {
-    let mut state = with_repo();
-    let route = Route::Security(security::Advisories(Some(ghtui())));
-    let items = fixtures::advisories();
-    let list = crate::fixtures::page(items.len() as u64, items, None);
-    open(&mut state, route, Data::Advisories(Box::new(list)));
-    state
+    at(
+        with_repo(),
+        Route::Security(security::Advisories(Some(ghtui()))),
+    )
 }
 
 /// A security advisory from GitHub's database.
 pub(crate) fn with_advisory() -> State {
-    let mut state = state();
-    let route = Route::Security(security::Advisory {
-        repo: None,
-        ghsa: "GHSA-6r3q-mjv7-xr8m".into(),
-    });
-    open(
-        &mut state,
-        route,
-        Data::Advisory(Box::new(fixtures::advisory())),
-    );
-    state
+    let ghsa = "GHSA-6r3q-mjv7-xr8m".into();
+    at(
+        state(),
+        Route::Security(security::Advisory { repo: None, ghsa }),
+    )
 }
+
 /// A wiki's Home.
 pub(crate) fn with_wiki() -> State {
-    let mut state = with_repo();
-    let route = Route::Wiki(wiki::Wiki {
-        repo: ghtui(),
-        page: None,
-    });
-    open(&mut state, route, Data::Wiki(Box::new(fixtures::wiki())));
-    state
+    at(
+        with_repo(),
+        Route::Wiki(wiki::Wiki {
+            repo: ghtui(),
+            page: None,
+        }),
+    )
 }
+
 /// The repository's open issues.
 pub(crate) fn with_issues() -> State {
-    let mut state = with_repo();
-    let route = Route::Issues(issues::Issues {
-        repo: ghtui(),
-        query: OPEN.into(),
-    });
-    let results = fixtures::issue_results(Some("c1"));
-    open(&mut state, route, Data::Search(Box::new(results)));
-    state
+    let query = OPEN.into();
+    at(
+        with_repo(),
+        Route::Issues(issues::Issues {
+            repo: ghtui(),
+            query,
+        }),
+    )
 }
 
 /// A commit, its repository's header loaded first.
 pub(crate) fn with_commit() -> State {
-    let mut state = with_repo();
-    let commit = fixtures::commit();
-    let route = Route::Code(code::Commit {
-        repo: ghtui(),
-        oid: commit.oid.clone(),
-        pr: None,
-    });
-    let comments = DataKey::CommitComments(ghtui(), commit.oid.clone());
-    open(&mut state, route, Data::Commit(Box::new(commit)));
-    let comment = crate::api::commit_comments::CommitComment {
-        id: 7,
-        node_id: "CC_7".into(),
-        author: "hubot".into(),
-        body: "This one broke the 256-color theme.".into(),
-        created_at: "2026-10-02T12:00:00Z".into(),
-        path: Some("src/theme.rs".into()),
-        line: Some(12),
-        url: String::new(),
-    };
-    fetched(
-        &mut state,
-        comments,
-        Data::CommitComments(Box::new(vec![comment].into())),
-    );
-    state
+    let oid = fixtures::commit().oid;
+    at(
+        with_repo(),
+        Route::Code(code::Commit {
+            repo: ghtui(),
+            oid,
+            pr: None,
+        }),
+    )
 }
 
 /// A pull request's Checks tab.
-pub(crate) fn with_pr_checks() -> State {
-    let mut state = with_pr();
+fn with_pr_checks() -> State {
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
-    let _ = state.push(Route::Pulls(pulls::Pr {
-        pr: pr.clone(),
-        tab: PrTab::Checks,
-    }));
-    // The switch refreshes the pull request; it comes back unchanged.
-    crate::fixtures::pr_fetched(&mut state, &pr, Ok(pr_detail()));
-    let activity = Data::PrActivity(Box::new(fixtures::activity()));
-    fetched(&mut state, DataKey::PrActivity(pr.clone()), activity);
-    let checks = Data::Checks(Box::new(fixtures::checks()));
-    fetched(&mut state, DataKey::PrChecks(pr), checks);
-    state
+    at(
+        with_pr(),
+        Route::Pulls(pulls::Pr {
+            pr,
+            tab: PrTab::Checks,
+        }),
+    )
 }
 
 /// A pull request's Review tab: a draft, a thread still open (and one
@@ -341,24 +272,10 @@ pub(crate) fn with_pr_review() -> State {
     state
 }
 
-/// A repository's Actions tab.
-pub(crate) fn with_actions() -> State {
-    let mut state = with_repo();
-    let route = Route::actions(ghtui());
-    let runs = Data::Runs(Box::new(fixtures::workflow_runs().1));
-    open(&mut state, route, runs);
-    state
-}
-
 /// Your inbox, from Home.
 pub(crate) fn with_notifications() -> State {
-    let mut state = with_home();
-    let route = Route::Search(search::Notifications {
-        query: String::new(),
-    });
-    let inbox = Data::Notifications(Box::new(fixtures::notifications()));
-    open(&mut state, route, inbox);
-    state
+    let query = String::new();
+    at(with_home(), Route::Search(search::Notifications { query }))
 }
 
 /// `state` in a `w`×`h` terminal.
@@ -397,299 +314,148 @@ pub(crate) fn with_tabs(n: usize) -> State {
 
 /// An organization's profile.
 pub(crate) fn with_org() -> State {
-    let mut state = state();
-    let route = Route::user("ratatui");
-    open(
-        &mut state,
-        route,
-        Data::Profile(Box::new(fixtures::org_profile())),
-    );
-    state
+    at(state(), Route::user("ratatui"))
 }
 
 /// A repository's discussions.
 pub(crate) fn with_discussions() -> State {
-    let mut state = with_repo();
     let of = crate::api::browse::DiscussionsOf::Repo(ghtui());
-    let route = Route::Discussions(discussions::Discussions { of, category: None });
-    open(
-        &mut state,
-        route,
-        Data::Discussions(Box::new(fixtures::discussions())),
-    );
-    state
+    at(
+        with_repo(),
+        Route::Discussions(discussions::Discussions { of, category: None }),
+    )
 }
 
 /// A discussion.
 pub(crate) fn with_discussion() -> State {
-    let mut state = with_repo();
     let of = crate::api::browse::DiscussionsOf::Repo(ghtui());
-    let route = Route::Discussions(discussions::Discussion { of, number: 14603 });
-    open(
-        &mut state,
-        route,
-        Data::Discussion(Box::new(fixtures::discussion())),
-    );
-    state
+    at(
+        with_repo(),
+        Route::Discussions(discussions::Discussion { of, number: 14603 }),
+    )
 }
+
 /// A workflow run.
 pub(crate) fn with_run() -> State {
-    let mut state = with_repo();
-    let route = Route::Runs(runs::WorkflowRun {
+    let route = runs::WorkflowRun {
         repo: ghtui(),
         run: 7,
         attempt: None,
-    });
-    open(
-        &mut state,
-        route,
-        Data::Run(Box::new(fixtures::workflow_run())),
-    );
-    state
+    };
+    at(with_repo(), Route::Runs(route))
 }
 
 /// A job, its failed step's log open; `step` is the step a link pointed at.
 pub(crate) fn with_job(step: Option<(u32, u32)>) -> State {
-    let mut state = with_repo();
-    let route = Route::Runs(runs::Job {
-        repo: ghtui(),
-        run: Some(7),
-        job: 2,
-        step,
-        query: String::new(),
-    });
-    let _ = state.push(route);
-    let (job, log) = fixtures::job();
-    fetched(
-        &mut state,
-        DataKey::Job(ghtui(), 2),
-        Data::Job(Box::new(job)),
-    );
-    let log = Data::Log(std::sync::Arc::new(log));
-    fetched(&mut state, DataKey::JobLog(ghtui(), 2), log);
-    state
+    let (repo, run, query) = (ghtui(), Some(7), String::new());
+    at(
+        with_repo(),
+        Route::Runs(runs::Job {
+            repo,
+            run,
+            job: 2,
+            step,
+            query,
+        }),
+    )
 }
 
 /// A workflow and its runs.
 pub(crate) fn with_workflow() -> State {
-    let mut state = with_repo();
-    let route = Route::Runs(runs::Workflow {
-        repo: ghtui(),
-        file: "ci.yml".into(),
-    });
-    let _ = state.push(route);
-    let (workflow, runs) = fixtures::workflow_runs();
-    let key = DataKey::Workflow(ghtui(), "ci.yml".into());
-    fetched(&mut state, key, Data::Workflow(Box::new(workflow)));
-    let key = DataKey::Runs(ghtui(), "workflow:ci.yml".into());
-    fetched(&mut state, key, Data::Runs(Box::new(runs)));
-    state
-}
-
-/// A repository's stargazers.
-pub(crate) fn with_stargazers() -> State {
-    let mut state = with_repo();
-    let route = Route::People(people::Stargazers(ghtui()));
-    open(&mut state, route, Data::Users(Box::new(fixtures::people())));
-    state
-}
-
-/// A repository's forks.
-pub(crate) fn with_forks() -> State {
-    let mut state = with_repo();
-    let route = Route::People(people::Forks(ghtui()));
-    open(
-        &mut state,
-        route,
-        Data::RepoPage(Box::new(fixtures::forks())),
-    );
-    state
-}
-
-/// A repository's releases.
-pub(crate) fn with_releases() -> State {
-    let mut state = with_repo();
-    let route = Route::Releases(releases::Releases(ghtui()));
-    open(
-        &mut state,
-        route,
-        Data::Releases(Box::new(fixtures::releases())),
-    );
-    state
+    let file = "ci.yml".into();
+    at(
+        with_repo(),
+        Route::Runs(runs::Workflow {
+            repo: ghtui(),
+            file,
+        }),
+    )
 }
 
 /// A release's page.
 pub(crate) fn with_release() -> State {
-    let mut state = with_repo();
-    let route = Route::Releases(releases::Release {
-        repo: ghtui(),
-        tag: "v0.2.0".into(),
-    });
-    open(
-        &mut state,
-        route,
-        Data::Release(Box::new(fixtures::release(true))),
-    );
-    state
-}
-
-/// A repository's tags.
-pub(crate) fn with_tags() -> State {
-    let mut state = with_repo();
-    open(
-        &mut state,
-        Route::Code(code::Tags(ghtui())),
-        Data::Tags(Box::new(fixtures::tags())),
-    );
-    state
+    let tag = "v0.2.0".into();
+    at(
+        with_repo(),
+        Route::Releases(releases::Release { repo: ghtui(), tag }),
+    )
 }
 
 /// A repository's branches.
 pub(crate) fn with_branches() -> State {
-    let mut state = with_repo();
-    open(
-        &mut state,
-        Route::Code(code::Branches(ghtui())),
-        Data::Branches(Box::new(fixtures::branches())),
-    );
-    state
+    at(with_repo(), Route::Code(code::Branches(ghtui())))
 }
+
 /// A repository's milestones.
 pub(crate) fn with_milestones() -> State {
-    let mut state = with_repo();
-    let route = Route::Issues(issues::Milestones {
+    let route = issues::Milestones {
         repo: ghtui(),
         closed: false,
-    });
-    open(
-        &mut state,
-        route,
-        Data::Milestones(Box::new(fixtures::milestones())),
-    );
-    state
+    };
+    at(with_repo(), Route::Issues(route))
 }
 
 /// A milestone.
 pub(crate) fn with_milestone() -> State {
-    let mut state = with_repo();
-    let route = Route::Issues(issues::Milestone {
+    let route = issues::Milestone {
         repo: ghtui(),
         number: 3,
-    });
-    open(
-        &mut state,
-        route,
-        Data::Milestone(Box::new(fixtures::milestone())),
-    );
-    state
+    };
+    at(with_repo(), Route::Issues(route))
 }
+
 /// A repository's deployments.
 pub(crate) fn with_deployments() -> State {
-    let mut state = with_repo();
-    let route = Route::Runs(runs::Deployments {
+    let route = runs::Deployments {
         repo: ghtui(),
         environment: None,
-    });
-    open(
-        &mut state,
-        route,
-        Data::Deployments(Box::new(fixtures::deployments())),
-    );
-    state
+    };
+    at(with_repo(), Route::Runs(route))
 }
+
 /// Two tags compared.
 pub(crate) fn with_compare() -> State {
-    let mut state = with_repo();
-    let route = Route::Code(code::Compare {
-        repo: ghtui(),
-        spec: "v0.1.0...v0.2.0".into(),
-    });
-    open(
-        &mut state,
-        route,
-        Data::Compare(Box::new(fixtures::comparison())),
-    );
-    state
-}
-/// A branch's commits.
-pub(crate) fn with_history() -> State {
-    let mut state = with_repo();
-    let route = Route::Code(code::Commits {
-        repo: ghtui(),
-        rev: "main".into(),
-        path: String::new(),
-    });
-    open(
-        &mut state,
-        route,
-        Data::History(Box::new(fixtures::history(Some("h1")))),
-    );
-    state
+    let spec = "v0.1.0...v0.2.0".into();
+    at(
+        with_repo(),
+        Route::Code(code::Compare {
+            repo: ghtui(),
+            spec,
+        }),
+    )
 }
 
 /// An issue, its repository's header loaded first.
 pub(crate) fn with_issue() -> State {
-    let mut state = state();
-    fetched(
-        &mut state,
-        DataKey::Repo(ghtui()),
-        Data::Repo(Box::new(fixtures::overview())),
-    );
-    let route = Route::Issues(issues::Issue {
-        repo: ghtui(),
-        number: 14,
-    });
-    let issue = Data::Issue(Some(Box::new(fixtures::issue())));
-    open(&mut state, route, issue);
-    fetched(
-        &mut state,
-        DataKey::InProjects(ghtui(), 14),
-        Data::InProjects(Box::new(fixtures::in_projects())),
-    );
-    state
+    at(
+        state(),
+        Route::Issues(issues::Issue {
+            repo: ghtui(),
+            number: 14,
+        }),
+    )
 }
 
 pub(crate) fn with_profile(tab: ProfileTab) -> State {
-    let mut state = state();
-    let route = Route::People(people::User {
-        login: "octocat".into(),
-        tab,
-    });
-    let _ = state.push(route.clone());
-    let profile = Data::Profile(Box::new(fixtures::profile()));
-    fetched(&mut state, DataKey::Profile("octocat".into()), profile);
-    // The tab's own list.
-    if let Some(key) = route.family().paged() {
-        let list = match key {
-            DataKey::Users(_) => Data::Users(Box::new(fixtures::people())),
-            _ => Data::RepoPage(Box::new(fixtures::profile_repos())),
-        };
-        fetched(&mut state, key, list);
-    }
-    state
+    let login = "octocat".into();
+    at(state(), Route::People(people::User { login, tab }))
 }
 
-pub(crate) fn with_search(kind: SearchKind, query: &str, results: SearchResults) -> State {
-    let mut state = state();
+pub(crate) fn with_search(kind: SearchKind, query: &str) -> State {
     let query = query.to_owned();
-    open(
-        &mut state,
-        Route::Search(search::Search { kind, query }),
-        Data::Search(Box::new(results)),
-    );
-    state
-}
-
-/// Repositories matching "terminal file manager".
-pub(crate) fn with_repo_search() -> State {
-    let results = fixtures::repo_results();
-    with_search(SearchKind::Repos, "terminal file manager", results)
+    at(state(), Route::Search(search::Search { kind, query }))
 }
 
 /// Every page ghtui has a fixture for, with its data in.
 pub(crate) fn pages() -> Vec<(&'static str, State)> {
     let mut commits = with_pr();
     press(&mut commits, "2gt");
+    let repo = |route| at(with_repo(), route);
+    let commits_of = code::Commits {
+        repo: ghtui(),
+        rev: "main".into(),
+        path: String::new(),
+    };
     vec![
         ("home", with_home()),
         ("repo", with_repo()),
@@ -706,41 +472,32 @@ pub(crate) fn pages() -> Vec<(&'static str, State)> {
             )),
         ),
         ("stars", with_profile(ProfileTab::Stars)),
-        ("search", with_repo_search()),
+        (
+            "search",
+            with_search(SearchKind::Repos, "terminal file manager"),
+        ),
         ("commit", with_commit()),
-        ("commits", with_history()),
+        ("commits", repo(Route::Code(commits_of))),
         ("pr checks", with_pr_checks()),
-        ("actions", with_actions()),
-        ("stargazers", with_stargazers()),
-        ("forks", with_forks()),
-        ("releases", with_releases()),
+        ("actions", repo(Route::actions(ghtui()))),
+        (
+            "stargazers",
+            repo(Route::People(people::Stargazers(ghtui()))),
+        ),
+        ("forks", repo(Route::People(people::Forks(ghtui())))),
+        (
+            "releases",
+            repo(Route::Releases(releases::Releases(ghtui()))),
+        ),
         ("release", with_release()),
-        ("tags", with_tags()),
+        ("tags", repo(Route::Code(code::Tags(ghtui())))),
         ("branches", with_branches()),
         (
             "discussion search",
-            with_search(
-                crate::api::browse::SearchKind::Discussions,
-                "q",
-                crate::fixtures::discussion_results(),
-            ),
+            with_search(SearchKind::Discussions, "q"),
         ),
-        (
-            "commit search",
-            with_search(
-                crate::api::browse::SearchKind::Commits,
-                "q",
-                crate::fixtures::commit_results(),
-            ),
-        ),
-        (
-            "code search",
-            with_search(
-                crate::api::browse::SearchKind::Code,
-                "q",
-                crate::fixtures::code_results(),
-            ),
-        ),
+        ("commit search", with_search(SearchKind::Commits, "q")),
+        ("code search", with_search(SearchKind::Code, "q")),
         ("wiki", with_wiki()),
         ("advisories", with_advisories()),
         ("advisory", with_advisory()),
