@@ -14,10 +14,9 @@ use super::{
 };
 use crate::data::DataKey;
 use crate::keymap::Action;
-use crate::nav::Doable;
+use crate::nav::{Doable, row};
 use crate::state::{Cmd, State};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::row;
 
 /// A milestone's change: a new one's (no number), or one's.
 #[derive(Debug, Clone, PartialEq, Eq)]

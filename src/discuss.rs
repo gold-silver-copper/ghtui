@@ -129,7 +129,15 @@ fn here(state: &State) -> Option<Here<'_>> {
 }
 
 /// Whether `action` is the discussion's on screen to do.
-pub fn takes(state: &State, action: Action) -> bool {
+/// What discussions add: their own actions on a discussion's pages.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    takes,
+    act,
+    offers: doables,
+    ..crate::features::Feature::NONE
+};
+
+fn takes(state: &State, action: Action) -> bool {
     ACTIONS.contains(&action) && here(state).is_some()
 }
 
@@ -427,13 +435,8 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
         if action == Action::MarkAnswer && !answerable {
             continue;
         }
-        out.push(Doable {
-            section,
-            action,
-            label: label.to_owned(),
-            short,
-            unavailable: plan(state, &h, action).err(),
-        });
+        let why = plan(state, &h, action).err();
+        out.push(crate::nav::row(section, action, label, short, why));
     }
 }
 

@@ -548,6 +548,14 @@ impl Job for Dispatch {
     }
 }
 
+/// What running a workflow by hand adds.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &[Action::RunWorkflow],
+    act: |state, _| action(state),
+    offers: doables,
+    ..crate::features::Feature::NONE
+};
+
 /// What the menu offers here: running the workflow by hand.
 pub fn doables(state: &State, out: &mut Vec<Doable>) {
     let Some((repo, file)) = workflow_here(state) else {
@@ -558,13 +566,14 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
     } else {
         format!("Run {file} by hand…")
     };
-    out.push(Doable {
-        section: "Change",
-        action: Action::RunWorkflow,
+    let why = refused(state, &repo, &file);
+    out.push(crate::nav::row(
+        "Change",
+        Action::RunWorkflow,
         label,
-        short: "",
-        unavailable: refused(state, &repo, &file),
-    });
+        "",
+        why,
+    ));
 }
 
 // ---- annotations in Files changed -----------------------------------------------

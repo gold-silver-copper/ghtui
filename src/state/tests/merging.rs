@@ -37,11 +37,9 @@ fn choices(s: &State) -> Vec<(&str, &Change)> {
 
 /// The Space menu's row for merging: its label, and why it can't be done.
 fn merge_row(s: &State) -> (String, Option<String>) {
-    let row = crate::act::doables(s)
-        .into_iter()
-        .find(|(a, ..)| *a == Action::Merge);
-    let (_, label, why) = row.unwrap();
-    (label, why)
+    let row = s.doables().into_iter().find(|d| d.action == Action::Merge);
+    let row = row.unwrap();
+    (row.label, row.unavailable)
 }
 
 /// Required checks still running.

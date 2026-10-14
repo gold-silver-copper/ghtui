@@ -9,12 +9,12 @@ use crate::api::model::{Capped, NodeId, RepoId};
 use crate::data::Picked;
 use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
-use crate::nav::Doable;
+use crate::nav::{Doable, row};
 use crate::picker::fuzzy_score;
 use crate::route::{Route, people};
 use crate::state::{Cmd, Remote, State};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::{Chosen, Pick, item, row};
+use crate::writes::{Chosen, Pick, item};
 
 use super::Page;
 use crate::data::DataKey;

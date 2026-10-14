@@ -521,15 +521,31 @@ pub fn doables(
     packages::doables(state, route, out);
 }
 
-/// Whether `,D` here is these pages': a package's, or a list's.
-pub fn deletes_here(route: Option<&crate::route::Route>) -> bool {
-    matches!(
-        route,
-        Some(crate::route::Route::Site(
-            Page::Package { .. } | Page::StarList { .. }
-        ))
-    )
-}
+/// What the site's pages add: your starred lists, and deleting a list or
+/// a package's version on its page.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &[crate::keymap::Action::Lists],
+    takes: |state, action| {
+        action == crate::keymap::Action::DeleteComment
+            && matches!(
+                state.route(),
+                Some(crate::route::Route::Site(
+                    Page::Package { .. } | Page::StarList { .. }
+                ))
+            )
+    },
+    act: |state, action| match action {
+        crate::keymap::Action::Lists => lists::open(state),
+        _ => ask_delete(state),
+    },
+    offers: |state, out| {
+        if let Some(route) = state.route() {
+            doables(state, route, out);
+        }
+        out.extend(lists::doable(state));
+    },
+    ..crate::features::Feature::NONE
+};
 
 /// `,D` here.
 #[must_use]

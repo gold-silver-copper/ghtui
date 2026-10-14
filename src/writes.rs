@@ -4,119 +4,13 @@
 //! ([`crate::watch`]). This module is what they share: their keys and
 //! menu rows, their pickers and questions.
 
-use crate::route::{Route, gists, releases, wiki};
+use crate::route::{Route, releases};
 
 use crate::api::watch::Watched;
 use crate::ui::overlays::PaletteItem;
 
 use crate::data::DataKey;
-use crate::keymap::Action;
-use crate::nav::Doable;
 use crate::state::{Cmd, Overlay, State};
-
-/// The actions these writes add.
-pub const ACTIONS: [Action; 6] = [
-    Action::Watch,
-    Action::NewRelease,
-    Action::UploadAsset,
-    Action::NewGist,
-    Action::NewWikiPage,
-    Action::Lists,
-];
-
-/// Whether `action` is these writes' here: their own actions anywhere,
-/// and editing and deleting on their pages.
-pub fn claims(state: &State, action: Action) -> bool {
-    let route = state.route();
-    ACTIONS.contains(&action)
-        || match action {
-            Action::EditComment => matches!(
-                route,
-                Some(
-                    Route::Wiki(wiki::Wiki { .. })
-                        | Route::Gists(gists::Gist { .. })
-                        | Route::Releases(releases::Release { .. })
-                )
-            ),
-            Action::DeleteComment => {
-                matches!(
-                    route,
-                    Some(
-                        Route::Gists(gists::Gist { .. })
-                            | Route::Releases(releases::Release { .. })
-                    )
-                ) || crate::site::deletes_here(route)
-            }
-            _ => false,
-        }
-}
-
-/// Runs one of the actions [`claims`] says are these writes'.
-#[must_use]
-pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
-    let route = state.route().cloned();
-    match (action, &route) {
-        (Action::Watch, _) => crate::watch::open(state),
-        (Action::NewRelease, _) => crate::release::open(state),
-        (Action::UploadAsset, _) => crate::release::assets::open_upload(state),
-        (Action::EditComment, Some(Route::Releases(releases::Release { .. }))) => {
-            crate::release::open_edit(state)
-        }
-        (Action::DeleteComment, Some(Route::Releases(releases::Release { .. }))) => {
-            crate::release::ask_delete(state)
-        }
-        (Action::NewGist, _) => crate::gist::open_new(state),
-        (Action::NewWikiPage, _) => crate::wiki::form::open_new(state),
-        (Action::EditComment, Some(Route::Wiki(wiki::Wiki { .. }))) => {
-            crate::wiki::form::open_edit(state)
-        }
-        (Action::EditComment, Some(Route::Gists(gists::Gist { .. }))) => {
-            crate::gist::open_edit(state)
-        }
-        (Action::DeleteComment, Some(Route::Gists(gists::Gist { .. }))) => {
-            crate::gist::ask_delete(state)
-        }
-        (Action::Lists, _) => crate::site::lists::open(state),
-        (Action::DeleteComment, Some(Route::Site(_))) => crate::site::ask_delete(state),
-        _ => {
-            state.info(action.not_here());
-            Vec::new()
-        }
-    }
-}
-
-/// The menu's rows for what changes GitHub, wherever you are.
-pub fn change_doables(state: &State) -> Vec<Doable> {
-    let mut out = Vec::from_iter(crate::watch::doable(state));
-    out.extend(crate::site::lists::doable(state));
-    out.extend(crate::housekeeping::change_doables(state));
-    out
-}
-
-/// The menu's rows for the page on screen.
-pub fn page_doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
-    crate::release::doables(state, route, out);
-    crate::gist::doables(state, route, out);
-    crate::wiki::form::doables(state, route, out);
-    crate::site::doables(state, route, out);
-}
-
-/// A menu row.
-pub(crate) fn row(
-    section: &'static str,
-    action: Action,
-    label: impl Into<String>,
-    short: &'static str,
-    unavailable: Option<String>,
-) -> Doable {
-    Doable {
-        section,
-        action,
-        label: label.into(),
-        short,
-        unavailable,
-    }
-}
 
 // ---- the forms' text and rows -----------------------------------------------------
 

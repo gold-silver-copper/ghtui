@@ -31,9 +31,8 @@ use crate::chrome::Section;
 use crate::data::DataKey;
 use crate::follow::{Expectation, Shown, expect};
 use crate::keymap::Action;
-use crate::nav::Doable;
+use crate::nav::{Doable, row};
 use crate::state::{Cmd, Screen, State};
-use crate::writes::row;
 
 pub mod files;
 pub mod git;
@@ -43,8 +42,16 @@ pub mod milestones;
 pub mod refs;
 pub mod repos;
 
-/// The actions housekeeping adds.
-pub const ACTIONS: [Action; 3] = [Action::NewHere, Action::Fork, Action::NewRepo];
+/// What housekeeping adds: a fork, a new repository and what's new on a
+/// page, and editing, deleting and closing on its pages; and a branch's
+/// deletion asked about once GitHub says whether it's protected.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &[Action::NewHere, Action::Fork, Action::NewRepo],
+    takes,
+    act,
+    offers: |state, out| out.extend(change_doables(state)),
+    follow: refs::follow,
+};
 
 // ---- forms ------------------------------------------------------------------------------------
 
@@ -418,10 +425,7 @@ fn clone_here(state: &mut State, repo: &RepoId) -> Result<Option<Clone>, Vec<Cmd
 
 /// Whether `action` is housekeeping's here: its own actions anywhere, and
 /// editing, deleting, closing and saving on its pages.
-pub fn claims(state: &State, action: Action) -> bool {
-    if ACTIONS.contains(&action) {
-        return true;
-    }
+fn takes(state: &State, action: Action) -> bool {
     let Some(route) = state.route() else {
         return false;
     };
@@ -450,9 +454,9 @@ pub fn claims(state: &State, action: Action) -> bool {
     }
 }
 
-/// Runs one of the actions [`claims`] says are housekeeping's.
+/// Runs one of housekeeping's actions.
 #[must_use]
-pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
+fn act(state: &mut State, action: Action) -> Vec<Cmd> {
     let route = state.route().cloned();
     match (action, route) {
         (Action::NewHere, Some(route)) => new_here(state, route),

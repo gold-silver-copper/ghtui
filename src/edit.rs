@@ -514,6 +514,14 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
     }
 }
 
+/// What editing issues and pull requests adds: its own actions.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &ACTIONS,
+    act,
+    offers: |state, out| out.extend(doables(state)),
+    ..crate::features::Feature::NONE
+};
+
 /// Runs one of [`ACTIONS`] on what's on screen.
 #[must_use]
 pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
@@ -578,13 +586,7 @@ pub fn doables(state: &State) -> Vec<Doable> {
                 Action::EditMilestone => "Milestone".into(),
                 _ => action.description().into(),
             };
-            Doable {
-                section: "Edit",
-                action,
-                label,
-                short: "",
-                unavailable: plan(state, action).err(),
-            }
+            crate::nav::row("Edit", action, label, "", plan(state, action).err())
         })
         .collect()
 }

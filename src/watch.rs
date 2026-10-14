@@ -12,11 +12,11 @@ use crate::ui::overlays::PaletteItem;
 use crate::data::DataKey;
 use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
-use crate::nav::Doable;
+use crate::nav::{Doable, row};
 use crate::picker::fuzzy_score;
 use crate::state::{Cmd, Remote, Screen, State};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::{Chosen, Pick, item, row};
+use crate::writes::{Chosen, Pick, item};
 
 /// Setting a subscription.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -241,7 +241,15 @@ pub fn choose(state: &mut State, work: Subscribe) -> Vec<Cmd> {
 }
 
 /// The menu's row, wherever there's something to subscribe to.
-pub fn doable(state: &State) -> Option<Doable> {
+/// What watching adds: how you're notified of what's on screen.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &[Action::Watch],
+    act: |state, _| open(state),
+    offers: |state, out| out.extend(doable(state)),
+    ..crate::features::Feature::NONE
+};
+
+fn doable(state: &State) -> Option<Doable> {
     let of = subject(state)?;
     let label = match &of {
         Watched::Repo(_) => "Watch the repository, or ignore it",

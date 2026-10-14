@@ -18,10 +18,9 @@ use crate::data::DataKey;
 use crate::follow::{Expectation, Shown};
 use crate::forms::{Fields, say};
 use crate::keymap::Action;
-use crate::nav::Doable;
+use crate::nav::{Doable, row};
 use crate::state::{Cmd, State};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::row;
 
 /// Commits and pushes a wiki page; its form's page asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,6 +67,21 @@ fn here(state: &State) -> Option<(Route, RepoId, Option<String>, Cow<'_, Form>)>
     let form = state.forms.shown(route);
     Some((route.clone(), repo.clone(), page.clone(), form))
 }
+
+/// What a wiki's pages add: making one, and editing the one on screen.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &[Action::NewWikiPage],
+    takes: |state, action| {
+        action == Action::EditComment
+            && matches!(state.route(), Some(Route::Wiki(wiki::Wiki { .. })))
+    },
+    act: |state, action| match action {
+        Action::NewWikiPage => open_new(state),
+        _ => open_edit(state),
+    },
+    offers: doables,
+    ..crate::features::Feature::NONE
+};
 
 /// What a form reads: the page, or for a new one the list of pages.
 pub fn key(repo: &RepoId, page: Option<&String>) -> DataKey {
@@ -338,8 +352,8 @@ fn offers(state: &State, out: &mut Vec<Doable>) {
 }
 
 /// The menu's rows: editing the page on screen and making one.
-pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
-    if let Route::Wiki(wiki::Wiki { .. }) = route {
+fn doables(state: &State, out: &mut Vec<Doable>) {
+    if let Some(Route::Wiki(wiki::Wiki { .. })) = state.route() {
         out.push(row(
             "Edit",
             Action::EditComment,

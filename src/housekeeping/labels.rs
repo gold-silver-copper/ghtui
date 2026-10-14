@@ -296,8 +296,7 @@ impl Job for Save {
             return Vec::new();
         }
         crate::forms::close_sender(state, &page);
-        crate::forms::close_sender(state, &form);
-        state.forms.take::<Form>(&form);
+        crate::forms::done::<Form>(state, &form);
         let said = match (&change, &was) {
             (Some(c), None) => format!("Created the label {}", c.name),
             (Some(c), Some(_)) => format!("Saved the label {}", c.name),

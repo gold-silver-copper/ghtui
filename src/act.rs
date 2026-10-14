@@ -1324,30 +1324,47 @@ fn failure(change: &Change, err: &Failure) -> String {
     text
 }
 
-/// The changes the menu offers for what's on screen: each action, its
-/// label, and why it can't be made now, if it can't.
-pub fn doables(state: &State) -> Vec<(Action, String, Option<String>)> {
-    (ACTIONS.into_iter())
-        .filter_map(|action| {
-            let subject = subject(state, action).filter(|s| s.fits(action))?;
-            let label = match (action, &subject) {
-                (Action::Close, Subject::Run(..) | Subject::Job(..)) => "Cancel the run",
-                (Action::Close, Subject::Alert(_)) => "Dismiss or reopen the alert",
-                (Action::Close, Subject::Discussion(..)) => "Close or reopen the discussion",
-                (Action::ReadyForReview, Subject::Pr(pr)) => match state.pr(pr) {
-                    Some(d) if d.state.is_open() && d.state != PrState::Draft => "Convert to draft",
-                    _ => "Mark the draft ready for review",
-                },
-                (Action::Close, _) => "Close or reopen",
-                (Action::Merge, Subject::Pr(pr)) => {
-                    state.pr(pr).map_or(action.description(), merge::label)
-                }
-                (action, _) => action.description(),
-            };
-            let why = plan_for(state, &subject, action).err();
-            Some((action, label.to_owned(), why))
-        })
-        .collect()
+/// What issue and pull request actions add: their own actions, wherever
+/// what they're about is.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &ACTIONS,
+    act,
+    offers,
+    follow,
+    ..crate::features::Feature::NONE
+};
+
+/// The changes the menu offers for what's on screen, and why one can't be
+/// made now, if it can't.
+fn offers(state: &State, out: &mut Vec<crate::nav::Doable>) {
+    let rows = (ACTIONS.into_iter()).filter_map(|action| {
+        let subject = subject(state, action).filter(|s| s.fits(action))?;
+        let label = match (action, &subject) {
+            (Action::Close, Subject::Run(..) | Subject::Job(..)) => "Cancel the run",
+            (Action::Close, Subject::Alert(_)) => "Dismiss or reopen the alert",
+            (Action::Close, Subject::Discussion(..)) => "Close or reopen the discussion",
+            (Action::ReadyForReview, Subject::Pr(pr)) => match state.pr(pr) {
+                Some(d) if d.state.is_open() && d.state != PrState::Draft => "Convert to draft",
+                _ => "Mark the draft ready for review",
+            },
+            (Action::Close, _) => "Close or reopen",
+            (Action::Merge, Subject::Pr(pr)) => {
+                state.pr(pr).map_or(action.description(), merge::label)
+            }
+            (action, _) => action.description(),
+        };
+        let short = match action {
+            Action::Merge => "merge",
+            Action::Approve => "approve",
+            Action::Rerun => "re-run",
+            Action::MarkRead => "read",
+            Action::MarkDone => "done",
+            _ => "",
+        };
+        let why = plan_for(state, &subject, action).err();
+        Some(crate::nav::row("Change", action, label, short, why))
+    });
+    out.extend(rows);
 }
 
 #[cfg(test)]

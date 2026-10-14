@@ -27,6 +27,7 @@ mod diff_job;
 mod diff_screen;
 mod discuss;
 mod edit;
+mod features;
 #[cfg(test)]
 mod fixtures;
 mod follow;

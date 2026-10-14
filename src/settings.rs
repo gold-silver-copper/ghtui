@@ -443,10 +443,13 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
     }
 }
 
-/// Whether this module takes `action`.
-pub fn claims(action: Action) -> bool {
-    ACTIONS.contains(&action)
-}
+/// What a repository's settings add: their own actions.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &ACTIONS,
+    act,
+    offers: doables,
+    ..crate::features::Feature::NONE
+};
 
 /// Runs one of [`ACTIONS`].
 #[must_use]
@@ -473,18 +476,15 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
     let Some((repo, page)) = here(state) else {
         return;
     };
-    let row = |action: Action, label: &str| Doable {
-        section: "Change",
-        action,
-        label: label.to_owned(),
+    let row = |action, label: &str| {
         // The status bar names the page's main ones.
-        short: match action {
+        let short = match action {
             Action::AddSetting => "add",
             Action::EditSetting => "edit",
             Action::Redeliver => "redeliver",
             _ => "",
-        },
-        unavailable: plan(state, action).err(),
+        };
+        crate::nav::row("Change", action, label, short, plan(state, action).err())
     };
     let archived = matches!(data(state, &repo, page), Some(Settings::General(g)) if g.archived);
     let rows: &[(Action, &str)] = match page {

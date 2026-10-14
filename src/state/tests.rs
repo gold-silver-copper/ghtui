@@ -192,6 +192,7 @@ mod create;
 mod discussions;
 mod edits;
 mod failures;
+mod features;
 mod housekeeping;
 mod manage;
 mod merging;

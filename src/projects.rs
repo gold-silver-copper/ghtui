@@ -44,7 +44,15 @@ pub const ACTIONS: [Action; 8] = [
 /// Whether `action` is the project's on screen to do: its own, and
 /// editing (a draft's text); on an issue or pull request, setting its
 /// fields in its projects.
-pub fn takes(state: &State, action: Action) -> bool {
+/// What projects add: their own actions on a project's pages.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    takes,
+    act,
+    offers: doables,
+    ..crate::features::Feature::NONE
+};
+
+fn takes(state: &State, action: Action) -> bool {
     (ACTIONS.contains(&action) && here(state).is_some())
         || (action == Action::SetField && sidebar::here(state).is_some())
 }
@@ -393,13 +401,8 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
         if !is_draft && matches!(action, Action::EditComment | Action::EditTitle) {
             continue;
         }
-        out.push(Doable {
-            section,
-            action,
-            label: label.to_owned(),
-            short,
-            unavailable: why_not(state, &h, action),
-        });
+        let why = why_not(state, &h, action);
+        out.push(crate::nav::row(section, action, label, short, why));
     }
 }
 

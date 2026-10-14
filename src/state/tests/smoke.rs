@@ -14,7 +14,7 @@ fn pressed(mut s: State, keys: &str) -> State {
 }
 
 /// The screens and overlays [`pages`] and the keys' screens leave out.
-fn more() -> Vec<(&'static str, State)> {
+pub(super) fn more() -> Vec<(&'static str, State)> {
     use super::diff::screen::{better_than_github, diff_at, diff_pr, open_diff, with_threads};
     let mut loading = state();
     let _ = loading.load_visible(false);

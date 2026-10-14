@@ -15,10 +15,9 @@ use super::{
 };
 use crate::data::DataKey;
 use crate::keymap::Action;
-use crate::nav::Doable;
+use crate::nav::{Doable, row};
 use crate::state::{Cmd, State};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::row;
 
 /// A branch's or tag's change: made at a commit, or deleted, with git in
 /// your clone (`clone`) or with GitHub's API.

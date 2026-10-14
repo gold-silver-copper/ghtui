@@ -16,18 +16,20 @@ pub struct Doable {
     pub unavailable: Option<String>,
 }
 
-pub(super) fn doable(
+/// A menu row.
+pub(crate) fn row(
     section: &'static str,
     action: Action,
-    label: &str,
+    label: impl Into<String>,
     short: &'static str,
+    unavailable: Option<String>,
 ) -> Doable {
     Doable {
         section,
         action,
-        label: label.to_owned(),
+        label: label.into(),
         short,
-        unavailable: None,
+        unavailable,
     }
 }
 
@@ -115,33 +117,14 @@ impl State {
             Screen::Diff(_) => {
                 for (section, actions) in DIFF_DOABLES {
                     for &(action, short) in *actions {
-                        out.push(doable(section, action, action.description(), short));
+                        out.push(row(section, action, action.description(), short, None));
                     }
                 }
                 None
             }
         };
-        for (action, label, why) in crate::act::doables(self) {
-            let short = match action {
-                Action::Merge => "merge",
-                Action::Approve => "approve",
-                Action::Rerun => "re-run",
-                Action::MarkRead => "read",
-                Action::MarkDone => "done",
-                _ => "",
-            };
-            let mut change = doable("Change", action, &label, short);
-            change.unavailable = why;
-            out.push(change);
-        }
-        out.extend(crate::edit::doables(self));
-        crate::manage::doables(self, &mut out);
-        crate::settings::doables(self, &mut out);
-        out.extend(crate::create::checkout_doable(self));
-        out.extend(crate::writes::change_doables(self));
-        crate::actions::doables(self, &mut out);
-        crate::offline::doables(self, &mut out);
-        let go = |action, label: &str, short| doable("Go", action, label, short);
+        crate::features::offers(self, &mut out);
+        let go = |action, label: &str, short| row("Go", action, label, short, None);
         out.push(go(
             Action::SearchGithub,
             "Search GitHub or go to a page",
@@ -218,7 +201,7 @@ impl State {
             messages.unavailable = Some("nothing yet".into());
         }
         out.push(messages);
-        let tab = |action, label: &str| doable("Tabs", action, label, "");
+        let tab = |action, label: &str| row("Tabs", action, label, "", None);
         out.push(tab(Action::OpenInTab, "Open in a new tab"));
         if self.tab_count() > 1 {
             out.push(tab(Action::NextOpenTab, "Next open tab"));
@@ -249,14 +232,14 @@ impl State {
             Action::Quit,
         ] {
             if contexts.contains(&action.context()) || self.key_here(action).is_some() {
-                out.push(doable("Keys", action, action.description(), ""));
+                out.push(row("Keys", action, action.description(), "", None));
             }
         }
         out
     }
 
     pub(super) fn page_doables(&self, p: &PageScreen, out: &mut Vec<Doable>) {
-        let here = |action, label: &str, short| doable("This page", action, label, short);
+        let here = |action, label: &str, short| row("This page", action, label, short, None);
         let route = &p.route;
         // A file's line is this page, as a log's is: nothing to open.
         let line = matches!(route, Route::Runs(runs::Job { .. })) && p.code_line().is_some();
@@ -393,7 +376,7 @@ impl State {
                     "Bring back the section removed".to_owned(),
                 ),
             ] {
-                let mut row = doable("Home", action, &label, "");
+                let mut row = row("Home", action, &label, "", None);
                 row.unavailable = crate::home::unavailable(self, action);
                 out.push(row);
             }
@@ -425,8 +408,6 @@ impl State {
             }
             out.push(quote);
         }
-        crate::projects::doables(self, out);
-        crate::discuss::doables(self, out);
         // Long reviews fold, in a conversation and on a review's page.
         let folds = p
             .page
@@ -446,9 +427,6 @@ impl State {
             }
             out.push(here(Action::Tab4, "Files changed (review)", ""));
         }
-        crate::forms::offers(self, out);
-        crate::create::doables(self, route, out);
-        crate::writes::page_doables(self, route, out);
     }
 
     /// After a count or the first keys of a sequence: what's typed, and

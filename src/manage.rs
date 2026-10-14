@@ -408,10 +408,17 @@ fn issue_plan(d: &IssueDetail, action: Action, about: Subject) -> Result<Plan, S
 
 /// Whether this module takes `action` here: its own anywhere, and
 /// checking out on an issue (a branch for it).
-pub fn claims(state: &State, action: Action) -> bool {
-    ACTIONS.contains(&action)
-        || (action == Action::Checkout && matches!(here(state), Some(Subject::Issue(..))))
-}
+/// What managing issues and pull requests adds: its own actions, and
+/// checking out a branch for the issue on screen.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &ACTIONS,
+    takes: |state, action| {
+        action == Action::Checkout && matches!(here(state), Some(Subject::Issue(..)))
+    },
+    act,
+    offers: doables,
+    ..crate::features::Feature::NONE
+};
 
 /// Runs one of the actions [`claims`] says are this module's.
 #[must_use]
@@ -440,12 +447,8 @@ fn send(state: &mut State, change: Change, about: Subject) -> Vec<Cmd> {
 
 /// The menu's rows where they apply.
 pub fn doables(state: &State, out: &mut Vec<Doable>) {
-    let row = |action: Action, label: &str| Doable {
-        section: "Change",
-        action,
-        label: label.to_owned(),
-        short: "",
-        unavailable: plan(state, action).err(),
+    let row = |action, label: &str| {
+        crate::nav::row("Change", action, label, "", plan(state, action).err())
     };
     if discussions_repo(state).is_some() {
         out.push(row(Action::NewDiscussion, "Start a new discussion"));

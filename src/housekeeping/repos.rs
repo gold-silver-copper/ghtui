@@ -277,8 +277,7 @@ pub(super) fn create(state: &mut State, route: &Route) -> Vec<Cmd> {
 /// GitHub until it's there.
 #[must_use]
 fn opened(state: &mut State, route: &Route, made: &MadeRepo) -> Option<Vec<Cmd>> {
-    state.forms.take::<Form>(route);
-    crate::forms::close_sender(state, route);
+    crate::forms::done::<Form>(state, route);
     let repo = made.repo()?;
     if state.route() != Some(route) {
         return Some(Vec::new());

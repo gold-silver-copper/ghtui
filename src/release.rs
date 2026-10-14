@@ -29,11 +29,11 @@ use crate::data::DataKey;
 use crate::follow::{Expectation, Shown};
 use crate::forms::{Fields, say};
 use crate::keymap::Action;
-use crate::nav::Doable;
+use crate::nav::{Doable, row};
 use crate::picker::fuzzy_score;
 use crate::state::{Cmd, State};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::{Answer, Chosen, Pick, item, row};
+use crate::writes::{Answer, Chosen, Pick, item};
 
 /// A release, as written so far: a new one, or one being edited.
 #[derive(Debug, Clone)]
@@ -268,6 +268,27 @@ fn here(state: &State) -> Option<(Route, RepoId, Cow<'_, Form>)> {
     let repo = form_repo(route)?;
     Some((route.clone(), repo.clone(), state.forms.shown(route)))
 }
+
+/// What releases add: making one wherever a repository is, and editing,
+/// deleting and uploading to the one on screen.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &[Action::NewRelease, Action::UploadAsset],
+    takes: |state, action| {
+        matches!(action, Action::EditComment | Action::DeleteComment)
+            && matches!(
+                state.route(),
+                Some(Route::Releases(releases::Release { .. }))
+            )
+    },
+    act: |state, action| match action {
+        Action::NewRelease => open(state),
+        Action::UploadAsset => assets::open_upload(state),
+        Action::EditComment => open_edit(state),
+        _ => ask_delete(state),
+    },
+    offers: doables,
+    ..crate::features::Feature::NONE
+};
 
 /// Why `repo` takes no release from you (nor changes to one), from
 /// what's known.
@@ -994,8 +1015,11 @@ fn offers(state: &State, out: &mut Vec<Doable>) {
 
 /// The menu's rows: making a release from a repository's pages, and
 /// changing the release on screen.
-pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
-    let Some(repo) = route.repo().filter(|_| here(state).is_none()) else {
+fn doables(state: &State, out: &mut Vec<Doable>) {
+    let Some(route) = state.route().filter(|_| here(state).is_none()) else {
+        return;
+    };
+    let Some(repo) = route.repo() else {
         return;
     };
     if matches!(route, Route::Releases(releases::Release { .. })) {

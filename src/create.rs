@@ -28,7 +28,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use crate::data::{Data, DataKey};
 use crate::forms::{Fields, Sent, say};
 use crate::keymap::Action;
-use crate::nav::Doable;
+use crate::nav::{Doable, row};
 use crate::picker::Choice;
 use crate::state::{Cmd, Overlay, State};
 use crate::ui::form::Row;
@@ -332,17 +332,29 @@ fn refused(state: &State, repo: &RepoId, pr: bool) -> Option<String> {
         .map(|_| format!("GitHub doesn't let you open issues in {repo}"))
 }
 
-/// The actions this module runs.
-#[must_use]
-pub fn action(state: &mut State, action: Action) -> Vec<Cmd> {
-    match action {
+/// What new issues and pull requests add: making one, pushing its
+/// branch, and checking a pull request out once it's loaded.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &[
+        Action::NewIssue,
+        Action::NewPr,
+        Action::PushBranch,
+        Action::Checkout,
+    ],
+    takes: |_, _| false,
+    act: |state, action| match action {
         Action::NewIssue | Action::NewPr => open(state, action == Action::NewPr),
-        Action::Create => submit(state),
         Action::PushBranch => ask_push(state),
-        Action::Checkout => checkout(state),
-        _ => Vec::new(),
-    }
-}
+        _ => checkout(state),
+    },
+    offers: |state, out| {
+        if let Some(route) = state.route() {
+            doables(state, route, out);
+        }
+        out.extend(checkout_doable(state));
+    },
+    follow: waiting_checkout,
+};
 
 /// `,i` and `,p`: the repository's new issue or pull request page, with
 /// what was written there before.
@@ -446,7 +458,6 @@ fn compose(state: &mut State) -> Vec<Cmd> {
 #[must_use]
 fn submit(state: &mut State) -> Vec<Cmd> {
     let Some((route, form)) = here(state) else {
-        state.info("That makes the new issue or pull request on its page (,i or ,p)");
         return Vec::new();
     };
     let Some(repo) = form_repo(&route).cloned() else {
@@ -884,7 +895,7 @@ fn checkout(state: &mut State) -> Vec<Cmd> {
 
 /// A pull request that was waiting to load before it's checked out.
 #[must_use]
-pub(crate) fn waiting_checkout(state: &mut State) -> Vec<Cmd> {
+fn waiting_checkout(state: &mut State) -> Vec<Cmd> {
     let Some(pr) = state.checkout.clone() else {
         return Vec::new();
     };
@@ -1173,106 +1184,67 @@ pub fn pick(state: &mut State, picked: Picked) -> Vec<Cmd> {
     follow(state)
 }
 
-/// A menu row.
-fn doable(section: &'static str, action: Action, label: &str, why: Option<String>) -> Doable {
-    Doable {
-        section,
-        action,
-        label: label.to_owned(),
-        short: "",
-        unavailable: why,
-    }
-}
-
 /// What the menu offers on a form: writing, pushing and making it.
 fn offers(state: &State, out: &mut Vec<Doable>) {
-    let row = doable;
-    if let Some((route, form)) = here(state)
-        && let Some(repo) = form_repo(&route)
-    {
-        let pr = matches!(route, Route::Pulls(pulls::NewPr(_)));
-        let mut write = row(
-            "This page",
-            Action::Comment,
-            "Write the title and description",
-            None,
-        );
-        write.short = "write";
-        if !pr && form.template.is_none() {
-            write.unavailable = Some("choose a template first".into());
-        }
-        out.push(write);
-        let why = match (pr, refused(state, repo, pr)) {
-            (_, Some(why)) => Some(why),
-            (true, None) => head_problem(state, repo, &form).err(),
-            (false, None) => templates::split(&form.text)
-                .0
-                .is_empty()
-                .then(|| "it needs a title".to_owned()),
+    let Some((route, form)) = here(state) else {
+        return;
+    };
+    let Some(repo) = form_repo(&route) else {
+        return;
+    };
+    let pr = matches!(route, Route::Pulls(pulls::NewPr(_)));
+    let why = (!pr && form.template.is_none()).then(|| "choose a template first".to_owned());
+    let label = "Write the title and description";
+    out.push(row("This page", Action::Comment, label, "write", why));
+    let why = match (pr, refused(state, repo, pr)) {
+        (_, Some(why)) => Some(why),
+        (true, None) => head_problem(state, repo, &form).err(),
+        (false, None) => templates::split(&form.text)
+            .0
+            .is_empty()
+            .then(|| "it needs a title".to_owned()),
+    };
+    let label = if pr {
+        "Create the pull request (draft or ready)"
+    } else {
+        "Create the issue"
+    };
+    out.push(row("This page", Action::Create, label, "create", why));
+    if pr {
+        let push = state.first_key(Action::PushBranch);
+        let why = match form.head_state(state, repo) {
+            Some(Ok(HeadState { local: Some(b), .. })) if !b.pushed() => None,
+            Some(Ok(HeadState { local: Some(_), .. })) => {
+                Some("GitHub has all of it already".into())
+            }
+            Some(Ok(_)) => Some("it isn't a branch of this clone".into()),
+            _ => Some(format!("no branch here to push ({push})")),
         };
-        let label = if pr {
-            "Create the pull request (draft or ready)"
-        } else {
-            "Create the issue"
-        };
-        let mut create = row("This page", Action::Create, label, why);
-        create.short = "create";
-        out.push(create);
-        if pr {
-            let push = state.first_key(Action::PushBranch);
-            let why = match form.head_state(state, repo) {
-                Some(Ok(HeadState { local: Some(b), .. })) if !b.pushed() => None,
-                Some(Ok(HeadState { local: Some(_), .. })) => {
-                    Some("GitHub has all of it already".into())
-                }
-                Some(Ok(_)) => Some("it isn't a branch of this clone".into()),
-                _ => Some(format!("no branch here to push ({push})")),
-            };
-            out.push(row(
-                "This page",
-                Action::PushBranch,
-                "Push the branch to GitHub",
-                why,
-            ));
-        }
+        let label = "Push the branch to GitHub";
+        out.push(row("This page", Action::PushBranch, label, "", why));
     }
 }
 
 /// What the menu offers on a repository's pages: a new issue or pull
 /// request.
-pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
-    let row = doable;
+fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
     let Some(repo) = route.repo() else {
         return;
     };
-    out.push(row(
-        "New",
-        Action::NewIssue,
-        "New issue",
-        refused(state, repo, false),
-    ));
-    out.push(row(
-        "New",
-        Action::NewPr,
-        "New pull request",
-        refused(state, repo, true),
-    ));
+    let why = |pr| refused(state, repo, pr);
+    out.push(row("New", Action::NewIssue, "New issue", "", why(false)));
+    out.push(row("New", Action::NewPr, "New pull request", "", why(true)));
 }
 
 /// The menu's row for checking out the pull request here, if there is one.
-pub fn checkout_doable(state: &State) -> Option<Doable> {
+fn checkout_doable(state: &State) -> Option<Doable> {
     let Some(crate::act::Subject::Pr(pr)) = crate::act::subject(state, Action::Checkout) else {
         return None;
     };
     let why = matches!(state.clone_of(&pr.repo), Some(None))
         .then(|| format!("ghtui isn't running in a clone of {}", pr.repo));
-    Some(Doable {
-        section: "Change",
-        action: Action::Checkout,
-        label: "Check out the pull request here".into(),
-        short: "",
-        unavailable: why,
-    })
+    let label = "Check out the pull request here";
+    Some(row("Change", Action::Checkout, label, "", why))
 }
 
 /// "3 commits".

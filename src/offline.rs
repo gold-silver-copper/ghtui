@@ -265,9 +265,18 @@ fn selected(state: &State) -> Option<&queue::Entry> {
 }
 
 /// Whether `action` is offline's here.
-pub fn claims(state: &State, action: Action) -> bool {
+/// What working offline adds: its own actions, and on the Offline page
+/// and while GitHub can't be reached, others' (refreshing, copying).
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &[Action::Offline, Action::KeepOffline],
+    takes,
+    act,
+    offers: doables,
+    ..crate::features::Feature::NONE
+};
+
+fn takes(state: &State, action: Action) -> bool {
     match action {
-        Action::Offline | Action::KeepOffline => true,
         Action::Refresh => state.offline.since.is_some(),
         // Where the write was thrown away: elsewhere, it's a draft's or a
         // Home section's.
@@ -392,14 +401,7 @@ pub fn follow(state: &mut State, id: u64) -> Vec<Do> {
 
 /// The Space menu's offline rows.
 pub fn doables(state: &State, out: &mut Vec<crate::nav::Doable>) {
-    use crate::nav::Doable;
-    let row = |action: Action, label: String| Doable {
-        section: "Offline",
-        action,
-        label,
-        short: "",
-        unavailable: None,
-    };
+    let row = |action, label| crate::nav::row("Offline", action, label, "", None);
     if let Some(entry) = selected(state) {
         let what = entry.write.what().to_lowercase();
         let mut again = row(Action::Rerun, format!("Send {what} again"));
@@ -423,12 +425,7 @@ pub fn doables(state: &State, out: &mut Vec<crate::nav::Doable>) {
     }
     // First of the menu's Go rows, which follow.
     if state.route() != Some(&Route::App(app::Offline)) {
-        out.push(Doable {
-            section: "Go",
-            ..row(
-                Action::Offline,
-                "Offline: what's queued for GitHub, and what's kept".into(),
-            )
-        });
+        let label = "Offline: what's queued for GitHub, and what's kept";
+        out.push(crate::nav::row("Go", Action::Offline, label, "", None));
     }
 }

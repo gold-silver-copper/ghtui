@@ -86,13 +86,15 @@ fn changeable(state: &State) -> Result<(Subject, Vec<&InProject>), String> {
 /// The menu's row on an issue's or pull request's page.
 pub fn doable(state: &State) -> Option<Doable> {
     here(state)?;
-    Some(Doable {
-        section: "Change",
-        action: Action::SetField,
-        label: "Set a field in its project".into(),
-        short: "set field",
-        unavailable: changeable(state).err(),
-    })
+    let label = "Set a field in its project";
+    let why = changeable(state).err();
+    Some(crate::nav::row(
+        "Change",
+        Action::SetField,
+        label,
+        "set field",
+        why,
+    ))
 }
 
 /// `,f` on an issue or pull request: its field to set, in the one

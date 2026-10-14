@@ -46,25 +46,24 @@ fn here(state: &State) -> Option<&'static Kind> {
     state.route()?.family().form()
 }
 
-/// Whether `action` is the form's on screen: making it, and writing its
+/// What forms add: making or saving the one on screen, and writing its
 /// text.
-pub fn claims(state: &State, action: Action) -> bool {
-    matches!(action, Action::Create | Action::Comment) && here(state).is_some()
-}
-
-/// Runs one of the actions [`claims`] says are the form's.
-#[must_use]
-pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
-    match action {
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &[Action::Create],
+    takes: |state, action| action == Action::Comment && here(state).is_some(),
+    act: |state, action| match action {
         Action::Comment => compose_here(state),
         _ => submit(state),
-    }
-}
+    },
+    offers,
+    follow,
+};
 
 /// `,s` or ctrl-s on a form's page.
 #[must_use]
 pub fn submit(state: &mut State) -> Vec<Cmd> {
     let Some(kind) = here(state) else {
+        state.info("That makes or saves a form, on its page");
         return Vec::new();
     };
     if state.route().is_some_and(|r| state.forms.sent(r).sending) {
@@ -112,7 +111,7 @@ pub fn follow(state: &mut State) -> Vec<Cmd> {
 }
 
 /// The menu's rows for the form on screen.
-pub fn offers(state: &State, out: &mut Vec<Doable>) {
+fn offers(state: &State, out: &mut Vec<Doable>) {
     if let Some(kind) = here(state) {
         (kind.offers)(state, out);
     }
@@ -131,10 +130,10 @@ pub(crate) fn offer(
     let sending = state.route().is_some_and(|r| state.forms.sent(r).sending);
     let busy = sending.then(|| "it's being sent".to_owned());
     if let Some(label) = write {
-        let row = crate::writes::row("This page", Action::Comment, label, "write", busy.clone());
+        let row = crate::nav::row("This page", Action::Comment, label, "write", busy.clone());
         out.push(row);
     }
-    let row = crate::writes::row("This page", Action::Create, save.0, save.1, busy.or(why));
+    let row = crate::nav::row("This page", Action::Create, save.0, save.1, busy.or(why));
     out.push(row);
 }
 

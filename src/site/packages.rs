@@ -7,11 +7,10 @@
 use crate::api::packages::{PackageDetail, PackageRef};
 use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
-use crate::nav::Doable;
+use crate::nav::{Doable, row};
 use crate::route::{Dest, Route, Target};
 use crate::state::{Cmd, Screen, State};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::row;
 
 use super::Page;
 use crate::data::DataKey;

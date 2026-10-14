@@ -18,10 +18,9 @@ use super::{
 };
 use crate::data::DataKey;
 use crate::keymap::Action;
-use crate::nav::Doable;
+use crate::nav::{Doable, row};
 use crate::state::{Cmd, State};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::row;
 
 /// A file's commit; its form's page asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -485,8 +484,7 @@ impl Job for Commit {
             crate::forms::failed(state, route, why.to_string());
             return Vec::new();
         }
-        state.forms.take::<Form>(route);
-        crate::forms::close_sender(state, route);
+        crate::forms::done::<Form>(state, route);
         let FileWrite {
             commit: c, base, ..
         } = *write;

@@ -22,10 +22,10 @@ use crate::data::DataKey;
 use crate::follow::{Expectation, Shown};
 use crate::forms::{Fields, say};
 use crate::keymap::Action;
-use crate::nav::Doable;
+use crate::nav::{Doable, row};
 use crate::state::{Cmd, State};
 use crate::work::{self, Cx, Failure, Job};
-use crate::writes::{Answer, Chosen, Pick, item, row};
+use crate::writes::{Answer, Chosen, Pick, item};
 
 /// A gist being made or changed.
 #[derive(Debug, Clone, Default)]
@@ -104,6 +104,23 @@ fn here(state: &State) -> Option<(Route, Cow<'_, Form>)> {
     })?;
     Some((route.clone(), state.forms.shown(route)))
 }
+
+/// What gists add: making one, and changing and deleting yours on its
+/// page.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &[Action::NewGist],
+    takes: |state, action| {
+        matches!(action, Action::EditComment | Action::DeleteComment)
+            && matches!(state.route(), Some(Route::Gists(gists::Gist { .. })))
+    },
+    act: |state, action| match action {
+        Action::NewGist => open_new(state),
+        Action::EditComment => open_edit(state),
+        _ => ask_delete(state),
+    },
+    offers: doables,
+    ..crate::features::Feature::NONE
+};
 
 /// The gist on screen, as loaded.
 fn shown(state: &State) -> Option<&Gist> {
@@ -723,10 +740,10 @@ fn offers(state: &State, out: &mut Vec<Doable>) {
 
 /// The menu's rows: a new gist anywhere a gist or profile is; changing
 /// and deleting your gist on its page.
-pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
-    if here(state).is_some() {
+fn doables(state: &State, out: &mut Vec<Doable>) {
+    let Some(route) = state.route().filter(|_| here(state).is_none()) else {
         return;
-    }
+    };
     if let Route::Gists(gists::Gist { .. }) = route {
         let why = match shown(state) {
             Some(g) => not_yours(state, g),

@@ -78,16 +78,9 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     if let Some(pr) = checks {
         crate::actions::checks_loaded(state, &pr);
     }
-    if data {
+    if data || state.route() != opened.as_ref() {
         cmds.extend(crate::follow::follow(state));
-        cmds.extend(act::follow(state));
-        cmds.extend(crate::create::waiting_checkout(state));
-        cmds.extend(crate::housekeeping::refs::follow(state));
-        cmds.extend(crate::forms::follow(state));
-    } else if state.route() != opened.as_ref() {
-        cmds.extend(crate::follow::follow(state));
-        cmds.extend(crate::housekeeping::refs::follow(state));
-        cmds.extend(crate::forms::follow(state));
+        cmds.extend(crate::features::follow(state));
     }
     cmds
 }
@@ -483,37 +476,18 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
             let kept = state.notices.log().iter().cloned().collect();
             return state.open_picker(picker::Kind::Messages(kept));
         }
-        // Queued writes, keeping repositories offline, and refreshing
-        // while GitHub can't be reached.
-        _ if crate::offline::claims(state, action) => return crate::offline::act(state, action),
-        Action::Refresh => return state.load_visible(true),
-        Action::Copy => return nav::copy_link(state),
-        Action::OpenInBrowser => return state.go(Target::External(state.here_url()).into()),
-        // The form on screen: making it, and writing its text.
-        _ if crate::forms::claims(state, action) => return crate::forms::act(state, action),
-        _ if crate::settings::claims(action) => return crate::settings::act(state, action),
-        _ if crate::manage::claims(state, action) => return crate::manage::act(state, action),
-        // Labels, milestones, branches and tags, forks, new repositories
-        // and files: before closing (a milestone's), editing and deleting.
-        _ if crate::housekeeping::claims(state, action) => {
-            return crate::housekeeping::act(state, action);
-        }
-        _ if act::ACTIONS.contains(&action) => return act::act(state, action),
         // The diff's links are in its threads' comments.
         Action::Hints | Action::HintsBrowser if diff.is_some() => {
             nav::start_hints(state, action == Action::HintsBrowser);
         }
-        // A discussion's and a project's own ways to write and edit.
-        _ if crate::discuss::takes(state, action) => return crate::discuss::act(state, action),
-        _ if crate::projects::takes(state, action) => return crate::projects::act(state, action),
-        _ if crate::writes::claims(state, action) => return crate::writes::act(state, action),
-        _ if crate::edit::ACTIONS.contains(&action) => return crate::edit::act(state, action),
-        Action::RunWorkflow => return crate::actions::action(state),
-        Action::NewIssue
-        | Action::NewPr
-        | Action::Create
-        | Action::PushBranch
-        | Action::Checkout => return crate::create::action(state, action),
+        // What a feature does: queued writes and refreshing while GitHub
+        // can't be reached among them.
+        _ if let Some(feature) = crate::features::of(state, action) => {
+            return (feature.act)(state, action);
+        }
+        Action::Refresh => return state.load_visible(true),
+        Action::Copy => return nav::copy_link(state),
+        Action::OpenInBrowser => return state.go(Target::External(state.here_url()).into()),
         _ if diff.is_some() => return diff_action(state, action),
         _ => return nav::page_action(state, action),
     }
