@@ -881,7 +881,7 @@ fn row(
 fn more(page: &mut Page, items: &Results<ProjectItem>) {
     let shown = items.items.len();
     let (target, text) = match items.rest() {
-        Rest::All => return,
+        Rest::All | Rest::Uncounted => return,
         Rest::OnGitHub(n) | Rest::At(n, _) => {
             page.blank();
             let text = left_out_text(n, "more item", "more items");

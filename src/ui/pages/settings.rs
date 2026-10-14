@@ -101,18 +101,33 @@ fn add_button(page: &mut Page, text: &str, keys: SettingKeys<'_>) -> Vec<Seg> {
     ]
 }
 
-/// What GitHub has beyond a list's first page.
-fn more_row<T>(page: &mut Page, list: &Listed<T>, what: &str) {
-    if list.more {
-        page.box_rule();
-        empty_row(
-            page,
-            &format!(
-                "… GitHub has more {what}: the first {} are shown",
-                list.items.len()
-            ),
-        );
+impl<T> Rows<T> for Listed<T> {
+    fn rows(&self) -> &[T] {
+        &self.items
     }
+    fn rest(&self) -> Rest {
+        if self.more {
+            Rest::Uncounted
+        } else {
+            Rest::All
+        }
+    }
+}
+
+/// A list's first page in a box titled `name` and how many it shows.
+fn listed<T>(
+    page: &mut Page,
+    name: &str,
+    right: Vec<Seg>,
+    list: &Listed<T>,
+    empty: &str,
+    row: impl FnMut(&mut Page, &T),
+) {
+    let title = vec![Seg::new(
+        format!("{name}  {}", count_of(list)),
+        Role::Strong,
+    )];
+    list_box(page, title, right, list, empty, row);
 }
 
 fn general(page: &mut Page, repo: &RepoId, g: &General, keys: SettingKeys<'_>) {
@@ -317,66 +332,55 @@ fn branches(page: &mut Page, b: &Branches, keys: SettingKeys<'_>) {
 }
 
 fn access(page: &mut Page, a: &Access, keys: SettingKeys<'_>, now: u64) {
-    let title = vec![Seg::new(
-        format!("Collaborators  {}", a.people.items.len()),
-        Role::Strong,
-    )];
     let right = add_button(page, "Add people", keys);
-    page.box_top(title, right);
-    if a.people.items.is_empty() {
-        empty_row(page, "Nobody has direct access.");
-    }
-    for (n, p) in a.people.items.iter().enumerate() {
-        if n > 0 && !page.compact {
-            page.box_rule();
-        }
-        let target = Link::Setting(SettingLink::Person(p.login.clone()));
-        item(page, target, |page, link| {
-            let bg = match &p.role {
-                Given::Is(crate::api::settings::Permission::Admin) => Bg::PrimaryContainer,
-                _ => Bg::SecondaryContainer,
-            };
-            page.box_line(
-                vec![Seg::linked(format!("@{}", p.login), Role::Strong, link)],
-                vec![chip(p.role.name(), bg)],
-                0,
-            );
-        });
-    }
-    more_row(page, &a.people, "collaborators");
-    page.box_bottom();
+    listed(
+        page,
+        "Collaborators",
+        right,
+        &a.people,
+        "Nobody has direct access.",
+        |page, p| {
+            let target = Link::Setting(SettingLink::Person(p.login.clone()));
+            item(page, target, |page, link| {
+                let bg = match &p.role {
+                    Given::Is(crate::api::settings::Permission::Admin) => Bg::PrimaryContainer,
+                    _ => Bg::SecondaryContainer,
+                };
+                page.box_line(
+                    vec![Seg::linked(format!("@{}", p.login), Role::Strong, link)],
+                    vec![chip(p.role.name(), bg)],
+                    0,
+                );
+            });
+        },
+    );
     page.blank();
-    let title = vec![Seg::new(
-        format!("Pending invitations  {}", a.invitations.items.len()),
-        Role::Strong,
-    )];
-    page.box_top(title, Vec::new());
-    if a.invitations.items.is_empty() {
-        empty_row(page, "No invitations waiting.");
-    }
-    for (n, i) in a.invitations.items.iter().enumerate() {
-        if n > 0 && !page.compact {
-            page.box_rule();
-        }
-        let target = Link::Setting(SettingLink::Invitation(i.id, i.login.clone()));
-        item(page, target, |page, link| {
-            let when = if i.expired {
-                "expired".to_owned()
-            } else {
-                format!("invited {}", time::ago_iso(&i.created_at, now))
-            };
-            page.box_line(
-                vec![Seg::linked(format!("@{}", i.login), Role::Strong, link)],
-                vec![
-                    Seg::new(format!("{when}  "), Role::Meta),
-                    chip(i.permission.name(), Bg::SecondaryContainer),
-                ],
-                0,
-            );
-        });
-    }
-    more_row(page, &a.invitations, "invitations");
-    page.box_bottom();
+    let (invitations, none) = (&a.invitations, "No invitations waiting.");
+    listed(
+        page,
+        "Pending invitations",
+        Vec::new(),
+        invitations,
+        none,
+        |page, i| {
+            let target = Link::Setting(SettingLink::Invitation(i.id, i.login.clone()));
+            item(page, target, |page, link| {
+                let when = if i.expired {
+                    "expired".to_owned()
+                } else {
+                    format!("invited {}", time::ago_iso(&i.created_at, now))
+                };
+                page.box_line(
+                    vec![Seg::linked(format!("@{}", i.login), Role::Strong, link)],
+                    vec![
+                        Seg::new(format!("{when}  "), Role::Meta),
+                        chip(i.permission.name(), Bg::SecondaryContainer),
+                    ],
+                    0,
+                );
+            });
+        },
+    );
     page.blank();
     page.wrapped(
         vec![Seg::new(
@@ -419,19 +423,8 @@ fn active_chip(active: bool) -> Seg {
 }
 
 fn hooks(page: &mut Page, list: &Listed<Hook>, keys: SettingKeys<'_>, now: u64) {
-    let title = vec![Seg::new(
-        format!("Webhooks  {}", list.items.len()),
-        Role::Strong,
-    )];
     let right = add_button(page, "Add webhook", keys);
-    page.box_top(title, right);
-    if list.items.is_empty() {
-        empty_row(page, "No webhooks.");
-    }
-    for (n, h) in list.items.iter().enumerate() {
-        if n > 0 && !page.compact {
-            page.box_rule();
-        }
+    listed(page, "Webhooks", right, list, "No webhooks.", |page, h| {
         item(
             page,
             Link::Setting(SettingLink::Hook(h.id)),
@@ -451,9 +444,7 @@ fn hooks(page: &mut Page, list: &Listed<Hook>, keys: SettingKeys<'_>, now: u64) 
                 body(page, vec![Seg::new(meta, Role::Meta)]);
             },
         );
-    }
-    more_row(page, list, "webhooks");
-    page.box_bottom();
+    });
 }
 
 fn hook(page: &mut Page, h: &HookPage, keys: SettingKeys<'_>, now: u64) {
@@ -496,61 +487,56 @@ fn hook(page: &mut Page, h: &HookPage, keys: SettingKeys<'_>, now: u64) {
         Frame::None,
     );
     page.blank();
-    let title = vec![Seg::new(
-        format!("Recent deliveries  {}", h.deliveries.items.len()),
-        Role::Strong,
-    )];
     let right = vec![Seg::new(
         format!("{} redelivers the selected one", keys.redeliver),
         Role::Meta,
     )];
-    page.box_top(title, right);
-    if h.deliveries.items.is_empty() {
-        empty_row(page, "Nothing delivered yet.");
-    }
-    for (n, d) in h.deliveries.items.iter().enumerate() {
-        if n > 0 && !page.compact {
-            page.box_rule();
-        }
-        item(
-            page,
-            Link::Setting(SettingLink::Delivery(d.id)),
-            |page, link| {
-                let ok = (200..300).contains(&d.code);
-                let (mark, role) = if ok {
-                    ("✓", Role::Success)
-                } else {
-                    ("✗", Role::Error)
-                };
-                let event = match &d.action {
-                    Some(action) => format!("{}.{action}", d.event),
-                    None => d.event.clone(),
-                };
-                let mut right = vec![Seg::new(format!("{} {}", d.code, d.status), Role::Meta)];
-                if d.redelivery {
-                    right.insert(0, Seg::new("redelivery · ", Role::Meta));
-                }
-                page.box_line(
-                    vec![
-                        Seg::new(format!("{mark} "), role),
-                        Seg::linked(event, Role::Strong, link),
-                        Seg::new(
-                            format!(
-                                "  {} · {}",
-                                short(&d.guid),
-                                time::ago_iso(&d.delivered_at, now)
+    let none = "Nothing delivered yet.";
+    listed(
+        page,
+        "Recent deliveries",
+        right,
+        &h.deliveries,
+        none,
+        |page, d| {
+            item(
+                page,
+                Link::Setting(SettingLink::Delivery(d.id)),
+                |page, link| {
+                    let ok = (200..300).contains(&d.code);
+                    let (mark, role) = if ok {
+                        ("✓", Role::Success)
+                    } else {
+                        ("✗", Role::Error)
+                    };
+                    let event = match &d.action {
+                        Some(action) => format!("{}.{action}", d.event),
+                        None => d.event.clone(),
+                    };
+                    let mut right = vec![Seg::new(format!("{} {}", d.code, d.status), Role::Meta)];
+                    if d.redelivery {
+                        right.insert(0, Seg::new("redelivery · ", Role::Meta));
+                    }
+                    page.box_line(
+                        vec![
+                            Seg::new(format!("{mark} "), role),
+                            Seg::linked(event, Role::Strong, link),
+                            Seg::new(
+                                format!(
+                                    "  {} · {}",
+                                    short(&d.guid),
+                                    time::ago_iso(&d.delivered_at, now)
+                                ),
+                                Role::Meta,
                             ),
-                            Role::Meta,
-                        ),
-                    ],
-                    right,
-                    0,
-                );
-            },
-        );
-    }
-    more_row(page, &h.deliveries, "deliveries");
-    page.box_bottom();
+                        ],
+                        right,
+                        0,
+                    );
+                },
+            );
+        },
+    );
 }
 
 /// A GUID's first part, as GitHub shows deliveries.
@@ -575,45 +561,39 @@ fn key_text(k: &DeployKey) -> String {
 }
 
 fn deploy_keys(page: &mut Page, list: &Listed<DeployKey>, keys: SettingKeys<'_>, now: u64) {
-    let title = vec![Seg::new(
-        format!("Deploy keys  {}", list.items.len()),
-        Role::Strong,
-    )];
     let right = add_button(page, "Add deploy key", keys);
-    page.box_top(title, right);
-    if list.items.is_empty() {
-        empty_row(page, "No deploy keys.");
-    }
-    for (n, k) in list.items.iter().enumerate() {
-        if n > 0 && !page.compact {
-            page.box_rule();
-        }
-        item(page, Link::Setting(SettingLink::Key(k.id)), |page, link| {
-            let access = if k.read_only {
-                chip("Read-only", Bg::SecondaryContainer)
-            } else {
-                chip("Read/write", Bg::TertiaryContainer)
-            };
-            page.box_line(
-                vec![Seg::linked(k.title.clone(), Role::Strong, link)],
-                vec![access],
-                0,
-            );
-            let mut meta = format!(
-                "{} · added {}",
-                key_text(k),
-                time::ago_iso(&k.created_at, now)
-            );
-            if let Some(by) = &k.added_by {
-                meta.push_str(&format!(" by {by}"));
-            }
-            match &k.last_used {
-                Some(at) => meta.push_str(&format!(" · last used {}", time::ago_iso(at, now))),
-                None => meta.push_str(" · never used"),
-            }
-            body(page, vec![Seg::new(meta, Role::Meta)]);
-        });
-    }
-    more_row(page, list, "deploy keys");
-    page.box_bottom();
+    listed(
+        page,
+        "Deploy keys",
+        right,
+        list,
+        "No deploy keys.",
+        |page, k| {
+            item(page, Link::Setting(SettingLink::Key(k.id)), |page, link| {
+                let access = if k.read_only {
+                    chip("Read-only", Bg::SecondaryContainer)
+                } else {
+                    chip("Read/write", Bg::TertiaryContainer)
+                };
+                page.box_line(
+                    vec![Seg::linked(k.title.clone(), Role::Strong, link)],
+                    vec![access],
+                    0,
+                );
+                let mut meta = format!(
+                    "{} · added {}",
+                    key_text(k),
+                    time::ago_iso(&k.created_at, now)
+                );
+                if let Some(by) = &k.added_by {
+                    meta.push_str(&format!(" by {by}"));
+                }
+                match &k.last_used {
+                    Some(at) => meta.push_str(&format!(" · last used {}", time::ago_iso(at, now))),
+                    None => meta.push_str(" · never used"),
+                }
+                body(page, vec![Seg::new(meta, Role::Meta)]);
+            });
+        },
+    );
 }

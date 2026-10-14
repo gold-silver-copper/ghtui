@@ -271,6 +271,8 @@ enum Rest {
     NextPage {
         total: Option<u64>,
     },
+    /// GitHub has more, uncounted, that ghtui doesn't read.
+    Uncounted,
 }
 
 /// A list drawn in a box: its rows and what it left out. A bare slice
@@ -360,6 +362,11 @@ fn rest_row(page: &mut Page, shown: usize, rest: Rest) {
             page.box_rule();
             return empty_row(page, &left_out_text(n, "more", "more"));
         }
+        Rest::Uncounted => {
+            page.box_rule();
+            let text = format!("… GitHub has more: the first {shown} are shown");
+            return empty_row(page, &text);
+        }
         Rest::At(n, url) => (Link::from(url), format!("… {n} more")),
         Rest::NextPage { total } => {
             let of = total.map_or_else(
@@ -383,7 +390,7 @@ fn count_of<T>(list: &impl Rows<T>) -> String {
         Rest::All => len.to_string(),
         Rest::OnGitHub(n) | Rest::At(n, _) => format!("{len} of {}", len as u64 + n),
         Rest::NextPage { total: Some(total) } => compact(total),
-        Rest::NextPage { total: None } => format!("{len}+"),
+        Rest::NextPage { total: None } | Rest::Uncounted => format!("{len}+"),
     }
 }
 
