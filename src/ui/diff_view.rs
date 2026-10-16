@@ -1,7 +1,7 @@
 //! Diff rendering, unified or split. Only the visible rows are laid out, so
 //! cost per frame depends on the terminal height, not the size of the PR.
 
-use crate::diff::{Content, DiffLine, Span as TokenSpan, TokenKind, Whitespace};
+use crate::diff::{Content, DiffLine, Span as TokenSpan, TextDiff, TokenKind, Whitespace};
 use crate::git::files::{FileStatus, MODE_SUBMODULE, MODE_SYMLINK};
 use crate::theme::{Bg, DiffBg, Fg, Syntax};
 use ratatui::buffer::Buffer;
@@ -282,6 +282,15 @@ impl DiffView<'_> {
         }
 
         let mut right = Vec::new();
+        // Asked to compare by syntax, a file that couldn't be says so.
+        if let Some(why) = file.text().and_then(TextDiff::fallback)
+            && self.doc.opts().structural
+        {
+            right.push(Span::styled(
+                format!("by lines: {}   ", why.reason()),
+                theme.meta(bg),
+            ));
+        }
         let blocks = file.blocks();
         let reviewed = blocks
             .iter()
@@ -480,6 +489,8 @@ impl DiffView<'_> {
         let moved = line.is_some_and(|(e, _)| self.doc.move_at_entry(pos.file, e).is_some());
         let diff_bg = match line {
             Some(_) if moved => DiffBg::Moved,
+            // Nothing in it is new or gone: the sign says it's in the diff.
+            Some((e, _)) if a.kept.contains(&e) => DiffBg::Context,
             Some((_, l)) => diff_bg(l),
             None => DiffBg::Context,
         };
@@ -1052,7 +1063,7 @@ mod tests {
         doc.set_options(ViewOptions {
             split: true,
             whitespace: Whitespace::Ignore,
-            wrap: 0,
+            ..ViewOptions::default()
         });
         let keys = Keys {
             show: "s",

@@ -55,7 +55,8 @@ pub enum Note {
 /// Why a change block is folded into one row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FoldReason {
-    /// Differs only in whitespace and line breaks.
+    /// Differs only in layout: whitespace and line breaks, and read by
+    /// syntax, blank lines and trailing commas too.
     Formatting,
     /// Already in the diff at your last review.
     Seen,
@@ -161,6 +162,8 @@ impl Row {
 pub struct ViewOptions {
     pub split: bool,
     pub whitespace: Whitespace,
+    /// Read by syntax where the file was compared that way.
+    pub structural: bool,
     /// Columns for comment text; 0 for the default.
     pub wrap: u16,
 }
@@ -200,6 +203,8 @@ pub struct DocFile {
     /// The alignment every entry index here refers to. Only `rebuild`
     /// changes it, dropping the windows and unfolds made in the other.
     whitespace: Whitespace,
+    /// Read by syntax ([`TextDiff::view`]); the same lines either way.
+    structural: bool,
     thread_rows: Vec<ThreadRow>,
     /// Line annotations by anchor.
     by_line: HashMap<LinePos, Vec<u32>>,
@@ -238,7 +243,8 @@ impl DocFile {
 
     /// The alignment the rows were built from.
     pub fn alignment(&self) -> Option<&crate::diff::Alignment> {
-        self.text().map(|t| t.alignment(self.whitespace))
+        self.text()
+            .map(|t| t.view(self.whitespace, self.structural))
     }
 
     /// The block containing alignment entry `entry`.
@@ -355,6 +361,7 @@ impl DocFile {
             self.unfolded.clear();
             self.whitespace = opts.whitespace;
         }
+        self.structural = opts.structural;
         let (anns, open) = (extras.anns, extras.open);
         self.rows.clear();
         self.headers.clear();
@@ -408,7 +415,7 @@ impl DocFile {
         let Some(Content::Text(text)) = diff.as_deref().map(|d| &d.content) else {
             return;
         };
-        let a = text.alignment(self.whitespace);
+        let a = text.view(self.whitespace, self.structural);
         let lines = &a.lines;
         self.blocks.clone_from(&a.blocks);
         let fold_of: Vec<Option<FoldReason>> = self
@@ -487,8 +494,7 @@ impl DocFile {
             self.rows.push(Row::Hunk { seg: idx(s) });
             let first_new_row = self.rows.len();
             // Lines, with folded blocks as one row each.
-            let push =
-                |rows: &mut Vec<Row>, range| push_lines(rows, text, lines, range, opts.split);
+            let push = |rows: &mut Vec<Row>, range| push_lines(rows, text, a, range, opts.split);
             let mut at = seg.start;
             for (i, (b, fold)) in self.blocks.iter().zip(&fold_of).enumerate() {
                 let (start, end) = (b.entries.start as usize, b.entries.end as usize);
@@ -666,12 +672,13 @@ fn ends_without_newline(text: &TextDiff, lines: &[DiffLine], e: Option<u32>) -> 
 fn push_lines(
     rows: &mut Vec<Row>,
     text: &TextDiff,
-    lines: &[DiffLine],
+    a: &crate::diff::Alignment,
     range: Range<usize>,
     split: bool,
 ) {
+    let lines = &a.lines;
     if split {
-        return push_split_rows(rows, text, lines, range);
+        return push_split_rows(rows, text, a, range);
     }
     for e in range {
         rows.push(Row::Line(idx(e)));
@@ -682,8 +689,15 @@ fn push_lines(
 }
 
 /// Split rows: context lines pair with themselves; within a change, the
-/// removed and added runs are zipped side by side.
-fn push_split_rows(rows: &mut Vec<Row>, text: &TextDiff, lines: &[DiffLine], seg: Range<usize>) {
+/// removed and added lines the alignment pairs sit side by side, and the
+/// rest are zipped in order between them.
+fn push_split_rows(
+    rows: &mut Vec<Row>,
+    text: &TextDiff,
+    a: &crate::diff::Alignment,
+    seg: Range<usize>,
+) {
+    let lines = &a.lines;
     let is = |e: usize, removed| {
         lines
             .get(e)
@@ -702,21 +716,36 @@ fn push_split_rows(rows: &mut Vec<Row>, text: &TextDiff, lines: &[DiffLine], seg
             e += 1;
             continue;
         }
-        let removed_start = e;
+        let removed_start = idx(e);
         while e < seg.end && is(e, true) {
             e += 1;
         }
-        let added_start = e;
+        let added_start = idx(e);
         while e < seg.end && is(e, false) {
             e += 1;
         }
-        let (removed, added) = (added_start - removed_start, e - added_start);
+        let (removed, added) = (removed_start..added_start, added_start..idx(e));
+        let anchors = (a.pairs.iter()).filter(|(r, n)| removed.contains(r) && added.contains(n));
+        let (mut r, mut n) = (removed.start, added.start);
         let mut missing_newline = false;
-        for i in 0..removed.max(added) {
-            let left = (i < removed).then_some(idx(removed_start + i));
-            let right = (i < added).then_some(idx(added_start + i));
-            missing_newline |= ends(left) || ends(right);
-            rows.push(Row::Split { left, right });
+        let end = (removed.end, added.end);
+        for &(to_r, to_n) in anchors.chain([&end]) {
+            let (left, right) = (r..to_r, n..to_n);
+            for i in 0..left.len().max(right.len()) {
+                let i = idx(i);
+                let left = left.start.checked_add(i).filter(|e| left.contains(e));
+                let right = right.start.checked_add(i).filter(|e| right.contains(e));
+                missing_newline |= ends(left) || ends(right);
+                rows.push(Row::Split { left, right });
+            }
+            if (to_r, to_n) != end {
+                missing_newline |= ends(Some(to_r)) || ends(Some(to_n));
+                rows.push(Row::Split {
+                    left: Some(to_r),
+                    right: Some(to_n),
+                });
+            }
+            (r, n) = (to_r + 1, to_n + 1);
         }
         if missing_newline {
             rows.push(Row::NoNewline);
@@ -845,6 +874,7 @@ impl Doc {
                     blocks: Vec::new(),
                     unfolded: HashSet::new(),
                     whitespace: Whitespace::default(),
+                    structural: false,
                     thread_rows: Vec::new(),
                     by_line: HashMap::new(),
                     local_commentable: None,
@@ -1625,7 +1655,7 @@ pub(crate) mod tests {
         ViewOptions {
             split,
             whitespace,
-            wrap: 0,
+            ..ViewOptions::default()
         }
     }
 
@@ -2147,6 +2177,38 @@ pub(crate) mod tests {
     mod better {
         use super::*;
         use crate::diff::moves::detect_moves;
+
+        /// Read by syntax, split view puts an edited line beside its new
+        /// version; by lines, beside whatever was added first.
+        #[test]
+        fn by_syntax_split_rows_pair_edited_lines() {
+            let mut doc = one(
+                "x.rs",
+                "a();\nrun(a, b);\nz();\n",
+                "a();\nprepare();\nrun(a, c);\nz();\n",
+            );
+            // The new line beside old line 2.
+            let beside = |doc: &Doc| {
+                let file = &doc.files[0];
+                let lines = &file.alignment().unwrap().lines;
+                file.rows().iter().find_map(|r| match *r {
+                    Row::Split {
+                        left: Some(l),
+                        right,
+                    } if lines[l as usize] == DiffLine::Removed(2) => {
+                        Some(right.map(|r| lines[r as usize]))
+                    }
+                    _ => None,
+                })
+            };
+            doc.set_options(ViewOptions {
+                structural: true,
+                ..view(true, Whitespace::Exact)
+            });
+            assert_eq!(beside(&doc), Some(Some(DiffLine::Added(3))));
+            doc.set_options(view(true, Whitespace::Exact));
+            assert_eq!(beside(&doc), Some(Some(DiffLine::Added(2))));
+        }
 
         #[test]
         fn formatting_only_blocks_fold_and_unfold() {

@@ -3,11 +3,13 @@
 //! Grammars are behind `lang-*` cargo features. Unknown languages, files over
 //! [`MAX_HIGHLIGHT_BYTES`] and grammar errors all fall back to plain text.
 
+use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
+use tree_sitter::{ParseOptions, Parser, Tree};
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
 
 use crate::diff::sat_u32;
@@ -190,6 +192,36 @@ pub fn highlight(lang: Option<Language>, text: &Text) -> Vec<Vec<Span>> {
     let cancel = Arc::new(AtomicUsize::new(0));
     cancel_at(Instant::now() + HIGHLIGHT_BUDGET, &cancel);
     spans(config, text, &cancel)
+}
+
+/// How long parsing a side may take.
+const PARSE_BUDGET: Duration = Duration::from_secs(1);
+
+/// `text`'s syntax tree as `lang`, or `None` without a grammar, past
+/// [`MAX_HIGHLIGHT_BYTES`], or when parsing takes too long (error recovery
+/// on garbage can). A syntax error is part of the tree.
+pub(crate) fn parse(lang: Language, text: &Text) -> Option<Tree> {
+    let config = config(lang)?;
+    if text.source.len() > MAX_HIGHLIGHT_BYTES {
+        return None;
+    }
+    let mut parser = Parser::new();
+    parser.set_language(&config.language).ok()?;
+    let source = text.source.as_bytes();
+    let start = Instant::now();
+    let mut in_time = |_: &tree_sitter::ParseState| {
+        if start.elapsed() > PARSE_BUDGET {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    };
+    let options = ParseOptions::new().progress_callback(&mut in_time);
+    parser.parse_with_options(
+        &mut |at, _| source.get(at..).unwrap_or_default(),
+        None,
+        Some(options),
+    )
 }
 
 /// Sets `cancel` at `deadline`, unless it's dropped by then: one thread

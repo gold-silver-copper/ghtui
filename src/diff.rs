@@ -1,8 +1,8 @@
 //! Diff computation and syntax highlighting. Pure logic, no UI, no I/O.
 //!
 //! Also comment anchoring ([`anchor`]), change blocks ([`blocks`]),
-//! intra-line token diffs ([`intraline`]) and moved-code detection
-//! ([`moves`]).
+//! intra-line token diffs ([`intraline`]), moved-code detection
+//! ([`moves`]) and structural diffs ([`structure`]).
 
 pub mod anchor;
 pub mod blocks;
@@ -12,6 +12,7 @@ pub mod hunks;
 pub mod intraline;
 pub mod moves;
 pub mod scope;
+pub mod structure;
 pub mod text;
 
 pub use file::{Alignment, CONTEXT, Content, FileDiff, TextDiff, counts};
@@ -20,6 +21,7 @@ pub use hunks::{
     Algorithm, DiffLine, Hunk, Whitespace, align, diff_lines, hunks, segments, segments_by,
     side_counts,
 };
+pub use structure::Fallback;
 pub use text::{Text, is_binary};
 
 /// `n` as a `u32`, saturating. Offsets and counts are `u32`, and [`Text`]
