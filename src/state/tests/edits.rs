@@ -17,11 +17,11 @@ fn on_hubot(s: &mut State) {
         }
         Screen::Diff(_) => false,
     };
-    for _ in 0..10 {
+    for _ in 0..200 {
         if selected(s) {
             return;
         }
-        press(s, "}");
+        press(s, "<Down>");
     }
     assert!(selected(s), "hubot's comment is selected");
 }
@@ -49,13 +49,13 @@ fn a_comment_is_edited_in_place_and_followed() {
     let comment = before.lines().position(|l| l.contains("hubot commented"));
     // Opening it changes nothing on GitHub; it only looks up who can be
     // mentioned.
-    let opened = press(&mut s, ",e");
+    let opened = press(&mut s, "e");
     assert!(
         fixtures::asked(&opened) == [DataKey::Mentionable(ghtui())] && opened.len() == 1,
         "{opened:?}"
     );
     let Some(Overlay::Compose(c)) = &s.overlay else {
-        panic!(",e opens the composer")
+        panic!("e opens the composer")
     };
     assert_eq!(c.text(), "Agreed. 120 columns, centered?");
     let screen = screen_text(&s);
@@ -81,7 +81,7 @@ fn a_comment_is_edited_in_place_and_followed() {
     // GitHub hasn't shown it: the page waits, and says so.
     issue_shows(&mut s, |_| {});
     assert!(s.following.is_some());
-    press(&mut s, ",e");
+    press(&mut s, "e");
     says(&s, "hasn't shown the last change");
     issue_shows(&mut s, |d| {
         d.first_comment().unwrap().body = "Agreed. 120 columns, centered?!".into();
@@ -108,19 +108,19 @@ fn edits_are_offered_only_where_github_allows_them() {
         why(&s, Action::React).is_empty(),
         "reacting is still offered"
     );
-    press(&mut s, ",e");
+    press(&mut s, "e");
     assert!(s.overlay.is_none());
     says(&s, "GitHub doesn't let you edit hubot's comment");
 
     // The description: nothing selected, it's what's edited.
-    press(&mut s, "gg");
+    press(&mut s, "<Home>");
     if let Screen::Page(p) = s.screen_mut() {
         p.selected = None;
     }
     assert!(why(&s, Action::EditComment).is_empty());
-    press(&mut s, ",D");
+    press(&mut s, "D");
     says(&s, "Select a comment first");
-    press(&mut s, ",e");
+    press(&mut s, "e");
     let Some(Overlay::Compose(c)) = &s.overlay else {
         panic!("the description opens")
     };
@@ -128,7 +128,7 @@ fn edits_are_offered_only_where_github_allows_them() {
 
     // Elsewhere, they say where they work.
     let mut list = super::with_issues();
-    press(&mut list, ",e");
+    press(&mut list, "e");
     says(&list, "works on a comment, an issue or a pull request");
 }
 
@@ -138,9 +138,9 @@ fn edits_are_offered_only_where_github_allows_them() {
 fn deleting_a_comment_asks_first() {
     let mut s = issue_with(|_| {});
     on_hubot(&mut s);
-    assert!(press(&mut s, ",D").is_empty());
+    assert!(press(&mut s, "D").is_empty());
     let Some(Overlay::Ask(c)) = &s.overlay else {
-        panic!(",D asks first")
+        panic!("D asks first")
     };
     assert!(c.title.starts_with("Delete hubot's comment"), "{}", c.title);
     // Data arriving doesn't close or change it.
@@ -159,7 +159,7 @@ fn deleting_a_comment_asks_first() {
     assert!(s.following.is_some());
     // Meanwhile, another edit waits too, and says so.
     on_hubot(&mut s);
-    assert!(press(&mut s, ",D").is_empty());
+    assert!(press(&mut s, "D").is_empty());
     assert!(s.overlay.is_none());
     says(&s, "GitHub hasn't shown the last change yet");
     issue_shows(&mut s, |d| {
@@ -202,21 +202,21 @@ fn reactions_show_under_the_description_and_each_comment() {
 #[test]
 fn reacting_toggles_yours() {
     let mut s = issue_with(|d| d.editable.reactions = vec![hooray(2, true)]);
-    press(&mut s, "gg");
+    press(&mut s, "<Home>");
     if let Screen::Page(p) = s.screen_mut() {
         p.selected = None;
     }
-    press(&mut s, ",+");
+    press(&mut s, "+");
     let rows: Vec<String> = match &s.overlay {
         Some(Overlay::Picker(p)) => s.picker_rows(p).into_iter().map(|(r, _)| r.label).collect(),
-        _ => panic!(",+ opens the reactions"),
+        _ => panic!("+ opens the reactions"),
     };
     assert_eq!(rows.len(), 8);
     assert!(
         rows[3].starts_with('✓') && rows[3].contains("Hooray"),
         "{rows:?}"
     );
-    let cmds = press(&mut s, "jjj<Enter>");
+    let cmds = press(&mut s, "<Down><Down><Down><Enter>");
     let take_back = Edit::React {
         subject: NodeId::new("I_14"),
         content: ReactionContent::Hooray,
@@ -229,7 +229,7 @@ fn reacting_toggles_yours() {
     assert!(s.following.is_none());
 
     on_hubot(&mut s);
-    press(&mut s, ",+");
+    press(&mut s, "+");
     let cmds = press(&mut s, "<Enter>");
     let give = Edit::React {
         subject: NodeId::new("IC_1"),
@@ -244,7 +244,7 @@ fn reacting_toggles_yours() {
 #[test]
 fn the_labels_picker_lists_whats_set_first() {
     let mut s = issue_with(|_| {});
-    let cmds = press(&mut s, ",l");
+    let cmds = act(&mut s, Action::EditLabels);
     let key = DataKey::Sidebar(ghtui(), 14);
     assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
     fixtures::served(&mut s, &cmds);
@@ -262,7 +262,7 @@ fn the_labels_picker_lists_whats_set_first() {
 #[test]
 fn labels_are_checked_then_applied() {
     let mut s = issue_with(|_| {});
-    let cmds = press(&mut s, ",l");
+    let cmds = act(&mut s, Action::EditLabels);
     fixtures::served(&mut s, &cmds);
     // bug, ui, documentation, good first issue: check documentation,
     // uncheck ui.
@@ -294,7 +294,7 @@ fn labels_are_checked_then_applied() {
     assert!(s.following.is_none());
 
     // Unchanged, nothing is sent.
-    press(&mut s, ",l");
+    act(&mut s, Action::EditLabels);
     assert!(press(&mut s, "<C-s>").is_empty());
     says(&s, "Nothing changed");
 }
@@ -304,11 +304,11 @@ fn labels_are_checked_then_applied() {
 #[test]
 fn reviewers_include_teams() {
     let mut s = with_pr();
-    let cmds = press(&mut s, ",q");
+    let cmds = act(&mut s, Action::RequestReviews);
     fixtures::served(&mut s, &cmds);
     let rows: Vec<String> = match &s.overlay {
         Some(Overlay::Picker(p)) => s.picker_rows(p).into_iter().map(|(r, _)| r.label).collect(),
-        _ => panic!(",q opens the reviewers"),
+        _ => panic!("asking for reviews opens the reviewers"),
     };
     // Who's asked, then the rest; never the author (octocat).
     let names = [
@@ -347,7 +347,7 @@ fn reviewers_include_teams() {
 #[test]
 fn milestone_and_title() {
     let mut s = issue_with(|_| {});
-    let cmds = press(&mut s, ",M");
+    let cmds = act(&mut s, Action::EditMilestone);
     fixtures::served(&mut s, &cmds);
     // No milestone, Links (current), 1.0.
     let cmds = press(&mut s, "<Down><Down><Enter>");
@@ -363,7 +363,7 @@ fn milestone_and_title() {
     });
     assert!(s.following.is_none());
 
-    press(&mut s, ",T");
+    act(&mut s, Action::EditTitle);
     let cmds = press(&mut s, "!<Enter>");
     let title = Edit::Title {
         pr: false,

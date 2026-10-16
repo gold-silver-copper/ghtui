@@ -20,7 +20,7 @@ fn commit_history_loads_more() {
         key.clone(),
         Data::History(Box::new(crate::fixtures::history(Some("h1")))),
     );
-    press(&mut state, "G");
+    press(&mut state, "<End>");
     assert!(selected_text(&state).starts_with("Load more"));
     let more_at = page(&state).selected;
     let cmds = press(&mut state, "<Enter>");
@@ -84,7 +84,7 @@ fn an_extended_list_is_kept_until_asked() {
     fetched(&mut state, key.clone(), page(10, Some("2")));
     assert!(state.load_visible(false).contains(&refetch), "pending runs");
     fetched(&mut state, key.clone(), page(10, Some("2")));
-    press(&mut state, "G");
+    press(&mut state, "<End>");
     press(&mut state, "<Enter>");
     update(
         &mut state,
@@ -128,7 +128,7 @@ fn a_next_page_from_before_a_refresh_is_not_appended() {
         Data::History(Box::new(page))
     };
     fetched(&mut state, key.clone(), page('a', Some("h1")));
-    press(&mut state, "G");
+    press(&mut state, "<End>");
     let old = press(&mut state, "<Enter>");
     assert_eq!(
         old,
@@ -140,7 +140,7 @@ fn a_next_page_from_before_a_refresh_is_not_appended() {
     // r, and the refreshed list arrives before the old next page.
     let _ = press(&mut state, "r");
     fetched(&mut state, key.clone(), page('c', Some("h2")));
-    press(&mut state, "G");
+    press(&mut state, "<End>");
     let new = press(&mut state, "<Enter>");
     assert_eq!(
         new,
@@ -183,7 +183,7 @@ fn load_more_during_a_refresh_waits_for_it() {
     let page = |next| Data::History(Box::new(crate::fixtures::history(next)));
     fetched(&mut state, key.clone(), page(Some("h1")));
     let _ = press(&mut state, "r");
-    press(&mut state, "G");
+    press(&mut state, "<End>");
     assert_eq!(press(&mut state, "<Enter>"), Vec::new());
     let cmds = fetched(&mut state, key.clone(), page(Some("h2")));
     let more = Cmd::Api(Api::FetchMore {
@@ -206,7 +206,7 @@ fn a_next_page_survives_a_failed_refresh() {
     let _ = state.push(route);
     let page = |next: Option<&str>| Data::History(Box::new(crate::fixtures::history(next)));
     fetched(&mut state, key.clone(), page(Some("h1")));
-    press(&mut state, "G");
+    press(&mut state, "<End>");
     press(&mut state, "<Enter>");
     let _ = press(&mut state, "r");
     let result = Err(ApiError::Network("offline".into()));
@@ -242,7 +242,7 @@ fn advisories_load_more() {
     assert!(cmds.contains(&fetch(key.clone())), "{cmds:?}");
     let list = crate::fixtures::page(3, crate::fixtures::advisories(), Some("c1"));
     fetched(&mut state, key.clone(), Data::Advisories(Box::new(list)));
-    press(&mut state, "G");
+    press(&mut state, "<End>");
     assert!(
         selected_text(&state).starts_with("Load more"),
         "{:?}",

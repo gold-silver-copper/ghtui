@@ -291,7 +291,7 @@ fn with_pr_checks() -> State {
 pub(crate) fn with_pr_review() -> State {
     let mut state = with_pr();
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
-    press(&mut state, "gr");
+    act(&mut state, Action::ReviewGlance);
     // The diff it starts reads the drafts and threads.
     let of = crate::diff_screen::DiffOf::Pr(pr.clone());
     state.diffs.insert(of.clone(), fixture_diff());
@@ -493,7 +493,7 @@ pub(crate) fn with_search(kind: SearchKind, query: &str) -> State {
 /// Every page ghtui has a fixture for, with its data in.
 pub(crate) fn pages() -> Vec<(&'static str, State)> {
     let mut commits = with_pr();
-    press(&mut commits, "2gt");
+    press(&mut commits, "2");
     let repo = |route| at(with_repo(), route);
     let commits_of = code::Commits {
         repo: ghtui(),

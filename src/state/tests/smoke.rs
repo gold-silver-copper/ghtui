@@ -38,17 +38,19 @@ pub(super) fn more() -> Vec<(&'static str, State)> {
     let _ = overflowing.switch_to_tab(6);
     let mut menu = with_repo();
     crate::nav::open_menu(&mut menu);
-    let merge = pressed(with_pr(), ",m");
+    let merge = pressed(with_pr(), "M");
+    let mut search_box = with_repo();
+    super::act(&mut search_box, crate::keymap::Action::SearchGithub);
+    press(&mut search_box, "oct");
     vec![
         ("home loading", loading),
         ("palette", palette),
         ("go to file", go_to_file),
         ("menu", menu),
         ("hints", pressed(with_repo(), "i")),
-        ("search box", pressed(with_repo(), "g/oct")),
+        ("search box", search_box),
         ("find on the page", pressed(with_repo(), "/oct")),
-        ("which key", pressed(with_repo(), "g")),
-        ("list filter", pressed(with_repo(), "2gt/")),
+        ("list filter", pressed(with_repo(), "2/")),
         ("log search", pressed(with_job(None), "/")),
         ("comment on an issue", pressed(with_issue(), "c")),
         ("merge confirm", merge),
@@ -59,7 +61,7 @@ pub(super) fn more() -> Vec<(&'static str, State)> {
         ("diff search", pressed(diff_at(0, 4), "/point")),
         ("threads", with_threads()),
         ("reply", pressed(with_threads(), "c")),
-        ("comment on lines", pressed(diff_at(0, 4), "Vjc")),
+        ("comment on lines", pressed(diff_at(0, 4), "s<Down>c")),
         ("submit", submit),
         ("moves", better_than_github()),
         ("diff loading", diff_loading),

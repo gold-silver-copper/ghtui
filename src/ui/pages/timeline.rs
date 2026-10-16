@@ -762,7 +762,7 @@ pub(super) fn review(
                         Role::Link,
                         link,
                     ),
-                    meta(" · ↵ or za shows them"),
+                    meta(" · ↵ shows them"),
                 ],
             );
         });
@@ -776,7 +776,7 @@ pub(super) fn review(
                     page,
                     vec![
                         Seg::linked("▾ Fold this review's threads", Role::Link, link),
-                        meta(" · ↵ or za"),
+                        meta(" · ↵"),
                     ],
                 );
             },

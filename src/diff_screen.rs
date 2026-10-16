@@ -573,35 +573,16 @@ pub fn apply(
     notice: &mut Notices,
 ) -> Vec<Cmd> {
     let lay = layout(content, &screen.prefs, &state.tree);
-    let half = (usize::from(lay.diff.height) / 2).max(1).cast_signed();
+    let page = usize::from(lay.diff.height)
+        .saturating_sub(2)
+        .max(1)
+        .cast_signed();
     let tree_focused = screen.focus == Pane::Tree && lay.tree.is_some();
     let tree = unfolded(&state.tree, &screen.folded);
     let before = (screen.top, screen.cursor, screen.shift);
-    let scrolls = matches!(
-        action,
-        Action::ScrollDown
-            | Action::ScrollUp
-            | Action::ScrollCenter
-            | Action::ScrollTop
-            | Action::ScrollBottom
-            | Action::ScrollLeft
-            | Action::ScrollRight
-            | Action::ScreenTop
-            | Action::ScreenMiddle
-            | Action::ScreenBottom
-    );
+    let scrolls = matches!(action, Action::ScrollLeft | Action::ScrollRight);
     let mut cmds = Vec::new();
     match action {
-        // A page is two half pages, so the cursor keeps its place on screen.
-        Action::PageDown | Action::PageUp => {
-            let half = if action == Action::PageDown {
-                Action::HalfPageDown
-            } else {
-                Action::HalfPageUp
-            };
-            cmds = apply(screen, state, half, content, notice);
-            cmds.extend(apply(screen, state, half, content, notice));
-        }
         Action::ToggleTree => {
             screen.prefs.tree_visible = !screen.prefs.tree_visible;
             if !screen.prefs.tree_visible {
@@ -661,34 +642,28 @@ pub fn apply(
         // Moving in the file tree; everything else acts on the diff.
         Action::Down
         | Action::Up
-        | Action::HalfPageDown
-        | Action::HalfPageUp
+        | Action::PageDown
+        | Action::PageUp
         | Action::Top
         | Action::Bottom
             if tree_focused =>
         {
-            let tree_half = (tree_list_height(lay.tree.unwrap_or_default()) / 2)
+            let tree_page = tree_list_height(lay.tree.unwrap_or_default())
+                .saturating_sub(1)
                 .max(1)
                 .cast_signed();
             let delta = match action {
                 Action::Down => 1,
                 Action::Up => -1,
-                Action::HalfPageDown => tree_half,
-                Action::HalfPageUp => -tree_half,
+                Action::PageDown => tree_page,
+                Action::PageUp => -tree_page,
                 Action::Top => isize::MIN,
                 _ => isize::MAX,
             };
             let row = screen.tree_selected.saturating_add_signed(delta);
             select_tree_row(screen, state, row);
         }
-        Action::Fold
-        | Action::Unfold
-        | Action::Open
-        | Action::FoldClose
-        | Action::FoldOpen
-        | Action::FoldToggle
-            if tree_focused =>
-        {
+        Action::Fold | Action::Unfold | Action::Open | Action::FoldToggle if tree_focused => {
             let at = screen.tree_selected;
             let row = tree.get(at);
             // The folder the row is in.
@@ -713,7 +688,6 @@ pub fn apply(
                         None => notice.info("Already at the top"),
                     }
                 }
-                (Action::FoldOpen, Some(TreeRow::File { .. })) => notice.info("Not a folder"),
                 // Folding a file folds the folder it's in.
                 (_, Some(TreeRow::File { .. })) => {
                     match parent.and_then(|i| Some((i, tree.get(i)?))) {
@@ -726,8 +700,8 @@ pub fn apply(
                 }
                 (_, Some(TreeRow::Dir { path, folded, .. })) => {
                     let fold = match action {
-                        Action::Fold | Action::FoldClose => true,
-                        Action::Unfold | Action::FoldOpen => false,
+                        Action::Fold => true,
+                        Action::Unfold => false,
                         _ => !folded,
                     };
                     if fold == *folded {
@@ -744,26 +718,14 @@ pub fn apply(
                 }
             }
         }
-        Action::FoldClose | Action::FoldOpen | Action::FoldToggle => {
+        Action::FoldToggle => {
             let (doc, file) = (&state.doc, screen.cursor.file);
-            let thread = (doc.annotation_under(screen.cursor, screen.half))
-                // Folding a folded thread folds its file, as in vim.
-                .filter(|&t| action != Action::FoldClose || doc.thread_open(t));
-            let open = match thread {
-                Some(t) => doc.thread_open(t),
-                None => doc.files().get(file).is_some_and(|f| !f.collapsed()),
-            };
-            let want = match action {
-                Action::FoldOpen => true,
-                Action::FoldClose => false,
-                _ => !open,
+            let thread = doc.annotation_under(screen.cursor, screen.half);
+            let want = match thread {
+                Some(t) => !doc.thread_open(t),
+                None => doc.files().get(file).is_some_and(DocFile::collapsed),
             };
             match thread {
-                _ if want == open => notice.info(if open {
-                    "Already unfolded"
-                } else {
-                    "Already folded"
-                }),
                 Some(t) => preserving_position(screen, state, |d| d.doc.toggle_thread(t)),
                 None => {
                     preserving_position(screen, state, |d| d.doc.set_open(file, want));
@@ -811,27 +773,6 @@ pub fn apply(
         }
         Action::ScrollLeft => screen.shift = screen.shift.saturating_sub(SHIFT),
         Action::ScrollRight => screen.shift = screen.shift.saturating_add(SHIFT).min(MAX_SHIFT),
-        Action::ScrollDown | Action::ScrollUp => {
-            let by = if action == Action::ScrollDown { 1 } else { -1 };
-            screen.top = state.doc.offset(screen.top, by);
-            // The cursor stays on screen.
-            let (doc, height) = (&state.doc, usize::from(lay.diff.height).max(1));
-            let (top, cursor) = (doc.to_global(screen.top), doc.to_global(screen.cursor));
-            if cursor < top {
-                screen.cursor = screen.top;
-            } else if cursor >= top + height {
-                screen.cursor = doc.offset(screen.top, (height - 1).cast_signed());
-            }
-        }
-        Action::ScrollCenter | Action::ScrollTop | Action::ScrollBottom => {
-            let height = usize::from(lay.diff.height).max(1).cast_signed();
-            let above = match action {
-                Action::ScrollTop => 0,
-                Action::ScrollBottom => height - 1,
-                _ => height / 2,
-            };
-            screen.top = state.doc.offset(screen.cursor, -above);
-        }
         // The tree's sections are its folders.
         Action::NextSection | Action::PrevSection if tree_focused => {
             let mut dirs = (tree.iter().enumerate())
@@ -848,24 +789,18 @@ pub fn apply(
                 None => notice.info("No more folders that way"),
             }
         }
-        Action::ScreenTop | Action::ScreenMiddle | Action::ScreenBottom => {
-            let height = usize::from(lay.diff.height).max(1).cast_signed();
-            let down = match action {
-                Action::ScreenTop => 0,
-                Action::ScreenBottom => height - 1,
-                _ => height / 2,
-            };
-            screen.cursor = state.doc.offset(screen.top, down);
-        }
         Action::Down => screen.cursor = state.doc.offset(screen.cursor, 1),
         Action::Up => screen.cursor = state.doc.offset(screen.cursor, -1),
-        Action::HalfPageDown => {
-            screen.cursor = state.doc.offset(screen.cursor, half);
-            screen.top = state.doc.offset(screen.top, half);
-        }
-        Action::HalfPageUp => {
-            screen.cursor = state.doc.offset(screen.cursor, -half);
-            screen.top = state.doc.offset(screen.top, -half);
+        // The view moves a page and the cursor with it, keeping its place
+        // on screen.
+        Action::PageDown | Action::PageUp => {
+            let by = if action == Action::PageDown {
+                page
+            } else {
+                -page
+            };
+            screen.cursor = state.doc.offset(screen.cursor, by);
+            screen.top = state.doc.offset(screen.top, by);
         }
         Action::Top => screen.cursor = Pos::default(),
         Action::Bottom => screen.cursor = state.doc.last(),
@@ -945,13 +880,12 @@ pub fn apply(
                 let pos = screen.cursor;
                 preserving_position(screen, state, |d| d.doc.expand(pos));
             }
-            Some(Row::Header | Row::Note(Note::Collapsed | Note::Viewed))
-                if state
-                    .doc
-                    .files()
-                    .get(screen.cursor.file)
-                    .is_some_and(|f| f.collapsed() || f.open.is_some()) =>
-            {
+            // Moved code: to its other end.
+            Some(Row::Moved { .. }) => {
+                return apply(screen, state, Action::JumpMove, content, notice);
+            }
+            // A file's header folds and unfolds it.
+            Some(Row::Header | Row::Note(Note::Collapsed | Note::Viewed)) => {
                 let file = screen.cursor.file;
                 let open = state.doc.files().get(file).is_some_and(DocFile::collapsed);
                 state.doc.set_open(file, open);

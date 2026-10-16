@@ -51,11 +51,9 @@ pub(super) const DIFF_DOABLES: &[(&str, &[(Action, &str)])] = {
                 (A::OldSide, ""),
                 (A::NewSide, ""),
                 (A::Search, ""),
-                (A::SearchBack, ""),
                 (A::SearchNext, ""),
                 (A::SearchPrev, ""),
                 (A::SearchWord, ""),
-                (A::SearchWordBack, ""),
                 (A::WordNext, ""),
                 (A::WordPrev, ""),
                 (A::Symbols, ""),
@@ -71,8 +69,6 @@ pub(super) const DIFF_DOABLES: &[(&str, &[(Action, &str)])] = {
         (
             "View",
             &[
-                (A::FoldClose, ""),
-                (A::FoldOpen, ""),
                 (A::FoldToggle, ""),
                 (A::FoldAll, ""),
                 (A::UnfoldAll, ""),
@@ -178,16 +174,6 @@ impl State {
             fwd.unavailable = Some("nothing to go forward to".into());
         }
         out.push(fwd);
-        let close = if self.screens.len() > 1 {
-            "Close this page (back)"
-        } else {
-            "Close the tab"
-        };
-        let mut close = go(Action::CloseView, close, "");
-        if self.screens.len() < 2 && self.tab_count() < 2 {
-            close.unavailable = Some("nothing left to close".into());
-        }
-        out.push(close);
         out.push(go(Action::GoHome, "Home", ""));
         out.push(go(Action::Notifications, "Notifications", ""));
         out.push(go(
@@ -213,20 +199,12 @@ impl State {
         for action in [
             Action::Down,
             Action::Up,
-            Action::NextItem,
-            Action::PrevItem,
             Action::NextSection,
             Action::PrevSection,
-            Action::ScreenTop,
-            Action::ScreenMiddle,
-            Action::ScreenBottom,
             Action::Top,
             Action::Bottom,
-            Action::HalfPageDown,
-            Action::HalfPageUp,
             Action::PageDown,
             Action::PageUp,
-            Action::ScrollCenter,
             Action::ScrollLeft,
             Action::ScrollRight,
             Action::Cancel,
@@ -306,7 +284,7 @@ impl State {
             out.push(here(Action::Blame, blame, "blame"));
             out.push(here(
                 Action::VisualLines,
-                "Select lines (y copies their link)",
+                "Select lines (l copies their link)",
                 "",
             ));
         }
@@ -322,12 +300,7 @@ impl State {
                 | Route::Runs(runs::Job { .. })
         ) {
             let why = (p.word_cursor().is_none()).then(|| "no line of code is selected".to_owned());
-            for action in [
-                Action::WordNext,
-                Action::WordPrev,
-                Action::SearchWord,
-                Action::SearchWordBack,
-            ] {
+            for action in [Action::WordNext, Action::WordPrev, Action::SearchWord] {
                 let mut row = here(action, action.description(), "");
                 row.unavailable.clone_from(&why);
                 out.push(row);
@@ -407,32 +380,6 @@ impl State {
         }
     }
 
-    /// After a count or the first keys of a sequence: what's typed, and
-    /// what can follow it here.
-    pub fn which_key(&self) -> Option<(String, Vec<KeyRow>)> {
-        let count = self.count.map(|c| c.to_string()).unwrap_or_default();
-        if self.typed.is_empty() {
-            self.count?;
-            let tab = self.first_key(Action::NextTab);
-            let top = self.first_key(Action::Top);
-            let rows = vec![
-                KeyRow::key("j k …", "that many times"),
-                KeyRow::key(tab, format!("tab {count}")),
-                KeyRow::key(top, format!("line {count}")),
-            ];
-            return Some((format!("{count}…"), rows));
-        }
-        let typed = format!("{count}{}…", crate::keymap::pretty_keys(&self.typed));
-        let rows = (self
-            .keymap
-            .continuations(&self.typed, self.contexts())
-            .into_iter())
-        .filter(|(_, a)| self.availability(*a).is_ok())
-        .map(|(rest, a)| KeyRow::key(crate::keymap::pretty_keys(&rest), a.description()))
-        .collect();
-        Some((typed, rows))
-    }
-
     /// Whether `action` does something here, or why not. What the menu
     /// lists decides, so which-key, the palette and the menu agree; moving
     /// and going places work everywhere.
@@ -446,13 +393,11 @@ impl State {
             || matches!(
                 action,
                 Back | Forward
-                    | CloseView
                     | Quit
                     | Menu
                     | CommandPalette
                     | Messages
                     | Search
-                    | SearchBack
                     | SearchNext
                     | SearchPrev
                     | SearchGithub
@@ -485,11 +430,7 @@ impl State {
                     Some(Route::Runs(runs::Job { .. })) => "search",
                     _ => "filter",
                 };
-                return vec![
-                    pair("↵", enter),
-                    pair("ctrl-j/k", "move"),
-                    pair("esc", "close"),
-                ];
+                return vec![pair("↵", enter), pair("↑↓", "move"), pair("esc", "close")];
             }
             Some(Overlay::Hints(_)) => {
                 return vec![pair("a-z", "type a link's letters"), pair("esc", "cancel")];
@@ -504,7 +445,7 @@ impl State {
             Some(Overlay::Menu(_)) => {
                 return vec![
                     pair("↵", "run"),
-                    pair("j/k", "choose"),
+                    pair("↑↓", "choose"),
                     pair("key", "run it"),
                     (self.first_key(Action::Search), "filter".into()),
                     pair("esc", "close"),
@@ -542,18 +483,10 @@ impl State {
                     | Kind::DiffFiles
                     | Kind::Commits { .. } => "open",
                 };
-                return vec![
-                    pair("↵", enter),
-                    pair("ctrl-j/k", "move"),
-                    pair("esc", "close"),
-                ];
+                return vec![pair("↵", enter), pair("↑↓", "move"), pair("esc", "close")];
             }
             Some(_) => return Vec::new(),
             None => {}
-        }
-        // Keys typed so far: the which-key panel lists what can follow.
-        if let Some((typed, _)) = self.which_key() {
-            return vec![(typed, String::new()), pair("esc", "cancel")];
         }
         // The menu first: everything else is in it, so it must never be
         // the hint a narrow terminal drops. Then what fits the thing under
@@ -579,6 +512,8 @@ impl State {
                 let key = match action {
                     Action::NextTab => pair(Action::NextTab, Action::PrevTab),
                     Action::NextHunk => pair(Action::NextHunk, Action::PrevHunk),
+                    Action::NextFile => pair(Action::NextFile, Action::PrevFile),
+                    Action::NextSection => pair(Action::NextSection, Action::PrevSection),
                     Action::NextColumn => pair(Action::PrevColumn, Action::NextColumn),
                     Action::SearchNext => pair(Action::SearchNext, Action::SearchPrev),
                     action => self.key_here(action),
@@ -649,16 +584,10 @@ impl State {
         out
     }
 
-    /// The first keys that run `action` on this screen, if any. The
-    /// page's tabs by number are a count before the next tab's keys.
+    /// The first key that runs `action` on this screen, if any.
     pub fn key_here(&self, action: Action) -> Option<String> {
-        let stack = self.contexts();
-        if let Some(keys) = self.keymap.keys_in(action, stack).next() {
-            return Some(crate::keymap::pretty_keys(keys));
-        }
-        let n = Action::PAGE_TABS.iter().position(|a| *a == action)? + 1;
-        let next = self.keymap.keys_in(Action::NextTab, stack).next()?;
-        Some(format!("{n}{}", crate::keymap::pretty_keys(next)))
+        let key = self.keymap.keys_in(action, self.contexts()).next()?;
+        Some(crate::keymap::pretty(key))
     }
 }
 

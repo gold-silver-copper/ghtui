@@ -8,7 +8,6 @@ use std::collections::HashSet;
 use crate::api::model::PrRef;
 use crate::data::DataKey;
 use crate::diff_screen::{DiffOf, RangeView};
-use crate::keymap::Action;
 use crate::state::{Cmd, Git, Screen, State};
 use crate::ui::page::{Link, ReviewLink};
 use crate::ui::pages::{LinesAt, Marks, PrTab};
@@ -162,10 +161,10 @@ fn toggle(state: &mut State, anchor: &str, open: Option<bool>) {
     }
 }
 
-/// `zc`, `zo` and `za` on a page: the review the selection is in, folded
-/// or unfolded. `None` where there's none (the key then says so).
+/// Folding on a page: the review the selection is in, folded or
+/// unfolded. `None` where there's none (the action then says so).
 #[must_use]
-pub fn fold_key(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
+pub fn fold_key(state: &mut State) -> Option<Vec<Cmd>> {
     let Screen::Page(p) = state.screen() else {
         return None;
     };
@@ -187,12 +186,7 @@ pub fn fold_key(state: &mut State, action: Action) -> Option<Vec<Cmd>> {
         return None;
     }
     let anchor = anchor.clone();
-    let open = match action {
-        Action::FoldOpen => Some(true),
-        Action::FoldClose => Some(false),
-        _ => None,
-    };
-    toggle(state, &anchor, open);
+    toggle(state, &anchor, None);
     Some(Vec::new())
 }
 

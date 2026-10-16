@@ -207,7 +207,7 @@ fn commit_picker_loads_a_range_and_blocks_comments() {
     );
     assert!(matches!(s.overlay, Some(Overlay::Picker(_))));
     // Mark the first commit, select the second: a range.
-    press(&mut s, "jj<Space>j");
+    press(&mut s, "<Down><Down><Space><Down>");
     let cmds = press(&mut s, "<Enter>");
     let [
         Cmd::Git(Git::LoadDiff {

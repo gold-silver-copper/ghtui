@@ -114,7 +114,7 @@ fn selected_comment(state: &State, about: &Subject) -> Result<Said, String> {
     let Screen::Page(p) = state.screen() else {
         return Err("Hiding works on a comment in a conversation".into());
     };
-    let next = state.first_key(Action::NextItem);
+    let next = state.first_key(Action::Down);
     // A comment's box, or a hidden one's fold, which its anchor names.
     let (by, number) = match p.selected_link() {
         Some(Link::Quote { author, at, .. }) => (Some((author, at)), None),

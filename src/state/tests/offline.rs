@@ -108,13 +108,13 @@ fn a_refused_write_is_sent_again_copied_or_thrown_away_from_its_row() {
     let _ = act(&mut state, Action::Offline);
     assert_eq!(route(&state), Route::App(app::Offline));
     while page(&state).selected_link() != Some(&crate::ui::page::Link::Queued(3)) {
-        press(&mut state, "j");
+        press(&mut state, "<Down>");
     }
     assert_eq!(
-        press(&mut state, ",R"),
+        press(&mut state, "R"),
         [Cmd::Offline(Off::Queue(Op::Retry(3)))]
     );
-    assert_eq!(press(&mut state, "y"), [Cmd::Copy("Too late".into())]);
+    assert_eq!(press(&mut state, "l"), [Cmd::Copy("Too late".into())]);
     assert_eq!(
         press(&mut state, "<Del>"),
         [Cmd::Offline(Off::Queue(Op::Discard(3)))]

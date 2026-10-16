@@ -56,7 +56,7 @@ fn palette_goes_places_and_runs_actions() {
 #[test]
 fn an_older_suggestion_reply_does_not_replace_a_newer_one() {
     let mut state = with_repo();
-    press(&mut state, "g/");
+    act(&mut state, Action::SearchGithub);
     press(&mut state, "ra");
     let suggest = |q: &str| DataKey::Suggest(q.into());
     let cmds = update(&mut state, Msg::SuggestDue("ra".into()));
@@ -240,7 +240,7 @@ fn go_to_file_and_switch_branches() {
 #[test]
 fn search_box_jumps_searches_and_loads_more() {
     let mut state = with_repo();
-    press(&mut state, "g/");
+    act(&mut state, Action::SearchGithub);
     let sb = overlay!(state, Search);
     assert!(!sb.filter);
     press(&mut state, "bug");
@@ -281,7 +281,7 @@ fn search_box_jumps_searches_and_loads_more() {
         key.clone(),
         Data::Search(Box::new(crate::fixtures::issue_results(Some("c1")))),
     );
-    press(&mut state, "G");
+    press(&mut state, "<End>");
     assert!(selected_text(&state).starts_with("Load more"));
     let cmds = press(&mut state, "<Enter>");
     assert_eq!(
@@ -318,7 +318,7 @@ fn search_box_jumps_searches_and_loads_more() {
 
     // Loading more doesn't block a refresh, and a next page that
     // arrives after the refresh (for the old list) is dropped.
-    press(&mut state, "G");
+    press(&mut state, "<End>");
     fetched(
         &mut state,
         key.clone(),
@@ -356,7 +356,7 @@ fn visited_pages_come_back_as_suggestions() {
     let mut state = with_repo();
     let _ = state.push(Route::user("octocat"));
     let _ = state.push(Route::App(app::Home));
-    press(&mut state, "g/");
+    act(&mut state, Action::SearchGithub);
     let sb = overlay!(state, Search);
     let labels: Vec<String> = state
         .suggestions(sb)
@@ -376,7 +376,8 @@ fn visited_pages_come_back_as_suggestions() {
     // Its letters scattered in a visited page's title aren't that page:
     // ↵ searches for what's typed.
     let _ = state.push(Route::App(app::Home));
-    press(&mut state, "g/occat<Enter>");
+    act(&mut state, Action::SearchGithub);
+    press(&mut state, "occat<Enter>");
     assert!(route(&state).search().is_some(), "{:?}", route(&state));
 }
 
@@ -386,9 +387,10 @@ fn visited_pages_come_back_as_suggestions() {
 fn a_link_typed_after_a_scope_or_a_filter_opens() {
     let pr = Route::pr(PrRef::parse("ratatui/ratatui#5").unwrap());
     let mut state = with_repo();
+    act(&mut state, Action::SearchGithub);
     press(
         &mut state,
-        "g/repo:gold-silver-copper/ghtui https://github.com/ratatui/ratatui/pull/5<Enter>",
+        "repo:gold-silver-copper/ghtui https://github.com/ratatui/ratatui/pull/5<Enter>",
     );
     assert_eq!(route(&state), pr);
 

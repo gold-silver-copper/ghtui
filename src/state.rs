@@ -26,7 +26,7 @@ use crate::data::{Data, DataKey};
 use crate::diff_job::{JobId, JobMsg};
 use crate::diff_screen::{self, DiffOf, DiffPrefs, DiffScreen, DiffState, Pane};
 use crate::join;
-use crate::keymap::{Action, Context, Key, Keymap, Resolved};
+use crate::keymap::{Action, Context, Keymap};
 use crate::nav::{self, Hints, Menu, PageScreen, SearchBox, Visit};
 use crate::notice::Notices;
 use crate::picker::{self, Picker};
@@ -374,14 +374,8 @@ pub struct State {
     /// Terminal size.
     pub size: (u16, u16),
     pub keymap: Keymap,
-    /// Keys typed so far that start a longer binding.
-    pub typed: Vec<Key>,
-    /// A count typed before them.
-    pub count: Option<usize>,
     /// The page's other tabs as they were left, to come back to.
     pub parked: Vec<Screen>,
-    /// The last search went backwards (`?`): `n` goes up.
-    pub backwards: bool,
     pub theme: Theme,
     pub icons: Icons,
     pub density: crate::config::Density,
@@ -446,10 +440,7 @@ impl State {
             problems: Default::default(),
             size,
             keymap,
-            typed: Vec::new(),
-            count: None,
             parked: Vec::new(),
-            backwards: false,
             theme,
             icons,
             density: crate::config::Density::default(),

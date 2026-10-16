@@ -111,7 +111,7 @@ fn plan(state: &State, action: Action) -> Result<Step, String> {
     let at = (&repo, page);
     let row = selected(state);
     let select = |what: &str| {
-        let next = state.first_key(Action::NextItem);
+        let next = state.first_key(Action::Down);
         format!("Select {what} first: {next} goes row by row")
     };
     match (action, settings) {

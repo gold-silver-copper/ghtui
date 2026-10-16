@@ -44,7 +44,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
         Some(Overlay::Search(sb)) if !state.search_field(sb).1 => Some(&sb.input),
         _ => None,
     };
-    let placeholder = format!("Type {} to search", state.first_key(Action::SearchGithub));
+    let placeholder = format!("Type {} to search", state.first_key(Action::CommandPalette));
     Header {
         ctx,
         crumbs: &crumbs,
@@ -313,8 +313,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 width: status.width.saturating_sub(2 * PAD_X),
                 ..status
             };
-            let prompt = if state.backwards { "?" } else { "/" };
-            Span::styled(prompt, ctx.theme.accent(Bg::Container)).render(row, buf);
+            Span::styled("/", ctx.theme.accent(Bg::Container)).render(row, buf);
             input.render(
                 Rect {
                     x: row.x + 1,
@@ -324,20 +323,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 buf,
             );
         }
-        // After the first keys of a sequence: what can follow.
-        None => {
-            if let Some((typed, rows)) = state.which_key() {
-                KeyPanel {
-                    ctx,
-                    title: &typed,
-                    rows: &rows,
-                    selected: None,
-                    position: (0, rows.len()),
-                }
-                .render(area, buf);
-            }
-        }
-        Some(Overlay::Hints(_)) => {}
+        None | Some(Overlay::Hints(_)) => {}
     }
 }
 
@@ -392,10 +378,10 @@ fn render_diff(
         return None;
     }
     let key = |a| state.first_key(a);
-    let jump = key(Action::JumpMove);
+    let jump = key(Action::Open);
     let (show, expand, viewed, reply, resolve, delete, file_comment) = (
         key(Action::Open),
-        key(Action::ExpandContext),
+        key(Action::Open),
         key(Action::ToggleViewed),
         key(Action::Comment),
         key(Action::ResolveThread),

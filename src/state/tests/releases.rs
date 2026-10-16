@@ -40,7 +40,7 @@ fn select_link(s: &mut State, link: &Link) {
 #[test]
 fn a_release_is_edited_and_its_page_follows() {
     let mut s = with_release();
-    press(&mut s, ",e");
+    press(&mut s, "e");
     let form = Route::Releases(releases::EditRelease {
         repo: ghtui(),
         tag: "v0.2.0".into(),
@@ -56,7 +56,7 @@ fn a_release_is_edited_and_its_page_follows() {
     c.input.move_cursor(CursorMove::End);
     c.input.insert_str(", fixed");
     press(&mut s, "<Esc>");
-    press(&mut s, ",s");
+    press(&mut s, "<C-s>");
     let choices: Vec<&str> = (overlay!(s, Ask).choices.iter())
         .map(|(l, _)| l.as_str())
         .collect();
@@ -105,7 +105,7 @@ fn a_release_is_edited_and_its_page_follows() {
 #[test]
 fn a_release_is_deleted_then_its_tag_asked_about() {
     let mut s = with_release();
-    press(&mut s, ",D");
+    press(&mut s, "D");
     assert_eq!(overlay!(s, Ask).title, "Delete the release ghtui 0.2.0?");
     assert!(
         (overlay!(s, Ask).facts.iter()).any(|(f, _)| f.contains("2 assets go with it")),
@@ -188,7 +188,7 @@ fn an_asset_is_saved_where_you_say() {
 #[test]
 fn assets_are_uploaded_and_deleted() {
     let mut s = with_release();
-    press(&mut s, ",U");
+    act(&mut s, Action::UploadAsset);
     press(&mut s, "Cargo.toml");
     let sent = fixtures::sent::<assets::Upload>(&press(&mut s, "<Enter>"));
     let of = Of {
@@ -215,7 +215,7 @@ fn assets_are_uploaded_and_deleted() {
 
     let name = "ghtui-aarch64-macos.tar.gz";
     select_link(&mut s, &Link::Asset(name.into()));
-    press(&mut s, ",D");
+    press(&mut s, "D");
     assert_eq!(overlay!(s, Ask).title, format!("Delete {name}?"));
     let sent = fixtures::sent::<assets::Delete>(&press(&mut s, "<Enter>"));
     let of = Of {

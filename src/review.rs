@@ -668,13 +668,15 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             }
             state.open_picker(picker::Kind::Commits { mark: None })
         }
-        // `c` on a thread replies to it.
+        // `c` on a thread replies to it; with lines selected, it comments
+        // on them, wherever the cursor has gone.
         Action::Comment
-            if let Some(Annotation {
-                key: AnnotationKey::Thread(thread_id),
-                can_reply,
-                ..
-            }) = &annotation =>
+            if screen.selection.is_none()
+                && let Some(Annotation {
+                    key: AnnotationKey::Thread(thread_id),
+                    can_reply,
+                    ..
+                }) = &annotation =>
         {
             if !can_reply {
                 return state.just_say("You can't reply to this one");

@@ -300,7 +300,7 @@ fn files_tab_opens_the_diff_once_the_pr_loads() {
             .any(|c| matches!(c, Cmd::Git(Git::LoadDiff { .. }))),
         "{cmds:?}"
     );
-    press(&mut state, "2gt");
+    press(&mut state, "2");
     assert_eq!(
         route(&state),
         Route::Pulls(pulls::Pr {

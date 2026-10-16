@@ -206,7 +206,7 @@ fn plan(state: &State, h: &Here<'_>, action: Action) -> Result<Step, String> {
     let about = Subject::Discussion(h.of.clone(), h.number);
     let send = |d| Ok(Step::Send(Change::Discussion(d), about.clone()));
     let selected = h.selected.and_then(|s| spot(d, s));
-    let next = state.first_key(Action::NextItem);
+    let next = state.first_key(Action::Down);
     let select = || format!("Select a comment first: {next} goes comment by comment");
     let write = |writes, title: String, at: Option<String>, text| {
         let writing = Writing {

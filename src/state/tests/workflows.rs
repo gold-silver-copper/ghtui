@@ -27,7 +27,7 @@ const WORKFLOW: &str = "name: CI\non:\n  workflow_dispatch:\n    inputs:\n      
 #[test]
 fn a_workflow_runs_by_hand_with_its_inputs_and_is_followed() {
     let mut s = with_workflow();
-    press(&mut s, ",E");
+    act(&mut s, Action::RunWorkflow);
     let dispatch = Route::Runs(runs::Dispatch {
         repo: ghtui(),
         file: "ci.yml".into(),
@@ -39,7 +39,7 @@ fn a_workflow_runs_by_hand_with_its_inputs_and_is_followed() {
     select_link(&mut s, &Link::Form(Row::Input("outcome".into())));
     press(&mut s, "<Enter>");
     press(&mut s, "pass<Enter>");
-    let cmds = press(&mut s, ",E");
+    let cmds = act(&mut s, Action::RunWorkflow);
     let dispatch = Dispatch {
         repo: ghtui(),
         file: "ci.yml".into(),
@@ -65,11 +65,11 @@ fn a_workflow_runs_by_hand_with_its_inputs_and_is_followed() {
 #[test]
 fn a_workflow_that_cant_run_by_hand_says_so() {
     let mut s = with_workflow();
-    press(&mut s, ",E");
+    act(&mut s, Action::RunWorkflow);
     let blob = crate::fixtures::file(".github/workflows/ci.yml", "on: push\n");
     let key = DataKey::Blob(ghtui(), "HEAD".into(), ".github/workflows/ci.yml".into());
     fetched(&mut s, key, Data::Blob(Box::new(blob)));
-    assert!(fetches(press(&mut s, ",E")).is_empty());
+    assert!(fetches(act(&mut s, Action::RunWorkflow)).is_empty());
     says(&s, "can't be run by hand");
 }
 

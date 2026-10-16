@@ -99,25 +99,25 @@ fn h_and_l_go_between_columns() {
     // The first column is what has no Status.
     let someday = selected(&s);
     assert!(someday.contains("itemId=1005"), "{someday}");
-    press(&mut s, "l");
+    press(&mut s, "<Right>");
     assert_eq!(selected(&s), ISSUE);
-    press(&mut s, "jl");
+    press(&mut s, "<Down><Right>");
     assert_eq!(
         selected(&s),
         "https://github.com/gold-silver-copper/ghtui/pull/12"
     );
-    press(&mut s, "l");
+    press(&mut s, "<Right>");
     assert_eq!(
         selected(&s),
         "https://github.com/gold-silver-copper/ghtui/issues/9"
     );
-    press(&mut s, "l");
+    press(&mut s, "<Right>");
     says(&s, "No column to the right has cards");
-    press(&mut s, "hhh");
+    press(&mut s, "<Left><Left><Left>");
     assert_eq!(selected(&s), someday);
 
     let mut s = with_project(Some(2));
-    press(&mut s, "l");
+    press(&mut s, "<Right>");
     says(&s, "Columns are a board's: this view is a table");
 }
 
@@ -148,10 +148,10 @@ fn a_board_with_swimlanes_has_its_columns_in_each_lane() {
         if selected(&s) == ISSUE {
             break;
         }
-        press(&mut s, "j");
+        press(&mut s, "<Down>");
     }
     assert_eq!(selected(&s), ISSUE);
-    press(&mut s, "l");
+    press(&mut s, "<Right>");
     says(&s, "No column to the right has cards");
     assert_eq!(selected(&s), ISSUE);
 }
@@ -194,7 +194,7 @@ fn a_roadmap_puts_items_on_a_timeline() {
 #[test]
 fn a_draft_shows_its_body() {
     let mut s = with_project(None);
-    press(&mut s, "lj<Enter>");
+    press(&mut s, "<Right><Down><Enter>");
     let expect = Route::Projects(projects::ProjectItem {
         project: roadmap(),
         view: None,
@@ -216,8 +216,8 @@ fn a_draft_shows_its_body() {
 #[test]
 fn moving_a_card_sets_its_column_and_the_board_follows() {
     let mut s = with_project(None);
-    press(&mut s, "l");
-    assert!(press(&mut s, ",c").is_empty());
+    press(&mut s, "<Right>");
+    assert!(press(&mut s, "m").is_empty());
     let Some(Overlay::Picker(picker)) = &s.overlay else {
         panic!("no picker");
     };
@@ -255,7 +255,7 @@ fn moving_a_card_sets_its_column_and_the_board_follows() {
     let mut p: Project = fixtures::project();
     fetched(&mut s, key.clone(), Data::Project(Box::new(p.clone())));
     assert!(s.following.is_some());
-    press(&mut s, ",c");
+    press(&mut s, "m");
     says(&s, "GitHub hasn't shown the last change yet");
     if let Some(it) = p.items.items.first_mut() {
         it.values.retain(|(f, _)| f.as_str() != "F_status");
@@ -273,7 +273,7 @@ fn moving_a_card_sets_its_column_and_the_board_follows() {
 #[test]
 fn setting_a_field_sends_its_value() {
     let mut s = with_project(Some(2));
-    press(&mut s, ",f");
+    act(&mut s, Action::SetField);
     let Some(Overlay::Picker(picker)) = &s.overlay else {
         panic!("no picker");
     };
@@ -310,7 +310,7 @@ fn a_project_you_cant_change_says_so() {
         view: None,
     });
     open(&mut s, route, Data::Project(Box::new(p)));
-    assert!(press(&mut s, ",c").is_empty());
+    assert!(press(&mut s, "m").is_empty());
     says(&s, "GitHub doesn't let you change this project");
     assert!(s.overlay.is_none());
 }
@@ -327,7 +327,7 @@ fn change_sent(cmds: &[Cmd]) -> &Change {
 fn items_are_added_by_reference_or_as_drafts() {
     use crate::api::project::{ItemContent, ProjectChange};
     let mut s = with_project(None);
-    press(&mut s, ",i");
+    press(&mut s, "a");
     press(&mut s, "gold-silver-copper/ghtui#14");
     let Some(Overlay::Picker(picker)) = &s.overlay else {
         panic!("no picker");
@@ -356,7 +356,7 @@ fn items_are_added_by_reference_or_as_drafts() {
     assert!(s.following.is_none());
 
     // A draft: its title typed, its text written in the composer.
-    press(&mut s, ",i");
+    press(&mut s, "a");
     press(&mut s, "Plan the release<Enter>");
     assert!(matches!(s.overlay, Some(Overlay::Compose(_))));
     let sent = press(&mut s, "Dates and notes<C-s>");
@@ -374,8 +374,8 @@ fn items_are_added_by_reference_or_as_drafts() {
 fn items_are_archived_and_restored() {
     use crate::api::project::ProjectChange;
     let mut s = with_project(None);
-    press(&mut s, "l");
-    assert!(press(&mut s, ",X").is_empty());
+    press(&mut s, "<Right>");
+    assert!(act(&mut s, Action::ArchiveItem).is_empty());
     let Some(Overlay::Ask(c)) = &s.overlay else {
         panic!("not asked");
     };
@@ -397,11 +397,11 @@ fn items_are_archived_and_restored() {
     assert!(s.following.is_none());
 
     // Restoring asks nothing.
-    press(&mut s, "G");
+    press(&mut s, "<End>");
     while !selected(&s).contains("itemId=1006") {
-        press(&mut s, "k");
+        press(&mut s, "<Up>");
     }
-    let sent = press(&mut s, ",X");
+    let sent = act(&mut s, Action::ArchiveItem);
     let restore = Change::Project(ProjectChange::Archive {
         project: NodeId::new("PVT_1"),
         item: NodeId::new("PVTI_6"),
@@ -416,8 +416,8 @@ fn items_are_archived_and_restored() {
 fn a_drafts_title_and_text_are_edited() {
     use crate::api::project::ProjectChange;
     let mut s = with_project(None);
-    press(&mut s, "lj");
-    press(&mut s, ",e");
+    press(&mut s, "<Right><Down>");
+    press(&mut s, "e");
     let Some(Overlay::Compose(c)) = &s.overlay else {
         panic!("no composer");
     };
@@ -433,7 +433,7 @@ fn a_drafts_title_and_text_are_edited() {
     });
     assert_eq!(change_sent(&sent), &edit);
     s.overlay = None;
-    press(&mut s, "k,e");
+    press(&mut s, "<Up>e");
     says(&s, "Only a draft's text is edited here");
 }
 
@@ -445,7 +445,7 @@ fn an_issues_field_is_set_from_its_sidebar() {
     let mut s = super::with_issue();
     let said = "Roadmap (In progress · Estimate: 3)";
     assert!(page_text(&s).contains(said), "{}", page_text(&s));
-    press(&mut s, ",f");
+    act(&mut s, Action::SetField);
     let Some(Overlay::Picker(picker)) = &s.overlay else {
         panic!("no picker");
     };

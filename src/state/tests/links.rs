@@ -11,7 +11,7 @@ fn browser_and_copy_use_the_selection_or_the_page() {
         vec![Cmd::OpenUrl("https://github.com/o/r/pull/1".into())]
     );
     assert_eq!(
-        press(&mut state, "y"),
+        press(&mut state, "l"),
         vec![Cmd::Copy("https://github.com/o/r/pull/1".into())]
     );
     let _ = state.push(issues("is:closed"));
@@ -108,7 +108,7 @@ fn a_comment_link_follows_its_comment_when_the_issue_refreshes() {
     let ((before, _), (after, _), line) = open(&|_| {});
     assert!(after > before, "{before} -> {after}");
     assert!(after <= line && line < after + 10, "{after} vs {line}");
-    let ((before, _), (after, _), _) = open(&|s| drop(press(s, "gg")));
+    let ((before, _), (after, _), _) = open(&|s| drop(press(s, "<Home>")));
     assert_eq!(after, before, "yanked back after scrolling");
     // Selecting an item on screen, as j can, is moving too.
     let select = |s: &mut State| {
@@ -172,7 +172,7 @@ fn the_mouse_follows_links_switches_tabs_and_scrolls() {
     let _ = click(&mut state, 0, bottom);
     assert!(state.overlay.is_none(), "a click outside closes it");
     // The wheel.
-    press(&mut state, "1gt");
+    press(&mut state, "1");
     update(&mut state, Msg::Resize(100, 16));
     let before = page(&state).scroll;
     update(

@@ -33,7 +33,7 @@ fn write(s: &mut State, text: &str) {
 #[test]
 fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
     let mut s = with_repo();
-    let cmds = press(&mut s, ",V");
+    let cmds = act(&mut s, Action::NewRelease);
     let repo = ghtui();
     assert_eq!(
         s.route(),
@@ -64,7 +64,7 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
     write(&mut s, "Nine\n\nWhat changed.");
     press(&mut s, "<Esc>");
 
-    press(&mut s, ",s");
+    press(&mut s, "<C-s>");
     assert_eq!(overlay!(s, Ask).choices.len(), 2, "publish or save a draft");
     let sent = press(&mut s, "<Enter>");
     let new = NewRelease {
@@ -108,7 +108,7 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
 #[test]
 fn a_tag_with_a_release_is_refused() {
     let mut s = with_repo();
-    press(&mut s, ",V");
+    act(&mut s, Action::NewRelease);
     press(&mut s, "v0.2.0<Enter>");
     let taken = TagLook {
         exists: true,
@@ -130,7 +130,7 @@ fn a_tag_with_a_release_is_refused() {
 fn a_thread_is_unsubscribed_and_followed() {
     let mut s = with_issue();
     let of = Watched::Thread(ghtui(), 14);
-    let cmds = press(&mut s, ",w");
+    let cmds = act(&mut s, Action::Watch);
     assert!(
         crate::fixtures::asks(&cmds, &DataKey::Subscription(of.clone())),
         "{cmds:?}"
@@ -172,7 +172,7 @@ fn a_thread_is_unsubscribed_and_followed() {
 #[test]
 fn your_gist_is_edited_and_its_page_follows() {
     let mut s = with_gist();
-    press(&mut s, ",e");
+    press(&mut s, "e");
     let route = Route::Gists(gists::EditGist {
         owner: "octocat".into(),
         id: "6cad326836d38bd3a7ae".into(),
@@ -215,7 +215,7 @@ fn your_gist_is_edited_and_its_page_follows() {
 fn someone_elses_gist_says_why_it_cant_be_changed() {
     let mut s = with_gist();
     s.viewer = Some("hubot".into());
-    press(&mut s, ",D");
+    press(&mut s, "D");
     says(&s, "It's @octocat's gist: only they can change it");
     assert!(s.overlay.is_none());
 }
@@ -225,7 +225,7 @@ fn someone_elses_gist_says_why_it_cant_be_changed() {
 #[test]
 fn a_gist_is_made_then_deleted() {
     let mut s = with_gist();
-    press(&mut s, ",G");
+    act(&mut s, Action::NewGist);
     assert_eq!(s.route(), Some(&Route::Gists(gists::NewGist)));
     write(&mut s, "hi");
     press(&mut s, "<C-s>");
@@ -260,7 +260,7 @@ fn a_gist_is_made_then_deleted() {
     );
 
     let mut s = with_gist();
-    press(&mut s, ",D");
+    press(&mut s, "D");
     assert_eq!(overlay!(s, Ask).title, "Delete this gist?");
     let sent = press(&mut s, "<Enter>");
     let delete = crate::gist::Delete {
@@ -281,7 +281,7 @@ fn a_gist_is_made_then_deleted() {
 #[test]
 fn a_wiki_page_is_edited_never_over_a_newer_one() {
     let mut s = with_wiki();
-    let cmds = press(&mut s, ",e");
+    let cmds = press(&mut s, "e");
     let route = Route::Wiki(wiki::WikiEdit {
         repo: ghtui(),
         page: Some("Home".into()),

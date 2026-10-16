@@ -19,12 +19,12 @@ fn open_switch_and_close() {
     assert_eq!((s.tab_count(), s.active_tab()), (2, 1));
     assert_eq!(route(&s), issue(1));
     let _ = s.push(issue(2));
-    press(&mut s, "[b");
+    press(&mut s, "<C-PageUp>");
     assert_eq!((s.active_tab(), route(&s)), (0, issue(1)));
-    press(&mut s, "]b");
+    press(&mut s, "<C-PageDown>");
     assert_eq!((s.active_tab(), route(&s)), (1, issue(2)));
     // Wrapping around, and straight to a number.
-    press(&mut s, "]b");
+    press(&mut s, "<C-PageDown>");
     assert_eq!(s.active_tab(), 0);
     press(&mut s, "<A-2>");
     assert_eq!(s.active_tab(), 1);
@@ -48,11 +48,11 @@ fn each_tab_has_its_own_history() {
     let _ = s.push(issue(3));
     act(&mut s, Action::Back);
     assert_eq!(route(&s), issue(2));
-    press(&mut s, "[b");
+    press(&mut s, "<C-PageUp>");
     assert_eq!(route(&s), issue(1));
     act(&mut s, Action::Forward);
     assert_eq!(route(&s), issue(1), "nothing to go forward to here");
-    press(&mut s, "]b");
+    press(&mut s, "<C-PageDown>");
     act(&mut s, Action::Forward);
     assert_eq!(route(&s), issue(3));
 }

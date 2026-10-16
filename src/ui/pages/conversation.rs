@@ -125,7 +125,7 @@ impl Conversation<'_> {
             item(page, fold, |page, link| {
                 let segs = vec![
                     Seg::linked(format!("▾ {hidden}"), Role::Link, link),
-                    Seg::new(" · ↵ or za folds it", Role::Meta),
+                    Seg::new(" · ↵ folds it", Role::Meta),
                 ];
                 page.add(Frame::None, 2, segs, Vec::new());
             });
@@ -141,7 +141,7 @@ impl Conversation<'_> {
             );
             let segs = vec![
                 Seg::linked(format!("▸ {hidden}"), Role::Link, link),
-                Seg::new(" · ↵ or za shows it", Role::Meta),
+                Seg::new(" · ↵ shows it", Role::Meta),
             ];
             body(page, segs);
             page.box_bottom();

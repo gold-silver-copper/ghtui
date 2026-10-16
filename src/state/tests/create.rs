@@ -14,9 +14,9 @@ use crate::ui::form::Row;
 
 /// The repository's page, then `keys` (`,i` or `,p`), with what the form
 /// can have delivered.
-fn form(keys: &str) -> (State, Vec<Cmd>) {
+fn form(action: Action) -> (State, Vec<Cmd>) {
     let mut s = with_repo();
-    let cmds = press(&mut s, keys);
+    let cmds = act(&mut s, action);
     let form = Data::NewForm(Box::new(crate::fixtures::new_form()));
     let mut more = fetched(&mut s, DataKey::NewForm(ghtui()), form);
     more.extend(cmds);
@@ -32,7 +32,7 @@ fn composer(s: &mut State) -> &mut crate::compose::Compose {
 
 /// The new issue's form, from the bug report template, its composer open.
 fn bug_report() -> State {
-    let (mut s, _) = form(",i");
+    let (mut s, _) = form(Action::NewIssue);
     // The templates come first; the bug report (by file name) is selected.
     press(&mut s, "<Enter>");
     s
@@ -43,7 +43,7 @@ fn bug_report() -> State {
 /// `ctrl-s` sends them, and the new issue opens in place of the form.
 #[test]
 fn a_new_issue_starts_from_its_template_and_opens_once_made() {
-    let (mut s, cmds) = form(",i");
+    let (mut s, cmds) = form(Action::NewIssue);
     assert_eq!(s.route(), Some(&Route::Issues(issues::NewIssue(ghtui()))));
     let form = DataKey::NewForm(ghtui());
     assert!(crate::fixtures::asks(&cmds, &form), "{cmds:?}");
@@ -176,7 +176,7 @@ fn compare() -> DataKey {
 
 /// A new pull request inside a clone, on branch `fix-parser`.
 fn in_clone() -> (State, Vec<Cmd>) {
-    let (mut s, cmds) = form(",p");
+    let (mut s, cmds) = form(Action::NewPr);
     assert!(fixtures::asks(&cmds, &DataKey::Clone(ghtui())), "{cmds:?}");
     let clone = Clone {
         top: PathBuf::from("/src/ghtui"),
@@ -203,9 +203,12 @@ fn a_pull_request_from_the_clones_branch_is_pushed_then_made() {
         text
     );
 
-    assert!(press(&mut s, ",s").is_empty());
-    fixtures::warns(&s, "fix-parser isn't on GitHub: ,P pushes it to origin");
-    assert!(press(&mut s, ",P").is_empty());
+    assert!(press(&mut s, "<C-s>").is_empty());
+    fixtures::warns(
+        &s,
+        "fix-parser isn't on GitHub: :push branch pushes it to origin",
+    );
+    assert!(act(&mut s, Action::PushBranch).is_empty());
     assert_eq!(overlay!(s, Ask).title, "Push fix-parser to origin?");
     let push = press(&mut s, "<Enter>");
     let pushed = Push {
@@ -219,7 +222,7 @@ fn a_pull_request_from_the_clones_branch_is_pushed_then_made() {
     assert_eq!(fixtures::asked(&again), [compare()], "compared again");
     head(&mut s, Some("a"));
 
-    press(&mut s, ",s");
+    press(&mut s, "<C-s>");
     let choices: Vec<&str> = overlay!(s, Ask)
         .choices
         .iter()
@@ -260,7 +263,7 @@ fn a_pull_request_from_the_clones_branch_is_pushed_then_made() {
 fn checkout_says_what_branch_or_why_not() {
     let mut s = with_pr();
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
-    let cmds = press(&mut s, ",c");
+    let cmds = act(&mut s, Action::Checkout);
     let work = crate::clone::Checkout {
         repo: pr.repo,
         pr: Some(pr.number),
@@ -276,7 +279,7 @@ fn checkout_says_what_branch_or_why_not() {
     says(&s, "you're on octocat/syntax-palette");
     // Outside a clone of it, it says so.
     fixtures::cloned(&mut s, &ghtui(), None);
-    assert!(press(&mut s, ",c").is_empty());
+    assert!(act(&mut s, Action::Checkout).is_empty());
     says(&s, "isn't running in a clone of gold-silver-copper/ghtui");
 }
 
@@ -286,9 +289,9 @@ fn checkout_says_what_branch_or_why_not() {
 fn checkout_on_a_row_waits_for_its_pull_request() {
     let mut s = with_home();
     s.data.retain(|key, _| !matches!(key, DataKey::Pr(_)));
-    press(&mut s, "jj");
+    press(&mut s, "<Down><Down>");
     let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
-    assert_eq!(press(&mut s, ",c"), [fixtures::fetch_pr(&pr)]);
+    assert_eq!(act(&mut s, Action::Checkout), [fixtures::fetch_pr(&pr)]);
     says(&s, "Loading gold-silver-copper/ghtui#12");
     let cmds = fixtures::pr_fetched(&mut s, &pr, Ok(fixtures::pr_detail()));
     assert_eq!(fixtures::sent::<crate::clone::Checkout>(&cmds).pr, Some(12));

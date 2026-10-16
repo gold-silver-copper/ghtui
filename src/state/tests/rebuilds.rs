@@ -52,7 +52,7 @@ fn a_page_away_is_built_with_what_came_meanwhile() {
     issue.title = "Renamed meanwhile".into();
     fetched(&mut state, key, Data::Issue(Some(Box::new(issue))));
     assert!(!page_text(&state).contains("Renamed meanwhile"));
-    press(&mut state, "[b");
+    press(&mut state, "<C-PageUp>");
     assert!(page_text(&state).contains("Renamed meanwhile"));
 }
 
