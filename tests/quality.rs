@@ -10,29 +10,42 @@
 use ghtui::diff::{Content, DiffLine, FileDiff, Whitespace};
 
 /// The changed lines of `old` → `new` (as `path`), `-`/`+` prefixed, with
-/// emphasised ranges in `⟦⟧`.
+/// emphasised ranges in `⟦⟧`, read by lines.
 fn show(path: &str, old: &str, new: &str) -> String {
+    render(path, old, new, false)
+}
+
+/// [`show`], read by syntax; a line none of whose code is new or gone is
+/// marked `·`, and a block folded as formatting-only has its lines marked
+/// `~` instead.
+fn by_syntax(path: &str, old: &str, new: &str) -> String {
+    render(path, old, new, true)
+}
+
+fn render(path: &str, old: &str, new: &str, structural: bool) -> String {
     let diff = FileDiff::compute(path, Some(old.as_bytes()), Some(new.as_bytes()));
     let Content::Text(text) = &diff.content else {
         panic!("not a text diff");
     };
+    if structural && let Some(why) = text.fallback() {
+        panic!("compared by lines: {}", why.reason());
+    }
+    let a = text.view(Whitespace::Exact, structural);
     let mut out = String::new();
-    for (i, line) in (0u32..).zip(&text.alignment(Whitespace::Exact).lines) {
+    for (i, line) in (0u32..).zip(&a.lines) {
         let sign = match line {
             DiffLine::Context { .. } => continue,
             DiffLine::Removed(_) => '-',
             DiffLine::Added(_) => '+',
         };
+        let folded = a
+            .blocks
+            .iter()
+            .any(|b| b.formatting_only && b.entries.contains(&i));
         let content = text.line(line.shown());
         let mut shown = String::new();
         let mut at = 0;
-        for &(a, b) in text
-            .alignment(Whitespace::Exact)
-            .intraline
-            .get(&i)
-            .into_iter()
-            .flatten()
-        {
+        for &(a, b) in a.intraline.get(&i).into_iter().flatten() {
             let (a, b) = (a as usize, b as usize);
             shown.push_str(content.get(at..a).unwrap());
             shown.push('⟦');
@@ -41,7 +54,12 @@ fn show(path: &str, old: &str, new: &str) -> String {
             at = b;
         }
         shown.push_str(content.get(at..).unwrap());
-        out.push_str(&format!("{sign}{shown}\n"));
+        let fold = match (folded, a.kept.contains(&i)) {
+            (true, _) => "~",
+            (false, true) => "·",
+            (false, false) => "",
+        };
+        out.push_str(&format!("{fold}{sign}{shown}\n"));
     }
     out
 }
@@ -241,4 +259,109 @@ fn a_syntax_error_elsewhere_degrades_gracefully() {
     let old = "fn fine() {\n    a();\n}\n\nfn broken( {\n";
     let new = old.replace("a();", "b();");
     assert_eq!(scope_of_change("a.rs", old, &new), ["fn fine"]);
+}
+
+// ---- by syntax -------------------------------------------------------------
+
+/// Arguments wrapped onto their own lines, one renamed: only the rename
+/// stands out, not the trailing comma the wrapping brought.
+#[test]
+fn by_syntax_wrapped_arguments_show_only_the_rename() {
+    let old = "    let diff = compute(path, old_text, new_text, options);\n";
+    let new = "    let diff = compute(\n        path,\n        old_text,\n        updated_text,\n        options,\n    );\n";
+    assert_eq!(
+        by_syntax("a.rs", old, new),
+        "-    let diff = compute(path, old_text, ⟦new⟧_text, options);\n\
+         ·+    let diff = compute(\n\
+         ·+        path,\n\
+         ·+        old_text,\n\
+         +        ⟦updated⟧_text,\n\
+         ·+        options,\n\
+         ·+    );\n"
+    );
+}
+
+/// Code wrapped in a new `if`: the `if` and its closing brace are what
+/// changed, not the re-indented lines inside.
+#[test]
+fn by_syntax_code_wrapped_in_an_if() {
+    let old = "fn f() {\n    prepare();\n    run(a, b);\n}\n";
+    let new = "fn f() {\n    if ready {\n        prepare();\n        run(a, b);\n    }\n}\n";
+    assert_eq!(
+        by_syntax("a.rs", old, new),
+        "·-    prepare();\n\
+         ·-    run(a, b);\n\
+         +    if ready {\n\
+         ·+        prepare();\n\
+         ·+        run(a, b);\n\
+         +    }\n"
+    );
+}
+
+/// Swapped parameters change the signature: one of them is shown moving.
+#[test]
+fn by_syntax_reordered_parameters() {
+    let old = "fn area(width: u32, height: u32) -> u32 {\n    width * height\n}\n";
+    let new = "fn area(height: u32, width: u32) -> u32 {\n    width * height\n}\n";
+    assert_eq!(
+        by_syntax("a.rs", old, new),
+        "-fn area(⟦width: u32,⟧ height: u32) -> u32 {\n\
+         +fn area(height: u32⟦, width: u32⟧) -> u32 {\n"
+    );
+}
+
+#[test]
+fn by_syntax_reflowed_struct_literal() {
+    let old = "let p = Point { x: 1, y: 2, z: 3 };\n";
+    let new = "let p = Point {\n    x: 1,\n    y: 2,\n    z: 4,\n};\n";
+    assert_eq!(
+        by_syntax("a.rs", old, new),
+        "-let p = Point { x: 1, y: 2, z: ⟦3⟧ };\n\
+         ·+let p = Point {\n\
+         ·+    x: 1,\n\
+         ·+    y: 2,\n\
+         +    z: ⟦4⟧,\n\
+         ·+};\n"
+    );
+}
+
+/// An ordinary edit to one line looks as it does by lines.
+#[test]
+fn by_syntax_a_one_line_edit() {
+    let (old, new) = (
+        "x();\nlet total = compute(a, b);\ny();\n",
+        "x();\nlet total = compute(a, c);\ny();\n",
+    );
+    assert_eq!(by_syntax("a.rs", old, new), show("a.rs", old, new));
+}
+
+/// Comments and strings are compared by their words.
+#[test]
+fn by_syntax_comment_and_string_words() {
+    let old = "// Returns the total of all rows.\nsay(\"Hello there\");\n";
+    let new = "// Returns the sum of all rows.\nsay(\"Hello over there\");\n";
+    assert_eq!(
+        by_syntax("a.rs", old, new),
+        "-// Returns the ⟦total⟧ of all rows.\n\
+         ·-say(\"Hello there\");\n\
+         +// Returns the ⟦sum⟧ of all rows.\n\
+         +say(\"Hello ⟦over⟧ there\");\n"
+    );
+}
+
+/// Re-wrapping a call is formatting only, trailing comma and all, so it
+/// folds away.
+#[test]
+fn by_syntax_reformatting_is_formatting_only() {
+    let old = "result = call(alpha,\n              beta)\n";
+    let new = "result = call(\n    alpha,\n    beta,\n)\n";
+    assert!(
+        by_syntax("a.py", old, new)
+            .lines()
+            .all(|l| l.starts_with('~')),
+        "{}",
+        by_syntax("a.py", old, new)
+    );
+    // A Python one-element tuple's comma is what makes it a tuple.
+    assert!(by_syntax("a.py", "x = (a)\n", "x = (a,)\n").contains("⟦,⟧"));
 }

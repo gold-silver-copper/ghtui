@@ -149,36 +149,28 @@ fn the_whole_pr_after_a_commit_keeps_githubs_patches() {
     assert!(is_file_comment(&target), "after All: {target:?}");
 }
 
-/// Ignoring whitespace, split and the tree are the screen's
-/// choices; picking a commit doesn't undo them.
+/// Ignoring whitespace, comparing by syntax, split and the tree are the
+/// screen's choices; picking a commit doesn't undo them.
 #[test]
 fn choosing_a_commit_keeps_the_view_toggles() {
     let (mut s, pr, job) = loading();
     deliver(&mut s, &pr, job);
-    press(&mut s, "zw");
-    press(&mut s, "zs");
-    press(&mut s, "zT");
-    let before = {
-        let d = screen(&s);
-        (
-            d.prefs.ignore_whitespace,
-            d.prefs.split_override,
-            d.prefs.tree_visible,
-        )
-    };
-    assert!(before.0 && before.1.is_some() && !before.2, "{before:?}");
+    let start = screen(&s).prefs;
+    for keys in ["zw", "zy", "zs", "zT"] {
+        press(&mut s, keys);
+    }
+    let before = screen(&s).prefs;
+    assert!(
+        before.ignore_whitespace
+            && !before.by_syntax
+            && start.by_syntax
+            && before.split_override.is_some()
+            && !before.tree_visible,
+        "{before:?}"
+    );
     let job = pick_commit(&mut s, &pr, "jj<Enter>");
     deliver(&mut s, &pr, job);
-    let d = screen(&s);
-    assert_eq!(
-        (
-            d.prefs.ignore_whitespace,
-            d.prefs.split_override,
-            d.prefs.tree_visible
-        ),
-        before,
-        "(ignore_whitespace, split_override, tree_visible)"
-    );
+    assert_eq!(screen(&s).prefs, before);
 }
 
 /// A file marked viewed stays viewed when another range of

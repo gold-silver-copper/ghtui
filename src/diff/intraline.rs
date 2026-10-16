@@ -66,6 +66,29 @@ pub fn diff_pair(
     old_spans: &[Span],
     new_spans: &[Span],
 ) -> Option<ChangedRanges> {
+    let (old_changed, new_changed) = token_changes(old, new, old_spans, new_spans);
+    let share = |ranges: &[(u32, u32)], line: &str| {
+        let changed: u32 = ranges.iter().map(|(a, b)| b - a).sum();
+        f64::from(changed) / line.trim().len().max(1) as f64
+    };
+    if old_changed.is_empty() && new_changed.is_empty() {
+        return None;
+    }
+    if share(&old_changed, old) > MAX_CHANGED_SHARE || share(&new_changed, new) > MAX_CHANGED_SHARE
+    {
+        return None;
+    }
+    Some((old_changed, new_changed))
+}
+
+/// The words of `old` and `new` that differ, however much that is (for
+/// comments and strings the structural diff paired).
+pub(crate) fn changed_tokens(old: &str, new: &str) -> ChangedRanges {
+    token_changes(old, new, &[], &[])
+}
+
+/// Changed byte ranges in `old` and `new`, by token.
+fn token_changes(old: &str, new: &str, old_spans: &[Span], new_spans: &[Span]) -> ChangedRanges {
     let (old_tokens, new_tokens) = (tokens(old, old_spans), tokens(new, new_spans));
     let mut input = InternedInput::default();
     input.update_before(old_tokens.iter().copied());
@@ -106,18 +129,7 @@ pub fn diff_pair(
         old_changed.extend(Some(o).filter(|(a, b)| a < b));
         new_changed.extend(Some(n).filter(|(a, b)| a < b));
     }
-    let share = |ranges: &[(u32, u32)], line: &str| {
-        let changed: u32 = ranges.iter().map(|(a, b)| b - a).sum();
-        f64::from(changed) / line.trim().len().max(1) as f64
-    };
-    if old_changed.is_empty() && new_changed.is_empty() {
-        return None;
-    }
-    if share(&old_changed, old) > MAX_CHANGED_SHARE || share(&new_changed, new) > MAX_CHANGED_SHARE
-    {
-        return None;
-    }
-    Some((old_changed, new_changed))
+    (old_changed, new_changed)
 }
 
 /// The bytes two tokens share at their start and end (by grapheme, never
@@ -179,7 +191,7 @@ fn dice(x: &[(char, char)], y: &[(char, char)]) -> f64 {
 }
 
 /// Dice coefficient over character bigrams of the trimmed lines.
-fn similarity(a: &str, b: &str) -> f64 {
+pub(crate) fn similarity(a: &str, b: &str) -> f64 {
     let (x, y) = (bigrams(a), bigrams(b));
     if x.is_empty() || y.is_empty() {
         return if a.trim() == b.trim() { 1.0 } else { 0.0 };

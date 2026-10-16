@@ -21,7 +21,8 @@ pub struct ChangeBlock {
     /// Alignment entries of the block.
     pub entries: Range<u32>,
     pub hash: String,
-    /// The removed and added text differ only in whitespace and line breaks.
+    /// The removed and added text differ only in whitespace and line breaks
+    /// (read by syntax, also when nothing in the code is new or gone).
     pub formatting_only: bool,
 }
 

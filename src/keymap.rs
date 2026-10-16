@@ -325,6 +325,7 @@ actions! {
     ToggleTree        "toggle_tree"       ["zT"]                   Diff   "Show or hide the file tree";
     ToggleSplit       "toggle_split"      ["zs"]                   Diff   "Split or unified view";
     IgnoreWhitespace  "ignore_whitespace" ["zw"]                   Diff   "Ignore whitespace changes";
+    BySyntax          "by_syntax"         ["zy"]                   Diff   "Compare by syntax or by lines";
     FullFile          "full_file"         ["zf"]                   Diff   "Show the whole file";
     ExpandContext     "expand_context"    ["e"]                    Diff   "Show more context";
     ToggleSinceReview "since_review"      []                       Diff   "Show only changes since your last review";

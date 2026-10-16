@@ -45,6 +45,56 @@ fn source() -> impl Strategy<Value = String> {
     prop::collection::vec(line, 0..25).prop_map(|lines| lines.join("\n"))
 }
 
+/// Pieces of code, laid out with any spacing between them.
+const PIECES: [&str; 16] = [
+    "a", "b", "f", "g", "(", ")", "{", "}", "[", "]", "=", "1", ";", "+", "\"x y\"", "// c\n",
+];
+const GAPS: [&str; 4] = ["", " ", "\n", "\n    "];
+
+/// Two versions of some code: pieces, then the same pieces edited (some
+/// replaced, put in or taken out), each laid out with its own spacing.
+fn versions() -> impl Strategy<Value = (String, String)> {
+    let pieces = prop::collection::vec(0..PIECES.len(), 0..40);
+    let edits = prop::collection::vec(
+        (
+            any::<prop::sample::Index>(),
+            prop::option::of(0..PIECES.len()),
+            any::<bool>(),
+        ),
+        0..4,
+    );
+    let gaps = || prop::collection::vec(0..GAPS.len(), 41);
+    (pieces, edits, gaps(), gaps()).prop_map(|(old, edits, old_gaps, new_gaps)| {
+        let mut new = old.clone();
+        for (at, piece, insert) in edits {
+            let i = at.index(new.len() + 1);
+            match (piece, insert) {
+                (Some(p), true) => new.insert(i, p),
+                (Some(p), false) => {
+                    if let Some(at) = new.get_mut(i) {
+                        *at = p;
+                    }
+                }
+                (None, _) if i < new.len() => {
+                    new.remove(i);
+                }
+                _ => {}
+            }
+        }
+        let lay = |pieces: &[usize], gaps: &[usize]| -> String {
+            pieces
+                .iter()
+                .zip(gaps)
+                .map(|(&p, &g)| {
+                    let (piece, gap) = (PIECES.get(p), GAPS.get(g));
+                    format!("{}{}", piece.unwrap_or(&""), gap.unwrap_or(&""))
+                })
+                .collect()
+        };
+        (lay(&old, &old_gaps), lay(&new, &new_gaps))
+    })
+}
+
 #[expect(clippy::unwrap_used, reason = "a fixture's IDs are 40 hex digits")]
 fn modified(path: &str) -> ChangedFile {
     ChangedFile {
@@ -127,6 +177,24 @@ proptest! {
         }
     }
 
+    /// Read by syntax, a change to more than spacing is never all folded
+    /// away as formatting, however the code is laid out.
+    #[test]
+    fn syntax_never_folds_a_real_change((old, new) in versions()) {
+        use ghtui::diff::{Content, Whitespace};
+        let squeezed = |s: &str| s.split_whitespace().collect::<String>();
+        let diff = FileDiff::compute("src/lib.rs", Some(old.as_bytes()), Some(new.as_bytes()));
+        if squeezed(&old) != squeezed(&new) && let Content::Text(text) = &diff.content {
+            for whitespace in [Whitespace::Exact, Whitespace::Ignore] {
+                let blocks = &text.view(whitespace, true).blocks;
+                prop_assert!(
+                    blocks.iter().any(|b| !b.formatting_only),
+                    "{whitespace:?}: {blocks:?}\n--- old\n{old}\n--- new\n{new}"
+                );
+            }
+        }
+    }
+
     /// Any two versions of a file lay out into a document whose positions
     /// round-trip, that searches, and that renders at any size.
     #[test]
@@ -135,6 +203,7 @@ proptest! {
         new in source(),
         query in "[a-z]{1,3}",
         split in any::<bool>(),
+        structural in any::<bool>(),
         left in any::<bool>(),
         width in 1u16..160,
         height in 1u16..30,
@@ -143,7 +212,7 @@ proptest! {
         let diff = FileDiff::compute("src/lib.rs", Some(old.as_bytes()), Some(new.as_bytes()));
         let mut doc = Doc::new(vec![modified("src/lib.rs")], &HashSet::new(), Default::default());
         doc.set_diff(0, Arc::new(diff));
-        doc.set_options(ViewOptions { split, ..ViewOptions::default() });
+        doc.set_options(ViewOptions { split, structural, ..ViewOptions::default() });
         doc.toggle_full(0);
         doc.toggle_full(0);
         let pos = doc.clamp(Pos { file: 0, row });

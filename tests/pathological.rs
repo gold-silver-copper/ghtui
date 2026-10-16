@@ -1,6 +1,6 @@
 //! Inputs that once made the diff pipeline hang.
 
-use ghtui::diff::{Content, FileDiff};
+use ghtui::diff::{Content, FileDiff, Whitespace};
 
 /// Found by the property tests: tree-sitter's Rust parser never finished
 /// on this (carriage returns, escape sequences, bidi controls, wide and
@@ -12,4 +12,23 @@ fn garbage_rust_still_diffs() {
     let diff = FileDiff::compute("src/lib.rs", Some(old.as_bytes()), Some(new.as_bytes()));
     assert!(matches!(diff.content, Content::Text(_)));
     assert!(diff.additions > 0 && diff.deletions > 0);
+}
+
+/// Brackets nested thousands deep: the syntax view reads the deepest of
+/// them as a flat run of tokens, so comparing never runs out of stack.
+#[test]
+fn deeply_nested_code_compares_by_syntax() {
+    let nested = |inner: &str| {
+        format!(
+            "fn f() {{ x = {}{inner}{}; }}\n",
+            "(".repeat(5000),
+            ")".repeat(5000)
+        )
+    };
+    let (old, new) = (nested("a"), nested("b"));
+    let diff = FileDiff::compute("src/lib.rs", Some(old.as_bytes()), Some(new.as_bytes()));
+    let Content::Text(text) = &diff.content else {
+        panic!("{:?}", diff.content);
+    };
+    assert_eq!(text.view(Whitespace::Exact, true).blocks.len(), 1);
 }

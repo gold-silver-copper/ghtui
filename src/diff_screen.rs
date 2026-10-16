@@ -144,9 +144,25 @@ pub struct DiffPrefs {
     /// `None` picks split or unified by width.
     pub split_override: Option<bool>,
     pub ignore_whitespace: bool,
+    /// Compare by syntax, where a file's language allows, not by lines.
+    pub by_syntax: bool,
 }
 
 impl DiffPrefs {
+    /// How diffs are compared, for the status bar.
+    pub fn label(&self) -> String {
+        let by = if self.by_syntax {
+            "By syntax"
+        } else {
+            "By lines"
+        };
+        if self.ignore_whitespace {
+            format!("{by}, ignoring whitespace")
+        } else {
+            by.to_owned()
+        }
+    }
+
     /// What a new diff screen `width` wide starts with.
     pub fn fit(width: u16) -> Self {
         Self {
@@ -154,6 +170,7 @@ impl DiffPrefs {
             tree_width: None,
             split_override: None,
             ignore_whitespace: false,
+            by_syntax: true,
         }
     }
 }
@@ -231,6 +248,7 @@ impl DiffScreen {
             } else {
                 Whitespace::Exact
             },
+            structural: self.prefs.by_syntax,
             // Thread cards start after the gutter; keep comments readable.
             wrap: lay.diff.width.saturating_sub(24).clamp(20, 100),
         }
@@ -607,6 +625,14 @@ pub fn apply(
                 "Ignoring whitespace changes"
             } else {
                 "Showing whitespace changes"
+            });
+        }
+        Action::BySyntax => {
+            screen.prefs.by_syntax = !screen.prefs.by_syntax;
+            notice.info(if screen.prefs.by_syntax {
+                "Comparing by syntax: only the code that changed stands out"
+            } else {
+                "Comparing by lines"
             });
         }
         Action::TreeNarrower | Action::TreeWider => match lay.tree {

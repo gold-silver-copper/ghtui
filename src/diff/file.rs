@@ -1,11 +1,14 @@
 //! A computed file diff, ready to render.
 
+use std::collections::HashSet;
+
 use crate::diff::anchor::{Commentable, HunkRange, LinePos, Side};
 use crate::diff::blocks::{self, ChangeBlock};
-use crate::diff::highlight::{Language, Span, highlight};
+use crate::diff::highlight::{Language, MAX_HIGHLIGHT_BYTES, Span, highlight, parse};
 use crate::diff::hunks::{Algorithm, DiffLine, Whitespace, align};
 use crate::diff::intraline::{IntraLine, intraline};
 use crate::diff::scope::{self, Scope};
+use crate::diff::structure::{self, Fallback};
 use crate::diff::text::{Text, is_binary};
 
 /// Context lines around changes.
@@ -39,6 +42,14 @@ pub struct Alignment {
     pub lines: Vec<DiffLine>,
     pub intraline: IntraLine,
     pub blocks: Vec<ChangeBlock>,
+    /// Removed and added entries that sit side by side in split view, in
+    /// order; the others in a block fill the rows between them. Empty: a
+    /// block's removed and added lines are zipped in order.
+    pub pairs: Vec<(u32, u32)>,
+    /// Changed entries none of whose code is new or gone, read by syntax:
+    /// it's all on the other side, laid out differently or around what was
+    /// added.
+    pub kept: HashSet<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +62,10 @@ pub struct TextDiff {
     new_spans: Vec<Vec<Span>>,
     exact: Alignment,
     ignoring_whitespace: Alignment,
+    /// The alignments read by syntax ([`structure`]): exact, then ignoring
+    /// whitespace; or why the file is shown by its lines. `None` when it
+    /// wasn't compared (no changes, or never rendered).
+    structural: Option<Result<Box<[Alignment; 2]>, Fallback>>,
     /// GitHub-style commentable ranges (Myers, 3 lines of context), used when
     /// GitHub's own patch isn't available.
     pub local_ranges: Vec<HunkRange>,
@@ -59,11 +74,38 @@ pub struct TextDiff {
 }
 
 impl TextDiff {
+    /// The lines' alignment for `whitespace`.
     pub fn alignment(&self, whitespace: Whitespace) -> &Alignment {
         match whitespace {
             Whitespace::Exact => &self.exact,
             Whitespace::Ignore => &self.ignoring_whitespace,
         }
+    }
+
+    /// The alignment for `whitespace` read by syntax when `structural` and
+    /// the file was compared that way, else by lines.
+    pub fn view(&self, whitespace: Whitespace, structural: bool) -> &Alignment {
+        match &self.structural {
+            Some(Ok(both)) if structural => {
+                let [exact, ignoring] = &**both;
+                match whitespace {
+                    Whitespace::Exact => exact,
+                    Whitespace::Ignore => ignoring,
+                }
+            }
+            _ => self.alignment(whitespace),
+        }
+    }
+
+    /// Why the file is shown by its lines although structure was asked
+    /// for.
+    pub fn fallback(&self) -> Option<Fallback> {
+        self.structural.as_ref()?.as_ref().err().copied()
+    }
+
+    /// A side's text.
+    pub(crate) fn side_text(&self, side: Side) -> &Text {
+        self.side(side).0
     }
 
     /// The scopes containing new-side line `line`, outermost first:
@@ -180,15 +222,25 @@ impl FileDiff {
         let (additions, deletions) = counts(&lines);
         let changed = additions + deletions > 0;
         let ignoring = changed.then(|| align(&old, &new, Algorithm::Histogram, Whitespace::Ignore));
-        // Only highlight files with changes to show.
+        // Only highlight and compare by syntax files with changes to show.
+        let lang = Language::from_path(path).filter(|_| changed && rich);
+        let trees = lang.map(|lang| (parse(lang, &old), parse(lang, &new)));
         let (local_ranges, old_spans, new_spans, scopes) = if changed && rich {
-            let lang = Language::from_path(path);
             let ranges = Commentable::local(&old, &new).ranges;
-            let scopes = scope::scopes(lang, &new);
+            let new_tree = trees.as_ref().and_then(|t| t.1.as_ref());
+            let scopes = scope::scopes_in(lang, new_tree, &new);
             (ranges, highlight(lang, &old), highlight(lang, &new), scopes)
         } else {
             Default::default()
         };
+        let matching = (changed && rich).then(|| match &trees {
+            None => Err(Fallback::NoGrammar),
+            Some((Some(a), Some(b))) => structure::compare((a, &old), (b, &new)),
+            Some(_) if old.source.len().max(new.source.len()) > MAX_HIGHLIGHT_BYTES => {
+                Err(Fallback::TooBig)
+            }
+            Some(_) => Err(Fallback::Unparsed),
+        });
         let mut text = TextDiff {
             old,
             new,
@@ -196,6 +248,7 @@ impl FileDiff {
             new_spans,
             exact: Alignment::default(),
             ignoring_whitespace: Alignment::default(),
+            structural: None,
             local_ranges,
             scopes,
         };
@@ -203,10 +256,14 @@ impl FileDiff {
             intraline: intraline(&text, if rich { lines.as_slice() } else { &[] }),
             blocks: blocks::change_blocks(path, &text, &lines),
             lines,
+            pairs: Vec::new(),
+            kept: HashSet::new(),
         };
         let exact = alignment(lines);
         let mut ignoring = ignoring.map_or_else(|| exact.clone(), alignment);
         blocks::name_after(&exact, &mut ignoring);
+        text.structural = matching
+            .map(|m| m.map(|m| Box::new([m.apply(&text, &exact), m.apply(&text, &ignoring)])));
         (text.exact, text.ignoring_whitespace) = (exact, ignoring);
         Self {
             content: Content::Text(Box::new(text)),

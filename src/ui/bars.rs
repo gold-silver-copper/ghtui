@@ -29,6 +29,9 @@ pub struct StatusBar<'a> {
     pub notice: Option<&'a Notice>,
     /// `(label, remaining, limit)` for the tightest rate-limit bucket.
     pub rate_limit: Option<(&'a str, u64, u64)>,
+    /// How what's on screen is shown, when there's a choice (a diff by
+    /// syntax or by lines).
+    pub view: Option<&'a str>,
     /// `(keys, what they do)` here, most useful first; shown when there's no
     /// notice, as many as fit.
     pub hints: &'a [(String, String)],
@@ -63,6 +66,10 @@ impl Widget for StatusBar<'_> {
         }
 
         let mut right = Vec::new();
+        if let Some(view) = self.view {
+            right.push(Span::styled(view.to_owned(), theme.meta(BAR)));
+            right.push(Span::styled("   ", theme.body(BAR)));
+        }
         if let Some((label, remaining, limit)) = self.rate_limit {
             let low = remaining.saturating_mul(10) < limit;
             let style = if low {

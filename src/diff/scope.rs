@@ -2,17 +2,13 @@
 //! they span, from the syntax tree, so a hunk can say where it is:
 //! `impl Doc › fn offset`.
 
-use std::ops::{ControlFlow, RangeInclusive};
-use std::time::{Duration, Instant};
+use std::ops::RangeInclusive;
 
-use tree_sitter::{Node, ParseOptions, Parser};
+use tree_sitter::{Node, Tree};
 
-use crate::diff::highlight::{Language, MAX_HIGHLIGHT_BYTES, config};
+use crate::diff::highlight::{Language, parse};
 use crate::diff::sat_u32;
 use crate::diff::text::Text;
-
-/// How long parsing for scopes may take.
-const PARSE_BUDGET: Duration = Duration::from_secs(1);
 
 /// A named scope and the lines it spans (1-based, inclusive).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,33 +24,16 @@ pub struct Scope {
 /// names, files too big to highlight, and anything that won't parse in
 /// time. A syntax error only loses the scopes it breaks.
 pub fn scopes(lang: Option<Language>, text: &Text) -> Vec<Scope> {
-    let Some((lang, config)) = lang.and_then(|l| Some((l, config(l)?))) else {
+    let tree = lang.and_then(|lang| parse(lang, text));
+    scopes_in(lang, tree.as_ref(), text)
+}
+
+/// [`scopes`] of `text` already parsed as `tree`.
+pub fn scopes_in(lang: Option<Language>, tree: Option<&Tree>, text: &Text) -> Vec<Scope> {
+    let (Some(lang), Some(tree)) = (lang, tree) else {
         return Vec::new();
     };
-    if text.source.len() > MAX_HIGHLIGHT_BYTES {
-        return Vec::new();
-    }
-    let mut parser = Parser::new();
-    if parser.set_language(&config.language).is_err() {
-        return Vec::new();
-    }
     let source = text.source.as_bytes();
-    let start = Instant::now();
-    let mut in_time = |_: &tree_sitter::ParseState| {
-        if start.elapsed() > PARSE_BUDGET {
-            ControlFlow::Break(())
-        } else {
-            ControlFlow::Continue(())
-        }
-    };
-    let options = ParseOptions::new().progress_callback(&mut in_time);
-    let Some(tree) = parser.parse_with_options(
-        &mut |at, _| source.get(at..).unwrap_or_default(),
-        None,
-        Some(options),
-    ) else {
-        return Vec::new();
-    };
     // Pre-order walk: parents before children.
     let mut out = Vec::new();
     let mut cursor = tree.walk();

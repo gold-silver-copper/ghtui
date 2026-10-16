@@ -168,8 +168,13 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
         .rate_limits
         .tightest()
         .map(|(_, b)| ("API", b.remaining, b.limit));
+    let view = match state.screen() {
+        Screen::Diff(screen) => Some(screen.prefs.label()),
+        Screen::Page(_) => None,
+    };
     StatusBar {
         ctx,
+        view: view.as_deref(),
         busy: busy.as_deref(),
         spinner: crate::state::SPINNER
             .get(state.spinner % crate::state::SPINNER.len())
