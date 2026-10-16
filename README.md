@@ -71,7 +71,7 @@ ghtui is pre-release, but it's usable every day.
 - **Git first**: files, folders, history, blame, comparisons, tags,
   code search, and a repository's contributors and commit activity come
   from your clone (or ghtui's own partial one), at
-  GitHub's revision, and code navigation (`gd`, `gS`, `gR`) from an
+  GitHub's revision, and code navigation (`g`, `:repo symbols`, `:references`) from an
   index of the repository's definitions built there.
 - **Live**: a pull request, an issue, a discussion, the Actions tab, a
   run and a running job update while they're on screen, and what came
@@ -173,7 +173,7 @@ state and its summary, then each thread it started: the lines it's on
 GitHub's diff hunk where there's no clone), its comments and replies, and
 whether it's resolved or outdated. `↵` on a thread opens it in Files
 changed. A review with more than three threads folds after the first
-two: `za` (or `↵` on its fold row) shows the rest. Your own pending
+two: `↵` on its fold row shows the rest. Your own pending
 review on GitHub shows as yours, not submitted, with its comments.
 
 The sidebar has what GitHub's has: each reviewer's latest review (an
@@ -190,12 +190,12 @@ there, where they show as threads) and `c` writes one. A repository's
 Issues tab starts with its pinned issues, and a discussion's answer is
 shown at the top as well as where it is.
 
-**Notifications** (`gn`, or the link at the top of Home) is your inbox,
+**Notifications** (`ctrl-n`, or the link at the top of Home) is your inbox,
 as on GitHub: what each thread is about, why you got it and when, the
 unread ones marked. `/` filters it as GitHub does (`is:unread`,
 `reason:review-requested`, `repo:owner/name`), `t` shows unread, read or
-all, and `↵` opens the thread at its latest comment. `,n` marks a thread
-read and `,d` marks it done; `,N` and `,D` mark everything shown. A
+all, and `↵` opens the thread at its latest comment. `m` marks a thread
+read and `d` marks it done; `:mark all read` and `D` mark everything shown. A
 thread marked done leaves the inbox until GitHub updates it again (a new
 comment, say), and then it's back, as on github.com. A
 filter GitHub can't apply (a reason, `is:read`) searches further pages
@@ -206,10 +206,10 @@ fresh as often as GitHub asks; click or follow it to open the inbox.
 A project opens at its first view, and its views are the page's tabs. A
 board shows each column (each value of its Status, or the field it's
 grouped by) as a box of cards, side by side as many as fit (the rest
-below), or one above another on a narrow screen; `h` and `l` go between
+below), or one above another on a narrow screen; `←` and `→` go between
 columns. A board grouped by a field has swimlanes: each of the field's
-values, with the board's columns of its own cards under it, and `h` and
-`l` keep to the lane. A table shows the view's fields in columns, as many
+values, with the board's columns of its own cards under it, and `←` and
+`→` keep to the lane. A table shows the view's fields in columns, as many
 as fit. A roadmap puts each item on a timeline from its start to its
 target date (or across its iteration): a bar in its Status's color with
 its dates, a diamond for a single day, today marked and the months
@@ -217,16 +217,16 @@ named; the page says how many days a column is. A view's filter applies,
 and its sort and grouping (a board's columns too) cover all its items,
 not only a page of them. A card opens what it is: an issue, a pull
 request, or a draft's own page with its body and fields. Where GitHub
-lets you change the project, `,c` moves the card to another column and
-`,f` sets one of its fields (a single select, an iteration, a text, a
-number or a date); `,i` adds an issue or pull request (`owner/repo#123`
-or its link) or a new draft, written in the comment editor; `,e` edits a
-draft's title and text; `,X` archives an item, asking first, and on one
+lets you change the project, `:checkout` moves the card to another column and
+`:set field` sets one of its fields (a single select, an iteration, a text, a
+number or a date); `:new issue` adds an issue or pull request (`owner/repo#123`
+or its link) or a new draft, written in the comment editor; `e` edits a
+draft's title and text; `:archive item` archives an item, asking first, and on one
 under Archived (below the view), restores it. The board follows GitHub
 until it shows the change.
 
 An issue's or pull request's sidebar shows each project it's in with its
-Status and its other fields' values, and `,f` on its page sets one there,
+Status and its other fields' values, and `:set field` on its page sets one there,
 with the board's pickers (first choosing the project, when it's in
 several you may change), without opening the board.
 
@@ -240,7 +240,7 @@ is; never the secret itself). Each list filters with `/` as GitHub's does
 (`is:open`, `severity:high`, `ecosystem:npm`, `package:`, `manifest:`,
 `scope:runtime`; `tool:`, `branch:`; `secret-type:`, `validity:active`,
 `resolution:revoked`) and `t` goes between open, closed and all. Where
-GitHub lets you, `,x` dismisses an open alert (for a secret, closes it):
+GitHub lets you, `x` dismisses an open alert (for a secret, closes it):
 pick GitHub's reason, after typing a comment if you like. On a closed one
 it reopens it, after asking. A list whose alerts are off says so.
 
@@ -248,8 +248,8 @@ it reopens it, after asking. A list whose alerts are off says so.
 comments with their replies and reactions. `c` writes an answer (or, in
 a category without answers, a comment); on a comment or one of its
 replies, it replies in that comment's thread, and `>` replies quoting
-it. `,!` marks the selected comment as the answer, or unmarks it, `,+`
-reacts, and `,e` and `,D` edit and delete, where GitHub lets you.
+it. `:mark answer` marks the selected comment as the answer, or unmarks it, `+`
+reacts, and `e` and `D` edit and delete, where GitHub lets you.
 
 **Offline**, ghtui is the same ghtui. A page always shows what the cache
 has first and GitHub refreshes it; when GitHub can't be reached (no
@@ -272,7 +272,7 @@ shows it. Merging and the like aren't queued: what they do depends on
 GitHub's state when they're sent. A write GitHub refuses then (the issue
 was locked or deleted meanwhile) stays, marked refused with GitHub's
 reason and its text, and the header says `⚠ 1 not sent`: on its row,
-`,R` sends it again, `y` copies its text and `del` throws it away
+`R` sends it again, `l` copies its text and `del` throws it away
 (`ctrl-z` brings it back). The queue is kept on disk for each host and
 account, so a restart keeps it. A write that may have reached GitHub
 when the connection dropped (or ghtui stopped while sending it) is
@@ -292,8 +292,8 @@ past 2 GiB of cache and clones. The Offline page (`:offline`, or the
 header's link) lists the queue and the kept repositories: what each
 keeps, its clone's size, when it was refreshed and what stopped it.
 
-**Tabs** work like a browser's: `T` opens the selection in a new tab, `]b`
-and `[b` switch between them, and they come back next time you start.
+**Tabs** work like a browser's: `T` opens the selection in a new tab, `ctrl-pgdn`
+and `ctrl-pgup` switch between them, and they come back next time you start.
 
 **The diff viewer** (a pull request's Files changed) adds what GitHub's
 doesn't:
@@ -310,7 +310,7 @@ Comparing by syntax works as difftastic's does: both versions are parsed
 and matched node by node, however they're laid out. It decides what's
 emphasised, what folds away as formatting and which lines sit side by
 side in split view; the lines, the +/− counts and where comments go stay
-git's. `zy` switches to comparing by lines and back, and the status bar
+git's. `:by syntax` switches to comparing by lines and back, and the status bar
 says which is on. A file without a grammar, or too big or slow to compare
 that way, is compared by lines, and its header says why.
 
@@ -330,15 +330,15 @@ GitHub's API doesn't. It answers in milliseconds once the clone has what
 it needs, and takes nothing from GitHub's rate limit.
 
 **Reading code** goes beyond the file on screen, without a language
-server. `gO` lists a file's functions, types, impls and modules, nested
+server. `:symbols` lists a file's functions, types, impls and modules, nested
 as in the code, and goes to the one you pick (in Files changed, the
 file under the cursor's). Across the repository, ghtui indexes the
 definitions at the revision you're viewing, from a clone (yours, or
 its cache's), in the background; in Files changed it's the pull
-request's head, so definitions the PR adds are found. `gd` goes to the
+request's head, so definitions the PR adds are found. `g` goes to the
 definition of the word under the cursor: in the file when it's there,
-else from the index. `gS` lists the repository's symbols, nearest the
-file first, and `gR` the lines that use the word (`git grep`, whole
+else from the index. `:repo symbols` lists the repository's symbols, nearest the
+file first, and `:references` the lines that use the word (`git grep`, whole
 words, at that revision). Symbols are read for Rust, TypeScript,
 JavaScript, Python and Go. ghtui says when the index is still building
 or stopped at a limit, and only then (or with no clone to read) asks
@@ -392,13 +392,13 @@ the page doesn't, so what came in while the page loaded isn't lost.
   file or folder), and a file already there is replaced only when you
   choose the row that says so.
 
-**Running a workflow by hand** (`,E` on a workflow's page or one of its
+**Running a workflow by hand** (`:run workflow` on a workflow's page or one of its
 runs) opens GitHub's "Run workflow" form: the branch, then the inputs
 its file declares on that branch (choices, booleans and text, with their
-defaults). `↵` changes one; `,E` (or the form's last row) runs it, and
+defaults). `↵` changes one; `:run workflow` (or the form's last row) runs it, and
 the page follows the run it started.
 
-**A pull request's Review tab** (`gr` from any of its tabs) shows where
+**A pull request's Review tab** (`:review glance` from any of its tabs) shows where
 its review stands, so you don't have to piece it together:
 - your drafts that aren't submitted yet;
 - the threads still unresolved, in every file;
@@ -408,13 +408,13 @@ its review stands, so you don't have to piece it together:
 - what still stops the merge.
 
 Each row opens what it's about: a draft or a thread in Files changed at
-its line, a review its own page. On a draft, `,e` edits it (in Files
-changed) and `,D` or `del` deletes it, which `ctrl-z` brings back, as
+its line, a review its own page. On a draft, `e` edits it (in Files
+changed) and `D` or `del` deletes it, which `ctrl-z` brings back, as
 they do on a draft in Files changed, where `c` comments on its line. A review's page has its summary and
 every thread it started or replied in, then two ways into Files
 changed: the changes it reviewed, as the pull request was at its commit
 (from git), and what changed since, marked as "since your last review"
-marks it. `,e` edits a review's summary where GitHub lets you, and `,D`
+marks it. `e` edits a review's summary where GitHub lets you, and `D`
 throws away your pending review.
 
 **Acting on GitHub** asks first wherever it matters (merging, closing,
@@ -425,65 +425,65 @@ GitHub until it shows it.
 **Editing** works on what's selected: a comment (or, with none selected,
 the description) opens in the comment editor in its own place, with its
 text. Reactions show under each comment as GitHub shows them, yours
-marked, and `,+` picks one of GitHub's eight to give or take back. The
+marked, and `+` picks one of GitHub's eight to give or take back. The
 sidebar's fields are edited in pickers, as on GitHub: check and uncheck
 labels, assignees or reviewers (people and teams), then apply them with
 `ctrl-s`; a milestone is one choice. In Files changed, the same keys work
 on the review comment under the cursor.
 
-**A new issue** (`,i` from any of a repository's pages) starts from the
+**A new issue** (`:new issue` from any of a repository's pages) starts from the
 repository's templates, as on GitHub: choose one, and its title, text,
 labels and assignees fill the form (a YAML form's fields become headings
 to answer under). The comment editor opens in place of the text: the
 first line is the title, the rest the description. Labels, assignees and
 a milestone are rows of the form, each with its picker. `ctrl-s` (or
-`,s` on the form) creates it, and the new issue opens.
+`ctrl-s` on the form) creates it, and the new issue opens.
 
-**A new pull request** (`,p`) proposes, inside a clone, the branch you're
+**A new pull request** (`:new pull request`) proposes, inside a clone, the branch you're
 on, into the default branch; Enter on either branch picks another. It's
 filled in as GitHub fills it: one commit's message, or the branch's name
 and a list of its commits, then the repository's template. A branch
-GitHub doesn't have, or has behind yours, says so, and `,P` pushes it
-with your own `git push` after asking. `,s` asks whether it's a draft,
+GitHub doesn't have, or has behind yours, says so, and `:push branch` pushes it
+with your own `git push` after asking. `ctrl-s` asks whether it's a draft,
 then creates it.
 
-**A new release** (`,V` from a repository's pages) starts, as on GitHub,
+**A new release** (`:new release` from a repository's pages) starts, as on GitHub,
 with its tag: one GitHub has, or a new one, which GitHub makes when the
 release is published, at the default branch or the branch or commit you
 choose. ghtui asks GitHub about the tag first, and says when it has a
 release already. The composer takes the title (the first line) and the
 notes; "Generate release notes" has GitHub write them from the pull
 requests since the last release. Pre-release and latest are rows to
-toggle. `,s` asks whether to publish it or save a draft, then the
+toggle. `ctrl-s` asks whether to publish it or save a draft, then the
 release's page (a draft's: the releases) opens and follows GitHub until
 it shows it.
 
 **A release's page** lists its assets with their sizes and how often
 they were downloaded. `↵` on one asks where to save it (by its name in
 the current folder unless you type a file or folder), and a file already
-there is replaced only when you choose the row that says so. `,U` uploads
-a file from a path (a folder's path lists its files) and `,D` on an asset
-deletes it, after asking. `,e` opens the release in the same form, to
+there is replaced only when you choose the row that says so. `:upload asset` uploads
+a file from a path (a folder's path lists its files) and `D` on an asset
+deletes it, after asking. `e` opens the release in the same form, to
 change its title, notes, tag, pre-release or latest, and saving asks
 whether to update it or make it a draft again (a draft's: publish it or
-keep it a draft). `,D` elsewhere on the page deletes the release, after
+keep it a draft). `D` elsewhere on the page deletes the release, after
 asking; then, asked apart, its tag too, or not. The page follows GitHub
 until it shows each change.
 
-**Gists**: `,G` writes a new one, file by file in the composer, with a
-description; `,s` asks whether it's secret or public, as GitHub's two
-buttons do. On your own gist, `,e` opens it as the same form (rename,
-add or remove files; only what changed is sent) and `,D` deletes it
+**Gists**: `:new gist` writes a new one, file by file in the composer, with a
+description; `ctrl-s` asks whether it's secret or public, as GitHub's two
+buttons do. On your own gist, `e` opens it as the same form (rename,
+add or remove files; only what changed is sent) and `D` deletes it
 after asking.
 
-**A wiki** is a git repository, and ghtui writes it with git: `,e` on a
+**A wiki** is a git repository, and ghtui writes it with git: `e` on a
 page opens it in the composer (or `$EDITOR`), `,W` writes a new one
 (its title on the first line). Saving commits the page in the wiki's
 clone in ghtui's cache, on the wiki's latest commit, and pushes it with
 the git credentials ghtui uses. If the page changed on GitHub since you
 opened it, nothing is overwritten: saving says so and keeps your text.
 
-**Subscriptions**: `,w` on an issue, a pull request or a discussion (or
+**Subscriptions**: `:watch` on an issue, a pull request or a discussion (or
 its row in a list, your inbox included) subscribes to it, unsubscribes
 or ignores it; anywhere else in a repository it sets how you watch the
 repository (participating and @mentions, all activity, or ignore). The
@@ -516,9 +516,9 @@ or a topic on a repository's page) has GitHub's description, its
 stars, related topics, and its repositories, most starred first.
 
 **Starred lists**: someone's Stars tab starts with their lists, and a
-list's page has its repositories. `,B` on a repository's pages lists
+list's page has its repositories. `:lists` on a repository's pages lists
 your lists, the ones it's in checked: `↵` puts it in a list or takes it
-out, and a name no list has makes the list with it in. `,D` on one of
+out, and a name no list has makes the list with it in. `D` on one of
 your lists deletes it, after asking. Your lists are read again until
 GitHub shows the change. Changing them takes a classic token's `user`
 scope (`gh auth refresh -s user`), which ghtui names when it's
@@ -527,7 +527,7 @@ missing.
 **Packages** are a profile's tab, and a link on a repository's page: an
 owner's packages of every kind, or those a repository published. A
 package's page says how to pull or install its newest version (or the
-one picked from its versions), and `,D` on a version deletes it, after
+one picked from its versions), and `D` on a version deletes it, after
 asking what goes with it; the page follows GitHub until it's gone.
 Without your token's `read:packages` scope, the page says so and how to
 add it.
@@ -540,34 +540,34 @@ its admins. Its own menu goes between General, Collaborators, Branches,
 Webhooks and Deploy keys. These change the repository for everyone, so
 every change asks first and lists what it changes, line by line:
 - **Branches** lists the branch protection rules (each with what it
-  asks and how many branches it applies to) and the rulesets. `,n`
-  writes a new rule and `,e` edits the selected one in the composer (or
+  asks and how many branches it applies to) and the rulesets. `a`
+  writes a new rule and `e` edits the selected one in the composer (or
   `$EDITOR`), as GitHub's form's settings, one a line: `Require linear
   history: yes`, `Required approvals: 2`, `Status checks: ci, lint`.
   `ctrl-s` asks, naming each setting that changes (`Required approvals:
   1 → 2`), and only those are sent, so what the form doesn't show stays
   as it is. If GitHub refuses, the form opens again with your text and
-  GitHub's words. `,D` deletes a rule; `,x` turns a ruleset on or off
+  GitHub's words. `D` deletes a rule; `x` turns a ruleset on or off
   (an organization's is the organization's to change).
 - **Collaborators** lists who has access, with their role, and the
-  invitations waiting. `,n` invites someone: their login, then a role
+  invitations waiting. `a` invites someone: their login, then a role
   (Read, Triage, Write, Maintain or Admin, each saying what it allows);
-  `,e` changes a collaborator's or an invitation's role, and `,D` removes
+  `e` changes a collaborator's or an invitation's role, and `D` removes
   them or cancels it. The owner's access can't change.
 - **Webhooks** lists each with its events and what its last delivery
-  got back; `↵` opens one with its recent deliveries. `,n` adds one and
-  `,e` edits it as a form (`Payload URL`, `Content type`, `Secret`,
+  got back; `↵` opens one with its recent deliveries. `a` adds one and
+  `e` edits it as a form (`Payload URL`, `Content type`, `Secret`,
   `SSL verification`, `Events`, `Active`; its secret is never shown, and
-  left empty keeps it), `,x` turns it off or on, `,D` deletes it, and on
-  its page `,R` redelivers the selected delivery.
-- **Deploy keys**: `,n` adds one (its title, the public key, and whether
-  it may push, which the question warns about), `,D` deletes one.
-- **General** says how the repository is set and archives it (`,x`),
+  left empty keeps it), `x` turns it off or on, `D` deletes it, and on
+  its page `R` redelivers the selected delivery.
+- **Deploy keys**: `a` adds one (its title, the public key, and whether
+  it may push, which the question warns about), `D` deletes one.
+- **General** says how the repository is set and archives it (`x`),
   asking twice as GitHub does: for its name, typed, then once more.
   Unarchiving asks the same way. Deleting a repository is done on
   github.com: ghtui never deletes one.
 
-**Checking out** a pull request (`,c` on it or its row), inside a clone
+**Checking out** a pull request (`:checkout` on it or its row), inside a clone
 of its repository, fetches its head and switches to a branch for it: its
 own branch's name (tracking it), or `owner/branch` for a fork's. It
 refuses while you have changes that aren't committed, and says which
@@ -575,73 +575,73 @@ branch you're on.
 
 **Managing** works as GitHub's sidebar and menus do, where GitHub lets
 you (and says why where it doesn't):
-- on a pull request, `,b` deletes its branch once it's merged or closed,
-  and restores it after; `,r` converts it back to a draft (after asking);
+- on a pull request, `:delete branch` deletes its branch once it's merged or closed,
+  and restores it after; `:ready for review` converts it back to a draft (after asking);
   the menu changes its base (pick a branch, then confirm) and reverts a
   merged one: GitHub makes the revert's branch and pull request, which
   opens;
-- `,L` locks an issue's, a pull request's or a discussion's conversation,
+- `:lock` locks an issue's, a pull request's or a discussion's conversation,
   with one of GitHub's reasons or none, and unlocks it after asking;
 - on an issue, the menu pins or unpins it and transfers it to another
-  of its owner's repositories you can write to; `,x` closes it as
+  of its owner's repositories you can write to; `x` closes it as
   completed, not planned, or a duplicate of an issue you choose next
   (typed as `#12`, `owner/repo#12` or a link, or picked from its open
   issues);
-- `,S` lists an issue's sub-issues: `↵` on one removes it, `#12` (or a
-  link) adds one, and `alt-↑` `alt-↓` move the one chosen; `,K` does the
+- `:sub issues` lists an issue's sub-issues: `↵` on one removes it, `#12` (or a
+  link) adds one, and `alt-↑` `alt-↓` move the one chosen; `:blocked by` does the
   same for the issues blocking it, which the sidebar lists under Blocked
   by (and Blocking);
-- `,c` on an issue makes a branch for it on GitHub, named as GitHub
+- `:checkout` on an issue makes a branch for it on GitHub, named as GitHub
   names it (its number and title, which you can change), from the
   default branch and linked to it, then offers to check it out in your
-  clone, as `,c` does a pull request;
-- `,H` hides the selected comment as spam, abuse, off-topic, outdated, a
+  clone, as `:checkout` does a pull request;
+- `:hide comment` hides the selected comment as spam, abuse, off-topic, outdated, a
   duplicate or resolved, and unhides a hidden one. A hidden comment shows
-  folded, with GitHub's reason; `↵` or `za` shows it;
+  folded, with GitHub's reason; `↵` shows it;
 - in a repository's discussions, the menu starts a new one: pick its
   category, then write its title and text in the composer, which starts
-  from the category's form where it has one. `,x` closes a discussion as
+  from the category's form where it has one. `x` closes a discussion as
   resolved, outdated or a duplicate, or reopens it.
 
 **Labels and milestones** are reached from the Issues and Pull requests
 tabs (`Labels · Milestones` above the list). The labels page lists each
 label with its description and how many open issues and pull requests
-have it; `↵` opens them. `,o` makes a new label (its name, colour and
+have it; `↵` opens them. `:new here` makes a new label (its name, colour and
 description are rows of a form, each set in a picker; GitHub's colours
 are offered, or type `#rrggbb`), `,e` edits the selected one (renaming
-it too) and `,D` deletes it, asking first and saying how many it comes
-off. On the milestones (and a milestone's page) `,o` makes one, `,e`
-edits its title, due date and description (in the composer), `,x`
-closes or reopens it, and `,D` deletes it after asking. Each page follows
+it too) and `D` deletes it, asking first and saying how many it comes
+off. On the milestones (and a milestone's page) `:new here` makes one, `e`
+edits its title, due date and description (in the composer), `x`
+closes or reopens it, and `D` deletes it after asking. Each page follows
 GitHub until it shows the change.
 
-**Branches and tags**: on the branches or tags list, `,o` makes one: its
+**Branches and tags**: on the branches or tags list, `:new here` makes one: its
 name, then where it starts (the branch selected, another branch, a tag,
-or a commit's SHA typed). `,D` deletes the selected one, asking first;
+or a commit's SHA typed). `D` deletes the selected one, asking first;
 never the default branch, nor one GitHub's branch protection or a
 ruleset keeps, and it says which. Inside a clone of the repository, git
 does it, after asking: `git push` of the commit to the new branch or
 tag, or `git push --delete`; your clone's own branches and tags aren't
 touched. Elsewhere GitHub's API does it.
 
-**Forks and new repositories**: `,F` on any of a repository's pages
+**Forks and new repositories**: `:fork` on any of a repository's pages
 forks it, to your account or an organization that lets you make
 repositories there, under the name you choose, with its default branch
-only unless you say all. `,C` makes a new repository: its owner, name,
+only unless you say all. `:new repository` makes a new repository: its owner, name,
 description, public or private, a README, and a `.gitignore` and licence
 from GitHub's templates. Then its page opens and follows GitHub until
 it's there (a fork can take GitHub a moment); for a new repository,
 cloning it here (`git clone` into `./name`) is offered.
 
-**Editing a file** (`,e` on a file, as the website's pencil) reads it as
+**Editing a file** (`e` on a file, as the website's pencil) reads it as
 GitHub has it on the branch, and opens the composer on its text
 (`ctrl-e` continues in `$EDITOR`). The form's rows name its path
 (changing it renames the file), the branch the commit goes to (the one
 you're on, or a new one, offered as a pull request after; a tag or a
 commit is never a branch, so it's always a new one there) and the
-commit's message (GitHub's own until you write one). `,o` in a folder
-makes a new file there, and `,D` on a file deletes it, each the same
-way. `,s` asks before committing. Inside a clone of the repository, git
+commit's message (GitHub's own until you write one). `:new here` in a folder
+makes a new file there, and `D` on a file deletes it, each the same
+way. `ctrl-s` asks before committing. Inside a clone of the repository, git
 makes the commit on GitHub's tip of the branch, from objects alone, and
 pushes it, so your branches, index and working tree stay as they are;
 elsewhere GitHub's API commits it (GitHub signs it). If the file changed
@@ -650,11 +650,14 @@ so, and keeps your text.
 
 ## Keys
 
-The keys are vim's where vim has one. A binding is a key sequence (`gg`,
-`]c`), and digits before it are a count: `5j` moves five rows, `3gt` goes
-to the page's third tab (the tab bar numbers them), `120gg` to line 120 of
-a file. After the first key of a sequence, a panel lists what can follow
-it here.
+The keys are the ones you already know: the arrows, Page Up and Down,
+Home and End, `↵` to open, and `esc` or `⌫` to go back. On top of them, a
+few single letters act on what's under the cursor, and the status bar
+shows the ones that do something here. `Space` lists everything you can
+do where you are, with its key if it has one, and `:` (the palette) finds
+anything, goes anywhere (`owner/repo#123`, `@user`, a URL) and searches
+GitHub; a number typed into it goes to that line of a file, a log or the
+diff. Whatever has no key is in those two.
 
 What a key does depends on where you are: the innermost of the contexts
 below that binds it wins. A list adds its keys to a page's, which add
@@ -662,209 +665,115 @@ theirs to the ones that work everywhere; in Files changed, the file tree
 has the focus or the diff does. A key that does nothing here says so, and
 says where it works.
 
-- `esc` only cancels: a search, a selection, an overlay or keys typed so
-  far. It never leaves the page. Back is `ctrl-o` (or `⌫`), forward is
-  `ctrl-i`, which terminals send as `⇥` (in Files changed `⇥` switches
-  between the file tree and the diff, so forward there is `alt-→`).
+- `esc` cancels a search, a selection or a dialog, and with nothing to
+  cancel goes back, as `⌫` and `alt-←` do; `alt-→` goes forward.
 - A page's own tabs (a pull request's Conversation, Commits, Checks,
-  Files changed and Review) aren't history: `gt` and `gT` switch them in
-  place, and each keeps where you were.
+  Files changed and Review) aren't history: `⇥` and `⇧⇥` step through
+  them and `1`–`9` go to one, as the tab bar numbers them, and each keeps
+  where you were. In Files changed, `⇥` switches between the file tree
+  and the diff.
 - `/` searches what's on screen: the page, a file, the diff or a log, and
   `n` and `N` go through the matches. On a list it edits the list's
-  filter instead, in place on the list. `g/` searches GitHub, as does `:`.
-  A URL or GitHub path typed or pasted into either, even after a filter
-  or a search's `repo:owner/name`, opens it.
-- In a file, `j` and `k` move line by line, `y` copies the line's link,
-  `V` selects lines (then `y` copies `#L10-L20`), and `gb` blames the
-  file at that line. In the blame, a run of lines opens its commit. A
-  job's log is the same: each line is a row with its own link.
-- `h` and `l` scroll code sideways in files, logs and the diff; in the
-  diff's file tree they fold and unfold folders, and the diff shows the
-  file selected there.
-- In the diff, `y` copies the link to the line, or to the lines `V`
-  selected, as GitHub writes it; such a link opens back on those lines.
-- What changes GitHub waits behind `,`: `,m` merges, `,a` approves, `,r`
-  marks a draft ready, `,u` updates the branch, `,x` closes or reopens
-  (or cancels a run), `,R` re-runs, `,*` stars, and in Files changed `,v`
-  marks a file viewed, `,t` resolves a thread and `,s` submits your
-  review. Each asks first where it matters.
-- `,m` offers what GitHub would: merging now, merging when ready
+  filter instead, in place on the list. A URL or GitHub path typed or
+  pasted into it or into the palette, even after a filter or a search's
+  `repo:owner/name`, opens it.
+- `i` letters every link on screen; typing a link's letters follows it.
+- `c` comments (on a thread, it replies), `>` replies quoting the
+  selected comment, `e` edits, `D` deletes, `+` reacts, `l` copies the
+  link, `o` opens it on GitHub and `r` refreshes.
+- Writes that change GitHub are capitals and ask first where it matters:
+  `M` merges, `A` approves and `R` re-runs; `x` closes or reopens (on a
+  running run, cancels it), and in Files changed resolves the thread
+  under the cursor. `ctrl-s` creates or saves the form on screen, and in
+  Files changed submits your review.
+- `M` offers what GitHub would: merging now, merging when ready
   (auto-merge, offered first while checks run), or adding it to the
   merge queue where its base branch has one. Once it's set to merge or
   queued, the merge box says so (who turned auto-merge on and how it
-  will merge; its place in the queue), and `,m` takes that back.
-- Edits wait behind `,` too: `,e` edits the selected comment, a review's
-  summary or the description, `,D` deletes a comment (or throws away
-  your pending review), `,+` reacts, and on an issue or pull request
-  `,T` edits its title, `,l` its labels, `,A` its assignees, `,q` asks
-  for reviews and `,M` sets its milestone.
-- New things wait behind `,` as well: `,i` writes a new issue and `,p` a
-  new pull request, which `,s` creates (and `,P` pushes its branch
-  first); `,c` checks a pull request out in your clone (on an issue, it
-  makes a branch for it first); `,E` runs a workflow by hand. `,V` makes a
-  release, `,G` a gist and `,W` a wiki page; `,s` makes or saves each,
-  and `,e` and `,D` edit a wiki page, your gist or a release and delete
-  your gist, a release or its asset; `,U` uploads an asset to a release.
-- `,B` puts the repository in your starred lists or takes it out; `,D`
-  deletes one of your lists on its page, or a package's version.
-- Housekeeping is behind `,` too: `,o` makes something new where you are
-  (vim's `o` opens a new line): a label, a milestone, a branch, a tag, or
-  a file in the folder. `,e` edits the selected label or milestone, or
-  the file; `,D` deletes it (or the selected branch or tag); `,x` closes
-  or reopens a milestone. `,F` forks the repository and `,C` makes a new
-  one.
-- `,w` subscribes to a thread or ignores it, or sets how you watch the
-  repository.
-- In a repository's settings, `,n` adds (a rule, a collaborator, a
-  webhook, a deploy key), `,e` edits the selected one, `,D` deletes or
-  removes it, `,x` turns a ruleset or a webhook on or off (on General,
-  archives the repository), and `,R` redelivers a webhook's delivery.
-- Managing waits behind `,` too: `,b` deletes or restores a merged pull
-  request's branch, `,L` locks or unlocks the conversation, `,H` hides
-  or unhides the selected comment, `,S` edits an issue's sub-issues and
-  `,K` what blocks it. Changing a base, reverting, pinning, transferring
-  and starting a discussion are in the menu (`Space`).
-- `q` closes the view: back a page, or the tab when there's nothing to go
-  back to. `ZZ`, `:q` in the palette, or `ctrl-c` quits; `ctrl-c` also
-  works in the comment editor, asking before it throws away your text.
-- `]]` and `[[` jump by section: a Home section, a box, a heading, a
-  folder in the file tree, a file in the diff. `}` and `{` go row by row,
-  comment by comment, and change by change in the diff. `H` `M` `L` go to
-  the top, middle and bottom of the screen.
-- `?` searches backwards, and `n` and `N` follow its direction. `>`
-  replies quoting the selected comment; Enter on a comment doesn't start
-  writing. In Files changed the view toggles are under `z`: `zw`
-  whitespace, `zy` syntax or lines, `zs` split, `zf` the whole file, `zT`
-  the file tree; `zc`
-  `zo` `za` fold a thread or file, `zM` `zR` every file; in a
-  conversation, `zc` `zo` `za` fold a long review.
-  In the file tree, `<` and `>` narrow and widen it.
-- On a project's board `h` and `l` go between columns; `,c` moves the
-  selected card to another column and `,f` sets one of its fields (on an
-  issue's or pull request's page, in its project); `,i` adds an item,
-  `,X` archives or restores one, and `,e` edits a draft.
-- `gn` opens your notifications (`,n` marks one read, `,d` done, `,N`
-  and `,D` everything shown) and `gr` a pull request's Review tab.
-- In files, logs and the diff, `w` and `b` move a word cursor along the
-  line: `*` and `#` search its word as a whole word (vim's `\<word\>`;
-  `/` takes `\<` and `\>` too), down and up, and `gx` opens a web
-  address under it. A job log's lines are rows, as a file's are.
-- In files and the diff, `gO` lists the file's symbols and `gd` goes to
-  the definition of the word under the cursor; `gS` lists the
-  repository's symbols and `gR` where the word is used. (`gr` is the
-  review at a glance; vim's `gR` replaces text, which ghtui doesn't.)
+  will merge; its place in the queue), and `M` takes that back.
+- In files and logs, `←` and `→` scroll sideways and `ctrl-←` and
+  `ctrl-→` move a word cursor along the line. `s` selects lines (then `l`
+  copies `#L10-L20`), `b` blames the file at that line and `g` goes to
+  the definition of the word under the cursor. In the blame, a run of
+  lines opens its commit; a job's log lines are rows with their own
+  links.
+- In Files changed, `]` and `[` go to the next and previous change, `⇧↓`
+  and `⇧↑` to the next and previous file and `U` to the next unviewed
+  one. `v` marks a file viewed, `m` marks a change reviewed, and `⇧←`
+  and `⇧→` pick the old or new half of a split row to comment on. `↵`
+  opens a fold or a gap, folds a file at its header, and jumps between
+  the ends of moved code. In the file tree, `←` and `→` fold and unfold
+  folders, and the diff shows the file selected there.
+- On pages, `]` and `[` jump by section: a Home section, a box, a
+  heading, a folder in the file tree.
+- On lists, `t` shows open, closed or all and `S` changes the sort; in
+  your notifications `m` marks one read and `d` done. On a project's
+  board, `←` and `→` go between columns, `m` moves the selected card and
+  `a` adds an item. In a repository's settings, `a` adds, `e` edits, `D`
+  deletes and `x` turns a ruleset or webhook on or off.
+- `h` goes home, `ctrl-n` to your notifications, `u` up a level, `f` to a
+  file and `B` to another branch or tag. `T` opens the selection in a new
+  tab, `ctrl-pgdn` and `ctrl-pgup` switch tabs, `alt-1`–`alt-9` go to
+  one and `ctrl-w` closes it.
+- `q` quits, as `:q` in the palette does; `ctrl-c` quits from anywhere,
+  and in the comment editor asks before it throws away your text.
 
 **Everywhere** (`global:`)
 
-| Keys                 | Action |
-| -------------------- | ------ |
-| `j` `↓` `ctrl-n`     | Move down |
-| `k` `↑` `ctrl-p`     | Move up |
-| `ctrl-d`             | Half page down |
-| `ctrl-u`             | Half page up |
-| `ctrl-f` `pgdn`      | Page down |
-| `ctrl-b` `pgup`      | Page up |
-| `ctrl-e`             | Scroll down a line |
-| `ctrl-y`             | Scroll up a line |
-| `zz`                 | Scroll the cursor to the middle |
-| `zt`                 | Scroll the cursor to the top |
-| `zb`                 | Scroll the cursor to the bottom |
-| `H`                  | To the top of the screen |
-| `M`                  | To the middle of the screen |
-| `L`                  | To the bottom of the screen |
-| `gg` `home`          | Go to the top (with a count, to that line) |
-| `G` `end`            | Go to the bottom |
-| `↵`                  | Open the selection |
-| `esc`                | Cancel a search, a selection or keys typed so far |
-| `ctrl-o` `⌫` `alt-←` | Back |
-| `⇥` `alt-→`          | Forward |
-| `q`                  | Close this view: back, or close the tab |
-| `-` `u`              | Up a level |
-| `gt`                 | Next tab of the page (with a count, that tab) |
-| `gT`                 | Previous tab of the page |
-| `]b` `ctrl-pgdn`     | Next open tab |
-| `[b` `ctrl-pgup`     | Previous open tab |
-| `T`                  | Open the selection in a new tab |
-| `ctrl-w`             | Close the tab |
-| `alt-1`–`alt-9`      | Go to open tab 1 to 9 |
-| `gh`                 | Go home |
-| `gn`                 | Your notifications |
-| `gr`                 | The pull request's review at a glance |
-| `/`                  | Search what's on screen (on a list, filter it) |
-| `?`                  | Search what's on screen, backwards |
-| `n`                  | Next search match |
-| `N`                  | Previous search match |
-| `*`                  | Search the word under the cursor |
-| `#`                  | Search the word under the cursor, backwards |
-| `g/`                 | Search GitHub or go to a page |
-| `f`                  | Go to file |
-| `c`                  | Comment (on a thread, reply) |
-| `y`                  | Copy the link (a queued write: its text) |
-| `o`                  | Open on GitHub |
-| `gx`                 | Open the link under the cursor in the browser |
-| `r` `ctrl-l`         | Refresh |
-| `space`              | Everything you can do here |
-| `:` `ctrl-k`         | Command palette |
-| `,m`                 | Merge the pull request |
-| `,a`                 | Approve the pull request |
-| `,r`                 | Mark the draft ready for review, or convert it to a draft |
-| `,u`                 | Update the branch from its base |
-| `,x`                 | Close (as a duplicate too) or reopen (an alert: dismiss it); on a running run, cancel it |
-| `,R`                 | Re-run the workflow run or job (a refused write: send it again) |
-| `,e`                 | Edit the comment or description (a wiki page, your gist, a release, a label, a milestone, a file) |
-| `,D`                 | Delete the comment (your gist, a release or its asset, a package's version, your list, a label, a milestone, a branch, a tag, a file) |
-| `,+`                 | React to the comment, issue or pull request |
-| `,c`                 | Check out the pull request in your clone (an issue: a new branch for it) |
-| `,w`                 | Subscribe to or ignore the thread; watch the repository |
-| `del`                | Delete the selection (a draft comment, a Home section, a write waiting for GitHub) |
-| `ctrl-z`             | Bring back what was just deleted |
-| `ZZ` `ctrl-c`        | Quit |
+| Keys            | Action |
+| --------------- | ------ |
+| `↓`             | Move down |
+| `↑`             | Move up |
+| `pgdn`          | Page down |
+| `pgup`          | Page up |
+| `home`          | Go to the top |
+| `end`           | Go to the bottom |
+| `↵`             | Open the selection |
+| `esc`           | Cancel a search or a selection; with nothing to cancel, go back |
+| `⌫` `alt-←`     | Back |
+| `alt-→`         | Forward |
+| `u`             | Up a level |
+| `⇥`             | Next tab of the page |
+| `⇧⇥`            | Previous tab of the page |
+| `1`–`9`         | Go to the page's tab 1 to 9 |
+| `ctrl-pgdn`     | Next open tab |
+| `ctrl-pgup`     | Previous open tab |
+| `T`             | Open the selection in a new tab |
+| `ctrl-w`        | Close the tab |
+| `alt-1`–`alt-9` | Go to open tab 1 to 9 |
+| `h`             | Go home |
+| `ctrl-n`        | Your notifications |
+| `/`             | Search what's on screen (on a list, filter it) |
+| `n`             | Next search match |
+| `N`             | Previous search match |
+| `f`             | Go to file |
+| `c`             | Comment (on a thread, reply) |
+| `l`             | Copy the link (a queued write: its text) |
+| `o`             | Open on GitHub |
+| `r`             | Refresh |
+| `space`         | Everything you can do here |
+| `:` `ctrl-k`    | Command palette: go anywhere, search GitHub, run anything |
+| `M`             | Merge the pull request |
+| `A`             | Approve the pull request |
+| `x`             | Close (as a duplicate too) or reopen (an alert: dismiss it); on a running run, cancel it |
+| `R`             | Re-run the workflow run or job (a refused write: send it again) |
+| `e`             | Edit the comment or description (a wiki page, your gist, a release, a label, a milestone, a file) |
+| `D`             | Delete the comment (your gist, a release or its asset, a package's version, your list, a label, a milestone, a branch, a tag, a file) |
+| `+`             | React to the comment, issue or pull request |
+| `del`           | Delete the selection (a draft comment, a Home section, a write waiting for GitHub) |
+| `ctrl-z`        | Bring back what was just deleted |
+| `q`             | Quit |
 
 **On pages** (`page:`)
 
-| Keys    | Action |
-| ------- | ------ |
-| `]]`    | Next section (a box, a Home section, a folder) |
-| `[[`    | Previous section |
-| `}`     | Next comment or row |
-| `{`     | Previous comment or row |
-| `]C`    | Next commit of the pull request |
-| `[C`    | Previous commit of the pull request |
-| `>`     | Reply quoting the comment |
-| `,*`    | Star / unstar |
-| `,T`    | Edit the title |
-| `,l`    | Edit the labels |
-| `,A`    | Edit the assignees |
-| `,q`    | Ask for reviews |
-| `,M`    | Set the milestone |
-| `,i`    | New issue |
-| `,p`    | New pull request |
-| `,s`    | Create or save the form on screen (an issue, a release, a label, a file…) |
-| `,P`    | Push the branch to GitHub |
-| `,!`    | Mark the comment as the discussion's answer, or unmark it |
-| `,V`    | New release |
-| `,U`    | Upload an asset to the release |
-| `,G`    | New gist |
-| `,W`    | New wiki page |
-| `,E`    | Run the workflow by hand |
-| `,B`    | Add the repository to your starred lists, or take it out |
-| `,o`    | New here: a label, a milestone, a branch, a tag, a file |
-| `,F`    | Fork the repository |
-| `,C`    | New repository |
-| `B`     | Switch branches or tags |
-| `,b`    | Delete the pull request's branch, or restore it |
-| `,L`    | Lock the conversation, or unlock it |
-| `,H`    | Hide the comment, or unhide it |
-| `,S`    | Add or remove sub-issues |
-| `,K`    | Mark the issue blocked by another, or no longer |
-| `i`     | Follow a link by its letters |
-| `I`     | Follow a link, in the browser |
-| `alt-↑` | Move the Home section up |
-| `alt-↓` | Move the Home section down |
-| `,f`    | Set a field of the item in its project |
-| `zc`    | Fold the file, thread or review |
-| `zo`    | Unfold the file, thread or review |
-| `za`    | Fold or unfold the file, thread or review |
+| Keys     | Action |
+| -------- | ------ |
+| `]`      | Next section (a box, a Home section, a folder) |
+| `[`      | Previous section |
+| `>`      | Reply quoting the comment |
+| `ctrl-s` | Create or save the form on screen (an issue, a release, a label, a file…) |
+| `B`      | Switch branches or tags |
+| `i`      | Follow a link by its letters |
 
 **On lists** (`list:`)
 
@@ -872,108 +781,80 @@ says where it works.
 | ---- | ------ |
 | `t`  | Open / closed / all (in the inbox, unread / read) |
 | `S`  | Change the sort |
-| `,n` | Mark the notification read |
-| `,d` | Mark the notification done |
-| `,N` | Mark everything shown read |
-| `,D` | Mark everything shown done |
+| `m`  | Mark the notification read |
+| `d`  | Mark the notification done |
 
 **In files** (`file:`)
 
-| Keys | Action |
-| ---- | ------ |
-| `gb` | Blame the file at this line, or back to the file |
-| `h`  | Scroll left |
-| `l`  | Scroll right |
-| `w`  | Next word (for * and gx) |
-| `b`  | Previous word |
-| `gO` | Symbols in this file, to go to one |
-| `gd` | Go to the definition of the word under the cursor |
-| `gS` | Symbols in the repository, to go to one |
-| `gR` | Where the word under the cursor is used |
-| `V`  | Select lines |
+| Keys     | Action |
+| -------- | ------ |
+| `b`      | Blame the file at this line, or back to the file |
+| `←`      | Scroll left |
+| `→`      | Scroll right |
+| `ctrl-→` | Next word (to search or go to its definition) |
+| `ctrl-←` | Previous word |
+| `g`      | Go to the definition of the word under the cursor |
+| `s`      | Select lines |
 
 **In job logs** (`log:`)
 
-| Keys | Action |
-| ---- | ------ |
-| `h`  | Scroll left |
-| `l`  | Scroll right |
-| `w`  | Next word (for * and gx) |
-| `b`  | Previous word |
+| Keys     | Action |
+| -------- | ------ |
+| `←`      | Scroll left |
+| `→`      | Scroll right |
+| `ctrl-→` | Next word (to search or go to its definition) |
+| `ctrl-←` | Previous word |
 
 **In projects** (`project:`)
 
 | Keys | Action |
 | ---- | ------ |
-| `h`  | Previous column of the board |
-| `l`  | Next column of the board |
-| `,c` | Move the item to another column |
-| `,i` | Add an issue, a pull request or a draft |
-| `,X` | Archive the item, or restore it |
+| `←`  | Previous column of the board |
+| `→`  | Next column of the board |
+| `m`  | Move the item to another column |
+| `a`  | Add an issue, a pull request or a draft |
 
 **In a repository's settings** (`settings:`)
 
 | Keys | Action |
 | ---- | ------ |
-| `,n` | Add a branch rule, a collaborator, a webhook or a deploy key |
-| `,e` | Edit the rule or webhook, or change the collaborator's role |
-| `,D` | Delete the rule, webhook or deploy key; remove the collaborator or invitation |
-| `,x` | Turn the ruleset or webhook on or off; archive or unarchive the repository |
-| `,R` | Redeliver the webhook delivery |
+| `a`  | Add a branch rule, a collaborator, a webhook or a deploy key |
+| `e`  | Edit the rule or webhook, or change the collaborator's role |
+| `D`  | Delete the rule, webhook or deploy key; remove the collaborator or invitation |
+| `x`  | Turn the ruleset or webhook on or off; archive or unarchive the repository |
 
 **In Files changed** (`diff:`)
 
-| Keys           | Action |
-| -------------- | ------ |
-| `i`            | Follow a link by its letters |
-| `I`            | Follow a link, in the browser |
-| `h`            | Scroll left |
-| `l`            | Scroll right |
-| `w`            | Next word (for * and gx) |
-| `b`            | Previous word |
-| `gO`           | Symbols in this file, to go to one |
-| `gd`           | Go to the definition of the word under the cursor |
-| `gS`           | Symbols in the repository, to go to one |
-| `gR`           | Where the word under the cursor is used |
-| `]c` `}`       | Next change |
-| `[c` `{`       | Previous change |
-| `]f` `]]` `⇧↓` | Next file |
-| `[f` `[[` `⇧↑` | Previous file |
-| `⇧←`           | Old side of a split row (for comments) |
-| `⇧→`           | New side of a split row (for comments) |
-| `U`            | Next unviewed file |
-| `]t`           | Next unresolved thread |
-| `[t`           | Previous unresolved thread |
-| `%`            | Jump to the other end of moved code |
-| `⇥`            | Switch between the file tree and the diff |
-| `zc`           | Fold the file, thread or review |
-| `zo`           | Unfold the file, thread or review |
-| `za`           | Fold or unfold the file, thread or review |
-| `zM`           | Fold every file |
-| `zR`           | Unfold every file |
-| `zT`           | Show or hide the file tree |
-| `zs`           | Split or unified view |
-| `zw`           | Ignore whitespace changes |
-| `zy`           | Compare by syntax or by lines |
-| `zf`           | Show the whole file |
-| `e`            | Show more context |
-| `,v`           | Mark the file viewed (syncs with GitHub) |
-| `m`            | Mark the change reviewed |
-| `V` `x`        | Select lines |
-| `C`            | Comment on the whole file |
-| `,t`           | Resolve or unresolve the thread |
-| `,s`           | Submit your review |
+| Keys     | Action |
+| -------- | ------ |
+| `i`      | Follow a link by its letters |
+| `←`      | Scroll left |
+| `→`      | Scroll right |
+| `ctrl-→` | Next word (to search or go to its definition) |
+| `ctrl-←` | Previous word |
+| `g`      | Go to the definition of the word under the cursor |
+| `]`      | Next change |
+| `[`      | Previous change |
+| `⇧↓`     | Next file |
+| `⇧↑`     | Previous file |
+| `⇧←`     | Old side of a split row (for comments) |
+| `⇧→`     | New side of a split row (for comments) |
+| `U`      | Next unviewed file |
+| `⇥`      | Switch between the file tree and the diff |
+| `v`      | Mark the file viewed (syncs with GitHub) |
+| `m`      | Mark the change reviewed |
+| `s`      | Select lines |
+| `x`      | Resolve or unresolve the thread |
+| `ctrl-s` | Submit your review |
 
 **In Files changed's file tree** (`tree:`)
 
 | Keys | Action |
 | ---- | ------ |
-| `]]` | Next section (a box, a Home section, a folder) |
-| `[[` | Previous section |
-| `h`  | Fold the folder (on a file, go to its folder) |
-| `l`  | Unfold the folder |
-| `<`  | Narrow the file tree |
-| `>`  | Widen the file tree |
+| `]`  | Next section (a box, a Home section, a folder) |
+| `[`  | Previous section |
+| `←`  | Fold the folder (on a file, go to its folder) |
+| `→`  | Unfold the folder |
 
 The comment editor opens where the comment will go: under the lines, the
 thread or the file header in Files changed, and in place of the comment
@@ -1010,9 +891,9 @@ days = 90             # only those updated in this many days
 disk = 2048           # MiB: nothing more is fetched past this (cache and clones)
 
 [keys]                # each action listed replaces its default keys
-down = ["j", "<Down>"]  # without ctrl-n
+down = ["j", "<Down>"]  # one key each: a character or a named key
 sort = ["list:O"]     # a context first binds it there only
-go_home = ["gh", "<A-h>"]   # sequences or modified keys
+go_home = ["<A-h>"]   # modified keys too
 
 [[home]]              # a Home section: a title and a GitHub search
 title = "Bugs in our repos"
@@ -1039,8 +920,9 @@ A section lists `pulls`, `issues` or `repos`, and shows up to 30 rows; its
 last row opens the rest. Without any `[[home]]` tables, Home shows your
 review requests, your open pull requests and your repositories. Action
 names for `[keys]` are in the `actions!` table in
-[`src/keymap.rs`](src/keymap.rs). A key bound twice in one context, or one
-that starts another where both apply, is an error that names both.
+[`src/keymap.rs`](src/keymap.rs). A key bound twice in one context is an
+error that names both, as is more than one key (`gg`): a binding is a
+single key.
 
 ## Design
 
@@ -1341,19 +1223,19 @@ checks; `cargo xtask live issue offline` runs only those.
     one, the wiki, security, code scanning and its alert #1, settings,
     projects, Insights, Explore, a topic, the owner's profile and
     gists, home and the inbox. It only reads.
-  - `issue` creates an issue with `,i`, comments with `c`, sees a
+  - `issue` creates an issue with `:new issue`, comments with `c`, sees a
     comment made on GitHub show without a refresh, and closes it with
-    `,x`.
-  - `pull`, in a fresh clone, proposes a new branch (`,p`), pushes it
-    (`,P`), creates a draft pull request (`,s`) and marks it ready
-    (`,r`).
-  - `release` makes a release with a new tag with `,V`.
-  - `labels` makes a label on the labels page with `,o`, and deletes it
-    with `,D`.
+    `x`.
+  - `pull`, in a fresh clone, proposes a new branch (`:new pull request`), pushes it
+    (`:push branch`), creates a draft pull request (`ctrl-s`) and marks it ready
+    (`:ready for review`).
+  - `release` makes a release with a new tag with `:new release`.
+  - `labels` makes a label on the labels page with `:new here`, and deletes it
+    with `D`.
   - `settings` writes a protection rule for `ghtui-live-` branches in
     its form (with `$EDITOR` set to a `sed` script) and saves it, then
-    deletes it with `,D`, and checks `main`'s rule ends as it began.
-  - `actions` runs `actions.yml` by hand with `,E`, with its `seconds`
+    deletes it with `D`, and checks `main`'s rule ends as it began.
+  - `actions` runs `actions.yml` by hand with `:run workflow`, with its `seconds`
     input set, and follows the run until it fails, as it does on
     purpose.
   - `offline` runs ghtui against a stand-in Enterprise Server (below)
@@ -1445,12 +1327,12 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   which the list names. They take the `read:user` scope.
 - Packages are listed 100 of each kind, and said when there are more.
   GitHub doesn't say beforehand who may delete a package's version (its
-  admins), so `,D` is offered on every version and GitHub's refusal is
+  admins), so `D` is offered on every version and GitHub's refusal is
   said. On an Enterprise Server, the install commands name its
   registries as `containers.HOST`, `npm.HOST` and so on (with subdomain
   isolation). A package's link opens under `/users/` (GitHub sends an
   organization's on).
-- `,B` reads up to 1,000 of a list's repositories to say whether one is
+- `:lists` reads up to 1,000 of a list's repositories to say whether one is
   in it, and says when a list is longer. A new list is public; its
   name, description and privacy are changed on github.com.
 
@@ -1490,7 +1372,7 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   those are offered to whoever may edit (GitHub refuses the rest); before
   3.22, a project's archived items are told apart by each item, and
   before 3.20 a view's filter doesn't apply (all its items are shown).
-- Long code lines are cut at the edge: `h` and `l` scroll them sideways,
+- Long code lines are cut at the edge: `←` and `→` scroll them sideways,
   but they don't wrap.
 - Markdown in the terminal: images show their alt text, and HTML is reduced
   to its text and links.
@@ -1507,7 +1389,7 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   ghtui shows on, read. Fine-grained tokens can't read notifications at
   all; a classic token can.
 - A pull request's Review tab and a review's page have no page on
-  GitHub, so their links (`y`, `o`, a restored tab) are the
+  GitHub, so their links (`l`, `o`, a restored tab) are the
   conversation's (at the review).
 - A conversation shows the newest 100 entries of its timeline and says
   how many earlier ones are on GitHub. A thread's lines are read from git
@@ -1518,15 +1400,15 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   whole commit is written here (GitHub's REST API takes a line comment
   only by its place in the diff). An issue's or pull request's sidebar
   lists its first 10 projects.
-- `gd` and `gS` go by name: the index knows functions, types, traits,
+- `g` and `:repo symbols` go by name: the index knows functions, types, traits,
   classes and modules, not imports, re-exports, names macros make, or
   what type a value has, so a name defined in several places offers
   them all. A repository bigger than the index's limits is indexed
   nearest the file you're in, and ghtui says so. Without a clone to
-  read, or while the index is still building, `gd` asks GitHub's code
+  read, or while the index is still building, `g` asks GitHub's code
   search, which reads only the default branch and searches text; it
   reads the first five files it finds.
-- `gR` in the cache's partial clone searches only the files fetched for
+- `:references` in the cache's partial clone searches only the files fetched for
   the index (Rust, TypeScript, JavaScript, Python and Go, within its
   limits), and says so; in your own clone it searches every text file.
   It lists the first 1,000 lines.
@@ -1576,7 +1458,7 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   started in; a tag's protection by a ruleset is GitHub's to say, when
   deleting it.
 - A repository's custom watch settings (only releases, issues…) and a
-  thread's custom events can only be set on github.com; `,w` offers
+  thread's custom events can only be set on github.com; `:watch` offers
   participating, all activity and ignore. A new tag is made by GitHub
   when the release is published; a tag only in your clone has to be
   pushed first. A release's tag is deleted on GitHub, not in your clone.
