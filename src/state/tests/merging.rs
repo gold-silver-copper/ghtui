@@ -44,7 +44,7 @@ fn auto_merge_says_who_enabled_it() {
         checks_running(d);
         d.auto_merge = alice_squashes();
     });
-    press(&mut s, "G");
+    press(&mut s, "<End>");
     let screen = screen_text(&s);
     assert!(screen.contains("Auto-merge enabled by alice"), "{screen}");
 }
@@ -60,7 +60,7 @@ fn a_queued_pull_request_says_its_place() {
             state: QueueState::AwaitingChecks,
         });
     });
-    press(&mut s, "G");
+    press(&mut s, "<End>");
     let screen = screen_text(&s);
     assert!(
         screen.contains("#2 in the merge queue for main"),
@@ -85,7 +85,7 @@ fn merging_while_checks_run_offers_merge_when_ready() {
         checks_running(d);
         d.may.enable_auto_merge = true;
     });
-    press(&mut s, ",m");
+    press(&mut s, "M");
     let labels: Vec<&str> = choices(&s).into_iter().map(|(l, _)| l).collect();
     assert_eq!(
         labels,
@@ -120,7 +120,7 @@ fn merging_while_checks_run_offers_merge_when_ready() {
     assert!(s.following.is_none());
 
     assert_eq!(merge_row(&s), ("Disable auto-merge".to_owned(), None));
-    press(&mut s, ",m");
+    press(&mut s, "M");
     let disable = Change::DisableAutoMerge {
         pr: NodeId::new("PR_12"),
     };
@@ -136,7 +136,7 @@ fn merging_while_checks_run_offers_merge_when_ready() {
         d.checks = Some(ChecksState::Pending);
         d.may.enable_auto_merge = true;
     });
-    press(&mut s, ",m");
+    press(&mut s, "M");
     let labels: Vec<&str> = choices(&s).into_iter().map(|(l, _)| l).collect();
     assert_eq!(labels.len(), 4);
     assert_eq!(labels[0], "Squash and merge when ready");
@@ -150,7 +150,7 @@ fn a_merge_queue_takes_it_in_and_lets_it_go() {
     let queue = |d: &mut PrDetail| d.merge_queue = true;
     let mut s = pr_with(queue);
     assert_eq!(merge_row(&s), ("Add to the merge queue".to_owned(), None));
-    press(&mut s, ",m");
+    press(&mut s, "M");
     let enqueue = Change::Enqueue {
         pr: NodeId::new("PR_12"),
         head: pr_detail().head_oid,
@@ -174,7 +174,7 @@ fn a_merge_queue_takes_it_in_and_lets_it_go() {
         merge_row(&s),
         ("Remove from the merge queue".to_owned(), None)
     );
-    press(&mut s, ",m");
+    press(&mut s, "M");
     let dequeue = Change::Dequeue {
         pr: NodeId::new("PR_12"),
     };

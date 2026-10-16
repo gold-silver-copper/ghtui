@@ -21,8 +21,8 @@ fn picker(s: &State) -> bool {
 
 /// Selects the row whose line has `text`.
 fn select(s: &mut State, text: &str) {
-    press(s, "gg");
-    for _ in 0..40 {
+    press(s, "<Home>");
+    for _ in 0..200 {
         let crate::state::Screen::Page(p) = s.screen() else {
             panic!("not a page");
         };
@@ -40,7 +40,7 @@ fn select(s: &mut State, text: &str) {
         if on {
             return;
         }
-        press(s, "}");
+        press(s, "<Down>");
     }
     panic!("no row has {text}");
 }
@@ -65,7 +65,7 @@ fn a_label_is_made_and_the_page_follows() {
         screen.contains("good first issue") && screen.contains("12 open"),
         "{screen}"
     );
-    press(&mut s, ",o");
+    act(&mut s, Action::NewHere);
     let form = Route::Housekeeping(FormOf::Label {
         repo: ghtui(),
         name: None,
@@ -76,7 +76,7 @@ fn a_label_is_made_and_the_page_follows() {
     // A colour: GitHub's, or one typed.
     select(&mut s, "Colour");
     press(&mut s, "<Enter><C-u>#ABCDEF<Enter>");
-    let cmds = press(&mut s, ",s");
+    let cmds = press(&mut s, "<C-s>");
     let work = fixtures::sent::<labels::Save>(&cmds);
     let made = LabelChange {
         name: "triage".into(),
@@ -110,8 +110,8 @@ fn a_label_is_made_and_the_page_follows() {
 fn a_label_is_edited_and_deleted() {
     let mut s = with_labels();
     select(&mut s, "good first issue");
-    press(&mut s, ",e");
-    let cmds = press(&mut s, ",s");
+    press(&mut s, "e");
+    let cmds = press(&mut s, "<C-s>");
     let work = fixtures::sent::<labels::Save>(&cmds);
     assert_eq!(work.was.as_deref(), Some("good first issue"));
     let change = work.change.clone().unwrap();
@@ -121,7 +121,7 @@ fn a_label_is_edited_and_deleted() {
     assert_eq!(s.route(), Some(&Route::Issues(issues::Labels(ghtui()))));
 
     select(&mut s, "bug");
-    press(&mut s, ",D");
+    press(&mut s, "D");
     let ask = overlay!(s, Ask);
     assert_eq!(ask.title, "Delete the label bug?");
     assert!(
@@ -149,7 +149,7 @@ fn a_label_is_edited_and_deleted() {
 fn milestones_are_closed_edited_and_deleted() {
     let mut s = with_milestones();
     select(&mut s, "Pages");
-    let cmds = press(&mut s, ",x");
+    let cmds = press(&mut s, "x");
     let close = milestones::Save {
         repo: ghtui(),
         number: Some(5),
@@ -165,7 +165,7 @@ fn milestones_are_closed_edited_and_deleted() {
     assert!(s.following.is_none(), "gone from the open ones");
 
     select(&mut s, "Links");
-    press(&mut s, ",e");
+    press(&mut s, "e");
     let form = Route::Housekeeping(FormOf::Milestone {
         repo: ghtui(),
         number: Some(3),
@@ -181,7 +181,7 @@ fn milestones_are_closed_edited_and_deleted() {
     press(&mut s, "<Enter>2026-13-01");
     assert!(page_text(&s).contains("Due date"));
     press(&mut s, "<C-u>2027-01-31<Enter>");
-    let cmds = press(&mut s, ",s");
+    let cmds = press(&mut s, "<C-s>");
     let work = fixtures::sent::<milestones::Save>(&cmds);
     let saved = MilestoneChange {
         title: "Links".into(),
@@ -199,7 +199,7 @@ fn milestones_are_closed_edited_and_deleted() {
     );
 
     select(&mut s, "Links");
-    press(&mut s, ",D");
+    press(&mut s, "D");
     assert_eq!(overlay!(s, Ask).title, "Delete the milestone Links?");
     let cmds = press(&mut s, "<Enter>");
     let delete = milestones::Save {
@@ -220,7 +220,7 @@ fn branches_are_made_and_protected_ones_kept() {
     let cmds = fixtures::cloned(&mut s, &repo, None);
     assert!(cmds.is_empty(), "{cmds:?}");
     select(&mut s, "tabs");
-    press(&mut s, ",o");
+    act(&mut s, Action::NewHere);
     assert!(picker(&s), "its name first");
     press(&mut s, "topic<Enter>");
     // Where it starts: the branch selected first.
@@ -237,11 +237,11 @@ fn branches_are_made_and_protected_ones_kept() {
     );
 
     select(&mut s, "main");
-    press(&mut s, ",D");
+    press(&mut s, "D");
     says(&s, "main is the default branch");
 
     select(&mut s, "links");
-    let cmds = press(&mut s, ",D");
+    let cmds = press(&mut s, "D");
     let key = DataKey::BranchRules(repo.clone(), "links".into());
     assert_eq!(fixtures::asked(&cmds), std::slice::from_ref(&key));
     let rules = BranchRules {
@@ -269,7 +269,7 @@ fn in_a_clone_git_pushes_after_asking() {
     };
     fixtures::cloned(&mut s, &repo, Some(clone.clone()));
     select(&mut s, "tabs");
-    let cmds = press(&mut s, ",D");
+    let cmds = press(&mut s, "D");
     let rules = BranchRules {
         protected: false,
         undeletable: false,
@@ -312,13 +312,13 @@ fn in_a_clone_git_pushes_after_asking() {
 #[test]
 fn a_repository_is_forked_and_opened() {
     let mut s = with_repo();
-    press(&mut s, ",F");
+    act(&mut s, Action::Fork);
     let form = Route::Housekeeping(FormOf::Fork(ghtui()));
     assert_eq!(s.route(), Some(&form));
     let owners = Data::Owners(Box::new(crate::housekeeping::fixtures::owners()));
     fetched(&mut s, DataKey::Owners, owners);
     assert!(page_text(&s).contains("It will be octocat/ghtui"));
-    let cmds = press(&mut s, ",s");
+    let cmds = press(&mut s, "<C-s>");
     let new = NewFork {
         repo: ghtui(),
         org: None,
@@ -343,7 +343,7 @@ fn a_repository_is_forked_and_opened() {
 #[test]
 fn a_new_repository_is_made_and_cloning_offered() {
     let mut s = with_repo();
-    press(&mut s, ",C");
+    act(&mut s, Action::NewRepo);
     let form = Route::Housekeeping(FormOf::NewRepo);
     assert_eq!(s.route(), Some(&form));
     let owners = Data::Owners(Box::new(crate::housekeeping::fixtures::owners()));
@@ -364,7 +364,7 @@ fn a_new_repository_is_made_and_cloning_offered() {
     press(&mut s, "<Enter>");
     select(&mut s, "Licence");
     press(&mut s, "<Enter>MIT<Enter>");
-    let cmds = press(&mut s, ",s");
+    let cmds = press(&mut s, "<C-s>");
     let new = NewRepo {
         org: Some("ghtui-org".into()),
         name: "tools".into(),
@@ -418,7 +418,7 @@ fn look() -> FileLook {
 fn a_file_is_edited_and_committed_on_a_new_branch() {
     let mut s = with_file();
     fixtures::cloned(&mut s, &ghtui(), None);
-    let cmds = press(&mut s, ",e");
+    let cmds = press(&mut s, "e");
     let form = Route::Housekeeping(FormOf::File {
         repo: ghtui(),
         rev: "main".into(),
@@ -437,7 +437,7 @@ fn a_file_is_edited_and_committed_on_a_new_branch() {
     press(&mut s, "<Esc>");
     select(&mut s, "Commit to");
     press(&mut s, "<Enter>octocat-patch-1<Enter>");
-    press(&mut s, ",s");
+    press(&mut s, "<C-s>");
     let ask = overlay!(s, Ask);
     assert_eq!(ask.title, "Commit changes?");
     assert!(
@@ -481,7 +481,7 @@ fn a_file_is_edited_and_committed_on_a_new_branch() {
 fn a_file_changed_meanwhile_keeps_your_text() {
     let mut s = with_file();
     fixtures::cloned(&mut s, &ghtui(), None);
-    press(&mut s, ",e");
+    press(&mut s, "e");
     let form = Route::Housekeeping(FormOf::File {
         repo: ghtui(),
         rev: "main".into(),
@@ -516,7 +516,7 @@ fn a_file_changed_meanwhile_keeps_your_text() {
 fn a_file_is_deleted_with_a_commit() {
     let mut s = with_file();
     fixtures::cloned(&mut s, &ghtui(), None);
-    press(&mut s, ",D");
+    press(&mut s, "D");
     let form = Route::Housekeeping(FormOf::File {
         repo: ghtui(),
         rev: "main".into(),
@@ -525,7 +525,7 @@ fn a_file_is_deleted_with_a_commit() {
     });
     assert_eq!(s.route(), Some(&form));
     read(&mut s);
-    press(&mut s, ",s");
+    press(&mut s, "<C-s>");
     assert_eq!(overlay!(s, Ask).title, "Delete src/main.rs?");
     let cmds = press(&mut s, "<Enter>");
     let commit = fixtures::sent::<files::Commit>(&cmds);
@@ -554,14 +554,14 @@ fn without_write_access_each_says_why() {
         DataKey::Repo(ghtui()),
         Data::Repo(Box::new(overview)),
     );
-    press(&mut s, ",e");
+    press(&mut s, "e");
     says(
         &s,
-        "Changing its files takes write access to gold-silver-copper/ghtui: fork it (,F)",
+        "Changing its files takes write access to gold-silver-copper/ghtui: fork it (:fork)",
     );
     let route = Route::Issues(issues::Labels(ghtui()));
     let _ = s.push(route);
-    press(&mut s, ",o");
+    act(&mut s, Action::NewHere);
     says(&s, "Changing labels takes write access");
 }
 
@@ -572,7 +572,7 @@ fn a_file_form_opened_from_a_page_reads_the_file() {
     let mut s = with_repo();
     let cmds = press(
         &mut s,
-        "g/gold-silver-copper/ghtui/edit/main/README.md<Enter>",
+        ":gold-silver-copper/ghtui/edit/main/README.md<Enter>",
     );
     let file = DataKey::FileLook(ghtui(), "main".into(), "README.md".into());
     assert!(fixtures::asks(&cmds, &file), "{cmds:?}");

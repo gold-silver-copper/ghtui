@@ -57,12 +57,12 @@ fn select(s: &mut State, is: impl Fn(&SettingLink) -> bool) {
         Screen::Page(p) => matches!(p.selected_link(), Some(Link::Setting(l)) if is(l)),
         Screen::Diff(_) => false,
     };
-    press(s, "gg");
-    for _ in 0..12 {
+    press(s, "<Home>");
+    for _ in 0..200 {
         if selected(s) {
             return;
         }
-        press(s, "}");
+        press(s, "<Down>");
     }
     assert!(selected(s), "nothing selected is what's wanted");
 }
@@ -108,7 +108,7 @@ fn the_settings_tab_is_for_admins() {
     let mut repo = super::with_repo();
     let tabs = repo.chrome().tabs;
     assert!(tabs.iter().all(|(t, _)| t.label != "Settings"));
-    press(&mut repo, ",x");
+    press(&mut repo, "x");
     says(&repo, "Closing works on");
 }
 
@@ -119,7 +119,7 @@ fn the_settings_tab_is_for_admins() {
 fn a_rule_is_edited_as_a_form_and_named_before_saving() {
     let mut s = on(SettingsPage::Branches);
     select(&mut s, |l| matches!(l, SettingLink::Rule(_)));
-    press(&mut s, ",e");
+    press(&mut s, "e");
     let text = composed(&s);
     assert!(text.contains("Required approvals: 1"), "{text}");
     write(
@@ -157,7 +157,7 @@ fn a_rule_is_edited_as_a_form_and_named_before_saving() {
 #[test]
 fn a_new_rule_refused_comes_back_to_edit() {
     let mut s = on(SettingsPage::Branches);
-    press(&mut s, ",n");
+    press(&mut s, "a");
     let text = composed(&s).replace("Branch name pattern: ", "Branch name pattern: release/*");
     write(&mut s, &text);
     press(&mut s, "<C-s>");
@@ -179,7 +179,7 @@ fn a_new_rule_refused_comes_back_to_edit() {
 
     let mut s = on(SettingsPage::Branches);
     select(&mut s, |l| matches!(l, SettingLink::Rule(_)));
-    press(&mut s, ",D");
+    press(&mut s, "D");
     assert!(asked(&s).contains(
         "Delete the protection rule for main?\nBranches matching main are then unprotected"
     ));
@@ -191,7 +191,7 @@ fn a_new_rule_refused_comes_back_to_edit() {
 fn a_ruleset_is_turned_off_after_asking() {
     let mut s = on(SettingsPage::Branches);
     select(&mut s, |l| *l == SettingLink::Ruleset(7));
-    press(&mut s, ",x");
+    press(&mut s, "x");
     assert!(asked(&s).starts_with("Disable ruleset “Tags are kept”?"));
     let cmds = press(&mut s, "<Enter>");
     assert!(matches!(
@@ -204,7 +204,7 @@ fn a_ruleset_is_turned_off_after_asking() {
     ));
     let mut s = on(SettingsPage::Branches);
     select(&mut s, |l| *l == SettingLink::Ruleset(8));
-    press(&mut s, ",x");
+    press(&mut s, "x");
     says(&s, "It's octo-org's ruleset");
 }
 
@@ -213,7 +213,7 @@ fn a_ruleset_is_turned_off_after_asking() {
 #[test]
 fn a_collaborator_is_invited_with_a_role() {
     let mut s = on(SettingsPage::Access);
-    press(&mut s, ",n");
+    press(&mut s, "a");
     press(&mut s, "hubot2<Enter>");
     press(&mut s, "write<Enter>");
     assert!(asked(&s).starts_with("Invite @hubot2 to gold-silver-copper/ghtui with Write access?"));
@@ -230,17 +230,17 @@ fn a_collaborator_is_invited_with_a_role() {
 
     let mut s = on(SettingsPage::Access);
     select(&mut s, |l| *l == SettingLink::Person("octocat".into()));
-    press(&mut s, ",e");
+    press(&mut s, "e");
     press(&mut s, "maintain<Enter>");
     assert!(asked(&s).contains("From Write to Maintain"));
     press(&mut s, "<Esc>");
-    press(&mut s, ",D");
+    press(&mut s, "D");
     assert!(asked(&s).starts_with("Remove @octocat from gold-silver-copper/ghtui?"));
     press(&mut s, "<Esc>");
     select(&mut s, |l| {
         *l == SettingLink::Person("gold-silver-copper".into())
     });
-    press(&mut s, ",D");
+    press(&mut s, "D");
     says(&s, "owns gold-silver-copper/ghtui");
 }
 
@@ -250,7 +250,7 @@ fn a_collaborator_is_invited_with_a_role() {
 #[test]
 fn webhooks_are_added_disabled_redelivered_and_deleted() {
     let mut s = on(SettingsPage::Hooks);
-    press(&mut s, ",n");
+    press(&mut s, "a");
     let text = composed(&s).replace("Payload URL: ", "Payload URL: https://example.com/new");
     write(&mut s, &text);
     press(&mut s, "<C-s>");
@@ -261,7 +261,7 @@ fn webhooks_are_added_disabled_redelivered_and_deleted() {
     assert!(matches!(sent(&cmds).0, SettingsChange::CreateHook { .. }));
 
     let mut s = on(SettingsPage::Hook(11));
-    press(&mut s, ",x");
+    press(&mut s, "x");
     assert!(asked(&s).starts_with("Disable this webhook?\nhttps://example.com/hook/11"));
     let cmds = press(&mut s, "<Enter>");
     let SettingsChange::UpdateHook { to, .. } = sent(&cmds).0 else {
@@ -270,7 +270,7 @@ fn webhooks_are_added_disabled_redelivered_and_deleted() {
     assert!(!to.active);
     press(&mut s, "<Esc>");
     select(&mut s, |l| *l == SettingLink::Delivery(902));
-    press(&mut s, ",R");
+    act(&mut s, Action::Redeliver);
     assert!(asked(&s).starts_with("Redeliver the pull_request delivery?"));
     let cmds = press(&mut s, "<Enter>");
     assert!(matches!(
@@ -279,7 +279,7 @@ fn webhooks_are_added_disabled_redelivered_and_deleted() {
     ));
 
     let mut s = on(SettingsPage::Hook(11));
-    press(&mut s, ",D");
+    press(&mut s, "D");
     let cmds = press(&mut s, "<Enter>");
     assert_eq!(sent(&cmds).1, &By::Confirm(about(SettingsPage::Hooks)));
     answer(&mut s, &cmds, Ok(()));
@@ -297,7 +297,7 @@ fn webhooks_are_added_disabled_redelivered_and_deleted() {
 #[test]
 fn a_new_webhooks_form_starts_on_its_payload_url() {
     let mut s = on(SettingsPage::Hooks);
-    press(&mut s, ",n");
+    press(&mut s, "a");
     press(&mut s, "https://example.com/new");
     let text = composed(&s);
     assert_eq!(
@@ -312,7 +312,7 @@ fn a_new_webhooks_form_starts_on_its_payload_url() {
 #[test]
 fn a_deploy_key_with_write_access_says_so() {
     let mut s = on(SettingsPage::Keys);
-    press(&mut s, ",n");
+    press(&mut s, "a");
     write(
         &mut s,
         "Title: deploy\nAllow write access: yes\nKey: ssh-ed25519 AAAAC3Nz me@x",
@@ -329,9 +329,9 @@ fn a_deploy_key_with_write_access_says_so() {
     )));
     press(&mut s, "<Esc>");
     select(&mut s, |l| *l == SettingLink::Key(41));
-    press(&mut s, ",e");
+    press(&mut s, "e");
     says(&s, "delete it and add it again");
-    press(&mut s, ",D");
+    press(&mut s, "D");
     assert!(asked(&s).starts_with("Delete deploy key “CI”?"));
 }
 
@@ -340,7 +340,7 @@ fn a_deploy_key_with_write_access_says_so() {
 #[test]
 fn archiving_asks_twice() {
     let mut s = on(SettingsPage::General);
-    press(&mut s, ",x");
+    press(&mut s, "x");
     press(&mut s, "ghtui");
     assert!(press(&mut s, "<Enter>").is_empty());
     assert!(
@@ -366,6 +366,6 @@ fn archiving_asks_twice() {
     deliver(&mut s, SettingsPage::General, Settings::General(g));
     assert!(s.following.is_none());
     assert!(page_text(&s).contains("Unarchive this repository"));
-    press(&mut s, ",D");
+    press(&mut s, "D");
     says(&s, "ghtui never deletes one");
 }

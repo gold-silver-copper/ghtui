@@ -46,12 +46,10 @@ pub fn find(state: &mut State, query: &str, forward: bool) {
     state.info(text);
 }
 
-/// `*` and `#`: searches the word under the cursor as `/` and `?` would,
-/// as a whole word, going to its next match below the cursor's line (or
-/// above).
+/// Searches the word under the cursor as `/` would, as a whole word,
+/// going to its next match below the cursor's line.
 #[must_use]
-pub fn search_word(state: &mut State, forward: bool) -> Vec<Cmd> {
-    state.backwards = !forward;
+pub fn search_word(state: &mut State) -> Vec<Cmd> {
     if let Some((screen, diff)) = state.diff_parts() {
         let code = diff.doc.code_at(screen.cursor, screen.half).unwrap_or("");
         let words = text::words(code);
@@ -60,7 +58,7 @@ pub fn search_word(state: &mut State, forward: bool) -> Vec<Cmd> {
             Some(word) => {
                 // The word cursor goes with the match.
                 screen.word = Some(screen.word.unwrap_or(0));
-                let found = diff_screen::search(screen, diff, text::whole_word(word), forward);
+                let found = diff_screen::search(screen, diff, text::whole_word(word), true);
                 state.notices.say(found);
             }
             None => state.info("No word under the cursor: this row has no code"),
@@ -93,11 +91,7 @@ pub fn search_word(state: &mut State, forward: bool) -> Vec<Cmd> {
     // From the cursor's line, around to the other end.
     let line = (p.selected.and_then(|i| p.page.items.get(i))).map_or(0, |it| it.start);
     let marks = &p.page.marks;
-    let next = if forward {
-        (marks.iter().position(|&m| m > line)).or_else(|| (!marks.is_empty()).then_some(0))
-    } else {
-        (marks.iter().rposition(|&m| m < line)).or_else(|| marks.len().checked_sub(1))
-    };
+    let next = (marks.iter().position(|&m| m > line)).or_else(|| (!marks.is_empty()).then_some(0));
     if let Some((n, of)) = next.and_then(|n| go_to_mark(p, n)) {
         state.info(format!("Match {n} of {of}"));
     }

@@ -141,7 +141,7 @@ fn the_whole_pr_after_a_commit_keeps_githubs_patches() {
     let target = comment_target(&mut s);
     assert!(is_file_comment(&target), "before: {target:?}");
 
-    let job = pick_commit(&mut s, &pr, "jj<Enter>");
+    let job = pick_commit(&mut s, &pr, "<Down><Down><Enter>");
     deliver(&mut s, &pr, job);
     let job = pick_commit(&mut s, &pr, "<Enter>");
     deliver(&mut s, &pr, job);
@@ -156,8 +156,13 @@ fn choosing_a_commit_keeps_the_view_toggles() {
     let (mut s, pr, job) = loading();
     deliver(&mut s, &pr, job);
     let start = screen(&s).prefs;
-    for keys in ["zw", "zy", "zs", "zT"] {
-        press(&mut s, keys);
+    for action in [
+        Action::IgnoreWhitespace,
+        Action::BySyntax,
+        Action::ToggleSplit,
+        Action::ToggleTree,
+    ] {
+        act(&mut s, action);
     }
     let before = screen(&s).prefs;
     assert!(
@@ -168,7 +173,7 @@ fn choosing_a_commit_keeps_the_view_toggles() {
             && !before.tree_visible,
         "{before:?}"
     );
-    let job = pick_commit(&mut s, &pr, "jj<Enter>");
+    let job = pick_commit(&mut s, &pr, "<Down><Down><Enter>");
     deliver(&mut s, &pr, job);
     assert_eq!(screen(&s).prefs, before);
 }
@@ -187,13 +192,13 @@ fn a_file_marked_viewed_stays_viewed_in_another_range() {
             states: std::collections::HashMap::new(),
         }))),
     );
-    let job = fixtures::sent::<crate::review::SetViewed>(&press(&mut s, ",v"));
+    let job = fixtures::sent::<crate::review::SetViewed>(&press(&mut s, "v"));
     assert!(job.viewed && job.path == PATH);
     fixtures::done(&mut s, job, Ok(()));
     let of = DiffOf::Pr(pr.clone());
     assert_eq!(s.diffs[&of].doc.files()[0].viewed, Viewed::Viewed);
 
-    let job = pick_commit(&mut s, &pr, "jj<Enter>");
+    let job = pick_commit(&mut s, &pr, "<Down><Down><Enter>");
     deliver(&mut s, &pr, job);
     assert_eq!(s.diffs[&of].doc.files()[0].viewed, Viewed::Viewed);
 }

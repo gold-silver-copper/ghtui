@@ -419,6 +419,19 @@ impl State {
 
     /// Palette entries: somewhere to go, what you can do here (the menu's
     /// order first), and searching GitHub.
+    /// What's on screen is numbered lines: a file, a blame, a job's log
+    /// or a diff.
+    fn shows_lines(&self) -> bool {
+        match self.screen() {
+            Screen::Diff(_) => true,
+            Screen::Page(p) => matches!(
+                p.route,
+                Route::Code(code::Blob { .. } | code::Blame { .. })
+                    | Route::Runs(crate::route::runs::Job { .. })
+            ),
+        }
+    }
+
     pub fn commands(&self, input: &str) -> Rows {
         let mut out = Vec::new();
         // vim's way out, first.
@@ -426,6 +439,16 @@ impl State {
         if quit_first {
             let key = self.key_here(Action::Quit).unwrap_or_default();
             out.push((item("Quit", key), Some(Choice::Action(Action::Quit))));
+        }
+        // A number, where lines are what's on screen: that line.
+        if let Ok(line) = input.trim().parse::<u32>()
+            && line > 0
+            && self.shows_lines()
+        {
+            out.push((
+                item(format!("Go to line {line}"), ""),
+                Some(Choice::Line(line)),
+            ));
         }
         if let Some(dest) = route::parse_input(input, self.context_repo()) {
             let label = match &dest.target {
@@ -671,9 +694,9 @@ pub fn move_in_list(key: KeyEvent, selected: &mut usize, count: usize) -> bool {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::Down | KeyCode::Tab => *selected += 1,
-        KeyCode::Char('n' | 'j') if ctrl => *selected += 1,
+        KeyCode::Char('n') if ctrl => *selected += 1,
         KeyCode::Up | KeyCode::BackTab => *selected = selected.saturating_sub(1),
-        KeyCode::Char('p' | 'k') if ctrl => *selected = selected.saturating_sub(1),
+        KeyCode::Char('p') if ctrl => *selected = selected.saturating_sub(1),
         _ => return false,
     }
     *selected = (*selected).min(count.saturating_sub(1));
@@ -722,10 +745,6 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
                 *mark = (*mark != Some(*i)).then_some(*i);
             }
         }
-        (KeyCode::Char('j'), Kind::Commits { .. }) => {
-            p.selected = (p.selected + 1).min(rows.len().saturating_sub(1));
-        }
-        (KeyCode::Char('k'), Kind::Commits { .. }) => p.selected = p.selected.saturating_sub(1),
         (_, Kind::Commits { .. }) => {}
         _ => {
             crate::nav::type_into(&mut p.input, key);

@@ -32,13 +32,13 @@ fn conversation() -> State {
 
 /// Selects the first item whose link `pick` likes, going down with `}`.
 fn select(s: &mut State, pick: impl Fn(&Link) -> bool) {
-    for _ in 0..40 {
+    for _ in 0..200 {
         if let Screen::Page(p) = s.screen()
             && p.selected_link().is_some_and(&pick)
         {
             return;
         }
-        press(s, "}");
+        press(s, "<Down>");
     }
     panic!("nothing selectable like that:\n{}", text(s));
 }
@@ -108,7 +108,7 @@ fn the_sidebar_says_where_each_reviewer_stands() {
 #[test]
 fn the_review_tab_lists_reviews_and_one_opens_its_page() {
     let mut s = conversation();
-    press(&mut s, "gr");
+    act(&mut s, Action::ReviewGlance);
     fetched(
         &mut s,
         DataKey::Reviews(pr()),
@@ -168,9 +168,9 @@ fn a_reviews_summary_is_edited() {
         &mut s,
         |l| matches!(l, Link::Quote { author, body, .. } if author == "hubot" && body.starts_with("Yes")),
     );
-    press(&mut s, ",e");
+    press(&mut s, "e");
     let Some(Overlay::Compose(c)) = &s.overlay else {
-        panic!(",e opens the composer")
+        panic!("e opens the composer")
     };
     assert_eq!(c.text(), "Yes: every role is checked at both depths.");
     press(&mut s, "!");
@@ -218,7 +218,7 @@ fn a_long_review_folds() {
         &mut s,
         |l| matches!(l, Link::Quote { body, .. } if body.starts_with("Yes")),
     );
-    press(&mut s, "za");
+    act(&mut s, Action::FoldToggle);
     assert_eq!(count(&s), 6, "{}", text(&s));
     select(&mut s, |l| matches!(l, Link::Review(ReviewLink::Fold(_))));
     press(&mut s, "<Enter>");

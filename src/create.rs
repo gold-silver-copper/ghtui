@@ -519,7 +519,10 @@ fn ask_push(state: &mut State) -> Vec<Cmd> {
     let Some((route, form)) =
         here(state).filter(|(r, _)| matches!(r, Route::Pulls(pulls::NewPr(_))))
     else {
-        return state.just_say("Pushing works on a new pull request's branch (,p)");
+        let new_pr = state.first_key(Action::NewPr);
+        return state.just_say(format!(
+            "Pushing works on a new pull request's branch ({new_pr})"
+        ));
     };
     let Some(repo) = form_repo(&route).cloned() else {
         return Vec::new();

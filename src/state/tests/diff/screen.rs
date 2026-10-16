@@ -10,7 +10,8 @@ use crate::ui::diff_doc::{Doc, Pos};
 
 use crate::diff_screen::{DiffOf, DiffPrefs, DiffScreen, DiffState, Pane};
 use crate::fixtures::diff_msg;
-use crate::state::tests::{NOW, press, screen_text, state};
+use crate::keymap::Action;
+use crate::state::tests::{NOW, act, press, screen_text, state};
 use crate::state::{DiffMsg, Msg, Screen, State, update};
 
 fn pr() -> PrRef {
@@ -205,11 +206,15 @@ fn the_diff_follows_the_file_tree() {
         at(s)
     };
     // Into src/, then docs/, from folder to folder.
-    assert_eq!(file(&mut s, "ggl"), (1, 0), "src/point.rs");
-    assert_eq!(file(&mut s, "]]l"), (3, 1), "docs/new.md");
-    assert_eq!(file(&mut s, "2j"), (5, 3), "gone.py");
-    assert_eq!(file(&mut s, "G"), (10, 7), "zz/pending.rs");
-    assert_eq!(file(&mut s, "5gg"), (4, 2), "notes.txt");
+    assert_eq!(file(&mut s, "<Home><Right>"), (1, 0), "src/point.rs");
+    assert_eq!(file(&mut s, "]<Right>"), (3, 1), "docs/new.md");
+    assert_eq!(file(&mut s, "<Down><Down>"), (5, 3), "gone.py");
+    assert_eq!(file(&mut s, "<End>"), (10, 7), "zz/pending.rs");
+    assert_eq!(
+        file(&mut s, "<Up><Up><Up><Up><Up><Up>"),
+        (4, 2),
+        "notes.txt"
+    );
     // A click in the tree selects there.
     let content = s.layout().content;
     let (screen, diff) = diff_parts(&mut s);
@@ -227,7 +232,7 @@ fn the_diff_follows_the_file_tree() {
     assert_eq!(at(&mut s), (6, 4), "logo.png");
 }
 
-/// `y` copies the line's link, or the selected lines', as GitHub
+/// `l` copies the line's link, or the selected lines', as GitHub
 /// anchors them; the link opens on those lines, selected.
 #[test]
 fn line_links_copy_and_open_on_their_lines() {
@@ -239,11 +244,11 @@ fn line_links_copy_and_open_on_their_lines() {
     let hash = crate::ui::pages::url::path_hash("src/point.rs");
     let files = format!("https://github.com/o/r/pull/7/files#diff-{hash}");
     assert_eq!(
-        copied(&mut s, "y"),
+        copied(&mut s, "l"),
         format!("{files}L3"),
         "the removed line"
     );
-    let url = copied(&mut s, "Vjjy");
+    let url = copied(&mut s, "s<Down><Down>l");
     assert_eq!(url, format!("{files}L3-R4"));
     press(&mut s, "<Esc>");
     let _ = s.follow(&crate::ui::page::Link::Url(url));
@@ -258,13 +263,13 @@ fn line_links_copy_and_open_on_their_lines() {
     if let Some((screen, _)) = s.diff_parts() {
         screen.of = commit_of();
     }
-    let url = copied(&mut s, "y");
+    let url = copied(&mut s, "l");
     assert!(url.contains("/commit/"), "{url}");
     assert!(url.ends_with(&format!("#diff-{hash}L3")), "{url}");
 }
 
-/// `zc`, `zo` and `za` fold the thread under the cursor, or the file;
-/// `zM` and `zR` every file.
+/// Folding folds the thread under the cursor, or the file (↵ on its
+/// header too); every file folds and unfolds at once.
 #[test]
 fn folds_close_threads_and_files() {
     let mut s = with_threads();
@@ -283,30 +288,30 @@ fn folds_close_threads_and_files() {
         screen.cursor = thread;
     }
     assert_eq!(open(&mut s), Some(true));
-    press(&mut s, "zc");
+    act(&mut s, Action::FoldToggle);
     assert_eq!(open(&mut s), Some(false), "the thread folds");
-    press(&mut s, "za");
+    act(&mut s, Action::FoldToggle);
     assert_eq!(open(&mut s), Some(true));
-    // Folding a folded thread folds its file.
-    press(&mut s, "zczc");
+    // ↵ on the file's header folds the file.
+    press(&mut s, "<Home><Enter>");
     assert_eq!(rows(&mut s, 0), 2, "the header, and the space after it");
     assert_eq!(diff_parts(&mut s).0.cursor, Pos { file: 0, row: 0 });
-    press(&mut s, "za");
+    act(&mut s, Action::FoldToggle);
     assert!(rows(&mut s, 0) > 2);
-    press(&mut s, "zM");
+    act(&mut s, Action::FoldAll);
     let doc = &diff_parts(&mut s).1.doc;
     assert!(
         doc.files()
             .iter()
             .all(crate::ui::diff_doc::DocFile::collapsed)
     );
-    press(&mut s, "zR");
+    act(&mut s, Action::UnfoldAll);
     let doc = &diff_parts(&mut s).1.doc;
     assert!(doc.files().iter().all(|f| !f.collapsed()), "generated too");
 }
 
-/// The file tree fits its names within a third of the screen, and `<`
-/// and `>` narrow and widen it.
+/// The file tree fits its names within a third of the screen, and
+/// narrows and widens.
 #[test]
 fn the_file_tree_fits_its_names_and_resizes() {
     let long = "docs/a-name-long-enough-to-want-more-than-a-third-of-the-screen.md";
@@ -325,9 +330,10 @@ fn the_file_tree_fits_its_names_and_resizes() {
         tree.map(|t| t.width)
     };
     assert_eq!(width(&mut s), Some(72), "a third of 216");
-    press(&mut s, "<lt><lt>");
+    act(&mut s, Action::TreeNarrower);
+    act(&mut s, Action::TreeNarrower);
     assert_eq!(width(&mut s), Some(64));
-    press(&mut s, ">");
+    act(&mut s, Action::TreeWider);
     assert_eq!(width(&mut s), Some(68));
     s.size = (110, 34);
     assert_eq!(width(&mut s), Some(55), "at most half");
@@ -593,9 +599,9 @@ fn a_review_comment_is_edited_in_its_thread() {
             ..reply
         };
     }
-    press(&mut s, ",e");
+    press(&mut s, "e");
     let Some(Overlay::Compose(c)) = &s.overlay else {
-        panic!(",e opens the composer")
+        panic!("e opens the composer")
     };
     assert_eq!(c.text(), "Good point, I'll spell it out.");
     let cmds = press(&mut s, "!<C-s>");
@@ -624,7 +630,7 @@ fn a_review_comment_is_edited_in_its_thread() {
             ..at
         };
     }
-    press(&mut s, ",e");
+    press(&mut s, "e");
     assert!(matches!(
         &s.overlay,
         Some(Overlay::Compose(c)) if matches!(c.target, crate::compose::Target::Review(crate::review::Comment::Draft { .. }))
@@ -827,7 +833,7 @@ fn big_file_timing_50k_lines() {
 
     // Full-file mode on 50k lines must stay interactive too.
     let start = Instant::now();
-    press(&mut s, "zf");
+    act(&mut s, Action::FullFile);
     terminal
         .draw(|frame| crate::view::view(&s, frame, NOW))
         .unwrap();

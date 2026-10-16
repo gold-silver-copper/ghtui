@@ -95,7 +95,7 @@ fn alert_lists_are_reached_from_the_security_tab_and_filter() {
 #[test]
 fn an_alert_is_dismissed_with_a_reason_and_followed() {
     let mut s = with_alert(AlertKind::CodeScanning, false);
-    assert!(press(&mut s, ",x").is_empty());
+    assert!(press(&mut s, "x").is_empty());
     let Some(Overlay::Picker(picker)) = &s.overlay else {
         panic!("no picker");
     };
@@ -127,7 +127,7 @@ fn an_alert_is_dismissed_with_a_reason_and_followed() {
 #[test]
 fn a_closed_alert_reopens_after_asking() {
     let mut s = with_alert(AlertKind::SecretScanning, true);
-    press(&mut s, ",x");
+    press(&mut s, "x");
     let Some(Overlay::Ask(confirm)) = &s.overlay else {
         panic!("no confirmation");
     };
@@ -139,7 +139,7 @@ fn a_closed_alert_reopens_after_asking() {
     });
     assert_eq!(*crate::fixtures::sent_change(&sent).0, change);
     let mut s = with_alert(AlertKind::SecretScanning, false);
-    press(&mut s, ",x");
+    press(&mut s, "x");
     let Some(Overlay::Picker(picker)) = &s.overlay else {
         panic!("no picker");
     };
@@ -155,7 +155,7 @@ fn a_closed_alert_reopens_after_asking() {
 #[test]
 fn a_rows_alert_loads_then_is_dismissed() {
     let mut s = with_alerts(AlertKind::Dependabot);
-    let cmds = press(&mut s, ",x");
+    let cmds = press(&mut s, "x");
     let key = DataKey::Alert(alert_ref(AlertKind::Dependabot, 2));
     assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
     let alert = fixtures::alert(AlertKind::Dependabot, 2);

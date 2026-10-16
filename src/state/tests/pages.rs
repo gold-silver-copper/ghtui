@@ -50,7 +50,7 @@ fn long_conversations_say_what_is_left_out() {
         (count("Conversation"), count("Commits")),
         (Some(101), Some(250))
     );
-    press(&mut state, "2gt");
+    press(&mut state, "2");
     assert!(page_text(&state).contains("… 248 earlier commits"));
 }
 
@@ -170,7 +170,7 @@ fn a_link_to_a_steps_line_opens_its_log() {
 #[test]
 fn a_filter_is_edited_in_place() {
     let mut state = with_repo();
-    press(&mut state, "2gt/label:bug");
+    press(&mut state, "2/label:bug");
     let Some(Overlay::Search(sb)) = &state.overlay else {
         panic!("not filtering");
     };

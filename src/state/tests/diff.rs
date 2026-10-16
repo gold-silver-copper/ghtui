@@ -124,7 +124,7 @@ fn the_review_tab_lists_drafts_and_threads_and_opens_them() {
         {
             break;
         }
-        press(&mut s, "j");
+        press(&mut s, "<Down>");
     }
     press(&mut s, "<Enter>");
     let screen = screen(&s);
@@ -162,7 +162,7 @@ fn select_draft(s: &mut State, id: u64) {
         {
             return;
         }
-        press(s, "j");
+        press(s, "<Down>");
     }
     panic!("no row for draft {id}");
 }
@@ -177,7 +177,7 @@ fn the_review_tab_edits_and_deletes_drafts() {
         "Name it for what it holds",
     )]);
     select_draft(&mut s, 1);
-    let cmds = press(&mut s, ",D");
+    let cmds = press(&mut s, "D");
     assert!(
         matches!(&cmds[..], [Cmd::SaveReview(_, r)] if r.pending.is_empty()),
         "{cmds:?}"
@@ -197,7 +197,7 @@ fn the_review_tab_edits_and_deletes_drafts() {
     );
     press(&mut s, "<C-z>");
     select_draft(&mut s, 1);
-    press(&mut s, ",e");
+    press(&mut s, "e");
     assert_eq!(screen(&s).of, DiffOf::Pr(pr));
     assert!(matches!(
         overlay!(s, Compose).target,
@@ -284,7 +284,7 @@ fn a_thread_row_keeps_the_cursor_across_a_rebuild() {
 fn viewed_state_applies_and_rolls_back_on_failure() {
     let (mut s, pr) = diff_state(120);
     // Before GitHub's state arrives, toggling explains why not.
-    assert!(press(&mut s, ",v").is_empty());
+    assert!(press(&mut s, "v").is_empty());
     warns(&s, "");
 
     diff_msg(
@@ -302,12 +302,12 @@ fn viewed_state_applies_and_rolls_back_on_failure() {
     );
 
     // Next unviewed skips the viewed file.
-    press(&mut s, "gg");
+    press(&mut s, "<Home>");
     act(&mut s, Action::NextUnviewed);
     assert_eq!(screen(&s).cursor.file, 1);
 
     // Toggle file 1 viewed: optimistic, then GitHub refuses.
-    let job = fixtures::sent::<crate::review::SetViewed>(&press(&mut s, ",v"));
+    let job = fixtures::sent::<crate::review::SetViewed>(&press(&mut s, "v"));
     assert!(job.viewed && job.previous == Viewed::Unviewed);
     assert_eq!(job.pull_request_id.as_str(), "PR_1");
     assert_eq!(
@@ -327,7 +327,7 @@ fn viewed_state_applies_and_rolls_back_on_failure() {
 #[test]
 fn nothing_is_saved_before_the_saved_review_is_read() {
     let (mut s, pr) = unread_diff_state(120);
-    press(&mut s, "]cjjj");
+    press(&mut s, "]<Down><Down><Down>");
     let cmds = press(&mut s, "m");
     assert!(!cmds.iter().any(|c| matches!(c, Cmd::SaveReview(..))));
 
@@ -373,10 +373,10 @@ fn unreadable_drafts_raise_a_lasting_problem() {
 fn review_marks_toggle_and_persist() {
     let (mut s, pr) = diff_state(120);
     // Off a changed line: nothing to mark.
-    assert!(press(&mut s, "gg").is_empty());
+    assert!(press(&mut s, "<Home>").is_empty());
     assert!(press(&mut s, "m").is_empty());
     // Onto the first change.
-    press(&mut s, "]cjjj");
+    press(&mut s, "]<Down><Down><Down>");
     let cmds = press(&mut s, "m");
     let Some(Cmd::SaveReview(saved_pr, review)) = cmds.first() else {
         panic!("{cmds:?}")
@@ -420,19 +420,18 @@ fn search_and_repeat() {
     warns(&s, "");
 }
 
-/// A count before `gg` goes to that new line of the file (or the
-/// nearest after it that shows).
+/// A number in the palette goes to that new line of the file.
 #[test]
-fn a_count_before_gg_goes_to_that_line() {
+fn a_line_number_in_the_palette_goes_to_that_line() {
     let (mut s, pr) = diff_state(120);
-    press(&mut s, "5gg");
+    press(&mut s, ":5<Enter>");
     let at = screen(&s).cursor;
     let doc = &s.diffs[&DiffOf::Pr(pr)].doc;
     let shown: Vec<_> = (doc.files().first().zip(doc.row(at)))
         .map(|(f, row)| f.shows(row).map(|p| p.line).collect())
         .unwrap_or_default();
     assert!(shown.iter().any(|&l| l >= 5), "{at:?}: {shown:?}");
-    press(&mut s, "9999gg");
+    press(&mut s, ":9999<Enter>");
     says(&s, "no line 9999");
 }
 
@@ -449,10 +448,9 @@ fn n_and_shift_n_follow_a_search_and_esc_ends_it() {
     let depth = s.screens.len();
     press(&mut s, "<Esc>");
     assert!(screen(&s).search.is_none(), "esc ends the search");
+    assert_eq!(s.screens.len(), depth, "and stays");
     press(&mut s, "<Esc>");
-    assert_eq!(s.screens.len(), depth, "and never leaves");
-    press(&mut s, "<C-o>");
-    assert_eq!(s.screens.len(), depth - 1, "ctrl-o goes back");
+    assert_eq!(s.screens.len(), depth - 1, "then goes back");
 }
 
 #[test]
@@ -470,7 +468,7 @@ fn file_finder_jumps_to_files() {
 #[test]
 fn whitespace_and_full_file_keep_the_cursor_line() {
     let (mut s, pr) = diff_state(120);
-    press(&mut s, "]cjjj");
+    press(&mut s, "]<Down><Down><Down>");
     let text = s.diffs[&DiffOf::Pr(pr.clone())]
         .doc
         .row_text(screen(&s).cursor);
@@ -482,7 +480,7 @@ fn whitespace_and_full_file_keep_the_cursor_line() {
             .row_text(screen(&s).cursor),
         text
     );
-    press(&mut s, "zw");
+    act(&mut s, Action::IgnoreWhitespace);
     assert_eq!(
         s.diffs[&DiffOf::Pr(pr)].doc.opts().whitespace,
         crate::diff::Whitespace::Ignore

@@ -33,7 +33,7 @@ fn said(s: &State) -> String {
 #[test]
 fn symbols_go_to_their_line() {
     let mut s = with_code();
-    press(&mut s, "gO");
+    act(&mut s, Action::Symbols);
     let Some(Overlay::Picker(p)) = &s.overlay else {
         panic!("no picker")
     };
@@ -49,15 +49,15 @@ fn symbols_go_to_their_line() {
 #[test]
 fn gd_finds_a_definition_in_the_file() {
     let mut s = with_code();
-    press(&mut s, "4gg");
+    press(&mut s, ":4<Enter>");
     assert_eq!(at(&s), (Some(4), Some("helper".into())));
-    press(&mut s, "gd");
+    press(&mut s, "g");
     assert_eq!(at(&s), (Some(8), Some("helper".into())), "{}", said(&s));
     // Not a name: says so.
     let mut s = with_code();
-    press(&mut s, "1ggwww");
+    press(&mut s, "<Home><C-Right><C-Right><C-Right>");
     assert_eq!(at(&s).1.as_deref(), Some("::"));
-    press(&mut s, "gd");
+    press(&mut s, "g");
     assert!(
         said(&s).contains("No name under the cursor"),
         "{}",
@@ -70,14 +70,14 @@ fn gd_finds_a_definition_in_the_file() {
 #[test]
 fn gd_asks_the_repository_for_one_outside_the_file() {
     let mut s = with_code();
-    press(&mut s, "5gg");
+    press(&mut s, ":5<Enter>");
     let ask = Ask {
         repo: ghtui(),
         rev: "main".into(),
         path: "src/lib.rs".into(),
         want: Want::Definition("other".into()),
     };
-    assert_eq!(press(&mut s, "gd"), [Cmd::Git(Git::Code(ask.clone()))]);
+    assert_eq!(press(&mut s, "g"), [Cmd::Git(Git::Code(ask.clone()))]);
     let answer = Answer {
         places: vec![Place {
             path: "src/other.rs".into(),
@@ -105,7 +105,7 @@ fn gd_asks_the_repository_for_one_outside_the_file() {
 #[test]
 fn repository_symbols_and_references_are_listed() {
     let mut s = with_code();
-    press(&mut s, "4gg");
+    press(&mut s, ":4<Enter>");
     let ask = |want| Ask {
         repo: ghtui(),
         rev: "main".into(),
@@ -118,7 +118,10 @@ fn repository_symbols_and_references_are_listed() {
         label: label.into(),
     };
     let symbols = ask(Want::Symbols);
-    assert_eq!(press(&mut s, "gS"), [Cmd::Git(Git::Code(symbols.clone()))]);
+    assert_eq!(
+        act(&mut s, Action::RepoSymbols),
+        [Cmd::Git(Git::Code(symbols.clone()))]
+    );
     let answer = Answer {
         places: vec![
             place("src/other.rs", 12, "fn other"),
@@ -130,9 +133,12 @@ fn repository_symbols_and_references_are_listed() {
     press(&mut s, "ioctl<Enter>");
     assert_eq!(at(&s).0, Some(10));
 
-    press(&mut s, "4gg");
+    press(&mut s, ":4<Enter>");
     let refs = ask(Want::References("helper".into()));
-    assert_eq!(press(&mut s, "gR"), [Cmd::Git(Git::Code(refs.clone()))]);
+    assert_eq!(
+        act(&mut s, Action::References),
+        [Cmd::Git(Git::Code(refs.clone()))]
+    );
     let answer = Answer {
         places: vec![
             place("src/lib.rs", 4, "helper(io::stdin());"),
@@ -174,18 +180,20 @@ fn repository_symbols_and_references_are_listed() {
     );
 }
 
-/// `*` searches a whole word: `io` isn't found in `ioctl`.
+/// Searching the word under the cursor finds the whole word: `io` isn't found in `ioctl`.
 #[test]
 fn star_matches_whole_words() {
     let mut s = with_code();
-    press(&mut s, "1ggwwww*");
+    press(&mut s, "<Home><C-Right><C-Right><C-Right><C-Right>");
+    act(&mut s, Action::SearchWord);
     assert_eq!(at(&s), (Some(4), Some("io".into())));
-    press(&mut s, "**");
+    act(&mut s, Action::SearchWord);
+    act(&mut s, Action::SearchWord);
     assert_eq!(at(&s), (Some(1), Some("io".into())), "around, past ioctl");
     assert!(said(&s).contains("Match 1 of 3"), "{}", said(&s));
 }
 
-/// In Files changed, `gO` and `gd` work on the file under the cursor,
+/// In Files changed, symbols and `g` work on the file under the cursor,
 /// at the new side's lines.
 #[test]
 fn symbols_and_definitions_in_the_diff() {
@@ -198,10 +206,11 @@ fn symbols_and_definitions_in_the_diff() {
         let doc = &s.diff().unwrap().doc;
         doc.line_at(screen.cursor, Side::Right).map(|l| l.line)
     };
-    press(&mut s, "gOorigin<Enter>");
+    act(&mut s, Action::Symbols);
+    press(&mut s, "origin<Enter>");
     assert_eq!(line(&s), Some(14));
     // `Self::new(…)`: its third word.
-    press(&mut s, "jwwwgd");
+    press(&mut s, "<Down><C-Right><C-Right><C-Right>g");
     assert_eq!(line(&s), Some(10), "{}", said(&s));
 }
 
@@ -211,7 +220,7 @@ fn a_search_match_is_the_word_gd_reads() {
     let mut s = with_code();
     press(&mut s, "/other<Enter>");
     assert_eq!(at(&s), (Some(5), Some("other".into())), "{}", said(&s));
-    press(&mut s, "gg/helper<Enter>");
+    press(&mut s, "<Home>/helper<Enter>");
     assert_eq!(at(&s), (Some(4), Some("helper".into())), "{}", said(&s));
     let mut long = "fn pad() {}\n".repeat(1500);
     long.push_str("fn last() {\n    valid_login(login).then(|| x);\n}\n");

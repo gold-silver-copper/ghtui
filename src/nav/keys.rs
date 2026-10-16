@@ -11,13 +11,10 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
     let Screen::Page(p) = state.screen_mut() else {
         return Vec::new();
     };
-    let half = (height / 2).max(1).cast_signed();
     let page = height.saturating_sub(2).max(1).cast_signed();
     match action {
         Action::Down => step(p, height, true),
         Action::Up => step(p, height, false),
-        Action::HalfPageDown => scroll_keep(p, half, height),
-        Action::HalfPageUp => scroll_keep(p, -half, height),
         Action::PageDown => scroll_keep(p, page, height),
         Action::PageUp => scroll_keep(p, -page, height),
         // The first or last row on screen there: a note (an empty Home
@@ -109,39 +106,18 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 }),
             }
         }
-        Action::NextItem | Action::PrevItem => {
-            p.fresh = false;
-            let n = p.page.items.len();
-            let next = match p.selected {
-                Some(i) if action == Action::NextItem => (i + 1 < n).then_some(i + 1),
-                Some(i) => i.checked_sub(1),
-                None if action == Action::NextItem => {
-                    (0..n).find(|&i| p.page.items.get(i).is_some_and(|it| it.start >= p.scroll))
-                }
-                None => (0..n).rev().find(|&i| {
-                    p.page
-                        .items
-                        .get(i)
-                        .is_some_and(|it| it.start < p.scroll + height)
-                }),
-            };
-            match next {
-                Some(i) => {
-                    p.selected = Some(i);
-                    if let Some(item) = p.page.items.get(i) {
-                        p.scroll = item.start.saturating_sub(MARGIN).min(max_scroll(p, height));
-                    }
-                }
-                None => state.info("No more here"),
-            }
-        }
         Action::NextSection | Action::PrevSection => {
             let at = (p.selected.and_then(|i| p.page.items.get(i))).map_or(p.scroll, |it| it.start);
             let sections = p.page.sections();
+            // Back is to the section before the one the selection is in.
+            let current = sections.iter().rev().find(|&&s| s <= at).copied();
             let to = if action == Action::NextSection {
                 sections.iter().find(|&&s| s > at)
             } else {
-                sections.iter().rev().find(|&&s| s < at)
+                sections
+                    .iter()
+                    .rev()
+                    .find(|&&s| current.is_none_or(|c| s < c))
             };
             let before = (p.scroll, p.selected);
             if let Some(line) = to.copied() {
@@ -166,48 +142,15 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 });
             }
         }
-        Action::ScreenTop | Action::ScreenMiddle | Action::ScreenBottom => {
-            let shown: Vec<usize> = (0..p.page.items.len())
-                .filter(|&i| is_row(p, i) && visible(p, i, height))
-                .collect();
-            let middle = p.scroll + height / 2;
-            let pick = match action {
-                Action::ScreenTop => shown.first(),
-                Action::ScreenBottom => shown.last(),
-                _ => shown.iter().min_by_key(|&&i| {
-                    p.page
-                        .items
-                        .get(i)
-                        .map_or(usize::MAX, |it| it.start.abs_diff(middle))
-                }),
-            };
-            match pick.copied() {
-                Some(i) if p.selected == Some(i) => state.info("Already there"),
-                Some(i) => {
-                    p.fresh = false;
-                    p.selected = Some(i);
-                }
-                None => state.info("Nothing to select on screen"),
-            }
-        }
-        Action::ScrollDown
-        | Action::ScrollUp
-        | Action::ScrollCenter
-        | Action::ScrollTop
-        | Action::ScrollBottom
-        | Action::ScrollLeft
-        | Action::ScrollRight => {
-            let before = (p.scroll, p.shift);
-            scroll_view(p, action, height);
-            if (p.scroll, p.shift) == before {
-                let why = match action {
+        Action::ScrollLeft | Action::ScrollRight => {
+            let (before, wide) = (p.shift, p.wide);
+            scroll_view(p, action);
+            if p.shift == before {
+                state.info(match action {
                     Action::ScrollLeft => "Already at the left edge",
-                    Action::ScrollRight if p.wide == 0 => "Nothing here is wider than the screen",
-                    Action::ScrollRight => "Already at the right edge",
-                    _ if p.page.height() <= height => "It all fits on the screen",
-                    _ => "Already there",
-                };
-                state.info(why);
+                    _ if wide == 0 => "Nothing here is wider than the screen",
+                    _ => "Already at the right edge",
+                });
             }
         }
         Action::WordNext | Action::WordPrev => {
@@ -256,7 +199,7 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::VisualLines if matches!(p.route, Route::Code(code::Blob { .. })) => {
             let (range, what) = match p.range {
                 Some(_) => (None, "Selection cleared"),
-                None => (p.selected, "Selecting lines · y copies their link"),
+                None => (p.selected, "Selecting lines · l copies their link"),
             };
             p.range = range;
             p.fresh = false;
@@ -297,12 +240,10 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::ToggleState => return cycle_state(state),
         Action::Sort => return cycle_sort(state),
         // A long review in a conversation.
-        Action::FoldClose | Action::FoldOpen | Action::FoldToggle => {
-            match crate::talk::fold_key(state, action) {
-                Some(cmds) => return cmds,
-                None => state.info("Select a long review or a hidden comment to fold or unfold it"),
-            }
-        }
+        Action::FoldToggle => match crate::talk::fold_key(state) {
+            Some(cmds) => return cmds,
+            None => state.info("Select a long review or a hidden comment to fold or unfold it"),
+        },
         _ => state.info(action.not_here()),
     }
     Vec::new()
@@ -311,31 +252,20 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
 /// Columns `h`/`l` scroll code sideways.
 pub(super) const SHIFT: usize = 8;
 
-/// `ctrl-e` `ctrl-y`, `zz` `zt` `zb`, `h` `l`: the view moves, the
-/// selection stays.
-pub(super) fn scroll_view(p: &mut PageScreen, action: Action, height: usize) {
-    let at = p
-        .selected
-        .and_then(|i| p.page.items.get(i))
-        .map_or(p.scroll, |it| it.start);
-    match action {
-        Action::ScrollDown => scroll_by(p, 1, height),
-        Action::ScrollUp => scroll_by(p, -1, height),
-        Action::ScrollTop => p.scroll = at.min(max_scroll(p, height)),
-        Action::ScrollBottom => {
-            p.scroll = (at + 1).saturating_sub(height).min(max_scroll(p, height));
-        }
-        Action::ScrollCenter => p.scroll = at.saturating_sub(height / 2).min(max_scroll(p, height)),
-        Action::ScrollLeft => p.shift = p.shift.saturating_sub(SHIFT),
-        _ => p.shift = p.shift.saturating_add(SHIFT).min(p.wide),
-    }
+/// `←` `→`: code moves sideways, the selection stays.
+pub(super) fn scroll_view(p: &mut PageScreen, action: Action) {
+    p.shift = match action {
+        Action::ScrollLeft => p.shift.saturating_sub(SHIFT),
+        _ => p.shift.saturating_add(SHIFT).min(p.wide),
+    };
 }
 
 pub(super) fn max_scroll(p: &PageScreen, height: usize) -> usize {
     p.page.height().saturating_sub(height)
 }
 
-/// A count before `gg`: that line of a file, else that row.
+/// Line `n` of a file (in the diff, of the file the cursor is in), else
+/// row `n`.
 #[must_use]
 pub fn go_to_line(state: &mut State, n: usize) -> Vec<Cmd> {
     let height = state.page_height();
@@ -381,7 +311,7 @@ pub fn go_to_line(state: &mut State, n: usize) -> Vec<Cmd> {
     Vec::new()
 }
 
-/// `gx`: the link under the cursor (a web address in the word under it,
+/// The link under the cursor (a web address in the word under it,
 /// else the selected row's), in the browser.
 #[must_use]
 pub fn open_link(state: &mut State) -> Vec<Cmd> {
@@ -391,18 +321,19 @@ pub fn open_link(state: &mut State) -> Vec<Cmd> {
     }
 }
 
-/// Esc on a page: ends a search on it or a selection of lines.
-pub fn cancel(state: &mut State) {
+/// Esc on a page: ends a search on it or a selection of lines; with
+/// neither, goes back.
+#[must_use]
+pub fn cancel(state: &mut State) -> Vec<Cmd> {
     if let Screen::Page(p) = state.screen_mut() {
         if p.range.take().is_some() {
             state.info("Selection cleared");
-            return;
+            return Vec::new();
         }
         if p.find.is_some() {
             find(state, "", true);
-            return;
+            return Vec::new();
         }
     }
-    let back = state.first_key(Action::Back);
-    state.info(format!("Nothing to cancel · {back} goes back"));
+    state.back()
 }

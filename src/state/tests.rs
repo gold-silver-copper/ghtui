@@ -58,7 +58,7 @@ fn with_prs(n: u64) -> State {
 }
 
 /// Runs an action that has no default key (it's in the menu).
-fn act(state: &mut State, action: Action) -> Vec<Cmd> {
+pub(super) fn act(state: &mut State, action: Action) -> Vec<Cmd> {
     let mut cmds = apply(state, action);
     state.sync_page();
     cmds.extend(state.settle_diff());

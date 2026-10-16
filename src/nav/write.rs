@@ -46,7 +46,7 @@ pub(super) fn quote_reply(state: &mut State) -> Vec<Cmd> {
             comment_with(state, &format!("> @{author} wrote:\n{quoted}\n"), Some(at))
         }
         _ => {
-            let down = state.first_key(Action::NextItem);
+            let down = state.first_key(Action::Down);
             state.just_say(format!(
                 "Select a comment to quote: {down} goes comment by comment"
             ))

@@ -53,12 +53,12 @@ fn select(s: &mut State, is: impl Fn(&Link) -> bool) {
         Screen::Page(p) => p.selected_link().is_some_and(&is),
         Screen::Diff(_) => false,
     };
-    press(s, "gg");
-    for _ in 0..12 {
+    press(s, "<Home>");
+    for _ in 0..200 {
         if selected(s) {
             return;
         }
-        press(s, "}");
+        press(s, "<Down>");
     }
     assert!(selected(s), "nothing selected is what's wanted");
 }
@@ -77,7 +77,7 @@ fn from_menu(s: &mut State, filter: &str) -> Vec<Cmd> {
 #[test]
 fn a_conversation_is_locked_with_a_reason_and_unlocked_after_asking() {
     let mut s = issue_with(|_| {});
-    press(&mut s, ",L");
+    act(&mut s, Action::Lock);
     assert!(matches!(pick(&s), Pick::Lock { .. }));
     press(&mut s, "heated");
     let cmds = press(&mut s, "<Enter>");
@@ -96,7 +96,7 @@ fn a_conversation_is_locked_with_a_reason_and_unlocked_after_asking() {
     assert!(s.following.is_none());
     assert!(screen_text(&s).contains("Locked as too heated"));
 
-    press(&mut s, ",L");
+    act(&mut s, Action::Lock);
     assert_eq!(
         overlay!(s, Ask).title,
         "Unlock the conversation on this issue?"
@@ -108,7 +108,7 @@ fn a_conversation_is_locked_with_a_reason_and_unlocked_after_asking() {
     assert_eq!(sent(&cmds).0, &unlock);
 
     let mut s = issue_with(|d| d.sidebar.labels = false);
-    press(&mut s, ",L");
+    act(&mut s, Action::Lock);
     says(&s, "that takes triage access");
 }
 
@@ -121,13 +121,13 @@ fn a_merged_pull_requests_branch_is_deleted_and_restored() {
         d.may.delete_head = true;
     };
     let mut s = pr_with(same);
-    press(&mut s, ",b");
+    act(&mut s, Action::DeleteBranch);
     says(&s, "It's still open");
     let mut s = pr_with(|d| {
         same(d);
         d.state = PrState::Merged;
     });
-    let cmds = press(&mut s, ",b");
+    let cmds = act(&mut s, Action::DeleteBranch);
     let delete = Change::Manage(Manage::DeleteBranch {
         repo: ghtui(),
         branch: "syntax-palette".into(),
@@ -141,7 +141,7 @@ fn a_merged_pull_requests_branch_is_deleted_and_restored() {
     });
     assert!(s.following.is_none());
     assert!(screen_text(&s).contains("branch deleted"));
-    let cmds = press(&mut s, ",b");
+    let cmds = act(&mut s, Action::DeleteBranch);
     let restore = Change::Manage(Manage::RestoreBranch {
         repo: ghtui(),
         branch: "syntax-palette".into(),
@@ -150,7 +150,7 @@ fn a_merged_pull_requests_branch_is_deleted_and_restored() {
     assert_eq!(sent(&cmds).0, &restore);
 
     let mut s = pr_with(|d| d.state = PrState::Merged);
-    press(&mut s, ",b");
+    act(&mut s, Action::DeleteBranch);
     says(&s, "Its branch is in octocat/ghtui");
 }
 
@@ -159,7 +159,7 @@ fn a_merged_pull_requests_branch_is_deleted_and_restored() {
 #[test]
 fn a_pull_request_converts_back_to_a_draft_after_asking() {
     let mut s = pr_with(|_| {});
-    press(&mut s, ",r");
+    act(&mut s, Action::ReadyForReview);
     assert!(overlay!(s, Ask).title.ends_with("to a draft?"));
     let cmds = press(&mut s, "<Enter>");
     let draft = Change::Manage(Manage::ConvertToDraft {
@@ -221,7 +221,7 @@ fn a_revert_opens_the_pull_request_github_makes() {
 #[test]
 fn an_issue_closes_as_a_duplicate_of_one_chosen() {
     let mut s = issue_with(|_| {});
-    press(&mut s, ",x");
+    press(&mut s, "x");
     let labels: Vec<&str> = overlay!(s, Ask)
         .choices
         .iter()
@@ -256,7 +256,7 @@ fn a_comment_is_hidden_with_a_reason_and_shows_folded() {
         &mut s,
         |l| matches!(l, Link::Quote { author, .. } if author == "hubot"),
     );
-    press(&mut s, ",H");
+    act(&mut s, Action::HideComment);
     press(&mut s, "topic");
     let cmds = press(&mut s, "<Enter>");
     let hide = Change::Manage(Manage::Hide {
@@ -275,9 +275,9 @@ fn a_comment_is_hidden_with_a_reason_and_shows_folded() {
     assert!(shown.contains("Hidden as off-topic"), "{shown}");
     assert!(!shown.contains("120 columns, centered?"), "{shown}");
     select(&mut s, |l| matches!(l, Link::Review(ReviewLink::Fold(_))));
-    press(&mut s, "za");
+    act(&mut s, Action::FoldToggle);
     assert!(screen_text(&s).contains("120 columns, centered?"));
-    let cmds = press(&mut s, ",H");
+    let cmds = act(&mut s, Action::HideComment);
     let unhide = Change::Manage(Manage::Unhide {
         comment: NodeId::new("IC_1"),
     });
@@ -291,7 +291,7 @@ fn sub_issues_and_what_blocks_an_issue_change_in_their_pickers() {
     let mut s = issue_with(|d| {
         d.sub_issues = vec![linked(2, "First"), linked(3, "Second")].into();
     });
-    press(&mut s, ",S");
+    act(&mut s, Action::SubIssues);
     let none = Data::OpenIssues(Box::default());
     fixtures::fetched(&mut s, DataKey::OpenIssues(ghtui()), none);
     let cmds = press(&mut s, "<A-Down>");
@@ -321,7 +321,7 @@ fn sub_issues_and_what_blocks_an_issue_change_in_their_pickers() {
     });
     assert!(s.following.is_none());
     s.overlay = None;
-    press(&mut s, ",S");
+    act(&mut s, Action::SubIssues);
     let cmds = press(&mut s, "<Enter>");
     let remove = Change::Manage(Manage::SubIssue {
         parent: NodeId::new("I_14"),
@@ -331,7 +331,7 @@ fn sub_issues_and_what_blocks_an_issue_change_in_their_pickers() {
     assert_eq!(sent(&cmds).0, &remove);
 
     let mut s = issue_with(|_| {});
-    press(&mut s, ",K");
+    act(&mut s, Action::BlockedBy);
     let cmds = press(&mut s, "#4<Enter>");
     let blocked = Change::Manage(Manage::BlockedBy {
         issue: NodeId::new("I_14"),
@@ -350,7 +350,7 @@ fn sub_issues_and_what_blocks_an_issue_change_in_their_pickers() {
 #[test]
 fn a_branch_for_an_issue_is_made_then_checked_out() {
     let mut s = issue_with(|_| {});
-    press(&mut s, ",c");
+    act(&mut s, Action::Checkout);
     let cmds = press(&mut s, "<Enter>");
     let branch = Change::Manage(Manage::LinkBranch {
         issue: NodeId::new("I_14"),
@@ -432,7 +432,7 @@ fn an_issue_is_pinned_and_transferred() {
 #[test]
 fn a_discussion_closes_with_a_reason() {
     let mut s = with_discussion();
-    press(&mut s, ",x");
+    press(&mut s, "x");
     let labels: Vec<&str> = overlay!(s, Ask)
         .choices
         .iter()

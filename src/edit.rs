@@ -243,7 +243,7 @@ fn page_spot(state: &State, about: &Subject, fallback: bool) -> Result<Spot, Str
         if fallback {
             return description(state, about);
         }
-        let next = state.first_key(Action::NextItem);
+        let next = state.first_key(Action::Down);
         return Err(format!(
             "Select a comment first: {next} goes comment by comment"
         ));
@@ -800,9 +800,6 @@ pub fn on_picker_key(state: &mut State, key: KeyEvent, rows: Rows) -> Vec<Cmd> {
             crate::nav::type_into(&mut p.input, key);
             p.selected = 0;
         }
-        // Reactions aren't filtered: j and k move, as in a list.
-        KeyCode::Char('j') => p.selected = (p.selected + 1).min(rows.len().saturating_sub(1)),
-        KeyCode::Char('k') => p.selected = p.selected.saturating_sub(1),
         _ => {}
     }
     Vec::new()

@@ -104,7 +104,7 @@ fn topics_and_starred_lists_read_as_on_github() {
 fn a_repository_is_put_in_a_list_and_followed() {
     let mut s = with_repo();
     let key = DataKey::MyLists(ghtui());
-    let cmds = press(&mut s, ",B");
+    let cmds = act(&mut s, Action::Lists);
     assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
     crate::fixtures::served(&mut s, &cmds);
     let Some(Overlay::Picker(p)) = &s.overlay else {
@@ -134,7 +134,7 @@ fn a_repository_is_put_in_a_list_and_followed() {
     assert!(s.following.is_none());
 
     // A new name makes the list, and puts the repository in it too.
-    press(&mut s, ",B");
+    act(&mut s, Action::Lists);
     let sent = press(&mut s, "Rust<Enter>");
     let w = crate::fixtures::sent::<crate::site::lists::SetLists>(&sent);
     assert_eq!(w.create.as_deref(), Some("Rust"));
@@ -146,7 +146,7 @@ fn a_repository_is_put_in_a_list_and_followed() {
 fn a_packages_version_is_deleted_after_asking() {
     let mut s = package();
     press(&mut s, "/sha256:3a7b<Enter>");
-    press(&mut s, ",D");
+    press(&mut s, "D");
     let Some(Overlay::Ask(ask)) = &s.overlay else {
         panic!("no question");
     };

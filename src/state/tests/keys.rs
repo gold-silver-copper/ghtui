@@ -24,25 +24,25 @@ fn j_moves_between_rows_and_scrolls_through_text() {
     assert!(first.contains(".github"), "{first}");
     // Through the files...
     for _ in 0..3 {
-        press(&mut state, "j");
+        press(&mut state, "<Down>");
     }
     assert!(selected_text(&state).contains("README.md"));
     // ...then the README scrolls, and the last row leaves the screen.
-    for _ in 0..12 {
-        press(&mut state, "j");
+    for _ in 0..200 {
+        press(&mut state, "<Down>");
     }
     let p = page(&state);
     assert!(p.scroll > 0);
     assert_eq!(p.selected, None, "nothing selected while reading");
-    press(&mut state, "G");
+    press(&mut state, "<End>");
     let p = page(&state);
     assert_eq!(p.scroll, p.page().height() - state.page_height());
     // Back up: rows get selected again once they're near.
     for _ in 0..20 {
-        press(&mut state, "k");
+        press(&mut state, "<Up>");
     }
     assert!(page(&state).selected.is_some());
-    press(&mut state, "gg");
+    press(&mut state, "<Home>");
     assert_eq!(page(&state).scroll, 0);
     assert_eq!(page(&state).selected, Some(0));
 }
@@ -50,7 +50,7 @@ fn j_moves_between_rows_and_scrolls_through_text() {
 #[test]
 fn h_l_and_u_move_like_a_file_manager() {
     let mut state = with_repo();
-    press(&mut state, "j<Enter>");
+    press(&mut state, "<Down><Enter>");
     let crates = Route::Code(code::Tree {
         repo: ghtui(),
         rev: "main".into(),
@@ -63,7 +63,7 @@ fn h_l_and_u_move_like_a_file_manager() {
         Route::Code(code::Repo(ghtui())),
         "u: the folder above"
     );
-    press(&mut state, "<C-o>");
+    press(&mut state, "<BS>");
     assert_eq!(route(&state), crates, "ctrl-o: back");
     press(&mut state, "uu");
     assert_eq!(
@@ -71,7 +71,7 @@ fn h_l_and_u_move_like_a_file_manager() {
         Route::user("gold-silver-copper"),
         "up from a repository: its owner"
     );
-    press(&mut state, "<C-o><C-o>");
+    press(&mut state, "<BS><BS>");
     assert_eq!(route(&state), crates);
 }
 
@@ -99,7 +99,7 @@ fn arrows_move_comment_by_comment_and_enter_quotes() {
     press(&mut state, "<Down>");
     assert_eq!(page(&state).selected, Some(0));
     assert!(page(&state).scroll > scroll);
-    for _ in 0..40 {
+    for _ in 0..200 {
         press(&mut state, "<Down>");
     }
     assert_eq!(page(&state).selected, Some(3), "the comment box at the end");
@@ -240,7 +240,7 @@ fn status_bar_hints_follow_the_context() {
     let hints: Vec<String> = state.key_hints().into_iter().map(|(_, w)| w).collect();
     assert_eq!(hints[..2], ["menu", "open"]);
     assert!(hints.contains(&"go to file".to_owned()));
-    press(&mut state, "2gt");
+    press(&mut state, "2");
     let hints: Vec<String> = state.key_hints().into_iter().map(|(_, w)| w).collect();
     assert!(
         hints.contains(&"filter".to_owned()) && hints.contains(&"tabs".to_owned()),
@@ -251,7 +251,7 @@ fn status_bar_hints_follow_the_context() {
 #[test]
 fn key_scopes_follow_the_screen() {
     let mut state = with_repo();
-    press(&mut state, "zw");
+    act(&mut state, Action::IgnoreWhitespace);
     // A review key on a page says where it works.
     says(&state, "Files changed");
     press(&mut state, "i");
@@ -271,14 +271,14 @@ pub(super) type Make = fn() -> State;
 /// links lead to.
 pub(super) fn screens() -> [(&'static str, Make); 31] {
     fn moved(mut s: State) -> State {
-        press(&mut s, "jj");
+        press(&mut s, "<Down><Down>");
         s
     }
     /// A page in a short terminal, scrolled into its middle, so every
     /// way of moving can move.
     fn mid(s: State) -> State {
         let mut s = super::sized(s, 100, 12);
-        press(&mut s, "j");
+        press(&mut s, "<Down>");
         s
     }
     [
@@ -296,7 +296,7 @@ pub(super) fn screens() -> [(&'static str, Make); 31] {
         ("commit", || with_commit()),
         ("commit files", || {
             let mut s = with_commit();
-            press(&mut s, "gtgt");
+            press(&mut s, "<Tab><Tab>");
             if let Some((screen, _)) = s.diff_parts() {
                 screen.cursor = Pos { file: 0, row: 4 };
             }
@@ -308,7 +308,7 @@ pub(super) fn screens() -> [(&'static str, Make); 31] {
         ("job", || {
             let mut s = super::sized(with_job(None), 100, 12);
             // Past the annotation and two steps: a line of the log.
-            press(&mut s, "ggjjj");
+            press(&mut s, "<Home><Down><Down><Down>");
             s
         }),
         ("workflow", || mid(with_workflow())),
@@ -323,7 +323,7 @@ pub(super) fn screens() -> [(&'static str, Make); 31] {
         // bottom when resized.
         ("blame", || {
             let mut s = super::sized(with_blame(), 100, 12);
-            press(&mut s, "ggj");
+            press(&mut s, "<Home><Down>");
             s
         }),
         ("gist", || mid(with_gist())),
@@ -362,11 +362,11 @@ fn no_action_is_silent() {
     assert!(silent.is_empty(), "silent:\n{}", silent.join("\n"));
 }
 
-/// `gt` walks a pull request's tabs into Files changed and `gT` walks
-/// back; so does a count before `gt`. They don't wrap around.
+/// `⇥` walks a pull request's tabs into Files changed and `⇧⇥` walks
+/// back; so do their numbers. They don't wrap around.
 #[test]
 fn tabs_go_into_the_files_and_back() {
-    let pairs = [("gtgtgt", "gTgTgT"), ("4gt", "1gt")];
+    let pairs = [("<Tab><Tab><Tab>", "<S-Tab><S-Tab><S-Tab>"), ("4", "1")];
     for (there, back) in pairs {
         let mut s = with_pr();
         let start = s.chrome().active;
@@ -375,7 +375,7 @@ fn tabs_go_into_the_files_and_back() {
         press(&mut s, back);
         assert!(matches!(s.screen(), Screen::Page(_)), "{back}");
         assert_eq!(s.chrome().active, start, "{back}");
-        press(&mut s, "gT");
+        press(&mut s, "<S-Tab>");
         assert_eq!(s.chrome().active, start, "no wrapping");
     }
 }
@@ -384,12 +384,12 @@ fn tabs_go_into_the_files_and_back() {
 #[test]
 fn commit_tabs_go_into_the_files_and_back() {
     let mut s = with_commit();
-    press(&mut s, "gt");
+    press(&mut s, "<Tab>");
     assert!(matches!(
         s.route(),
         Some(crate::route::Route::Code(code::CommitChecks { .. }))
     ));
-    press(&mut s, "gt");
+    press(&mut s, "<Tab>");
     assert!(
         matches!(s.screen(), Screen::Diff(d) if d.of == commit_of()),
         "the commit's diff, by its full ID"
@@ -401,15 +401,20 @@ fn commit_tabs_go_into_the_files_and_back() {
     ));
 }
 
-/// `esc` cancels and never leaves the page; `ctrl-o` goes back.
+/// `esc` cancels what there is to cancel, and with nothing, goes back,
+/// as `⌫` does.
 #[test]
-fn esc_never_leaves_the_page() {
+fn esc_cancels_then_goes_back() {
     let mut s = with_pr();
     let depth = s.screens.len();
-    press(&mut s, "<Esc>g<Esc>3<Esc><Esc>");
+    press(&mut s, "/");
+    press(&mut s, "<Esc>");
+    assert_eq!(s.screens.len(), depth, "esc closed the search");
+    press(&mut s, "<Esc>");
+    assert_eq!(s.screens.len(), depth - 1);
+    press(&mut s, "<A-Right>");
     assert_eq!(s.screens.len(), depth);
-    assert!(s.typed.is_empty() && s.count.is_none());
-    press(&mut s, "<C-o>");
+    press(&mut s, "<BS>");
     assert_eq!(s.screens.len(), depth - 1);
 }
 
@@ -419,58 +424,43 @@ fn esc_never_leaves_the_page() {
 fn page_tabs_keep_their_place() {
     let mut s = with_pr();
     let depth = s.screens.len();
-    press(&mut s, "4gt");
+    press(&mut s, "4");
     let at = Pos { file: 2, row: 3 };
     if let Screen::Diff(d) = s.screen_mut() {
         d.cursor = at;
     }
-    press(&mut s, "1gt");
+    press(&mut s, "1");
     assert!(matches!(s.screen(), Screen::Page(_)));
-    press(&mut s, "4gt");
+    press(&mut s, "4");
     assert!(matches!(s.screen(), Screen::Diff(d) if d.cursor == at));
     assert_eq!(s.screens.len(), depth, "no history");
 }
 
-/// After a key that starts sequences, a panel lists what can follow;
-/// a count goes before.
+/// A key of another screen says where it works, not what it would do.
 #[test]
-fn sequences_say_what_can_follow() {
+fn a_key_of_another_screen_says_where_it_works() {
     let mut s = with_pr();
-    press(&mut s, "2g");
-    let (typed, rows) = s.which_key().unwrap();
-    assert_eq!(typed, "2g…");
-    assert!(rows.iter().any(|r| r.key == "t"), "{rows:?}");
-    // Only what does something here: `gb` is a file's.
-    assert!(!rows.iter().any(|r| r.key == "b"), "{rows:?}");
     press(&mut s, "t");
-    assert_eq!(s.chrome().active, Some(1), "2gt: the second tab");
-    let depth = s.screens.len();
-    press(&mut s, "z");
-    press(&mut s, "q");
-    assert_eq!(
-        s.screens.len(),
-        depth,
-        "zq is no binding; q in it doesn't close"
-    );
-    // A key of another screen says so, not what it would do there.
-    press(&mut s, "w");
     let said = format!("{:?}", s.notices.shown());
-    assert!(said.contains("w does nothing here"), "{said}");
+    assert!(said.contains("t does nothing here"), "{said}");
+    assert!(said.contains("works on lists"), "{said}");
+    press(&mut s, "2");
+    assert_eq!(s.chrome().active, Some(1), "2: the second tab");
 }
 
-/// A file's lines are rows: a count goes to one, `y` copies its link,
-/// `V` a range's, and `gb` blames from there.
+/// A file's lines are rows: `:3` goes to one, `l` copies its link, `s`
+/// selects a range for it, and `b` blames from there.
 #[test]
 fn file_lines_copy_and_blame() {
     let mut s = super::with_file();
-    press(&mut s, "3gg");
+    press(&mut s, ":3<Enter>");
     let copied = |s: &mut State, keys: &str| match press(s, keys).as_slice() {
         [crate::state::Cmd::Copy(url)] => url.clone(),
         cmds => panic!("{cmds:?}"),
     };
-    assert!(copied(&mut s, "y").ends_with("src/main.rs#L3"));
-    assert!(copied(&mut s, "Vjjy").ends_with("src/main.rs#L3-L5"));
-    press(&mut s, "<Esc>gb");
+    assert!(copied(&mut s, "l").ends_with("src/main.rs#L3"));
+    assert!(copied(&mut s, "s<Down><Down>l").ends_with("src/main.rs#L3-L5"));
+    press(&mut s, "<Esc>b");
     assert!(matches!(
         s.route(),
         Some(Route::Code(code::Blame {
@@ -496,34 +486,33 @@ fn word_here(s: &State) -> (Option<u32>, Option<String>) {
 #[test]
 fn words_in_a_file() {
     let mut s = super::with_file();
-    press(&mut s, "1ggwww");
+    press(&mut s, "<Home><C-Right><C-Right><C-Right>");
     assert_eq!(word_here(&s), (Some(1), Some("::".into())));
-    press(&mut s, "wwwb");
+    press(&mut s, "<C-Right><C-Right><C-Right><C-Left>");
     assert_eq!(word_here(&s), (Some(1), Some("io".into())));
-    press(&mut s, "*");
+    act(&mut s, Action::SearchWord);
     assert_eq!(word_here(&s), (Some(4), Some("io".into())));
     assert!(format!("{:?}", s.notices.shown()).contains("Match 2 of 2"));
-    press(&mut s, "#");
+    press(&mut s, "N");
     assert_eq!(word_here(&s), (Some(1), Some("io".into())));
-    // `n` after `#` goes on up: there's nothing above.
-    press(&mut s, "n");
-    assert!(format!("{:?}", s.notices.shown()).contains("No earlier match"));
 }
 
-/// `gx` opens the web address under the word cursor; elsewhere on
-/// the line, its link.
+/// Opening the link under the cursor opens the web address under the
+/// word cursor; elsewhere on the line, its link.
 #[test]
 fn gx_opens_the_address_under_the_cursor() {
     let mut s = super::with_repo();
     let route = Route::blob(super::ghtui(), "main".into(), "a.rs".into());
     let blob = crate::fixtures::file("a.rs", "// See https://example.com/docs.\n");
     super::open(&mut s, route, crate::data::Data::Blob(Box::new(blob)));
-    let opened = |s: &mut State, keys: &str| match press(s, keys).as_slice() {
+    let opened = |s: &mut State| match super::act(s, Action::OpenLink).as_slice() {
         [crate::state::Cmd::OpenUrl(url)] => url.clone(),
         cmds => panic!("{cmds:?}"),
     };
-    assert!(opened(&mut s, "1gggx").ends_with("/a.rs#L1"));
-    assert_eq!(opened(&mut s, "wwwwgx"), "https://example.com/docs");
+    press(&mut s, ":1<Enter>");
+    assert!(opened(&mut s).ends_with("/a.rs#L1"));
+    press(&mut s, "<C-Right><C-Right><C-Right><C-Right>");
+    assert_eq!(opened(&mut s), "https://example.com/docs");
 }
 
 /// In Files changed, `w` moves along the cursor's line and `*` goes
@@ -541,20 +530,23 @@ fn words_in_the_diff() {
             .unwrap_or_default()
             .to_owned()
     };
-    for _ in 0..40 {
+    for _ in 0..200 {
         if code(&s).contains("pub fn new") {
             break;
         }
-        press(&mut s, "j");
+        press(&mut s, "<Down>");
     }
-    press(&mut s, "wwwwwww");
+    press(
+        &mut s,
+        "<C-Right><C-Right><C-Right><C-Right><C-Right><C-Right><C-Right>",
+    );
     let Screen::Diff(screen) = s.screen() else {
         panic!()
     };
     assert_eq!(screen.word, Some(18), "the first i32");
-    press(&mut s, "*");
+    act(&mut s, Action::SearchWord);
     assert!(code(&s).contains("as i32"), "{}", code(&s));
-    press(&mut s, "#");
+    press(&mut s, "N");
     assert!(code(&s).contains("pub fn new"), "{}", code(&s));
 }
 
@@ -563,12 +555,12 @@ fn words_in_the_diff() {
 #[test]
 fn log_lines_are_rows() {
     let mut s = with_job(Some((3, 2)));
-    let copied = |s: &mut State| match press(s, "y").as_slice() {
+    let copied = |s: &mut State| match press(s, "l").as_slice() {
         [crate::state::Cmd::Copy(url)] => url.clone(),
         cmds => panic!("{cmds:?}"),
     };
     assert!(copied(&mut s).ends_with("/actions/runs/7/job/2#step:3:2"));
-    press(&mut s, "j");
+    press(&mut s, "<Down>");
     let url = copied(&mut s);
     assert!(url.ends_with("#step:3:3"), "{url}");
     press(&mut s, "<Enter>");
@@ -603,7 +595,7 @@ fn blame_runs_open_their_commit() {
         link.as_ref().is_some_and(|l| l.contains("/commit/bbbbbbb")),
         "{link:?}"
     );
-    press(&mut s, "ggj");
+    press(&mut s, "<Home><Down>");
     assert!(selected(&s).is_some_and(|l| l.contains("/commit/")));
     press(&mut s, "<Enter>");
     assert!(matches!(s.route(), Some(Route::Code(code::Commit { .. }))));
@@ -623,7 +615,7 @@ fn pr_commits_step_and_go_up() {
     };
     let first = "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567";
     let _ = s.push(commit(first));
-    press(&mut s, "]C");
+    act(&mut s, Action::NextCommit);
     assert_eq!(
         s.route(),
         Some(&commit("1b2c3d4e5f60718293a4b5c6d7e8f9012345678a"))
@@ -644,11 +636,11 @@ fn a_quote_reply_opens_under_the_comment() {
         }
         Screen::Diff(_) => false,
     };
-    for _ in 0..10 {
+    for _ in 0..200 {
         if on_hubot(&s) {
             break;
         }
-        press(&mut s, "}");
+        press(&mut s, "<Down>");
     }
     assert!(on_hubot(&s), "hubot's comment is selected");
     press(&mut s, "<Enter>");
@@ -671,8 +663,8 @@ fn a_quote_reply_opens_under_the_comment() {
 #[test]
 fn vim_keys_work_in_the_menu() {
     let mut s = with_pr();
-    press(&mut s, "<Space>h");
+    press(&mut s, "<Space><Left>");
     assert!(s.overlay.is_none());
-    press(&mut s, "<Space>l");
+    press(&mut s, "<Space><Right>");
     assert!(!matches!(s.overlay, Some(Overlay::Menu(_))));
 }

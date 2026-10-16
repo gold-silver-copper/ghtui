@@ -19,7 +19,7 @@ fn threads_show_navigate_and_resolve() {
         ])),
     );
     assert_eq!(s.diffs[&DiffOf::Pr(pr.clone())].doc.annotations().len(), 2);
-    press(&mut s, "gg");
+    press(&mut s, "<Home>");
     act(&mut s, Action::NextThread);
     let at = s.diffs[&DiffOf::Pr(pr.clone())]
         .doc
@@ -33,12 +33,7 @@ fn threads_show_navigate_and_resolve() {
     let hints = s.key_hints();
     assert_eq!(
         hints.get(1..3),
-        Some(
-            &[
-                ("c".into(), "reply".into()),
-                (",t".into(), "resolve".into())
-            ][..]
-        )
+        Some(&[("c".into(), "reply".into()), ("x".into(), "resolve".into())][..])
     );
 
     // Resolve: optimistic, rolled back on failure.
@@ -50,12 +45,41 @@ fn threads_show_navigate_and_resolve() {
     warns(&s, "");
 
     // Resolved, it can be unresolved straight away.
-    press(&mut s, "gg");
+    press(&mut s, "<Home>");
     act(&mut s, Action::NextThread);
     let job = fixtures::sent::<crate::review::Resolve>(&act(&mut s, Action::ResolveThread));
     fixtures::done(&mut s, job, Ok(()));
     let open = &s.diffs[&DiffOf::Pr(pr.clone())].inputs().thread_list()[1];
     assert!(open.resolved && open.can_unresolve);
+}
+
+/// On a thread, `c` replies; with lines selected, it comments on them,
+/// even with the cursor moved onto a thread's rows.
+#[test]
+fn c_comments_on_selected_lines_even_across_a_thread() {
+    let (mut s, pr) = diff_state(120);
+    let open = thread("open", Some(14), false, false);
+    diff_msg(&mut s, &pr, DiffMsg::ThreadsLoaded(Ok(vec![open])));
+    press(&mut s, "<Home>");
+    act(&mut s, Action::NextThread);
+    press(&mut s, "c");
+    let target = &overlay!(s, Compose).target;
+    assert!(
+        matches!(
+            target,
+            compose::Target::Review(crate::review::Comment::Reply { .. })
+        ),
+        "{target:?}"
+    );
+    press(&mut s, "<Esc><Up>s<Down>c");
+    let target = &overlay!(s, Compose).target;
+    assert!(
+        matches!(
+            target,
+            compose::Target::Review(crate::review::Comment::Line { .. })
+        ),
+        "{target:?}"
+    );
 }
 
 #[test]
@@ -156,7 +180,7 @@ fn selections_across_hunks_are_refused() {
         }])),
     );
     to_line(&mut s, "A point in 2D");
-    press(&mut s, "x");
+    press(&mut s, "s");
     to_line(&mut s, "origin");
     press(&mut s, "c");
     assert!(s.overlay.is_none());
@@ -167,7 +191,7 @@ fn selections_across_hunks_are_refused() {
 fn cancelling_a_comment_keeps_the_selection() {
     let (mut s, _) = diff_state(120);
     to_line(&mut s, "A point in 2D");
-    press(&mut s, "Vjc<Esc>");
+    press(&mut s, "s<Down>c<Esc>");
     assert!(s.overlay.is_none());
     assert!(screen(&s).selection.is_some(), "the selection survives");
     // Again, and the comment covers the same lines.
@@ -198,7 +222,7 @@ fn typed_text_survives_one_press_of_each_discard_key() {
     assert!(matches!(&s.overlay, Some(Overlay::Compose(c)) if c.text() == "nit"));
 
     let (mut s, _) = diff_state(120);
-    press(&mut s, ",slooks good<Esc>");
+    press(&mut s, "<C-s>looks good<Esc>");
     assert!(matches!(&s.overlay, Some(Overlay::Submit(d)) if d.input.lines() == ["looks good"]));
     press(&mut s, "!<Esc><Esc>");
     assert!(s.overlay.is_none());
@@ -213,7 +237,7 @@ fn submit_with_rejection_then_fix_and_resubmit() {
     press(&mut s, "<C-s>");
     let id = s.diffs[&DiffOf::Pr(pr.clone())].inputs().review.pending[0].id;
 
-    press(&mut s, ",s");
+    press(&mut s, "<C-s>");
     assert!(matches!(s.overlay, Some(Overlay::Submit(_))));
     press(&mut s, "<Tab>");
     let submit = fixtures::sent::<crate::review::Submit>(&press(&mut s, "<C-s>"));
@@ -243,7 +267,7 @@ fn submit_with_rejection_then_fix_and_resubmit() {
         s.diffs[&DiffOf::Pr(pr.clone())].inputs().review.pending[0].line,
         None
     );
-    press(&mut s, ",s");
+    press(&mut s, "<C-s>");
     let submit = fixtures::sent::<crate::review::Submit>(&press(&mut s, "<C-s>"));
     let outcome = SubmitOutcome {
         accepted: vec![id],
@@ -272,7 +296,7 @@ fn submit_with_rejection_then_fix_and_resubmit() {
 #[test]
 fn request_changes_needs_a_summary() {
     let (mut s, _) = diff_state(120);
-    press(&mut s, ",s");
+    press(&mut s, "<C-s>");
     press(&mut s, "<Tab><Tab>");
     assert!(press(&mut s, "<C-s>").is_empty());
     assert!(matches!(&s.overlay, Some(Overlay::Submit(d)) if d.sent.error.is_some()));
@@ -286,7 +310,7 @@ fn replies_post_right_away() {
         &pr,
         DiffMsg::ThreadsLoaded(Ok(vec![thread("t", Some(14), false, false)])),
     );
-    press(&mut s, "gg");
+    press(&mut s, "<Home>");
     act(&mut s, Action::NextThread);
     press(&mut s, "c");
     press(&mut s, "Fixed");
@@ -441,7 +465,7 @@ fn c_on_a_draft_comments_where_it_is() {
 #[test]
 fn a_draft_is_edited_and_deleted_by_the_comment_keys() {
     let (mut s, pr) = on_draft(vec![fixtures::draft(1, 14, "Use a constant")], 1);
-    press(&mut s, ",e");
+    press(&mut s, "e");
     assert!(matches!(
         overlay!(s, Compose).target,
         compose::Target::Review(crate::review::Comment::Draft { id: 1 })
@@ -455,7 +479,7 @@ fn a_draft_is_edited_and_deleted_by_the_comment_keys() {
         s.diffs[&of].inputs().review.pending[0].body,
         "Use a constant!"
     );
-    let cmds = press(&mut s, ",D");
+    let cmds = press(&mut s, "D");
     assert!(matches!(&cmds[..], [Cmd::SaveReview(_, r)] if r.pending.is_empty()));
     says(&s, "ctrl-z");
 }
@@ -483,7 +507,7 @@ fn the_cursor_stays_on_a_thread_it_resolves() {
         d.cursor = last;
     }
     for resolved in [true, false] {
-        let job = fixtures::sent::<crate::review::Resolve>(&press(&mut s, ",t"));
+        let job = fixtures::sent::<crate::review::Resolve>(&press(&mut s, "x"));
         assert_eq!(job.resolved, resolved);
         let doc = &s.diffs[&of].doc;
         assert_eq!(
@@ -502,18 +526,18 @@ fn the_cursor_stays_on_a_thread_it_resolves() {
 #[test]
 fn g_ends_in_the_last_file_and_c_between_files_says_why() {
     let (mut s, pr) = diff_state(120);
-    press(&mut s, "G");
+    press(&mut s, "<End>");
     let doc = &s.diffs[&DiffOf::Pr(pr)].doc;
     let at = screen(&s).cursor;
     assert_eq!(at.file, doc.files().len() - 1);
     assert_ne!(doc.row(at), Some(Row::Spacer));
-    press(&mut s, "j");
+    press(&mut s, "<Down>");
     assert_eq!(screen(&s).cursor, at);
     if let Screen::Diff(d) = s.screens.last_mut() {
         d.cursor = Pos { file: 0, row: 0 };
     }
-    press(&mut s, "]f");
-    press(&mut s, "k");
+    press(&mut s, "<S-Down>");
+    press(&mut s, "<Up>");
     let doc = &s.diffs[&DiffOf::Pr(PrRef::parse("o/r#7").unwrap())].doc;
     assert_eq!(doc.row(screen(&s).cursor), Some(Row::Spacer));
     press(&mut s, "c");
@@ -532,7 +556,7 @@ fn a_match_shows_with_its_thread() {
         &pr,
         DiffMsg::ThreadsLoaded(Ok(vec![thread("open", Some(14), false, false)])),
     );
-    press(&mut s, "gg");
+    press(&mut s, "<Home>");
     to_line(&mut s, "origin");
     let doc = &s.diffs[&DiffOf::Pr(pr)].doc;
     let screen = screen(&s);

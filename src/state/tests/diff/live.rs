@@ -115,7 +115,7 @@ fn a_comment_before_the_first_answer_is_fetched() {
 fn nothing_else_is_polled() {
     let (mut s, _) = diff_state(120);
     next_ask(&mut s);
-    press(&mut s, "gh");
+    press(&mut s, "h");
     let scheduled = timers(&mut s)
         .into_iter()
         .any(|cmd| matches!(cmd, Cmd::Timer(Timer::Watch(_), _)));

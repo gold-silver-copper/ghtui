@@ -26,12 +26,12 @@ fn select(s: &mut State, author: &str, text: &str) {
             Some(Link::Quote { author: a, body, .. }) if a == author && body.starts_with(text)),
         Screen::Diff(_) => false,
     };
-    press(s, "gg");
-    for _ in 0..12 {
+    press(s, "<Home>");
+    for _ in 0..200 {
         if on(s) {
             return;
         }
-        press(s, "}");
+        press(s, "<Down>");
     }
     panic!("{author}'s “{text}” isn't selected");
 }
@@ -97,7 +97,7 @@ fn c_answers_or_replies_in_the_thread() {
 fn the_answer_is_marked_and_unmarked() {
     let mut s = with_discussion();
     select(&mut s, "monalisa", "Drafts");
-    let cmds = press(&mut s, ",!");
+    let cmds = act(&mut s, Action::MarkAnswer);
     let mark = Change::Discussion(Discuss::Answer {
         comment: NodeId::new("DC_18765100"),
         on: true,
@@ -113,7 +113,7 @@ fn the_answer_is_marked_and_unmarked() {
 
     let mut s = with_discussion();
     select(&mut s, "hubot", "Fetch");
-    let cmds = press(&mut s, ",!");
+    let cmds = act(&mut s, Action::MarkAnswer);
     let unmark = Change::Discussion(Discuss::Answer {
         comment: NodeId::new("DC_18765024"),
         on: false,
@@ -121,11 +121,11 @@ fn the_answer_is_marked_and_unmarked() {
     assert_eq!(sent(&cmds).0, &unmark);
 
     select(&mut s, "octocat", "That works");
-    assert!(press(&mut s, ",!").is_empty());
+    assert!(act(&mut s, Action::MarkAnswer).is_empty());
     says(&s, "A reply can't be the answer, only a comment");
     deliver(&mut s, |d| d.answerable = false);
     select(&mut s, "monalisa", "Drafts");
-    press(&mut s, ",!");
+    act(&mut s, Action::MarkAnswer);
     says(&s, "Q&A doesn't take answers");
 }
 
@@ -136,7 +136,7 @@ fn the_answer_is_marked_and_unmarked() {
 fn comments_are_reacted_to_edited_and_deleted() {
     let mut s = with_discussion();
     select(&mut s, "monalisa", "Drafts");
-    press(&mut s, ",+");
+    press(&mut s, "+");
     assert!(matches!(s.overlay, Some(Overlay::Picker(_))));
     let cmds = press(&mut s, "<Enter>");
     let react = Change::Edit(Edit::React {
@@ -163,16 +163,16 @@ fn comments_are_reacted_to_edited_and_deleted() {
     });
     assert!(s.following.is_none());
 
-    press(&mut s, ",e");
+    press(&mut s, "e");
     says(&s, "GitHub doesn't let you edit monalisa's comment");
     select(&mut s, "octocat", "That works");
-    press(&mut s, ",e");
+    press(&mut s, "e");
     let Some(Overlay::Compose(c)) = &s.overlay else {
         panic!("no composer");
     };
     assert_eq!(c.text(), "That works, thanks!");
     s.overlay = None;
-    press(&mut s, ",D");
+    press(&mut s, "D");
     let Some(Overlay::Ask(c)) = &s.overlay else {
         panic!("not asked");
     };

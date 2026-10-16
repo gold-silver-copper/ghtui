@@ -276,32 +276,14 @@ pub(super) fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     // that (the messages list keeps it).
     let dismissing = matches!(state.notices.dismiss(), Some(Notice::Error(_)));
     if dismissing && key.code == KeyCode::Esc {
-        (state.typed, state.count) = (Vec::new(), None);
         return Vec::new();
     }
-    let key = Key::from(key);
-    // Digits before a binding are a count.
-    if let Some(digit) = key.digit().filter(|_| state.typed.is_empty())
-        && (digit > 0 || state.count.is_some())
-    {
-        let count = state.count.unwrap_or(0).saturating_mul(10);
-        state.count = Some(count.saturating_add(digit as usize).min(MAX_COUNT));
-        return Vec::new();
-    }
-    state.typed.push(key);
-    let resolved = state.keymap.resolve(&state.typed, state.contexts());
-    if resolved == Resolved::Wait {
-        return Vec::new();
-    }
-    let typed = std::mem::take(&mut state.typed);
-    let count = state.count.take();
-    match resolved {
-        Resolved::Run(action) => run(state, action, count),
-        // Esc gives up on keys typed so far.
-        _ if typed.len() > 1 && key.code == KeyCode::Esc => Vec::new(),
-        _ => {
-            let shown = crate::keymap::pretty_keys(&typed);
-            match state.keymap.elsewhere(&typed) {
+    let key = crate::keymap::Key::from(key);
+    match state.keymap.resolve(key, state.contexts()) {
+        Some(action) => apply(state, action),
+        None => {
+            let shown = crate::keymap::pretty(key);
+            match state.keymap.elsewhere(key) {
                 Some(action) => {
                     state.info(format!("{shown} does nothing here · {}", action.not_here()));
                 }
@@ -315,27 +297,6 @@ pub(super) fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     }
 }
 
-/// The largest count typed.
-pub(super) const MAX_COUNT: usize = 9999;
-
-/// Runs `action`, `count` times if it's a motion. With a count, top goes
-/// to that line or row and the next tab is that tab.
-#[must_use]
-pub fn run(state: &mut State, action: Action, count: Option<usize>) -> Vec<Cmd> {
-    match (action, count) {
-        (Action::Top, Some(n)) => nav::go_to_line(state, n),
-        (Action::NextTab, Some(n)) => nav::switch_tab(state, n),
-        (action, Some(n)) if action.repeats() => {
-            let mut cmds = Vec::new();
-            for _ in 0..n {
-                cmds.extend(apply(state, action));
-            }
-            cmds
-        }
-        (action, _) => apply(state, action),
-    }
-}
-
 #[must_use]
 pub(super) fn on_search_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     let Some(Overlay::Find(input)) = &mut state.overlay else {
@@ -346,14 +307,13 @@ pub(super) fn on_search_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         KeyCode::Enter => {
             let query = input.lines().join("");
             state.overlay = None;
-            let forward = !state.backwards;
             if !query.is_empty() {
                 match state.diff_parts() {
                     Some((screen, diff)) => {
-                        let found = diff_screen::search(screen, diff, query, forward);
+                        let found = diff_screen::search(screen, diff, query, true);
                         state.notices.say(found);
                     }
-                    None => nav::find(state, &query, forward),
+                    None => nav::find(state, &query, true),
                 }
             }
         }
@@ -373,26 +333,10 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Screen::Page(_) => None,
     };
     match action {
-        Action::Quit => state.quit = true,
-        // After `?`, `n` goes up and `N` down.
-        Action::SearchNext | Action::SearchPrev if state.backwards => {
-            let flipped = if action == Action::SearchNext {
-                Action::SearchPrev
-            } else {
-                Action::SearchNext
-            };
-            state.backwards = false;
-            let cmds = apply(state, flipped);
-            state.backwards = true;
-            return cmds;
+        Action::Quit => {
+            state.quit = crate::compose::may_discard(state, "q", "quit and discard");
         }
-        Action::CloseView if state.screens.len() > 1 => return state.back(),
-        Action::CloseView if state.tab_count() > 1 => return state.close_tab(),
-        Action::CloseView => {
-            let quit = state.first_key(Action::Quit);
-            state.info(format!("Nothing left to close · {quit} quits"));
-        }
-        // Esc ends a search or selection, and never leaves.
+        // Esc ends a search or selection; with neither, it goes back.
         Action::Cancel if diff == Some(true) => {
             if let Screen::Diff(screen) = state.screen_mut() {
                 (screen.search, screen.selection) = (None, None);
@@ -403,7 +347,7 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         {
             nav::search_log(state, "");
         }
-        Action::Cancel => nav::cancel(state),
+        Action::Cancel => return nav::cancel(state),
         Action::Back => return state.back(),
         Action::Forward => return state.go_forward(),
         // From the files, up is the pull request.
@@ -435,18 +379,12 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
             state.info("Already home");
         }
         Action::GoHome => return state.push(Route::App(app::Home)),
-        Action::Search | Action::SearchBack if diff.is_some() || !nav::searches_itself(state) => {
-            state.backwards = action == Action::SearchBack;
+        Action::Search if diff.is_some() || !nav::searches_itself(state) => {
             let input = nav::new_input(&state.theme, Bg::Container);
             state.overlay = Some(Overlay::Find(Box::new(input)));
         }
-        Action::Search | Action::SearchBack => {
-            state.backwards = action == Action::SearchBack;
-            return state.open_search(false);
-        }
-        Action::SearchWord | Action::SearchWordBack => {
-            return nav::search_word(state, action == Action::SearchWord);
-        }
+        Action::Search => return state.open_search(false),
+        Action::SearchWord => return nav::search_word(state),
         Action::OpenLink => return nav::open_link(state),
         Action::Symbols => return crate::code_nav::symbols(state),
         Action::Definition => return crate::code_nav::definition(state),

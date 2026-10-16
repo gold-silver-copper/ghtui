@@ -3,6 +3,20 @@
 use super::*;
 use crate::route::{app, code, search};
 
+/// `]` and `[` go from section to section, either way: back from a
+/// section's first row is the section before, not the one it's in.
+#[test]
+fn sections_go_both_ways() {
+    let mut state = with_prs(2);
+    crate::fixtures::section(&mut state, 0, mine(2, 2));
+    press(&mut state, "<Home>");
+    let first = page(&state).selected;
+    press(&mut state, "]");
+    assert!(page(&state).selected > first, "{:?}", page(&state).selected);
+    press(&mut state, "[");
+    assert_eq!(page(&state).selected, first);
+}
+
 #[test]
 fn home_selects_the_first_row_and_opens_it() {
     let mut state = with_prs(3);
@@ -11,9 +25,9 @@ fn home_selects_the_first_row_and_opens_it() {
         selected_text(&state).contains("PR 1"),
         "a fresh page selects its first row"
     );
-    press(&mut state, "j");
+    press(&mut state, "<Down>");
     assert!(selected_text(&state).contains("PR 2"));
-    press(&mut state, "k");
+    press(&mut state, "<Up>");
     let cmds = fetches(press(&mut state, "<Enter>"));
     let pr = PrRef::parse("o/r#1").unwrap();
     assert_eq!(
@@ -36,7 +50,7 @@ fn home_selects_the_first_row_and_opens_it() {
         "the activity is still loading"
     );
 
-    press(&mut state, "<C-o>");
+    press(&mut state, "<BS>");
     assert_eq!(route(&state), Route::App(app::Home));
     assert!(
         selected_text(&state).contains("PR 1"),
@@ -44,15 +58,11 @@ fn home_selects_the_first_row_and_opens_it() {
     );
     act(&mut state, Action::Forward);
     assert_eq!(route(&state), Route::pr(pr), "forward again");
-    press(&mut state, "gh");
-    assert!(!state.quit);
-    // q closes a view; ZZ, or :q in the palette, quits.
-    press(&mut state, "q");
-    assert!(!state.quit);
+    // q quits, as :q in the palette does.
     press(&mut state, ":q<Enter>");
     assert!(state.quit, ":q quits");
     state.quit = false;
-    press(&mut state, "ZZ");
+    press(&mut state, "q");
     assert!(state.quit);
 }
 
@@ -68,7 +78,7 @@ fn a_section_opens_the_rest_of_its_list() {
     state.sync_page();
     let text = page_text(&state);
     assert!(text.contains("Your pull requests  5 of 31"), "{text:?}");
-    press(&mut state, "G");
+    press(&mut state, "<End>");
     assert_eq!(selected_text(&state).trim(), "… 26 more");
     let key = mine_key(&state);
     press(&mut state, "<Enter>");
@@ -77,7 +87,7 @@ fn a_section_opens_the_rest_of_its_list() {
     };
     assert_eq!(route(&state), Route::Search(search::Search { kind, query }));
     assert!(selected_text(&state).contains("PR 1"), "the same list");
-    press(&mut state, "<C-o>");
+    press(&mut state, "<BS>");
     let cmds = press(&mut state, "o");
     let [Cmd::OpenUrl(url)] = cmds.as_slice() else {
         panic!("{cmds:?}")
@@ -92,13 +102,13 @@ fn a_section_opens_the_rest_of_its_list() {
 fn home_sections_are_changed_in_the_config() {
     use crate::home::{Edit, EditConfig};
     let mut state = with_prs(2);
-    press(&mut state, "j");
+    press(&mut state, "<Down>");
     assert!(matches!(state.section_here(), Some((1, _))));
-    let job = fixtures::sent::<EditConfig>(&press(&mut state, "<A-Up>"));
+    let job = fixtures::sent::<EditConfig>(&act(&mut state, Action::MoveSectionUp));
     assert_eq!(job.edit, Edit::Move { at: 1, up: true });
     assert_eq!(job.shown, crate::home::defaults());
     assert!(
-        press(&mut state, "<A-Up>").is_empty(),
+        act(&mut state, Action::MoveSectionUp).is_empty(),
         "one change at a time"
     );
     let mut moved = crate::home::defaults();

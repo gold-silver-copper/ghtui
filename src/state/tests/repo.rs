@@ -120,7 +120,7 @@ fn repo_tabs_filters_state_sort_and_star() {
             "Insights"
         ]
     );
-    let cmds = fetches(press(&mut state, "2gt"));
+    let cmds = fetches(press(&mut state, "2"));
     let open = issues(OPEN);
     assert_eq!(route(&state), open);
     let (kind, query) = open.search().unwrap();
@@ -153,15 +153,15 @@ fn repo_tabs_filters_state_sort_and_star() {
         issues("is:closed label:bug sort:created-asc")
     );
 
-    press(&mut state, "gt");
+    press(&mut state, "<Tab>");
     assert!(
         matches!(route(&state), Route::Pulls(pulls::Pulls { .. })),
         "→: the next tab"
     );
-    press(&mut state, "1gt");
+    press(&mut state, "1");
     assert_eq!(route(&state), Route::Code(code::Repo(ghtui())));
 
-    let cmds = press(&mut state, ",*");
+    let cmds = act(&mut state, Action::Star);
     let star = Change::Star {
         repo: ghtui(),
         id: NodeId::new("R_ghtui"),
@@ -179,7 +179,7 @@ fn repo_tabs_filters_state_sort_and_star() {
 fn directories_and_files_open_from_the_repo() {
     let mut state = with_repo();
     while !selected_text(&state).contains("crates") {
-        press(&mut state, "j");
+        press(&mut state, "<Down>");
     }
     let cmds = fetches(press(&mut state, "<Enter>"));
     let tree = DataKey::Tree(ghtui(), "main".into(), "crates".into());
@@ -197,7 +197,7 @@ fn directories_and_files_open_from_the_repo() {
     );
     fetched(&mut state, tree, Data::Tree(crate::fixtures::tree()));
     while !selected_text(&state).contains("README.md") {
-        press(&mut state, "j");
+        press(&mut state, "<Down>");
     }
     press(&mut state, "<Enter>");
     assert_eq!(route(&state), blob("main", "crates/README.md"));

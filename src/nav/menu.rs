@@ -8,8 +8,6 @@ pub struct Menu {
     pub selected: usize,
     /// Typed after `/`: only matching rows show.
     pub filter: Option<String>,
-    /// Keys typed so far that start a row's keys (`]` of `]c`).
-    pub typed: Vec<crate::keymap::Key>,
 }
 
 impl Menu {
@@ -50,7 +48,6 @@ pub fn open_menu(state: &mut State) {
         rows: state.doables(),
         selected: 0,
         filter: None,
-        typed: Vec::new(),
     };
     menu.reselect();
     state.overlay = Some(Overlay::Menu(Box::new(menu)));
@@ -86,32 +83,23 @@ impl State {
 #[must_use]
 pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     let stack = state.contexts();
-    let pressed = [crate::keymap::Key::from(key)];
-    let action = match state.keymap.resolve(&pressed, stack) {
-        crate::keymap::Resolved::Run(action) => Some(action),
-        _ => None,
-    };
+    let pressed = crate::keymap::Key::from(key);
+    let action = state.keymap.resolve(pressed, stack);
     let Some(Overlay::Menu(menu)) = &mut state.overlay else {
         return Vec::new();
     };
     let last = menu.shown().len().saturating_sub(1);
     let typed = !key.modifiers.contains(KeyModifiers::CONTROL);
     let run = match (&mut menu.filter, key.code) {
-        // Keys of a row typed so far: Esc drops them, more keys finish them.
-        (None, KeyCode::Esc) if !menu.typed.is_empty() => {
-            menu.typed.clear();
-            return Vec::new();
-        }
-        (None, _) if !menu.typed.is_empty() => return run_menu_keys(state, pressed),
-        (_, KeyCode::Down) | (None, KeyCode::Char('j')) => {
+        (_, KeyCode::Down) => {
             menu.selected = (menu.selected + 1).min(last);
             return Vec::new();
         }
-        (_, KeyCode::Up) | (None, KeyCode::Char('k')) => {
+        (_, KeyCode::Up) => {
             menu.selected = menu.selected.saturating_sub(1);
             return Vec::new();
         }
-        (_, KeyCode::Enter) | (None, KeyCode::Right | KeyCode::Char('l')) => {
+        (_, KeyCode::Enter) | (None, KeyCode::Right) => {
             menu.shown().get(menu.selected).map(|d| (*d).clone())
         }
         // Filtering: letters narrow the list instead of running rows.
@@ -130,49 +118,21 @@ pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             menu.filter = Some(String::new());
             return Vec::new();
         }
-        (None, KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left | KeyCode::Char('h')) => None,
+        (None, KeyCode::Esc | KeyCode::Left) => None,
         (None, _) if action == Some(Action::Menu) => None,
-        // A row's own keys run it.
-        (None, _) => return run_menu_keys(state, pressed),
+        // A row's own key runs it.
+        (None, _) => {
+            let keys = |d: &&Doable| state.keymap.keys_in(d.action, stack).any(|k| k == pressed);
+            match menu.rows.iter().find(keys).cloned() {
+                Some(d) => Some(d),
+                None => {
+                    let shown = crate::keymap::pretty(pressed);
+                    return state.just_say(format!("{shown}: no row here has that key"));
+                }
+            }
+        }
     };
     run_menu_row(state, run)
-}
-
-/// A key toward a row's own keys: runs the row once they're all typed,
-/// waits while they could still be.
-#[must_use]
-pub(super) fn run_menu_keys(state: &mut State, [pressed]: [crate::keymap::Key; 1]) -> Vec<Cmd> {
-    let stack = state.contexts();
-    let Some(Overlay::Menu(menu)) = &mut state.overlay else {
-        return Vec::new();
-    };
-    menu.typed.push(pressed);
-    let typed = menu.typed.clone();
-    let keys = |d: &Doable| {
-        state
-            .keymap
-            .keys_in(d.action, stack)
-            .map(<[_]>::to_vec)
-            .collect::<Vec<_>>()
-    };
-    let row = menu.rows.iter().find(|d| keys(d).contains(&typed)).cloned();
-    let longer = menu.rows.iter().any(|d| {
-        keys(d)
-            .iter()
-            .any(|k| k.len() > typed.len() && k.starts_with(&typed))
-    });
-    match row {
-        Some(d) => {
-            menu.typed.clear();
-            run_menu_row(state, Some(d))
-        }
-        None if longer => Vec::new(),
-        None => {
-            menu.typed.clear();
-            let shown = crate::keymap::pretty_keys(&typed);
-            state.just_say(format!("{shown}: no row here has those keys"))
-        }
-    }
 }
 
 /// Runs a menu row (`None` closes the menu).
