@@ -24,7 +24,8 @@ ghtui is pre-release, but it's usable every day.
   browser (a download, most of a repository's settings), and then it
   says why.
 - **Reviewing** is where ghtui goes furthest. Diffs are computed locally
-  with git, highlighted with tree-sitter, and shown unified or split. You
+  with git, compared by syntax where the language allows, highlighted with
+  tree-sitter, and shown unified or split. You
   can reply, resolve, comment on lines or ranges, suggest changes, and
   submit a review. Every review reads as on GitHub, with the threads it
   started, and opens the changes it reviewed and what changed since.
@@ -82,8 +83,8 @@ ghtui is pre-release, but it's usable every day.
   and go to GitHub in order (once) when it's back. Repositories you
   choose are fetched ahead and kept fresh, to read offline.
 
-Not there yet: code navigation with a language server's precision,
-structural diffs, and a pull request's Files changed offline.
+Not there yet: code navigation with a language server's precision, and
+a pull request's Files changed offline.
 
 ## Goals
 
@@ -296,12 +297,22 @@ and `[b` switch between them, and they come back next time you start.
 
 **The diff viewer** (a pull request's Files changed) adds what GitHub's
 doesn't:
+- a comparison by syntax: only the code that changed stands out, not the
+  lines that wrapping, reindenting or a new enclosing `if` touched;
 - changed words within a line, and changed letters within a word;
 - moved code, with a jump between its two ends;
 - formatting-only changes folded away;
 - scope names in hunk headers (`impl Doc › fn offset`);
 - "changes since your last review", even across force-pushes and rebases;
 - local per-change "reviewed" marks beside GitHub's per-file "viewed".
+
+Comparing by syntax works as difftastic's does: both versions are parsed
+and matched node by node, however they're laid out. It decides what's
+emphasised, what folds away as formatting and which lines sit side by
+side in split view; the lines, the +/− counts and where comments go stay
+git's. `zy` switches to comparing by lines and back, and the status bar
+says which is on. A file without a grammar, or too big or slow to compare
+that way, is compared by lines, and its header says why.
 
 **A repository's code is read with git**: its files and folders, "Go to
 file" (`f`), a branch's or a file's commits, a commit, blame, a
@@ -723,7 +734,8 @@ says where it works.
 - `?` searches backwards, and `n` and `N` follow its direction. `>`
   replies quoting the selected comment; Enter on a comment doesn't start
   writing. In Files changed the view toggles are under `z`: `zw`
-  whitespace, `zs` split, `zf` the whole file, `zT` the file tree; `zc`
+  whitespace, `zy` syntax or lines, `zs` split, `zf` the whole file, `zT`
+  the file tree; `zc`
   `zo` `za` fold a thread or file, `zM` `zR` every file; in a
   conversation, `zc` `zo` `za` fold a long review.
   In the file tree, `<` and `>` narrow and widen it.
@@ -942,6 +954,7 @@ says where it works.
 | `zT`           | Show or hide the file tree |
 | `zs`           | Split or unified view |
 | `zw`           | Ignore whitespace changes |
+| `zy`           | Compare by syntax or by lines |
 | `zf`           | Show the whole file |
 | `e`            | Show more context |
 | `,v`           | Mark the file viewed (syncs with GitHub) |
@@ -1208,7 +1221,7 @@ a module for each feature beside them. The rest are its modules:
 | `schema` | GitHub's GraphQL schema, which the queries are typed against   |
 | `store`  | The cache, and review drafts kept outside it                    |
 | `git`    | The `git` CLI: clones, fetches, credentials, reads at a commit  |
-| `diff`   | Hunks (imara-diff), highlighting (tree-sitter), the diff model  |
+| `diff`   | Hunks (imara-diff), syntax trees (tree-sitter), the diff model  |
 | `theme`  | Color schemes, contrast, terminal detection                     |
 
 ## Development
