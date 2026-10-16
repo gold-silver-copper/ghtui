@@ -4,8 +4,7 @@
 //! asks GitHub (`gh api`, [`gh`]) whether the change happened, and cleans
 //! up what it made even when a step fails. Writes go only to
 //! [`gh::REPO`]. The owner's browser is never opened: a stand-in
-//! `xdg-open`, first on the server's `PATH`, records the URLs instead
-//! ([`Cx::opened`]).
+//! `xdg-open`, first on the server's `PATH`, writes the URLs down instead.
 //!
 //! Adding a check: write a `pub const CHECK: Check` in a file under
 //! `live/checks/`, and list it in [`checks::ALL`].
@@ -21,7 +20,7 @@ pub mod checks;
 pub mod fux;
 pub mod gh;
 
-pub use fux::{Launch, NARROW, Pane};
+pub use fux::{Launch, Pane};
 
 /// `cargo xtask live`.
 #[derive(clap::Args)]
@@ -44,9 +43,6 @@ pub struct Check {
     pub name: &'static str,
     pub about: &'static str,
     pub run: fn(&mut Cx) -> Result<()>,
-    /// Runs before any check starts, for what takes GitHub a while (a
-    /// workflow to run), so the wait overlaps the other checks.
-    pub prepare: Option<fn(&mut Cx) -> Result<()>>,
     /// Puts back what a killed run of this check may have left changed
     /// (a repository setting), when any run starts.
     pub sweep: Option<fn() -> Result<()>>,
@@ -62,14 +58,8 @@ impl Check {
             name,
             about,
             run,
-            prepare: None,
             sweep: None,
         }
-    }
-
-    pub const fn prepare(mut self, prepare: fn(&mut Cx) -> Result<()>) -> Check {
-        self.prepare = Some(prepare);
-        self
     }
 
     pub const fn sweep(mut self, sweep: fn() -> Result<()>) -> Check {
@@ -86,18 +76,6 @@ pub fn stopping() -> bool {
     STOP.load(Ordering::Relaxed)
 }
 
-/// A check gives up without failing: something it needs is missing.
-#[derive(Debug)]
-pub struct Skipped(pub String);
-
-impl std::fmt::Display for Skipped {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for Skipped {}
-
 /// What every check shares.
 pub struct Env {
     /// Everything the run makes on disk; emptied when a run starts.
@@ -111,18 +89,6 @@ pub struct Env {
     /// Unique to this run, for names and texts it writes.
     pub run_id: String,
     config: PathBuf,
-    opened: PathBuf,
-}
-
-impl Env {
-    /// The xdg-open stand-in's log: every URL ghtui opened.
-    pub fn opened(&self) -> Vec<String> {
-        std::fs::read_to_string(&self.opened)
-            .unwrap_or_default()
-            .lines()
-            .map(str::to_owned)
-            .collect()
-    }
 }
 
 type Cleanup = Box<dyn FnOnce() -> Result<()>>;
@@ -151,7 +117,7 @@ impl Cx<'_> {
         Ok(())
     }
 
-    /// Starts ghtui at 216 columns, in the run's scratch directory.
+    /// Starts ghtui in the run's scratch directory.
     pub fn ghtui(&mut self, args: &[&str]) -> Result<Pane> {
         self.launch(Launch::new(args))
     }
@@ -163,7 +129,6 @@ impl Cx<'_> {
         for pane in self.panes.drain(..) {
             pane.kill();
         }
-        let name = format!("{}-{}", self.name, launch.size.0);
         let mut env = vec![
             (
                 "XDG_CACHE_HOME".to_owned(),
@@ -186,19 +151,9 @@ impl Cx<'_> {
             path(&self.env.config),
         ];
         argv.extend(launch.args.iter().cloned());
-        let pane = self.env.fux.run(&name, launch.size, &cwd, &env, &argv)?;
+        let pane = self.env.fux.run(self.name, &cwd, &env, &argv)?;
         self.panes.push(pane.clone());
         Ok(pane)
-    }
-
-    /// URLs ghtui opened in the "browser" since `since` of them.
-    pub fn opened_since(&self, since: usize) -> Vec<String> {
-        self.env.opened().into_iter().skip(since).collect()
-    }
-
-    /// Gives up on this check without failing it.
-    pub fn skip(why: impl Into<String>) -> anyhow::Error {
-        anyhow::Error::new(Skipped(why.into()))
     }
 
     /// A text unique to this run, to find what the check wrote.
@@ -247,12 +202,6 @@ pub fn main(args: &Args) -> ExitCode {
     }
 }
 
-enum Outcome {
-    Passed,
-    Failed(String),
-    Skipped(String),
-}
-
 fn run(args: &Args) -> Result<bool> {
     let started = Instant::now();
     let selected: Vec<&Check> = if args.checks.is_empty() {
@@ -293,8 +242,7 @@ fn run(args: &Args) -> Result<bool> {
         std::fs::create_dir_all(work.join(dir))?;
     }
     set_private(&work.join("run"))?;
-    let opened = work.join("opened.txt");
-    write_xdg_open(&work.join("bin/xdg-open"), &opened)?;
+    write_xdg_open(&work.join("bin/xdg-open"), &work.join("opened.txt"))?;
     let config = work.join("config.toml");
     std::fs::write(&config, "")?;
     let token = gh::token()?;
@@ -311,7 +259,6 @@ fn run(args: &Args) -> Result<bool> {
         scopes,
         run_id,
         config,
-        opened,
     };
     say(&format!(
         "Live check of {} on {}, as {}, in {}",
@@ -325,38 +272,22 @@ fn run(args: &Args) -> Result<bool> {
         say(&format!("  leftovers from an earlier run: {err:#}"));
     }
 
-    let mut cxs: Vec<(&Check, Cx, Option<Outcome>)> = selected
-        .iter()
-        .map(|&check| {
-            let cx = Cx {
-                env: &env,
-                name: check.name,
-                cleanups: Vec::new(),
-                panes: Vec::new(),
-            };
-            (check, cx, None)
-        })
-        .collect();
-    for (check, cx, outcome) in &mut cxs {
-        if let Some(prepare) = check.prepare
-            && let Err(err) = prepare(cx)
-        {
-            *outcome = Some(outcome_of(&err));
-        }
-    }
     let mut results = Vec::new();
-    for (check, mut cx, prepared) in cxs {
+    for check in selected {
+        let mut cx = Cx {
+            env: &env,
+            name: check.name,
+            cleanups: Vec::new(),
+            panes: Vec::new(),
+        };
         let began = Instant::now();
         say(&format!("▶ {}: {}", check.name, check.about));
-        let outcome = match prepared {
-            Some(outcome) => outcome,
-            None if stopping() => Outcome::Failed("stopped".into()),
-            None => match (check.run)(&mut cx) {
-                Ok(()) => Outcome::Passed,
-                Err(err) => outcome_of(&err),
-            },
+        let outcome = if stopping() {
+            Err("stopped".to_owned())
+        } else {
+            (check.run)(&mut cx).map_err(|err| format!("{err:#}"))
         };
-        if matches!(outcome, Outcome::Failed(_)) {
+        if outcome.is_err() {
             for pane in &cx.panes {
                 let file = env
                     .work
@@ -379,32 +310,24 @@ fn run(args: &Args) -> Result<bool> {
         }
         let secs = began.elapsed().as_secs_f32();
         match &outcome {
-            Outcome::Passed => say(&format!("✓ {} ({secs:.0}s)", check.name)),
-            Outcome::Failed(why) => say(&format!("✗ {} ({secs:.0}s): {why}", check.name)),
-            Outcome::Skipped(why) => say(&format!("– {} skipped: {why}", check.name)),
+            Ok(()) => say(&format!("✓ {} ({secs:.0}s)", check.name)),
+            Err(why) => say(&format!("✗ {} ({secs:.0}s): {why}", check.name)),
         }
         for problem in &problems {
             say(&format!("    cleanup failed: {problem}"));
         }
-        results.push((check.name, outcome, problems));
+        results.push((check.name, outcome.is_err() || !problems.is_empty()));
     }
 
     env.fux.stop();
-    let passed = results
-        .iter()
-        .filter(|(_, o, _)| matches!(o, Outcome::Passed))
-        .count();
     let failed: Vec<&str> = results
         .iter()
-        .filter(|(_, o, p)| matches!(o, Outcome::Failed(_)) || !p.is_empty())
-        .map(|(name, _, _)| *name)
+        .filter(|(_, failed)| *failed)
+        .map(|(name, _)| *name)
         .collect();
-    let skipped = results
-        .iter()
-        .filter(|(_, o, _)| matches!(o, Outcome::Skipped(_)))
-        .count();
     say(&format!(
-        "\n{passed} passed, {} failed, {skipped} skipped in {:.0}s{}",
+        "\n{} passed, {} failed in {:.0}s{}",
+        results.len() - failed.len(),
         failed.len(),
         started.elapsed().as_secs_f32(),
         if failed.is_empty() {
@@ -416,16 +339,9 @@ fn run(args: &Args) -> Result<bool> {
     Ok(failed.is_empty())
 }
 
-fn outcome_of(err: &anyhow::Error) -> Outcome {
-    match err.downcast_ref::<Skipped>() {
-        Some(Skipped(why)) => Outcome::Skipped(why.clone()),
-        None => Outcome::Failed(format!("{err:#}")),
-    }
-}
-
 /// What an earlier run left behind when it was killed before cleaning up:
-/// issues, pull requests and branches it named, its projects, and the
-/// repository settings checks change.
+/// issues and pull requests it titled, its branches, and what each
+/// check's own sweep looks for.
 fn sweep() -> Result<()> {
     for issue in gh::rest_list(&format!(
         "repos/{}/issues?state=all&creator=@me&per_page=100",

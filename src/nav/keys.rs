@@ -1,6 +1,7 @@
 //! Keys on pages: moving, scrolling, following links, cancelling.
 
 use super::*;
+use crate::route::{code, runs};
 
 /// Actions on a page screen. Those that don't work on pages say where
 /// they do.
@@ -34,7 +35,9 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 .find(|&i| is_row(p, i) && visible(p, i, height));
         }
         // A file's line is this page: say what you can do with it.
-        Action::Open if matches!(p.route, Route::Blob { .. }) && p.selected.is_some() => {
+        Action::Open
+            if matches!(p.route, Route::Code(code::Blob { .. })) && p.selected.is_some() =>
+        {
             let line = p.selected.and_then(|i| p.line_of(i)).unwrap_or(1);
             let (copy, blame) = (
                 state.first_key(Action::Copy),
@@ -45,14 +48,16 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
             ));
         }
         // So is a line of a job's log.
-        Action::Open if matches!(p.route, Route::Job { .. }) && p.code_line().is_some() => {
+        Action::Open
+            if matches!(p.route, Route::Runs(runs::Job { .. })) && p.code_line().is_some() =>
+        {
             let at = match p.selected_link().and_then(Link::url).map(Dest::from_url) {
                 Some(Dest {
                     target:
-                        Target::Page(Route::Job {
+                        Target::Page(Route::Runs(runs::Job {
                             step: Some((step, line)),
                             ..
-                        }),
+                        })),
                     ..
                 }) => format!("Line {line} of step {step}"),
                 _ => "A line of the log".to_owned(),
@@ -73,10 +78,9 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
                         state.first_key(Action::Down),
                         state.first_key(Action::Hints),
                     );
-                    state.info(format!(
+                    state.just_say(format!(
                         "Nothing selected: {down} selects a row, {hints} picks any link"
-                    ));
-                    Vec::new()
+                    ))
                 }
             };
         }
@@ -89,7 +93,7 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 Some((n, of)) => state.info(format!("Match {n} of {of}")),
                 None if p.page.marks.is_empty() => {
                     let query = match &p.route {
-                        Route::Job { query, .. } => Some(query.clone()),
+                        Route::Runs(runs::Job { query, .. }) => Some(query.clone()),
                         _ => p.find.clone(),
                     };
                     let search = state.first_key(Action::Search);
@@ -198,9 +202,7 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
             if (p.scroll, p.shift) == before {
                 let why = match action {
                     Action::ScrollLeft => "Already at the left edge",
-                    Action::ScrollRight if p.page.wide() == 0 => {
-                        "Nothing here is wider than the screen"
-                    }
+                    Action::ScrollRight if p.wide == 0 => "Nothing here is wider than the screen",
                     Action::ScrollRight => "Already at the right edge",
                     _ if p.page.height() <= height => "It all fits on the screen",
                     _ => "Already there",
@@ -212,10 +214,9 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
             let forward = action == Action::WordNext;
             let Some((_, code, room)) = p.code_line() else {
                 let down = state.first_key(Action::Down);
-                state.info(format!(
+                return state.just_say(format!(
                     "Words are a line of code's: {down} moves to a line of a file or a log"
                 ));
-                return Vec::new();
             };
             match text::step_word(&code, p.word, forward) {
                 Some(word) => {
@@ -230,30 +231,29 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
             let line = p.selected.and_then(|i| p.line_of(i));
             let lines = line.map(|n| (n, n));
             let route = match p.route.clone() {
-                Route::Blob {
+                Route::Code(code::Blob {
                     repo, rev, path, ..
-                } => Route::Blame {
+                }) => Route::Code(code::Blame {
                     repo,
                     rev,
                     path,
                     lines,
-                },
-                Route::Blame {
+                }),
+                Route::Code(code::Blame {
                     repo, rev, path, ..
-                } => Route::Blob {
+                }) => Route::Code(code::Blob {
                     repo,
                     rev,
                     path,
                     lines,
-                },
+                }),
                 _ => {
-                    state.info(action.not_here());
-                    return Vec::new();
+                    return state.just_say(action.not_here());
                 }
             };
             return state.push(route);
         }
-        Action::VisualLines if matches!(p.route, Route::Blob { .. }) => {
+        Action::VisualLines if matches!(p.route, Route::Code(code::Blob { .. })) => {
             let (range, what) = match p.range {
                 Some(_) => (None, "Selection cleared"),
                 None => (p.selected, "Selecting lines · y copies their link"),
@@ -263,16 +263,15 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
             state.info(what);
         }
         Action::NextCommit | Action::PrevCommit => {
-            let Route::Commit {
+            let Route::Code(code::Commit {
                 repo,
                 oid,
                 pr: Some(number),
-            } = p.route.clone()
+            }) = p.route.clone()
             else {
-                state.info(
+                return state.just_say(
                     "Next and previous commits are a pull request's: open one from its Commits tab",
                 );
-                return Vec::new();
             };
             let at = state.pr_commit_at(&repo, number, &oid);
             let to = match &at {
@@ -282,35 +281,21 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
             };
             return match (to, at) {
                 (Some(url), _) => state.go(Dest::from_url(&url)),
-                (None, Some(_)) => {
-                    state.info(if action == Action::NextCommit {
-                        "This is the newest commit"
-                    } else {
-                        "No earlier commit here"
-                    });
-                    Vec::new()
-                }
-                (None, None) => {
-                    state.info("The pull request's commits haven't loaded yet");
-                    Vec::new()
-                }
+                (None, Some(_)) => state.just_say(if action == Action::NextCommit {
+                    "This is the newest commit"
+                } else {
+                    "No earlier commit here"
+                }),
+                (None, None) => state.just_say("The pull request's commits haven't loaded yet"),
             };
         }
-        _ if crate::projects::ACTIONS.contains(&action) => {
-            return crate::projects::act(state, action);
-        }
         Action::Star => return star(state),
+        Action::Delete | Action::UndoDelete => return crate::home::act(state, action),
         Action::Comment => return comment_with(state, "", None),
         Action::QuoteReply => return quote_reply(state),
         Action::Branch => return state.open_finder(true),
         Action::ToggleState => return cycle_state(state),
         Action::Sort => return cycle_sort(state),
-        Action::SaveSection
-        | Action::RenameSection
-        | Action::MoveSectionUp
-        | Action::MoveSectionDown
-        | Action::Delete
-        | Action::UndoDelete => return crate::home::act(state, action),
         // A long review in a conversation.
         Action::FoldClose | Action::FoldOpen | Action::FoldToggle => {
             match crate::talk::fold_key(state, action) {
@@ -342,7 +327,7 @@ pub(super) fn scroll_view(p: &mut PageScreen, action: Action, height: usize) {
         }
         Action::ScrollCenter => p.scroll = at.saturating_sub(height / 2).min(max_scroll(p, height)),
         Action::ScrollLeft => p.shift = p.shift.saturating_sub(SHIFT),
-        _ => p.shift = p.shift.saturating_add(SHIFT).min(p.page.wide()),
+        _ => p.shift = p.shift.saturating_add(SHIFT).min(p.wide),
     }
 }
 
@@ -402,10 +387,7 @@ pub fn go_to_line(state: &mut State, n: usize) -> Vec<Cmd> {
 pub fn open_link(state: &mut State) -> Vec<Cmd> {
     match state.link_under_cursor() {
         Some(url) => state.go(Target::External(url).into()),
-        None => {
-            state.info("No link under the cursor");
-            Vec::new()
-        }
+        None => state.just_say("No link under the cursor"),
     }
 }
 

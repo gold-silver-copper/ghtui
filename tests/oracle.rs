@@ -13,32 +13,13 @@
     reason = "fixture helpers aren't #[test] functions, but a panic in them is still a test failure"
 )]
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+mod common;
 
+use std::path::PathBuf;
+
+use common::git;
 use ghtui::git::credentials::Credentials;
 use ghtui::git::repo::{PrRefs, Repo};
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.invalid")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.invalid")
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).trim().to_owned()
-}
 
 /// "GitHub": a repository with `main`, served over `file://`.
 struct Origin {

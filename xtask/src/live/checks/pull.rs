@@ -1,6 +1,6 @@
-//! Pull requests from a clone: proposing its branch (`,p`), pushing it
-//! (`,P`) and creating the pull request (`,s`); checking one out (`,c`),
-//! refused while the tree is dirty.
+//! A pull request from a clone: proposing its branch (`,p`), pushing it
+//! (`,P`), creating the pull request as a draft (`,s`), and marking it
+//! ready for review (`,r`).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -10,21 +10,15 @@ use anyhow::{Context, Result, bail, ensure};
 
 use crate::live::{Check, Cx, Launch, gh, path, until};
 
-pub const CREATE: Check = Check::new(
-    "pr-create",
-    "a pull request from a clone's branch: ,p proposes it, ,P pushes the branch, ,s creates it",
-    create,
-);
-
-pub const CHECKOUT: Check = Check::new(
-    "checkout",
-    ",c checks a pull request out in a clone, and refuses while the tree is dirty",
-    checkout,
+pub const CHECK: Check = Check::new(
+    "pull",
+    "a pull request from a clone's branch: ,p proposes it, ,P pushes the branch, ,s creates it as a draft, ,r marks it ready",
+    run,
 );
 
 const GITHUB: Duration = Duration::from_secs(30);
 
-fn create(cx: &mut Cx) -> Result<()> {
+fn run(cx: &mut Cx) -> Result<()> {
     let clone = scratch_clone(cx, "clone-pr")?;
     let branch = format!("{}{}", gh::BRANCH_PREFIX, cx.env.run_id);
     let title = cx.mark("pull request");
@@ -36,24 +30,11 @@ fn create(cx: &mut Cx) -> Result<()> {
     git(&clone, &["add", "."])?;
     git(&clone, &["commit", "-q", "-m", &title])?;
     let head = git(&clone, &["rev-parse", "HEAD"])?;
-    let undo_branch = branch.clone();
-    cx.defer(format!("delete branch {branch}"), move || {
-        // Closing its pull request first; deleting the branch alone also
-        // closes it.
-        for pr in gh::rest_list(&format!(
-            "repos/{}/pulls?head={}:{undo_branch}&state=open",
-            gh::REPO,
-            gh::OWNER
-        ))? {
-            if let Some(number) = pr["number"].as_u64() {
-                gh::close_pr(number)?;
-            }
-        }
-        match gh::get(&format!("repos/{}/branches/{undo_branch}", gh::REPO)) {
-            Ok(_) => gh::delete_branch(&undo_branch),
-            Err(_) => Ok(()),
-        }
-    });
+    let undo = branch.clone();
+    cx.defer(
+        format!("close the pull request, delete {branch}"),
+        move || gh::drop_branch(&undo),
+    );
 
     let ghtui = cx.launch(Launch::new(&[gh::REPO]).cwd(&clone))?;
     ghtui.wait_for("Pull requests")?;
@@ -96,46 +77,22 @@ fn create(cx: &mut Cx) -> Result<()> {
         pr["base"]["ref"]
     );
     ghtui.wait_for("wants to merge into")?;
-    Ok(())
-}
+    ghtui.wait_for("still a draft")?;
+    let number = pr["number"].as_u64().context("no pull request number")?;
 
-fn checkout(cx: &mut Cx) -> Result<()> {
-    let clone = scratch_clone(cx, "clone-checkout")?;
-    // A pull request the test repository keeps open for this.
-    let number = 2;
-    let pr = gh::get(&format!("repos/{}/pulls/{number}", gh::REPO))?;
-    let (branch, head) = (
-        pr["head"]["ref"].as_str().unwrap_or_default().to_owned(),
-        pr["head"]["sha"].as_str().unwrap_or_default().to_owned(),
-    );
-    let readme = clone.join("README.md");
-    let text = std::fs::read_to_string(&readme)?;
-    std::fs::write(&readme, format!("{text}\nNot committed.\n"))?;
-
-    let ghtui = cx.launch(Launch::new(&[&format!("{}#{number}", gh::REPO)]).cwd(&clone))?;
-    ghtui.wait_for("wants to merge into")?;
-    cx.step(",c refuses while README.md isn't committed, and names it")?;
-    ghtui.keys(", c")?;
-    ghtui.wait_for("Not checked out: README.md has changes that aren't committed")?;
-    ensure!(
-        git(&clone, &["branch", "--show-current"])? == "main",
-        "the clone left main"
-    );
-
-    cx.step("with the tree clean, ,c switches to the pull request's branch")?;
-    git(&clone, &["checkout", "-q", "README.md"])?;
-    ghtui.keys(", c")?;
-    until("the clone on the pull request's branch", GITHUB, || {
-        let on = git(&clone, &["branch", "--show-current"])?;
-        Ok((on == branch).then_some(()))
+    ghtui.wait_followed()?;
+    cx.step(",r marks it ready for review")?;
+    ghtui.keys(", r")?;
+    until("ready on GitHub", GITHUB, || {
+        let pr = gh::get(&format!("repos/{}/pulls/{number}", gh::REPO))?;
+        Ok((pr["draft"] == false).then_some(()))
     })?;
-    let at = git(&clone, &["rev-parse", "HEAD"])?;
-    ensure!(at == head, "the branch is at {at}, GitHub's head is {head}");
+    ghtui.wait_gone("still a draft")?;
     Ok(())
 }
 
 /// A fresh clone of the test repository, removed when the check ends.
-pub fn scratch_clone(cx: &mut Cx, name: &str) -> Result<PathBuf> {
+fn scratch_clone(cx: &mut Cx, name: &str) -> Result<PathBuf> {
     let dir = cx.env.work.join(name);
     let url = format!("https://github.com/{}", gh::REPO);
     let out = Command::new("git")
@@ -159,7 +116,7 @@ pub fn scratch_clone(cx: &mut Cx, name: &str) -> Result<PathBuf> {
 }
 
 /// `git ARGS` in `dir`; its output, trimmed.
-pub fn git(dir: &Path, args: &[&str]) -> Result<String> {
+fn git(dir: &Path, args: &[&str]) -> Result<String> {
     let out = Command::new("git").arg("-C").arg(dir).args(args).output()?;
     if !out.status.success() {
         bail!(

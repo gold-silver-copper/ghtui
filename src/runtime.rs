@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::api::model::{PendingReview, PrRef, RepoId, ReviewEvent};
+use crate::api::model::PrRef;
 use crate::api::{ApiError, GitHub};
-use crate::store::{DraftComment, ReviewState, Reviews};
+use crate::store::{ReviewState, Reviews};
 use crate::ui::bars::Notice;
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind, MouseEventKind};
@@ -15,13 +15,13 @@ use futures::StreamExt;
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
 
-use crate::browse::{Data, DataKey};
+use crate::data::{self, DataKey};
 use crate::diff_job::{self, GitContext, JobControl, JobMsg, JobTx, RepoGit};
 use crate::diff_screen::DiffOf;
 use crate::review::EditPurpose;
-use crate::review::{self, SubmitOutcome};
-use crate::state::{Api, Cmd, DiffMsg, Failure, Git, Msg, Problem, State, apply_msg, timers};
+use crate::state::{Api, Cmd, DiffMsg, Git, Msg, Problem, State, apply_msg, timers};
 use crate::view::view;
+use crate::work::Failure;
 
 struct Effects {
     gh: GitHub,
@@ -75,7 +75,10 @@ pub async fn run(
         reviews,
     };
     let result = drive(terminal, state, &mut effects, rx, initial, started).await;
-    // Drafts saved just before quitting still reach the disk.
+    // Answers cached just before quitting still reach the disk, and so do
+    // drafts.
+    let store = effects.gh.store().clone();
+    blocking(move || store.sync()).await;
     drop(effects.save_review);
     #[expect(clippy::disallowed_methods, reason = "a file write: no progress")]
     if tokio::time::timeout(Duration::from_secs(2), effects.writer)
@@ -115,27 +118,42 @@ async fn drive(
     loop {
         let msg = tokio::select! {
             event = events.next() => match event {
-                Some(Ok(Event::Key(key))) if key.kind != KeyEventKind::Release => Msg::Key(key),
-                Some(Ok(Event::Resize(w, h))) => Msg::Resize(w, h),
-                Some(Ok(Event::Paste(text))) => Msg::Paste(text),
-                Some(Ok(Event::FocusGained)) => Msg::Focus(true),
-                Some(Ok(Event::FocusLost)) => Msg::Focus(false),
-                Some(Ok(Event::Mouse(m))) if matches!(
-                    m.kind,
-                    MouseEventKind::Down(_) | MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
-                ) => Msg::Mouse(m),
-                Some(Ok(_)) => continue,
+                Some(Ok(event)) => match event_msg(event) {
+                    Some(msg) => msg,
+                    None => continue,
+                },
                 Some(Err(err)) => return Err(err.into()),
                 None => return Ok(()),
             },
             Some(msg) = rx.recv() => msg,
             signal = stop.recv() => {
                 tracing::info!(signal, "stopping");
-                save_tabs(&effects.gh, &state).await;
+                save_tabs(&effects.gh, &state);
                 return Ok(());
             }
         };
         let mut cmds = apply_msg(&mut state, msg);
+        // Every key, scroll or resize that's ready is drawn once; each is
+        // settled first, as the next may act on the page it opened. They
+        // wait while the editor is to open, or ghtui to quit. The stream
+        // is polled with this task's waker: crossterm wakes the waker of
+        // the poll that found nothing, so one that wakes nobody would
+        // leave the next key unread until something else arrives.
+        let editing = |cmds: &[Cmd]| cmds.iter().any(|c| matches!(c, Cmd::Edit { .. }));
+        while !state.quit
+            && !editing(&cmds)
+            && let std::task::Poll::Ready(event) = futures::poll!(events.next())
+        {
+            // Ended: the loop sees it next.
+            let Some(event) = event.transpose()? else {
+                break;
+            };
+            let Some(msg) = event_msg(event) else {
+                continue;
+            };
+            cmds.extend(state.settle());
+            cmds.extend(apply_msg(&mut state, msg));
+        }
         // Drain whatever else is ready so a burst of results is settled
         // and drawn once.
         while let Ok(msg) = rx.try_recv() {
@@ -152,11 +170,31 @@ async fn drive(
             }
         }
         if state.quit {
-            save_tabs(&effects.gh, &state).await;
+            save_tabs(&effects.gh, &state);
             return Ok(());
         }
         draw(terminal, &state, dump.as_deref())?;
     }
+}
+
+/// What a terminal event means to ghtui, if anything.
+fn event_msg(event: Event) -> Option<Msg> {
+    Some(match event {
+        Event::Key(key) if key.kind != KeyEventKind::Release => Msg::Key(key),
+        Event::Resize(w, h) => Msg::Resize(w, h),
+        Event::Paste(text) => Msg::Paste(text),
+        Event::FocusGained => Msg::Focus(true),
+        Event::FocusLost => Msg::Focus(false),
+        Event::Mouse(m)
+            if matches!(
+                m.kind,
+                MouseEventKind::Down(_) | MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
+            ) =>
+        {
+            Msg::Mouse(m)
+        }
+        _ => return None,
+    })
 }
 
 /// Draws `state`, and with a `dump` path writes the frame's text there.
@@ -185,23 +223,7 @@ impl Effects {
     fn run(&mut self, cmd: Cmd) -> Option<(EditPurpose, String)> {
         let replies = panic_replies(&cmd);
         match cmd {
-            Cmd::Api(Api::Fetch {
-                key: DataKey::Wiki(repo, page),
-                ..
-            }) => self.wiki(repo, page, replies),
-            Cmd::Api(Api::Fetch {
-                key: DataKey::Lines(repo, commit, path),
-                ..
-            }) => self.lines(repo, commit, path, replies),
-            Cmd::Api(Api::Fetch { key, cached }) if crate::source::by_git(&key, None) => {
-                self.local(key, None, cached, replies);
-            }
-            Cmd::Api(Api::FetchMore { key, after })
-                if crate::source::by_git(&key, Some(&after)) =>
-            {
-                self.local(key, Some(after), false, replies);
-            }
-            Cmd::Api(api) => spawn(api, replies, &self.gh, &self.tx),
+            Cmd::Api(api) => spawn(api, replies, &self.gh, &self.local, &self.tx),
             Cmd::Git(git) => self.git(git, replies),
             Cmd::OpenUrl(url) => {
                 spawn_guarded(&self.tx, replies, |tx| async move {
@@ -225,20 +247,15 @@ impl Effects {
                     let _ = tx.send(Msg::SuggestDue(q));
                 });
             }
-            Cmd::Create(work) => {
-                let (gh, cwd) = (self.gh.clone(), self.git.cwd.clone());
+            Cmd::Work(work) => {
+                let cx = crate::work::Cx {
+                    gh: self.gh.clone(),
+                    git: self.git.clone(),
+                };
                 spawn_guarded(&self.tx, replies, |tx| async move {
-                    let done = work.run(&gh, &cwd).await;
-                    let _ = tx.send(Msg::Create(done));
-                    let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
-                });
-            }
-            Cmd::Write(work) => {
-                let (gh, git) = (self.gh.clone(), self.git.clone());
-                spawn_guarded(&self.tx, replies, |tx| async move {
-                    let done = work.run(&gh, &git).await;
-                    let _ = tx.send(Msg::Write(done));
-                    let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
+                    let done = work.run(&cx).await;
+                    let _ = tx.send(Msg::Done(done));
+                    told(&cx.gh, &tx);
                 });
             }
             Cmd::Offline(cmd) => self.offline(cmd, replies),
@@ -247,19 +264,6 @@ impl Effects {
                 let _ = self.save_review.send((pr, review));
             }
             Cmd::Edit { purpose, text } => return Some((purpose, text)),
-            Cmd::EditHome {
-                path,
-                shown,
-                edit,
-                what,
-            } => {
-                spawn_guarded(&self.tx, replies, |tx| async move {
-                    let made = edit.clone();
-                    let result =
-                        blocking(move || crate::home::edit_file(&path, &shown, &made)).await;
-                    let _ = tx.send(Msg::HomeEdited { edit, result, what });
-                });
-            }
         }
         None
     }
@@ -423,62 +427,6 @@ impl Effects {
         });
     }
 
-    /// Reads a file's lines at a commit through git, for a review thread.
-    fn lines(&self, repo: RepoId, commit: String, path: String, replies: Vec<Msg>) {
-        let git = self.git.clone();
-        spawn_guarded(&self.tx, replies, |tx| async move {
-            let result = crate::talk::read_lines(&git, &repo, &commit, &path).await;
-            let _ = tx.send(Msg::Fetched {
-                key: DataKey::Lines(repo, commit, path),
-                result: result.map(|l| Data::Lines(Arc::new(l))),
-                cached_at: None,
-            });
-        });
-    }
-
-    /// Reads a wiki page through git.
-    fn wiki(&self, repo: RepoId, page: Option<String>, replies: Vec<Msg>) {
-        let git = self.git.clone();
-        spawn_guarded(&self.tx, replies, |tx| async move {
-            let result = crate::wiki::page(&git, &repo, page.as_deref()).await;
-            let _ = tx.send(Msg::Fetched {
-                key: DataKey::Wiki(repo, page),
-                result: result.map(|w| Data::Wiki(Box::new(w))),
-                cached_at: None,
-            });
-        });
-    }
-
-    /// Reads `key` (its page after `after`) through git where it can
-    /// (`crate::source`), saying where it came from; with `cached`, the
-    /// cache's copy shows first.
-    fn local(&self, key: DataKey, after: Option<String>, cached: bool, replies: Vec<Msg>) {
-        let (gh, local) = (self.gh.clone(), self.local.clone());
-        spawn_guarded(&self.tx, replies, |tx| async move {
-            if cached {
-                let (gh, lookup) = (gh.clone(), key.clone());
-                if let Some((data, at)) = blocking(move || cached_data(&gh, &lookup)).await {
-                    let _ = tx.send(Msg::Fetched {
-                        key: key.clone(),
-                        result: Ok(data),
-                        cached_at: Some(at),
-                    });
-                }
-            }
-            let (result, from) = local.fetch(&gh, &key, after.clone()).await;
-            let _ = tx.send(Msg::Source(key.clone(), from));
-            let _ = tx.send(match after {
-                Some(after) => Msg::FetchedMore(key, after, result),
-                None => Msg::Fetched {
-                    key,
-                    result,
-                    cached_at: None,
-                },
-            });
-            let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
-        });
-    }
-
     fn job_git(&self, of: &DiffOf) -> Option<RepoGit> {
         self.jobs.get(of).and_then(|(control, _)| control.git())
     }
@@ -486,86 +434,61 @@ impl Effects {
 
 /// Runs a GitHub request and sends its answer, then the rate limits (and
 /// the token's state, when it changed).
-fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
-    let gh = gh.clone();
+fn spawn(
+    api: Api,
+    replies: Vec<Msg>,
+    gh: &GitHub,
+    local: &Arc<crate::source::Local>,
+    tx: &mpsc::UnboundedSender<Msg>,
+) {
+    let (gh, local) = (gh.clone(), local.clone());
     spawn_guarded(tx, replies, |tx| async move {
         let msg = match api {
             Api::FetchViewer => Msg::Viewer(gh.viewer_login().await),
-            Api::FetchUnread => Msg::Unread(gh.unread().await),
-            Api::FetchPr(pr) => {
-                let result = gh.pull_request(&pr).await;
-                // GitHub can't be reached: the cache's copy, if there's one.
-                if let Err(ApiError::Offline(_)) = &result
-                    && let Some(cached) = gh.cached_pull_request(&pr)
-                {
-                    let _ = tx.send(Msg::PrCached(pr.clone(), Box::new(cached)));
-                }
-                Msg::Pr(pr, Box::new(result))
-            }
             Api::Fetch { key, cached } => {
-                if cached {
-                    let (gh, lookup) = (gh.clone(), key.clone());
-                    if let Some((data, at)) = blocking(move || cached_data(&gh, &lookup)).await {
+                // Nothing on screen yet: the cache's copy, first or (for
+                // what shows it only then) while GitHub can't be reached.
+                let send_cached = |gh: GitHub, key: DataKey| async {
+                    let lookup = key.clone();
+                    if let Some(c) = blocking(move || data::load::cached(&gh, &lookup)).await {
                         let _ = tx.send(Msg::Fetched {
-                            key: key.clone(),
-                            result: Ok(data),
-                            cached_at: Some(at),
+                            key,
+                            result: Ok(c.value),
+                            cached_at: Some(c.fetched_at),
+                            source: None,
                         });
                     }
+                };
+                if cached && key.cache_first() {
+                    send_cached(gh.clone(), key.clone()).await;
                 }
-                // Nothing on screen yet: a search shows before its checks.
+                // A first look before the rest only for a page showing
+                // nothing yet: one showing it already would be built
+                // twice, the first time with less.
                 let early = cached.then_some(&tx);
-                let result = fetch(&gh, &key, None, early).await;
+                let (result, source) = data::load::load(&gh, &local, &key, None, early).await;
+                if cached && !key.cache_first() && matches!(result, Err(ApiError::Offline(_))) {
+                    send_cached(gh.clone(), key.clone()).await;
+                }
                 Msg::Fetched {
                     key,
                     result,
                     cached_at: None,
+                    source,
                 }
             }
             Api::FetchMore { key, after } => {
-                let result = fetch(&gh, &key, Some(after.clone()), None).await;
-                Msg::FetchedMore(key, after, result)
-            }
-            Api::Change(change, by) => {
-                let result = gh.change(&change).await;
-                Msg::Changed(change, by, result)
-            }
-            Api::Suggest(q) => {
-                let result = gh
-                    .search(crate::api::browse::SearchKind::Repos, &q, None)
-                    .await
-                    .map(|r| match r {
-                        crate::api::browse::SearchResults::Repos(r) => {
-                            r.items.into_iter().take(6).collect()
-                        }
-                        _ => Vec::new(),
-                    });
-                Msg::Suggested(q, result)
+                let more = Some(after.clone());
+                let (result, source) = data::load::load(&gh, &local, &key, more, None).await;
+                Msg::FetchedMore(key, after, result, source)
             }
             Api::SaveVisits(visits) => {
-                gh.remember(crate::api::browse::keys::VISITS, visits).await;
+                gh.remember(crate::store::VISITS, &visits);
                 return;
             }
             Api::FetchViewed(pr) => {
                 let result = gh.viewed_files(&pr).await;
                 Msg::Diff(pr.into(), DiffMsg::ViewedLoaded(Box::new(result)))
-            }
-            Api::SetViewed {
-                pr,
-                pull_request_id,
-                path,
-                viewed,
-                previous,
-            } => {
-                let result = gh.set_viewed(&pull_request_id, &path, viewed).await;
-                Msg::Diff(
-                    pr.into(),
-                    DiffMsg::ViewedSaved {
-                        path,
-                        previous,
-                        result,
-                    },
-                )
             }
             Api::FetchThreads(pr) => {
                 let result = gh.review_threads(&pr).await;
@@ -575,38 +498,6 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 let result = gh.pr_patches(&pr).await;
                 Msg::Diff(pr.into(), DiffMsg::PatchesLoaded(result))
             }
-            Api::SetResolved {
-                pr,
-                thread_id,
-                resolved,
-            } => {
-                let result = gh.set_resolved(&thread_id, resolved).await;
-                Msg::Diff(
-                    pr.into(),
-                    DiffMsg::ResolvedSet {
-                        thread_id,
-                        resolved,
-                        result,
-                    },
-                )
-            }
-            Api::SubmitReview {
-                pr,
-                head,
-                drafts,
-                event,
-                body,
-                seen,
-            } => {
-                let review = Review {
-                    drafts,
-                    event,
-                    body: &body,
-                    seen,
-                };
-                let outcome = submit_review(&gh, &pr, &head, review).await;
-                Msg::Diff(pr.into(), DiffMsg::ReviewSubmitted(outcome))
-            }
             Api::FetchPendingReview(pr) => {
                 let result = gh.pending_review(&pr).await;
                 let comments = result.map(|(_, pending)| pending.map_or(0, |p| p.comments));
@@ -615,10 +506,6 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
             Api::FetchLastReview { pr, login } => {
                 let result = gh.last_review_commit(&pr, &login).await;
                 Msg::Diff(pr.into(), DiffMsg::LastReview(result))
-            }
-            Api::FetchMentionable(repo) => {
-                let result = gh.mentionable(&repo).await;
-                Msg::Mentionable(repo, result)
             }
             Api::Poll { pr, asks } => {
                 let polls = asks.into_iter().map(|ask| {
@@ -631,7 +518,6 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
                 let answers = futures::future::join_all(polls).await;
                 Msg::Polled(pr, answers)
             }
-            Api::Actions(work) => Msg::Actions(work.run(&gh).await),
             Api::Watch { what, asks } => {
                 let polls = asks.into_iter().map(|ask| {
                     let gh = &gh;
@@ -645,26 +531,32 @@ fn spawn(api: Api, replies: Vec<Msg>, gh: &GitHub, tx: &mpsc::UnboundedSender<Ms
             }
         };
         let _ = tx.send(msg);
-        let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
-        let left_out = gh.take_left_out();
-        if !left_out.is_empty() {
-            let text = format!("GitHub left some data out: {}", left_out.join("; "));
-            let _ = tx.send(Msg::Notice(Notice::Error(text)));
-        }
-        for missing in gh.take_missing() {
-            let _ = tx.send(Msg::Notice(Notice::Info(missing)));
-        }
-        let doubts = gh.take_doubts();
-        if !doubts.is_empty() {
-            let text = format!("GitHub's answer doesn't add up: {}", doubts.join("; "));
-            let _ = tx.send(Msg::Notice(Notice::Error(text)));
-        }
-        if let Some(rejected) = gh.token_rejected_change() {
-            let hint = crate::api::auth::sign_in_hint(crate::host::current());
-            let text = format!("GitHub rejected the token: {hint}, then restart");
-            let _ = tx.send(Msg::Problem(Problem::Auth, rejected.then_some(text)));
-        }
+        told(&gh, &tx);
     });
+}
+
+/// After a request: the rate limits, and what GitHub's answers left out,
+/// doubted or rejected.
+fn told(gh: &GitHub, tx: &mpsc::UnboundedSender<Msg>) {
+    let _ = tx.send(Msg::RateLimits(gh.rate_limits()));
+    let left_out = gh.take_left_out();
+    if !left_out.is_empty() {
+        let text = format!("GitHub left some data out: {}", left_out.join("; "));
+        let _ = tx.send(Msg::Notice(Notice::Error(text)));
+    }
+    for missing in gh.take_missing() {
+        let _ = tx.send(Msg::Notice(Notice::Info(missing)));
+    }
+    let doubts = gh.take_doubts();
+    if !doubts.is_empty() {
+        let text = format!("GitHub's answer doesn't add up: {}", doubts.join("; "));
+        let _ = tx.send(Msg::Notice(Notice::Error(text)));
+    }
+    if let Some(rejected) = gh.token_rejected_change() {
+        let hint = crate::api::auth::sign_in_hint(crate::host::current());
+        let text = format!("GitHub rejected the token: {hint}, then restart");
+        let _ = tx.send(Msg::Problem(Problem::Auth, rejected.then_some(text)));
+    }
 }
 
 /// Tells the page each time GitHub becomes unreachable, or reachable
@@ -710,7 +602,7 @@ fn spawn_guarded<F: Future<Output = ()> + Send + 'static>(
 
 /// Runs `f` on the blocking pool. A panic in `f` resumes in the caller, so
 /// [`spawn_guarded`] reports it.
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+pub(crate) async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
     match tokio::task::spawn_blocking(f).await {
         Ok(value) => value,
         Err(err) => match err.try_into_panic() {
@@ -739,31 +631,18 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
     }
     let msg = match cmd {
         Cmd::Api(Api::FetchViewer) => Msg::Viewer(api()),
-        Cmd::Api(Api::FetchUnread) => Msg::Unread(api()),
-        Cmd::Api(Api::FetchPr(pr)) => Msg::Pr(pr.clone(), Box::new(api())),
         Cmd::Api(Api::Fetch { key, .. }) => Msg::Fetched {
             key: key.clone(),
             result: api(),
             cached_at: None,
+            source: None,
         },
         Cmd::Api(Api::FetchMore { key, after }) => {
-            Msg::FetchedMore(key.clone(), after.clone(), api())
+            Msg::FetchedMore(key.clone(), after.clone(), api(), None)
         }
-        Cmd::Api(Api::Change(change, by)) => Msg::Changed(change.clone(), by.clone(), api()),
-        Cmd::Api(Api::Suggest(q)) => Msg::Suggested(q.clone(), api()),
         Cmd::Api(Api::FetchViewed(pr)) => {
             Msg::Diff(pr.clone().into(), DiffMsg::ViewedLoaded(Box::new(api())))
         }
-        Cmd::Api(Api::SetViewed {
-            pr, path, previous, ..
-        }) => Msg::Diff(
-            pr.clone().into(),
-            DiffMsg::ViewedSaved {
-                path: path.clone(),
-                previous: *previous,
-                result: api(),
-            },
-        ),
         Cmd::Api(Api::FetchThreads(pr)) => {
             Msg::Diff(pr.clone().into(), DiffMsg::ThreadsLoaded(api()))
         }
@@ -775,44 +654,17 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
             let none = threads.iter().map(|t| (t.thread.clone(), None)).collect();
             Msg::Diff(pr.clone().into(), DiffMsg::Job(*job, JobMsg::Mapped(none)))
         }
-        Cmd::Api(Api::SetResolved {
-            pr,
-            thread_id,
-            resolved,
-        }) => Msg::Diff(
-            pr.clone().into(),
-            DiffMsg::ResolvedSet {
-                thread_id: thread_id.clone(),
-                resolved: *resolved,
-                result: api(),
-            },
-        ),
         Cmd::LoadReview(pr) => Msg::Diff(pr.clone().into(), DiffMsg::ReviewLoaded(git())),
-        Cmd::Create(work) => Msg::Create(work.failed()),
-        Cmd::Write(work) => Msg::Write(work.failed()),
-        Cmd::EditHome { edit, what, .. } => Msg::HomeEdited {
-            edit: edit.clone(),
-            result: Err("ghtui hit a bug".into()),
-            what: what.clone(),
-        },
-        Cmd::Api(Api::SubmitReview { pr, .. }) => Msg::Diff(
-            pr.clone().into(),
-            DiffMsg::ReviewSubmitted(SubmitOutcome {
-                error: Some("Couldn't submit: ghtui hit a bug".into()),
-                ..SubmitOutcome::default()
-            }),
-        ),
+        Cmd::Work(work) => Msg::Done(work.failed()),
         Cmd::Api(Api::FetchPendingReview(pr)) => {
             Msg::Diff(pr.clone().into(), DiffMsg::PendingReview(api()))
         }
         Cmd::Api(Api::FetchLastReview { pr, .. }) => {
             Msg::Diff(pr.clone().into(), DiffMsg::LastReview(api()))
         }
-        Cmd::Api(Api::FetchMentionable(repo)) => Msg::Mentionable(repo.clone(), api()),
         Cmd::Git(Git::Code(ask)) => Msg::Code(ask.clone(), Err("ghtui hit a bug".into())),
         Cmd::Api(Api::Poll { pr, .. }) => Msg::Polled(pr.clone(), Vec::new()),
         Cmd::Api(Api::Watch { what, .. }) => Msg::Watched(what.clone(), Vec::new()),
-        Cmd::Api(Api::Actions(work)) => Msg::Actions(work.failed()),
         Cmd::Offline(crate::offline::Cmd::Probe) => {
             Msg::Offline(crate::offline::Msg::Probed(false))
         }
@@ -900,7 +752,7 @@ fn review_writer(
 }
 
 /// The signals that ask ghtui to stop: quitting on them restores the
-/// terminal (a plain `kill` used to leave it in raw mode with mouse
+/// terminal (a plain `kill` would leave it in raw mode with mouse
 /// reporting on).
 struct StopSignals {
     #[cfg(unix)]
@@ -943,325 +795,13 @@ impl StopSignals {
 
 /// Remembers the open tabs for next time. One tab isn't remembered:
 /// ghtui starts at home, as it always has.
-async fn save_tabs(gh: &GitHub, state: &State) {
+fn save_tabs(gh: &GitHub, state: &State) {
     let urls = if state.tab_count() > 1 {
         state.tab_urls()
     } else {
         Vec::new()
     };
-    gh.remember(crate::api::browse::keys::TABS, urls).await;
-}
-
-/// What the cache has for a page, and when it was fetched.
-pub(crate) fn cached_data(gh: &GitHub, key: &DataKey) -> Option<(Data, u64)> {
-    use crate::api::browse::keys;
-    use crate::api::project;
-    fn at<T>(c: crate::store::Cached<T>, wrap: impl FnOnce(T) -> Data) -> (Data, u64) {
-        (wrap(c.value), c.fetched_at)
-    }
-    Some(match key {
-        DataKey::Repo(repo) => at(gh.cached(&keys::repo(repo))?, |v| Data::Repo(Box::new(v))),
-        DataKey::Readme(repo) => at(gh.cached(&keys::readme(repo))?, |v: Option<_>| {
-            Data::Readme(v.map(Box::new))
-        }),
-        DataKey::Tree(repo, rev, path) => at(gh.cached(&keys::tree(repo, rev, path))?, Data::Tree),
-        DataKey::Search(kind, query) => at(gh.cached(&keys::search(*kind, query))?, |v| {
-            Data::Search(Box::new(v))
-        }),
-        DataKey::StateCounts(query) => {
-            at(gh.cached(&keys::state_counts(query))?, Data::StateCounts)
-        }
-        DataKey::Issue(repo, number) => match gh.cached(&keys::issue(repo, *number)) {
-            Some(issue) => at(issue, |v| Data::Issue(Some(Box::new(v)))),
-            // A pull request it is, as kept (offline, its page opens).
-            None => {
-                let pr = PrRef {
-                    repo: repo.clone(),
-                    number: *number,
-                };
-                (Data::Issue(None), gh.cached_pull_request(&pr)?.fetched_at)
-            }
-        },
-        DataKey::Reviews(pr) => at(gh.cached(&keys::reviews(pr))?, |v| {
-            Data::Reviews(Box::new(v))
-        }),
-        DataKey::PrActivity(pr) => at(gh.cached(&keys::pr_activity(pr))?, |v| {
-            Data::PrActivity(Box::new(v))
-        }),
-        DataKey::Profile(login) => at(gh.cached(&keys::profile(login))?, |v| {
-            Data::Profile(Box::new(v))
-        }),
-        DataKey::Refs(repo) => at(gh.cached(&keys::refs(repo))?, |v| Data::Refs(Box::new(v))),
-        DataKey::Commit(repo, oid) => at(gh.cached(&keys::commit(repo, oid))?, |v| {
-            Data::Commit(Box::new(v))
-        }),
-        DataKey::PrChecks(pr) => at(gh.cached(&keys::pr_checks(pr))?, |v| {
-            Data::Checks(Box::new(v))
-        }),
-        DataKey::Users(list) => at(gh.cached(&keys::users(list))?, |v| Data::Users(Box::new(v))),
-        DataKey::Forks(repo) => at(gh.cached(&keys::forks(repo))?, |v| {
-            Data::RepoPage(Box::new(v))
-        }),
-        DataKey::OwnerRepos(login, sort) => at(gh.cached(&keys::owner_repos(login, *sort))?, |v| {
-            Data::RepoPage(Box::new(v))
-        }),
-        DataKey::Stars(login) => at(gh.cached(&keys::starred(login))?, |v| {
-            Data::RepoPage(Box::new(v))
-        }),
-        DataKey::Releases(repo) => at(gh.cached(&keys::releases(repo))?, |v| {
-            Data::Releases(Box::new(v))
-        }),
-        DataKey::Release(repo, tag) => at(gh.cached(&keys::release(repo, tag))?, |v| {
-            Data::Release(Box::new(v))
-        }),
-        DataKey::Tags(repo) => at(gh.cached(&keys::tags(repo))?, |v| Data::Tags(Box::new(v))),
-        DataKey::Milestones(repo, closed) => {
-            at(gh.cached(&keys::milestones(repo, *closed))?, |v| {
-                Data::Milestones(Box::new(v))
-            })
-        }
-        DataKey::Milestone(repo, n) => at(gh.cached(&keys::milestone(repo, *n))?, |v| {
-            Data::Milestone(Box::new(v))
-        }),
-        DataKey::Deployments(repo, env) => {
-            at(gh.cached(&keys::deployments(repo, env.as_deref()))?, |v| {
-                Data::Deployments(Box::new(v))
-            })
-        }
-        DataKey::Compare(repo, spec) => at(gh.cached(&keys::compare(repo, spec))?, |v| {
-            Data::Compare(Box::new(v))
-        }),
-        DataKey::Blame(repo, rev, path) => at(gh.cached(&keys::blame(repo, rev, path))?, |v| {
-            Data::Blame(Box::new(v))
-        }),
-        DataKey::Gist(id) => at(gh.cached(&keys::gist(id))?, |v| Data::Gist(Box::new(v))),
-        DataKey::Gists(login) => at(gh.cached(&keys::gists(login))?, |v| {
-            Data::Gists(Box::new(v))
-        }),
-        DataKey::Teams(org) => at(gh.cached(&keys::teams(org))?, |v| Data::Teams(Box::new(v))),
-        DataKey::Team(org, slug) => at(gh.cached(&keys::team(org, slug))?, |v| {
-            Data::Team(Box::new(v))
-        }),
-        DataKey::Advisories(repo) => at(gh.cached(&keys::advisories(repo.as_ref()))?, |v| {
-            Data::Advisories(Box::new(v))
-        }),
-        DataKey::Advisory(repo, ghsa) => {
-            at(gh.cached(&keys::advisory(repo.as_ref(), ghsa))?, |v| {
-                Data::Advisory(Box::new(v))
-            })
-        }
-        DataKey::Branches(repo) => at(gh.cached(&keys::branches(repo))?, |v| {
-            Data::Branches(Box::new(v))
-        }),
-        DataKey::Run(repo, run, attempt) => at(gh.cached(&keys::run(repo, *run, *attempt))?, |v| {
-            Data::Run(Box::new(v))
-        }),
-        DataKey::Discussions(of, category) => at(
-            gh.cached(&keys::discussions(of, category.as_deref()))?,
-            |v| Data::Discussions(Box::new(v)),
-        ),
-        DataKey::Discussion(of, n) => at(gh.cached(&keys::discussion(of, *n))?, |v| {
-            Data::Discussion(Box::new(v))
-        }),
-        DataKey::Job(repo, job) => at(gh.cached(&keys::job(repo, *job))?, |v| {
-            Data::Job(Box::new(v))
-        }),
-        DataKey::Workflow(repo, file) => at(gh.cached(&keys::workflow(repo, file))?, |v| {
-            Data::Workflow(Box::new(v))
-        }),
-        DataKey::Housekeeping(key) => {
-            let (data, at) = crate::housekeeping::cached(gh, key)?;
-            (Data::Housekeeping(Box::new(data)), at)
-        }
-        DataKey::Runs(repo, query) => at(gh.cached(&keys::runs(repo, query))?, |v| {
-            Data::Runs(Box::new(v))
-        }),
-        DataKey::Notifications(query) => at(gh.cached(&keys::notifications(query))?, |v| {
-            Data::Notifications(Box::new(v))
-        }),
-        DataKey::CommitChecks(repo, oid) => at(gh.cached(&keys::commit_checks(repo, oid))?, |v| {
-            Data::Checks(Box::new(v))
-        }),
-        DataKey::Projects(of) => at(gh.cached(&project::keys::projects(of))?, |v| {
-            Data::Projects(Box::new(v))
-        }),
-        DataKey::Project(p, view) => at(gh.cached(&project::keys::project(p, *view))?, |v| {
-            Data::Project(Box::new(v))
-        }),
-        DataKey::Alerts(repo, kind, query) => {
-            let key = crate::api::security::keys::alerts(repo, *kind, query);
-            at(gh.cached(&key)?, |v| Data::Alerts(Box::new(v)))
-        }
-        DataKey::Alert(a) => at(gh.cached(&crate::api::security::keys::alert(a))?, |v| {
-            Data::Alert(Box::new(v))
-        }),
-        DataKey::Site(key) => return crate::site::cached(gh, key),
-        DataKey::Settings(repo, page) => {
-            let key = crate::api::settings::keys::page(repo, *page);
-            at(gh.cached(&key)?, |v| Data::Settings(Box::new(v)))
-        }
-        DataKey::History(repo, rev, path) => at(gh.cached(&keys::history(repo, rev, path))?, |v| {
-            Data::History(Box::new(v))
-        }),
-        DataKey::LastCommits(repo, rev, path) => {
-            at(gh.cached(&keys::last_commits(repo, rev, path))?, |v| {
-                Data::LastCommits(std::sync::Arc::new(v))
-            })
-        }
-        // Files aren't cached; they can be large.
-        // A wiki's clone is its cache.
-        // Where a ref ends is asked anew each session.
-        // What a new issue can have is what it has now.
-        // A commit's comments revalidate with their ETag.
-        DataKey::Blob(..)
-        | DataKey::CommitComments(..)
-        | DataKey::Lines(..)
-        | DataKey::InProjects(..)
-        | DataKey::Files(..)
-        | DataKey::JobLog(..)
-        | DataKey::Wiki(..)
-        | DataKey::RefIn(..)
-        | DataKey::Sidebar(..)
-        | DataKey::NewForm(..)
-        | DataKey::Subscription(..) => {
-            return None;
-        }
-    })
-}
-
-/// A page's data; for a list, the page after `after` (the first without).
-/// With `early`, a search's page is sent there as soon as it's found, as
-/// a first look while its pull requests' checks are read.
-pub(crate) async fn fetch(
-    gh: &GitHub,
-    key: &DataKey,
-    after: Option<String>,
-    early: Option<&mpsc::UnboundedSender<Msg>>,
-) -> Result<Data, ApiError> {
-    Ok(match key {
-        DataKey::Repo(repo) => Data::Repo(Box::new(gh.repo(repo).await?)),
-        DataKey::Readme(repo) => Data::Readme(gh.readme(repo).await?.map(Box::new)),
-        DataKey::Tree(repo, rev, path) => Data::Tree(gh.tree(repo, rev, path).await?),
-        DataKey::Blob(repo, rev, path) => Data::Blob(Box::new(gh.blob(repo, rev, path).await?)),
-        DataKey::Search(kind, query) => {
-            let found = |r: &crate::api::browse::SearchResults| {
-                if let Some(tx) = early {
-                    let _ = tx.send(Msg::Fetched {
-                        key: key.clone(),
-                        result: Ok(Data::Search(Box::new(r.clone()))),
-                        cached_at: Some(crate::store::now()),
-                    });
-                }
-            };
-            let results = gh.search_showing(*kind, query, after, found).await?;
-            Data::Search(Box::new(results))
-        }
-        DataKey::StateCounts(query) => Data::StateCounts(gh.state_counts(query).await?),
-        DataKey::Issue(repo, number) => Data::Issue(gh.issue(repo, *number).await?.map(Box::new)),
-        DataKey::PrActivity(pr) => Data::PrActivity(Box::new(gh.pr_activity(pr).await?)),
-        DataKey::Reviews(pr) => Data::Reviews(Box::new(gh.reviews(pr).await?)),
-        DataKey::InProjects(repo, n) => Data::InProjects(Box::new(gh.projects_of(repo, *n).await?)),
-        DataKey::CommitComments(repo, oid) => {
-            Data::CommitComments(Box::new(gh.commit_comments(repo, oid).await?))
-        }
-        DataKey::Profile(login) => Data::Profile(Box::new(gh.profile(login).await?)),
-        DataKey::Files(repo, rev) => {
-            let (files, truncated) = gh.file_list(repo, rev).await?;
-            Data::Files(std::sync::Arc::new(files), truncated)
-        }
-        DataKey::Refs(repo) => Data::Refs(Box::new(gh.refs(repo).await?)),
-        DataKey::RefIn(repo, spot) => Data::RefIn(gh.ref_in(repo, spot).await?),
-        DataKey::Commit(repo, oid) => Data::Commit(Box::new(gh.commit(repo, oid).await?)),
-        DataKey::PrChecks(pr) => Data::Checks(Box::new(gh.pr_checks(pr).await?)),
-        DataKey::Users(list) => Data::Users(Box::new(gh.users(list, after).await?)),
-        DataKey::Forks(repo) => Data::RepoPage(Box::new(gh.forks(repo, after).await?)),
-        DataKey::OwnerRepos(login, sort) => {
-            Data::RepoPage(Box::new(gh.owner_repos(login, *sort, after).await?))
-        }
-        DataKey::Stars(login) => Data::RepoPage(Box::new(gh.starred(login, after).await?)),
-        DataKey::Releases(repo) => Data::Releases(Box::new(gh.releases(repo, after).await?)),
-        DataKey::Release(repo, tag) => Data::Release(Box::new(gh.release(repo, tag).await?)),
-        DataKey::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, after).await?)),
-        DataKey::Branches(repo) => Data::Branches(Box::new(gh.branches(repo, after).await?)),
-        // A thread's lines come through git (see `Effects::lines`).
-        DataKey::Lines(repo, ..) => {
-            return Err(ApiError::NotFound(format!(
-                "{repo}'s lines, which git reads"
-            )));
-        }
-        // Wikis come through git (see `Effects::wiki`).
-        DataKey::Wiki(repo, _) => {
-            return Err(ApiError::NotFound(format!(
-                "{repo}'s wiki, which git reads"
-            )));
-        }
-        DataKey::Advisories(repo) => {
-            Data::Advisories(Box::new(gh.advisories(repo.as_ref(), after).await?))
-        }
-        DataKey::Advisory(repo, ghsa) => {
-            Data::Advisory(Box::new(gh.advisory(repo.as_ref(), ghsa).await?))
-        }
-        DataKey::Teams(org) => Data::Teams(Box::new(gh.teams(org, after).await?)),
-        DataKey::Team(org, slug) => Data::Team(Box::new(gh.team(org, slug).await?)),
-        DataKey::Gist(id) => Data::Gist(Box::new(gh.gist(id).await?)),
-        DataKey::Gists(login) => Data::Gists(Box::new(gh.gists(login, after).await?)),
-        DataKey::Blame(repo, rev, path) => Data::Blame(Box::new(gh.blame(repo, rev, path).await?)),
-        DataKey::Compare(repo, spec) => Data::Compare(Box::new(gh.compare(repo, spec).await?)),
-        DataKey::Deployments(repo, env) => {
-            Data::Deployments(Box::new(gh.deployments(repo, env.as_deref(), after).await?))
-        }
-        DataKey::Milestones(repo, closed) => {
-            Data::Milestones(Box::new(gh.milestones(repo, *closed, after).await?))
-        }
-        DataKey::Milestone(repo, n) => {
-            Data::Milestone(Box::new(gh.milestone(repo, *n, after).await?))
-        }
-        DataKey::Run(repo, run, attempt) => {
-            Data::Run(Box::new(gh.workflow_run(repo, *run, *attempt).await?))
-        }
-        DataKey::Discussions(of, category) => Data::Discussions(Box::new(
-            gh.discussions(of, category.as_deref(), after).await?,
-        )),
-        DataKey::Discussion(of, n) => Data::Discussion(Box::new(gh.discussion(of, *n).await?)),
-        DataKey::Job(repo, job) => Data::Job(Box::new(gh.job(repo, *job).await?)),
-        DataKey::JobLog(repo, job) => Data::Log(Arc::new(gh.job_log(repo, *job).await?)),
-        DataKey::Workflow(repo, file) => Data::Workflow(Box::new(gh.workflow(repo, file).await?)),
-        DataKey::Runs(repo, query) => Data::Runs(Box::new(gh.runs(repo, query, after).await?)),
-        DataKey::Notifications(query) => {
-            Data::Notifications(Box::new(gh.notifications(query, after).await?))
-        }
-        DataKey::Sidebar(repo, number) => Data::Sidebar(Box::new(gh.sidebar(repo, *number).await?)),
-        DataKey::NewForm(repo) => Data::NewForm(Box::new(gh.new_form(repo).await?)),
-        DataKey::Subscription(of) => Data::Subscription(Box::new(gh.subscription(of).await?)),
-        DataKey::Settings(repo, page) => Data::Settings(Box::new(gh.settings(repo, *page).await?)),
-        DataKey::CommitChecks(repo, oid) => {
-            Data::Checks(Box::new(gh.commit_checks(repo, oid).await?))
-        }
-        DataKey::Projects(of) => Data::Projects(Box::new(gh.projects(of, after).await?)),
-        DataKey::Project(p, view) => Data::Project(Box::new(gh.project(p, *view, after).await?)),
-        DataKey::Alerts(repo, kind, query) => {
-            Data::Alerts(Box::new(gh.alerts(repo, *kind, query, after).await?))
-        }
-        DataKey::Alert(a) => Data::Alert(Box::new(gh.alert(a).await?)),
-        DataKey::Site(key) => crate::site::fetch(gh, key, after).await?,
-        DataKey::Housekeeping(key) => {
-            Data::Housekeeping(Box::new(crate::housekeeping::fetch(gh, key, after).await?))
-        }
-        DataKey::History(repo, rev, path) => {
-            Data::History(Box::new(gh.history(repo, rev, path, after).await?))
-        }
-        DataKey::LastCommits(repo, rev, path) => {
-            let names: Vec<String> = gh
-                .tree(repo, rev, path)
-                .await?
-                .into_iter()
-                .map(|e| e.name)
-                .collect();
-            Data::LastCommits(std::sync::Arc::new(
-                gh.last_commits(repo, rev, path, &names).await?,
-            ))
-        }
-    })
+    gh.remember(crate::store::TABS, &urls);
 }
 
 /// Puts `text` on the clipboard with OSC 52 (through tmux too, when its
@@ -1330,152 +870,6 @@ fn check_git(tx: mpsc::UnboundedSender<Msg>) {
         tracing::warn!("{problem}");
         let _ = tx.send(Msg::Notice(Notice::Error(problem)));
     });
-}
-
-fn api_message(err: &ApiError) -> String {
-    match err {
-        ApiError::GraphQl(messages) => messages.join("; "),
-        err => err.to_string(),
-    }
-}
-
-/// A review to submit.
-struct Review<'a> {
-    drafts: Vec<DraftComment>,
-    event: ReviewEvent,
-    body: &'a str,
-    /// The comments in your pending review on GitHub you were shown.
-    seen: u64,
-}
-
-/// Submits a review: reuses the viewer's pending review on GitHub (or
-/// starts one on `head`), adds each draft as a thread, and submits only if
-/// GitHub accepted every draft. Each draft's fate is reported, so rejected
-/// ones keep their text. A pending review holding comments you weren't
-/// shown isn't submitted: they'd be published unseen.
-async fn submit_review(gh: &GitHub, pr: &PrRef, head: &str, review: Review<'_>) -> SubmitOutcome {
-    let mut outcome = SubmitOutcome::default();
-    // GitHub can't be reached, and nothing was sent: to queue.
-    let unsent = |review: &Review<'_>| {
-        Some(Box::new(crate::offline::queue::Review {
-            pr: pr.clone(),
-            head: head.to_owned(),
-            drafts: review.drafts.clone(),
-            event: review.event,
-            body: review.body.to_owned(),
-            seen: review.seen,
-        }))
-    };
-    let (review_id, held) = match gh.pending_review(pr).await {
-        Ok((_, Some(pending))) if pending.comments > review.seen => {
-            outcome.on_github = Some(pending.comments);
-            outcome.error = Some(
-                "Not sent: your pending review on GitHub holds comments you hadn't seen".into(),
-            );
-            return outcome;
-        }
-        Ok((_, Some(pending))) => match reusable(&pending, head) {
-            Ok(()) => (pending.id, pending.comments),
-            Err(message) => {
-                outcome.error = Some(message);
-                return outcome;
-            }
-        },
-        Ok((pr_id, None)) => match gh.start_review(&pr_id, head).await {
-            Ok(id) => (id, 0),
-            Err(err) => {
-                if let ApiError::Offline(_) = err {
-                    outcome.unsent = unsent(&review);
-                }
-                outcome.error = Some(format!("Couldn't start the review: {}", api_message(&err)));
-                return outcome;
-            }
-        },
-        Err(err) => {
-            if let ApiError::Offline(_) = err {
-                outcome.unsent = unsent(&review);
-            }
-            outcome.error = Some(format!("Couldn't reach the PR: {}", api_message(&err)));
-            return outcome;
-        }
-    };
-    for draft in review.drafts {
-        match gh
-            .add_review_thread(&review_id, &review::new_thread(&draft))
-            .await
-        {
-            Ok(_) => outcome.accepted.push(draft.id),
-            Err(err) => outcome.rejected.push((draft.id, api_message(&err))),
-        }
-    }
-    // Those accepted are in it now, and were yours to see.
-    outcome.on_github = Some(held + outcome.accepted.len() as u64);
-    if !outcome.rejected.is_empty() {
-        return outcome;
-    }
-    match gh
-        .submit_review(&review_id, review.event, review.body)
-        .await
-    {
-        Ok(()) => outcome.submitted = true,
-        Err(err) => outcome.error = Some(format!("Couldn't submit: {}", api_message(&err))),
-    }
-    outcome
-}
-
-/// Submits a queued review ([`crate::offline::queue`]). What GitHub
-/// refuses stays queued as refused, without the comments it took (they
-/// wait in your pending review there, counted as seen).
-pub(crate) async fn send_review(
-    gh: &GitHub,
-    queued: crate::offline::queue::Review,
-) -> crate::offline::queue::Sent {
-    use crate::offline::queue::Sent;
-    let review = Review {
-        drafts: queued.drafts.clone(),
-        event: queued.event,
-        body: &queued.body,
-        seen: queued.seen,
-    };
-    let outcome = submit_review(gh, &queued.pr, &queued.head, review).await;
-    if outcome.unsent.is_some() {
-        return Sent::Unsent;
-    }
-    if outcome.submitted {
-        return Sent::Taken;
-    }
-    let why = match (&outcome.error, outcome.rejected.as_slice()) {
-        (Some(err), _) => err.clone(),
-        (None, rejected) => {
-            let reasons: Vec<&str> = rejected.iter().map(|(_, r)| r.as_str()).collect();
-            format!("GitHub refused comments: {}", reasons.join("; "))
-        }
-    };
-    let seen = outcome.on_github.unwrap_or(queued.seen);
-    let mut rest = queued;
-    rest.drafts.retain(|d| !outcome.accepted.contains(&d.id));
-    for draft in &mut rest.drafts {
-        draft.error = (outcome.rejected.iter())
-            .find(|(id, _)| *id == draft.id)
-            .map(|(_, reason)| reason.clone());
-    }
-    rest.seen = seen;
-    Sent::Partly(rest, why)
-}
-
-/// Whether the drafts can join your pending review: it must be on `head`.
-/// One on another commit has its comments placed on that commit's lines,
-/// and the drafts' line numbers are from this diff, so they're not mixed;
-/// nor is the pending review discarded, since it may hold comments written
-/// on GitHub.
-fn reusable(pending: &PendingReview, head: &str) -> Result<(), String> {
-    match &pending.commit {
-        Some(commit) if commit != head => Err(format!(
-            "You have a pending review on another commit ({}): finish or discard it on GitHub, then submit again",
-            crate::ui::text::short_sha(commit)
-        )),
-        _ => Ok(()),
-    }
 }
 
 /// A temporary file holding `text` for the editor: created exclusively
@@ -1553,7 +947,6 @@ async fn edit_externally(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::model::NodeId;
 
     /// A panicking task still answers: a notice, then the failure reply
     /// the screen is waiting for.
@@ -1572,19 +965,6 @@ mod tests {
             rx.recv().await,
             Some(Msg::Diff(p, DiffMsg::ThreadsLoaded(Err(ApiError::Internal(_))))) if p == DiffOf::Pr(pr.clone())
         ));
-    }
-
-    #[test]
-    fn a_pending_review_on_another_commit_is_not_reused() {
-        let on = |commit: Option<&str>| PendingReview {
-            id: NodeId::new("R_1"),
-            commit: commit.map(Into::into),
-            comments: 0,
-        };
-        assert_eq!(reusable(&on(Some("abc")), "abc"), Ok(()));
-        assert_eq!(reusable(&on(None), "abc"), Ok(()));
-        let err = reusable(&on(Some("0123456789")), "abc").unwrap_err();
-        assert!(err.contains("another commit (0123456)"), "{err}");
     }
 
     #[cfg(unix)]

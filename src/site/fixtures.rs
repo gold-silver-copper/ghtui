@@ -6,13 +6,8 @@ use crate::api::insights::{
 };
 use crate::api::lists::{ListPage, Mine, MyLists, StarList};
 use crate::api::model::{Capped, NodeId, RepoId};
-use crate::api::packages::{
-    Kind, Package, PackageDetail, PackageList, PackageRef, PackagesOf, Version,
-};
+use crate::api::packages::{Kind, Package, PackageDetail, PackageList, PackageRef, Version};
 use crate::api::replies::SavedReply;
-use crate::browse::Data;
-
-use super::{Key, Value};
 
 /// Sunday 2026-04-12, 00:00 UTC.
 pub const START: u64 = 1_775_952_000;
@@ -95,14 +90,12 @@ pub fn dependencies() -> Dependencies {
                         ],
                         212,
                     ),
-                    unparseable: false,
-                    too_big: false,
+                    ..Default::default()
                 },
                 Manifest {
                     path: "xtask/Cargo.toml".into(),
                     dependencies: Capped::new(vec![dep("duct", ">= 1.0.0, < 2.0.0", None)], 1),
-                    unparseable: false,
-                    too_big: false,
+                    ..Default::default()
                 },
             ],
             2,
@@ -243,14 +236,14 @@ pub fn package_detail() -> PackageDetail {
     };
     PackageDetail {
         package: package(),
-        versions: crate::api::browse::Results {
-            total: 2,
-            items: vec![
+        versions: crate::fixtures::page(
+            2,
+            vec![
                 version(102, "sha256:9f1c0d2e", &["latest", "0.2.0"]),
                 version(101, "sha256:3a7b55e1", &[]),
             ],
-            next: None,
-        },
+            None,
+        ),
     }
 }
 
@@ -259,22 +252,4 @@ pub fn saved_replies() -> Capped<SavedReply> {
         title: "Thanks".into(),
         body: "Thanks for the report!".into(),
     }])
-}
-
-/// What GitHub might answer for `key`.
-pub fn sample(key: &Key) -> Data {
-    let v = match key {
-        Key::Activity(_) => Value::Activity(activity()),
-        Key::Traffic(_) => Value::Traffic(traffic()),
-        Key::Dependencies(_) => Value::Dependencies(dependencies()),
-        Key::Featured => Value::Topics(featured()),
-        Key::Topic(_) => Value::Topic(rust()),
-        Key::StarLists(_) => Value::StarLists(star_lists()),
-        Key::StarList(..) => Value::StarList(list_page()),
-        Key::MyLists(_) => Value::MyLists(my_lists()),
-        Key::Packages(PackagesOf::Owner(_) | PackagesOf::Repo(_)) => Value::Packages(packages()),
-        Key::Package(_) => Value::Package(package_detail()),
-        Key::SavedReplies => Value::SavedReplies(saved_replies()),
-    };
-    Data::Site(Box::new(v))
 }

@@ -7,10 +7,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::api::model::Capped;
 use crate::api::replies::SavedReply;
-use crate::browse::{Need, Picked};
+use crate::data::Picked;
 use crate::state::{Cmd, Overlay, Remote, State};
 
-use super::{Key, site};
+use crate::data::DataKey;
 
 /// The list of saved replies, open in the composer.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -29,9 +29,9 @@ struct Row {
 /// The list's rows, for what's typed: the replies whose title or text
 /// has it, else why there are none; then where they're made.
 fn rows(state: &State, query: &str) -> Vec<Row> {
-    let key = site(Key::SavedReplies);
+    let key = DataKey::SavedReplies;
     #[expect(clippy::disallowed_methods, reason = "said as the list's row")]
-    let fetched = Remote::fetched(state.data.get(&key), "")
+    let fetched = Remote::fetched(state.remote(&key), "")
         .pick(<Capped<SavedReply> as Picked>::pick)
         .text("your saved replies");
     let note = |label: String| Row {
@@ -42,7 +42,7 @@ fn rows(state: &State, query: &str) -> Vec<Row> {
         // Said short: the list is narrow.
         Err(why) if why.contains("read:user") => vec![
             note("Your token lacks the read:user scope:".to_owned()),
-            note("gh auth refresh -s read:user adds it".to_owned()),
+            note(format!("{} adds it", crate::api::refresh("read:user"))),
         ],
         Err(why) => vec![note(why)],
         Ok(replies) if replies.is_empty() => vec![note("You have no saved replies".to_owned())],
@@ -101,7 +101,7 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Option<Vec<Cmd>> {
         return Some(if open {
             Vec::new()
         } else {
-            state.ensure(Need::Data(site(Key::SavedReplies)), true)
+            state.ensure(DataKey::SavedReplies, true)
         });
     }
     if !open {
@@ -139,7 +139,7 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Option<Vec<Cmd>> {
             {
                 c.input.insert_str(&text);
                 c.saved = None;
-                c.error = None;
+                c.sent.error = None;
             }
         }
         _ => {}

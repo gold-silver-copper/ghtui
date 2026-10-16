@@ -110,7 +110,7 @@ impl DiffView<'_> {
         let theme = self.ctx.theme;
         let quiet_bg = if cursor { Bg::SelectedInactive } else { PANE };
         let indent = sign_column(file);
-        let pad = " ".repeat(indent);
+        let pad = Pad(indent);
         // `⋯ what · KEY to verb`, aligned with the code.
         let action = |buf: &mut Buffer, what: Span<'static>, key: &str, verb: &str| {
             fill(buf, area, theme, quiet_bg);
@@ -833,8 +833,24 @@ pub fn code_room(file: &DocFile, width: u16, split: bool) -> usize {
     usize::from(width).saturating_sub(numbers + 8)
 }
 
-fn number(n: Option<u32>, width: usize) -> String {
-    n.map_or_else(|| " ".repeat(width), |n| format!("{n:>width$}"))
+fn number(n: Option<u32>, width: usize) -> std::borrow::Cow<'static, str> {
+    const BLANK: &str = "          ";
+    match n {
+        Some(n) => format!("{n:>width$}").into(),
+        None => BLANK
+            .get(..width)
+            .map_or_else(|| " ".repeat(width).into(), Into::into),
+    }
+}
+
+/// So many spaces, written where it's formatted: rows are drawn every
+/// frame.
+struct Pad(usize);
+
+impl std::fmt::Display for Pad {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:1$}", "", self.0)
+    }
 }
 
 /// Styled code, with tabs expanded and control characters made visible,

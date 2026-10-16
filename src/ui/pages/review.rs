@@ -298,7 +298,11 @@ pub(super) fn review_drafts(page: &mut Page, pr: &PrRef, drafts: Option<&[DraftC
             DraftSide::Left => 'L',
             DraftSide::Right => 'R',
         };
-        let target = url::diff_line(pr, &draft.path, draft.line.map(|l| (side, l)));
+        let target = Link::Review(ReviewLink::Draft {
+            pr: pr.clone(),
+            id: draft.id,
+            url: url::diff_line(pr, &draft.path, draft.line.map(|l| (side, l))),
+        });
         item(page, target, |page, link| {
             let at = place(&draft.path, draft.line);
             body(page, vec![Seg::linked(at, Role::Link, link)]);

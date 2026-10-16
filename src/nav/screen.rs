@@ -2,9 +2,11 @@
 
 use super::*;
 
-/// What a page was built for: the data's generation, its diff's inputs
-/// (a pull request's Review tab shows them), the width and the density.
-pub(super) type Built = (u64, Option<u64>, u16, bool);
+/// What a page was built for: the versions of GitHub's data it reads, the
+/// generation of the rest of what it shows, its form's version, its
+/// diff's inputs (a pull request's Review tab shows them), the width and
+/// the density.
+pub(super) type Built = (u64, u64, u64, Option<u64>, u16, bool);
 
 /// The screen of one page: where it is, what's selected, and the page as
 /// last built.
@@ -17,6 +19,9 @@ pub struct PageScreen {
     pub selected: Option<usize>,
     pub(super) page: Arc<Page>,
     pub(super) built: Option<Built>,
+    /// When a time the page shows relative to now ("3m ago") reads
+    /// differently: the next minute timer builds the page again.
+    pub(super) expires: u64,
     /// Nothing has been selected or scrolled yet: select the first visible
     /// item once the page has items.
     pub(super) fresh: bool,
@@ -33,6 +38,8 @@ pub struct PageScreen {
     pub range: Option<usize>,
     /// Columns code is scrolled left by.
     pub shift: usize,
+    /// How far code can scroll left ([`Page::wide`]), found once a build.
+    pub(super) wide: usize,
     /// The word cursor, by its column in the code of the selected line:
     /// `None` until `w` or `b` picks one.
     pub word: Option<usize>,
@@ -46,25 +53,14 @@ impl PageScreen {
         // Lists start on their first row, a job on a step and a file on the
         // lines linked; reading pages (issues, pull requests, files) start
         // with nothing selected.
-        let list = !matches!(
-            route,
-            Route::Issue { .. }
-                | Route::Blob { lines: None, .. }
-                | Route::Blame { lines: None, .. }
-                | Route::Commit { .. }
-                | Route::Release { .. }
-                | Route::Discussion { .. }
-                | Route::Pr {
-                    tab: PrTab::Conversation,
-                    ..
-                }
-        );
+        let list = route.family().starts_on_row();
         Self {
             route,
             scroll: 0,
             selected: None,
             page: Arc::new(Page::default()),
             built: None,
+            expires: u64::MAX,
             fresh: list,
             jumped: None,
             anchor,
@@ -72,6 +68,7 @@ impl PageScreen {
             find: None,
             range: None,
             shift: 0,
+            wide: 0,
             word: None,
             land: None,
         }
@@ -88,6 +85,7 @@ impl PageScreen {
         if let Some(query) = &self.find {
             page.mark(query);
         }
+        self.wide = page.wide();
         let old = mem::replace(&mut self.page, Arc::new(page));
         self.built = Some(built);
         let before = (self.scroll, self.selected);
@@ -192,25 +190,31 @@ impl State {
         usize::from(self.page_area().height).max(1)
     }
 
-    /// Rebuilds the page on screen if its data or the width changed, and
+    /// Rebuilds the page on screen if what it shows changed (its data,
+    /// the width, a time relative to now, by the last minute timer), and
     /// keeps its scroll and selection valid.
     pub fn sync_page(&mut self) {
         let width = self.page_width();
         let height = self.page_height();
+        let (now, minute) = ((self.clock)(), self.minute);
         let Screen::Page(p) = self.screen() else {
             return;
         };
         let built = (
-            self.data_gen,
+            self.data_version(&p.route),
+            self.shown_gen,
+            self.forms.version(&p.route),
             self.diff_version(&p.route),
             width,
             self.compact(),
         );
-        let rebuild = (p.built != Some(built)).then(|| p.route.clone());
-        let page = rebuild.map(|route| self.build_page(&route, width, (self.clock)()));
+        let rebuild = (p.built != Some(built) || minute >= p.expires).then(|| p.route.clone());
+        let page = rebuild
+            .map(|route| crate::ui::time::until_changed(|| self.build_page(&route, width, now)));
         if let Screen::Page(p) = self.screen_mut() {
-            if let Some(page) = page {
+            if let Some((page, expires)) = page {
                 p.show(page, built);
+                p.expires = expires;
             }
             settle(p, height);
         }

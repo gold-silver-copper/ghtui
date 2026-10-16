@@ -1,5 +1,9 @@
-//! What ghtui changes on GitHub, other than a review: every such write is
-//! a [`Change`], sent by [`GitHub::change`].
+//! The changes ghtui makes to issues, pull requests, discussions, runs,
+//! notifications, projects, alerts and a repository's settings: each is a
+//! [`Change`], sent by [`GitHub::change`]; the writes the offline queue
+//! keeps until GitHub is back are some of them. Reviews, releases, gists,
+//! wikis, labels, milestones, files and the like are written by their own
+//! jobs.
 
 use crate::schema::schema;
 
@@ -13,7 +17,7 @@ use crate::api::queries::{
 };
 
 /// A change to make on GitHub.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Change {
     /// Comment on an issue or pull request.
     Comment {
@@ -142,7 +146,7 @@ pub enum Change {
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cynic(graphql_type = "PullRequestMergeMethod", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequestMergeMethod")]
 pub enum MergeMethod {
     Merge,
     Squash,
@@ -161,7 +165,7 @@ impl MergeMethod {
 
 /// Why an issue was closed.
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
-#[cynic(graphql_type = "IssueClosedStateReason", schema_module = "schema")]
+#[cynic(graphql_type = "IssueClosedStateReason")]
 pub enum CloseReason {
     Completed,
     NotPlanned,
@@ -170,10 +174,7 @@ pub enum CloseReason {
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
-#[cynic(
-    graphql_type = "PullRequestBranchUpdateMethod",
-    schema_module = "schema"
-)]
+#[cynic(graphql_type = "PullRequestBranchUpdateMethod")]
 pub enum UpdateMethod {
     Merge,
     Rebase,
@@ -391,33 +392,21 @@ pub struct AddCommentVariables {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "AddCommentVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "AddCommentVariables")]
 pub struct AddComment {
     #[arguments(input: { subjectId: $subject, body: $body })]
     pub add_comment: Option<AddCommentPayload>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "IdVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "IdVariables")]
 pub struct AddStar {
     #[arguments(input: { starrableId: $id })]
     pub add_star: Option<StarPayload>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "IdVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "IdVariables")]
 pub struct RemoveStar {
     #[arguments(input: { starrableId: $id })]
     pub remove_star: Option<UnstarPayload>,
@@ -431,33 +420,21 @@ pub struct MergeVariables {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "MergeVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "MergeVariables")]
 pub struct MergePr {
     #[arguments(input: { pullRequestId: $pr, mergeMethod: $method, expectedHeadOid: $head })]
     pub merge_pull_request: Option<MergePayload>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "MergeVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "MergeVariables")]
 pub struct EnableAutoMerge {
     #[arguments(input: { pullRequestId: $pr, mergeMethod: $method, expectedHeadOid: $head })]
     pub enable_pull_request_auto_merge: Option<AutoMergePayload>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "IdVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "IdVariables")]
 pub struct DisableAutoMerge {
     #[arguments(input: { pullRequestId: $id })]
     pub disable_pull_request_auto_merge: Option<NoAutoMergePayload>,
@@ -470,44 +447,28 @@ pub struct EnqueueVariables {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "EnqueueVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "EnqueueVariables")]
 pub struct Enqueue {
     #[arguments(input: { pullRequestId: $pr, expectedHeadOid: $head })]
     pub enqueue_pull_request: Option<EnqueuePayload>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "IdVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "IdVariables")]
 pub struct Dequeue {
     #[arguments(input: { id: $id })]
     pub dequeue_pull_request: Option<DequeuePayload>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "IdVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "IdVariables")]
 pub struct ClosePr {
     #[arguments(input: { pullRequestId: $id })]
     pub close_pull_request: Option<ClosePrPayload>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "IdVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "IdVariables")]
 pub struct ReopenPr {
     #[arguments(input: { pullRequestId: $id })]
     pub reopen_pull_request: Option<ReopenPrPayload>,
@@ -520,33 +481,21 @@ pub struct CloseIssueVariables {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "CloseIssueVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "CloseIssueVariables")]
 pub struct CloseIssue {
     #[arguments(input: { issueId: $issue, stateReason: $reason })]
     pub close_issue: Option<CloseIssuePayload>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "IdVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "IdVariables")]
 pub struct ReopenIssue {
     #[arguments(input: { issueId: $id })]
     pub reopen_issue: Option<ReopenIssuePayload>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "IdVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "IdVariables")]
 pub struct MarkReady {
     #[arguments(input: { pullRequestId: $id })]
     pub mark_pull_request_ready_for_review: Option<ReadyPayload>,
@@ -560,11 +509,7 @@ pub struct UpdateBranchVariables {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "UpdateBranchVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "UpdateBranchVariables")]
 pub struct UpdateBranch {
     #[arguments(input: { pullRequestId: $pr, updateMethod: $method, expectedHeadOid: $head })]
     pub update_pull_request_branch: Option<UpdateBranchPayload>,

@@ -47,7 +47,7 @@ pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
         page.box_bottom();
         return;
     }
-    let lines = markdown::highlighted(text, crate::diff::Language::from_path(path));
+    let lines = markdown::highlighted_file(text, crate::diff::Language::from_path(path));
     let width = lines.len().to_string().len();
     let is_marked = |n: usize| marked.is_some_and(|(a, b)| (a as usize..=b as usize).contains(&n));
     // Each line is a row: selected, `y` copies its link.
@@ -115,7 +115,7 @@ pub fn blame(
     let commits = unique(blame.ranges.iter().map(|r| &r.commit.oid)).len() as u64;
     let info = format!("Blame · {}", plural(commits, "commit"));
     page.box_top(vec![Seg::new(info, Role::Meta)], vec![file]);
-    let lines = markdown::highlighted(text, crate::diff::Language::from_path(path));
+    let lines = markdown::highlighted_file(text, crate::diff::Language::from_path(path));
     let width = lines.len().to_string().len();
     let is_marked = |n: usize| marked.is_some_and(|(a, b)| (a as usize..=b as usize).contains(&n));
     // Beside each run of lines: its commit, author, age and message, in
@@ -217,12 +217,7 @@ mod tests {
         let blame = Blame {
             ranges: vec![range(1, 2, "aaaaaaa"), range(3, 3, "bbbbbbb")],
         };
-        let blob = Blob {
-            path: "a.txt".into(),
-            text: Some("one\ntwo\nthree\n".into()),
-            size: 14,
-            truncated: false,
-        };
+        let blob = crate::fixtures::file("a.txt", "one\ntwo\nthree\n");
         let repo = RepoId::new("o", "r");
         let at = FileAt {
             repo: &repo,

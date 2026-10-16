@@ -1,6 +1,7 @@
 //! Fetching, refreshing and writing.
 
 use super::*;
+use crate::route::issues;
 
 #[test]
 fn duplicate_fetches_are_suppressed() {
@@ -9,6 +10,9 @@ fn duplicate_fetches_are_suppressed() {
         .map(|s| fetch(s.search.clone().unwrap().key()))
         .collect();
     assert_eq!(state.load_visible(false), sections);
+    assert_eq!(state.load_visible(true), []);
+    // Who you are is asked again until it's known.
+    state.viewer = None;
     assert_eq!(state.load_visible(true), vec![Cmd::Api(Api::FetchViewer)]);
 }
 
@@ -22,6 +26,7 @@ fn cached_data_shows_while_fetching() {
             key: DataKey::Profile("octocat".into()),
             result: Ok(Data::Profile(Box::new(crate::fixtures::profile()))),
             cached_at: Some(0),
+            source: None,
         },
     );
     assert!(page(&state).page().lines[0].text().contains("The Octocat"));
@@ -31,7 +36,7 @@ fn cached_data_shows_while_fetching() {
 
 #[test]
 fn failed_refresh_keeps_cached_data() {
-    let mut state = with_home(2);
+    let mut state = with_prs(2);
     let _ = state.load_visible(true);
     mine_failed(&mut state, ApiError::RateLimited(30));
     assert!(selected_text(&state).contains("PR 1"));
@@ -45,12 +50,13 @@ fn failed_refresh_keeps_cached_data() {
 /// One outage that fails each of the page's needs is said once.
 #[test]
 fn a_refresh_error_shared_by_needs_is_said_once() {
-    let mut state = with_home(2);
+    let mut state = with_prs(2);
     let repos = state.home[2].search.clone().unwrap().key();
     let fetched = |result| Msg::Fetched {
         key: repos.clone(),
         result,
         cached_at: None,
+        source: None,
     };
     let none = SearchResults::Repos(crate::api::browse::Results::default());
     update(&mut state, fetched(Ok(Data::Search(Box::new(none)))));
@@ -66,20 +72,26 @@ fn a_refresh_error_shared_by_needs_is_said_once() {
 #[test]
 fn only_a_review_that_went_through_counts_as_a_write() {
     let mut state = with_repo();
-    let key = DataKey::Issue(repo(), 14);
+    let key = DataKey::Issue(ghtui(), 14);
     let _ = state.push(issue(14));
     let issue = Data::Issue(Some(Box::new(crate::fixtures::issue())));
     fetched(&mut state, key.clone(), issue);
-    let of = DiffOf::Pr(PrRef::parse("o/r#1").unwrap());
+    let submit = crate::review::Submit {
+        pr: PrRef::parse("o/r#1").unwrap(),
+        head: crate::git::Oid::parse(&crate::fixtures::pr_detail().head_oid).unwrap(),
+        drafts: Vec::new(),
+        event: crate::api::model::ReviewEvent::Approve,
+        body: String::new(),
+        seen: 0,
+    };
     let mut outcome = crate::review::SubmitOutcome {
         error: Some("Couldn't reach the PR".into()),
         ..Default::default()
     };
-    let submitted = |o| Msg::Diff(of.clone(), DiffMsg::ReviewSubmitted(o));
-    update(&mut state, submitted(outcome.clone()));
+    crate::fixtures::done(&mut state, submit.clone(), Ok(outcome.clone()));
     assert_eq!(state.load_visible(false), Vec::new());
     outcome.accepted.push(1);
-    update(&mut state, submitted(outcome));
+    crate::fixtures::done(&mut state, submit, Ok(outcome));
     let refetch = Cmd::Api(Api::Fetch { key, cached: false });
     assert!(state.load_visible(false).contains(&refetch));
 }
@@ -88,7 +100,7 @@ fn only_a_review_that_went_through_counts_as_a_write() {
 fn issue_comments_post_and_refresh() {
     let mut state = state();
     let _ = state.push(issue(14));
-    let key = DataKey::Issue(repo(), 14);
+    let key = DataKey::Issue(ghtui(), 14);
     press(&mut state, "c");
     assert!(state.overlay.is_none(), "nothing to comment on yet");
     fetched(
@@ -98,7 +110,10 @@ fn issue_comments_post_and_refresh() {
     );
     press(&mut state, "c");
     let compose = overlay!(state, Compose);
-    assert_eq!(compose.title(), "Comment on gold-silver-copper/ghtui#14");
+    assert_eq!(
+        compose.target.title(&state),
+        "Comment on gold-silver-copper/ghtui#14"
+    );
     press(&mut state, "Thanks!");
     let cmds = update(
         &mut state,
@@ -108,7 +123,7 @@ fn issue_comments_post_and_refresh() {
         subject: NodeId::new("I_14"),
         body: "Thanks!".into(),
     };
-    let sent = vec![Cmd::Api(Api::Change(comment, act::By::Compose))];
+    let sent = vec![fixtures::change(comment, act::By::Compose)];
     assert_eq!(cmds, sent);
     let cmds = answer(&mut state, &sent, Ok(()));
     assert!(state.overlay.is_none());
@@ -136,16 +151,14 @@ fn a_fresh_copy_keeps_the_selected_issue() {
     let (kind, query) = route(&state).search().unwrap();
     let key = DataKey::Search(kind, query);
     let list = |numbers: &[u64]| {
-        Data::Search(Box::new(SearchResults::Issues(
-            crate::api::browse::Results {
-                total: numbers.len() as u64,
-                items: numbers
-                    .iter()
-                    .map(|&n| crate::fixtures::issue_summary(n, Status::Issue(IssueState::Open)))
-                    .collect(),
-                next: None,
-            },
-        )))
+        Data::Search(Box::new(SearchResults::Issues(crate::fixtures::page(
+            numbers.len() as u64,
+            numbers
+                .iter()
+                .map(|&n| crate::fixtures::issue_summary(n, Status::Issue(IssueState::Open)))
+                .collect(),
+            None,
+        ))))
     };
     update(
         &mut state,
@@ -153,6 +166,7 @@ fn a_fresh_copy_keeps_the_selected_issue() {
             key: key.clone(),
             result: Ok(list(&[14, 11, 8])),
             cached_at: Some(0),
+            source: None,
         },
     );
     while !selected_text(&state).contains("Issue 11") {
@@ -169,11 +183,11 @@ fn a_fresh_copy_keeps_the_selected_issue() {
 fn an_edited_comment_stays_selected() {
     let mut s = with_repo();
     s.size = (100, 12);
-    let _ = s.push(Route::Issue {
-        repo: repo(),
+    let _ = s.push(Route::Issues(issues::Issue {
+        repo: ghtui(),
         number: 14,
-    });
-    let key = DataKey::Issue(repo(), 14);
+    }));
+    let key = DataKey::Issue(ghtui(), 14);
     let mut issue = crate::fixtures::issue();
     update(
         &mut s,
@@ -181,6 +195,7 @@ fn an_edited_comment_stays_selected() {
             key: key.clone(),
             result: Ok(Data::Issue(Some(Box::new(issue.clone())))),
             cached_at: Some(0),
+            source: None,
         },
     );
     let Screen::Page(p) = s.screen_mut() else {
@@ -202,7 +217,7 @@ fn an_edited_comment_stays_selected() {
 /// moving what you scrolled to.
 #[test]
 fn a_failed_refresh_keeps_the_view() {
-    let mut state = with_home(40);
+    let mut state = with_prs(40);
     for _ in 0..25 {
         press(&mut state, "<Down>");
     }

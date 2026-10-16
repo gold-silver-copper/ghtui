@@ -1,6 +1,5 @@
 use super::*;
 use crate::api::mention::Mentionable;
-use crate::review::Compose;
 
 fn composer(s: &State) -> &Compose {
     overlay!(s, Compose)
@@ -27,12 +26,13 @@ fn completions(s: &State) -> Vec<String> {
 fn completion_offers_participants_and_inserts_the_mention() {
     let (mut s, pr, cmds) = composing();
     let repo = pr.repo;
-    assert!(cmds.contains(&Cmd::Api(Api::FetchMentionable(repo.clone()))));
+    let key = DataKey::Mentionable(repo);
+    assert!(fixtures::asks(&cmds, &key));
     let known = Mentionable {
         users: vec!["alicia".into(), "bob".into()],
         issues: vec![(12, "Fix the parser".into()), (9, "Docs".into())],
     };
-    update(&mut s, Msg::Mentionable(repo, Ok(known)));
+    fixtures::fetched(&mut s, key, Data::Mentionable(Box::new(known)));
 
     press(&mut s, "cc @al");
     assert_eq!(completions(&s), ["@alice", "@alicia"]);
@@ -108,16 +108,16 @@ fn saved_replies(s: &mut State, result: Result<Vec<(&str, &str)>, ApiError>) {
                 body: body.into(),
             })
             .collect::<Vec<_>>();
-        let value = crate::site::Value::SavedReplies(replies.into());
-        Data::Site(Box::new(value))
+        Data::SavedReplies(Box::new(replies.into()))
     });
-    let key = crate::site::site(crate::site::Key::SavedReplies);
+    let key = DataKey::SavedReplies;
     update(
         s,
         Msg::Fetched {
             key,
             result,
             cached_at: None,
+            source: None,
         },
     );
 }
@@ -129,12 +129,8 @@ fn a_saved_reply_goes_in_at_the_cursor() {
     let (mut s, ..) = composing();
     press(&mut s, "Hi. ");
     let cmds = press(&mut s, "<C-g>");
-    let key = crate::site::site(crate::site::Key::SavedReplies);
-    assert!(
-        cmds.iter()
-            .any(|c| matches!(c, Cmd::Api(Api::Fetch { key: k, .. }) if *k == key)),
-        "{cmds:?}"
-    );
+    let key = DataKey::SavedReplies;
+    assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
     saved_replies(
         &mut s,
         Ok(vec![

@@ -8,7 +8,7 @@ use crate::api::model::{Capped, NodeId, RepoId, ReviewComment, ReviewThread, Sid
 use crate::api::{ApiError, GitHub};
 
 /// A comment on a commit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitComment {
     /// GitHub's number for it, which its link's anchor uses
     /// (`#commitcomment-…`).
@@ -72,17 +72,12 @@ impl CommitComment {
 pub(crate) struct Wire {
     id: u64,
     node_id: String,
-    user: Option<WireUser>,
+    user: Option<crate::api::browse::UserLogin>,
     body: String,
     created_at: String,
     path: Option<String>,
     line: Option<u32>,
     html_url: String,
-}
-
-#[derive(Deserialize)]
-struct WireUser {
-    login: String,
 }
 
 impl Wire {

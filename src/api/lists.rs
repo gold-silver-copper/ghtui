@@ -63,35 +63,16 @@ pub struct MyLists {
 /// it.
 pub const MEMBERS_MAX: usize = 1_000;
 
-pub mod keys {
-    use crate::api::model::RepoId;
-
-    pub fn lists(login: &str) -> String {
-        format!("lists:{}", login.to_lowercase())
-    }
-
-    pub fn list(login: &str, slug: &str) -> String {
-        format!("lists:{}:{slug}", login.to_lowercase())
-    }
-
-    pub fn mine(repo: &RepoId) -> String {
-        format!("lists:mine:{repo}")
-    }
-}
-
 impl GitHub {
     /// Someone's starred lists, most recently added to first; GitHub
     /// shows you your private ones too.
     pub async fn star_lists(&self, login: &str) -> Result<Capped<StarList>, ApiError> {
         let vars = serde_json::json!({ "login": login });
-        let found: wire::Lists = self
+        let found: wire::Counted<wire::List> = self
             .graphql_json(crate::api::raw::STAR_LISTS, vars, login, "/user/lists")
             .await?;
-        let total = found.total_count;
-        let mut lists: Vec<StarList> = found.nodes.into_iter().flatten().map(Into::into).collect();
-        lists.sort_by(|a, b| b.last_added.cmp(&a.last_added));
-        let lists = Capped::new(lists, total);
-        self.remember(&keys::lists(login), lists.clone()).await;
+        let mut lists = found.into_capped(|l| Some(StarList::from(l)));
+        lists.items.sort_by(|a, b| b.last_added.cmp(&a.last_added));
         Ok(lists)
     }
 
@@ -111,9 +92,8 @@ impl GitHub {
             .as_deref()
             .and_then(|a| a.split_once(' '))
             .map(|(_, c)| c);
-        let first = cursor.is_none();
         let vars = serde_json::json!({ "id": list.id.as_str(), "after": cursor });
-        let items: wire::Items = self
+        let items: wire::Connection<wire::Repo> = self
             .graphql_json(
                 &crate::api::raw::star_list_items(),
                 vars,
@@ -121,22 +101,10 @@ impl GitHub {
                 "/node/items",
             )
             .await?;
-        let next = (items.page_info.has_next_page)
-            .then_some(items.page_info.end_cursor)
-            .flatten()
-            .map(|c| format!("{} {c}", list.id.as_str()));
-        let repos = Results {
-            total: items.total_count,
-            items: items
-                .nodes
-                .into_iter()
-                .flatten()
-                .filter_map(wire::Repo::summary)
-                .collect(),
-            next,
-        };
+        let mut repos = items.filter_results(wire::Repo::summary);
+        repos.next = repos.next.map(|c| format!("{} {c}", list.id.as_str()));
         let page = ListPage { list, repos };
-        Ok(self.kept_page(first, &keys::list(login, slug), page).await)
+        Ok(self.checked(page, format!("@{login}'s list {slug}")))
     }
 
     /// Your lists, and which of them have `repo`.
@@ -165,7 +133,6 @@ impl GitHub {
             viewer: found.viewer.login,
             lists: Capped::new(lists, found.viewer.lists.total_count),
         };
-        self.remember(&keys::mine(repo), mine.clone()).await;
         Ok(mine)
     }
 
@@ -175,7 +142,7 @@ impl GitHub {
         &self,
         list: &NodeId,
         item: &NodeId,
-        mut page: wire::Members,
+        mut page: wire::Connection<wire::Member>,
     ) -> Result<(Option<bool>, u64), ApiError> {
         let total = page.total_count;
         let mut read = 0;
@@ -249,14 +216,8 @@ mod wire {
     use serde::Deserialize;
 
     use crate::api::browse::RepoSummary;
+    pub use crate::api::browse::wire::{Connection, Count, Counted};
     use crate::api::model::{NodeId, RepoId};
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Lists {
-        pub total_count: u64,
-        pub nodes: Vec<Option<List>>,
-    }
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -268,12 +229,6 @@ mod wire {
         pub is_private: bool,
         pub last_added_at: Option<String>,
         pub items: Count,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Count {
-        pub total_count: u64,
     }
 
     impl From<List> for super::StarList {
@@ -288,21 +243,6 @@ mod wire {
                 last_added: l.last_added_at,
             }
         }
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct PageInfo {
-        pub has_next_page: bool,
-        pub end_cursor: Option<String>,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Items {
-        pub total_count: u64,
-        pub page_info: PageInfo,
-        pub nodes: Vec<Option<Repo>>,
     }
 
     #[derive(Deserialize)]
@@ -367,14 +307,7 @@ mod wire {
     #[serde(rename_all = "camelCase")]
     pub struct Viewer {
         pub login: String,
-        pub lists: MyListPage,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct MyListPage {
-        pub total_count: u64,
-        pub nodes: Vec<Option<MyList>>,
+        pub lists: Counted<MyList>,
     }
 
     #[derive(Deserialize)]
@@ -383,15 +316,7 @@ mod wire {
         pub id: NodeId,
         pub name: String,
         pub is_private: bool,
-        pub items: Members,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Members {
-        pub total_count: u64,
-        pub page_info: PageInfo,
-        pub nodes: Vec<Option<Member>>,
+        pub items: Connection<Member>,
     }
 
     #[derive(Deserialize)]

@@ -3,8 +3,8 @@
 //! template, and a pull request's title and description from its commits,
 //! as GitHub fills them in.
 
-use super::yaml::{self, Value};
 use crate::git::local::CommitMessage;
+use crate::yaml::{self, Value};
 
 /// An issue template, ready to fill in.
 #[derive(Debug, Clone, PartialEq, Eq)]

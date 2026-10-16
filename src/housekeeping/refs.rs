@@ -3,24 +3,32 @@
 //! after asking; elsewhere GitHub's API makes and deletes them. The
 //! default branch, and a branch GitHub's rules protect, aren't deleted.
 
-use crate::api::GitHub;
 use crate::api::browse::{BranchInfo, Results, TagInfo};
 use crate::api::housekeeping::{BranchRules, RefKind};
 use crate::api::model::RepoId;
-use crate::create::Look;
 use crate::git::local::Clone;
 use crate::picker::fuzzy_score;
+use crate::route::{Route, code};
 
-use super::{
-    Chosen, Expected, Pick, RefWrite, Subject, Work, ask, clone_here, expect, item, refused,
-    selected,
-};
-use crate::browse::DataKey;
+use super::{Expected, Pick, RefWrite, Subject, ask, clone_here, expect, item, refused, selected};
+use crate::act::Step;
+use crate::data::DataKey;
 use crate::keymap::Action;
-use crate::nav::Doable;
-use crate::route::Route;
+use crate::nav::{Doable, row};
+use crate::picker::Choice;
 use crate::state::{Cmd, State};
-use crate::writes::{Work as Writes, row};
+use crate::work::{self, Cx, Failure, Job};
+
+/// A branch's or tag's change: made at a commit, or deleted, with git in
+/// your clone (`clone`) or with GitHub's API.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Save {
+    pub repo: RepoId,
+    pub kind: RefKind,
+    pub name: String,
+    pub write: RefWrite,
+    pub clone: Option<Clone>,
+}
 
 /// What making or deleting one takes.
 fn what(kind: RefKind) -> &'static str {
@@ -52,11 +60,10 @@ fn picked(state: &State, kind: RefKind) -> Option<(String, Option<&BranchInfo>)>
 #[must_use]
 pub(super) fn start(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec<Cmd> {
     if let Some(why) = refused(state, repo, what(kind)) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
-    let pick = crate::writes::Pick::Housekeeping(Pick::RefName(repo.clone(), kind));
-    crate::writes::open_picker(state, pick)
+    let pick = crate::picker::Kind::Housekeeping(Pick::RefName(repo.clone(), kind));
+    state.open_picker(pick)
 }
 
 /// Why `name` can't name a branch or tag, as git's `check-ref-format`
@@ -80,30 +87,18 @@ pub(super) fn name_problem(name: &str) -> Option<&'static str> {
 }
 
 /// The name picker's one row.
-pub(super) fn name_rows(
-    repo: &RepoId,
-    kind: RefKind,
-    q: &str,
-) -> Vec<(
-    crate::ui::overlays::PaletteItem,
-    Option<crate::writes::Chosen>,
-)> {
+pub(super) fn name_rows(repo: &RepoId, kind: RefKind, q: &str) -> crate::picker::Rows {
     let q = q.trim();
     match name_problem(q) {
         Some(why) => vec![item(why, "", None)],
         None => vec![item(
             format!("Create {} {q}", kind.noun()),
             "then where it starts",
-            Some(Chosen::RefName(repo.clone(), kind, q.to_owned())),
+            Some(Choice::Step(Step::Pick(crate::picker::Kind::Housekeeping(
+                Pick::RefFrom(repo.clone(), kind, q.to_owned()),
+            )))),
         )],
     }
-}
-
-/// Named: where it starts.
-#[must_use]
-pub(super) fn named(state: &mut State, repo: RepoId, kind: RefKind, name: String) -> Vec<Cmd> {
-    let pick = crate::writes::Pick::Housekeeping(Pick::RefFrom(repo, kind, name));
-    crate::writes::open_picker(state, pick)
 }
 
 /// Where it starts: a commit typed, then the branches (the one selected,
@@ -114,17 +109,40 @@ pub(super) fn from_rows(
     kind: RefKind,
     name: &str,
     q: &str,
-) -> Vec<(
-    crate::ui::overlays::PaletteItem,
-    Option<crate::writes::Chosen>,
-)> {
+) -> crate::picker::Rows {
+    // Made in your clone, it's asked about first.
+    let (Some(clone), Some(route)) = (state.clone_of(repo), state.route()) else {
+        return vec![item("Looking for your clone of the repository…", "", None)];
+    };
     let chosen = |from: &str| {
-        Some(Chosen::RefFrom(
-            repo.clone(),
-            kind,
-            name.to_owned(),
-            from.to_owned(),
-        ))
+        let step = match clone {
+            Some(c) => {
+                let noun = kind.noun();
+                let push =
+                    super::Answer::Push(repo.clone(), kind, name.to_owned(), from.to_owned());
+                Step::Ask(super::question(
+                    route.clone(),
+                    format!("Create the {noun} {name} at {from}?"),
+                    vec![
+                        (in_clone(c), false),
+                        (format!("Your clone gets no {noun} of its own"), false),
+                    ],
+                    vec![("Create and push".into(), push)],
+                ))
+            }
+            None => {
+                let save = Save {
+                    repo: repo.clone(),
+                    kind,
+                    name: name.to_owned(),
+                    write: RefWrite::Create(from.to_owned()),
+                    clone: None,
+                };
+                let doing = format!("Creating the {} {name}…", kind.noun());
+                Step::Start(doing, save.into())
+            }
+        };
+        Some(Choice::Step(step))
     };
     let q = q.trim();
     let branches = state.picked::<Results<BranchInfo>>(&DataKey::Branches(repo.clone()));
@@ -164,47 +182,6 @@ pub(super) fn from_rows(
     rows
 }
 
-/// Where it starts is chosen: in your clone, asks before pushing it;
-/// elsewhere GitHub makes it, as its own dialog's button does.
-#[must_use]
-pub(super) fn from_chosen(
-    state: &mut State,
-    repo: RepoId,
-    kind: RefKind,
-    name: String,
-    from: String,
-) -> Vec<Cmd> {
-    let clone = match clone_here(state, &repo) {
-        Ok(clone) => clone,
-        Err(cmds) => return cmds,
-    };
-    let subject = Subject::Ref {
-        repo: repo.clone(),
-        kind,
-        name: name.clone(),
-        from: Some(from.clone()),
-    };
-    match clone {
-        Some(c) => {
-            ask(
-                state,
-                Some(subject),
-                format!("Create the {} {name} at {from}?", kind.noun()),
-                vec![
-                    (in_clone(&c), false),
-                    (
-                        format!("Your clone gets no {} of its own", kind.noun()),
-                        false,
-                    ),
-                ],
-                vec![("Create and push".into(), super::Answer::Push)],
-            );
-            Vec::new()
-        }
-        None => send(state, repo, kind, name, Some(from)),
-    }
-}
-
 /// What a fact says of git doing it in your clone.
 pub(super) fn in_clone(c: &Clone) -> String {
     let name = c.top.file_name().map_or_else(
@@ -219,60 +196,53 @@ pub(super) fn in_clone(c: &Clone) -> String {
 #[must_use]
 pub(super) fn ask_delete(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec<Cmd> {
     if let Some(why) = refused(state, repo, what(kind)) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let Some((name, branch)) = picked(state, kind) else {
-        state.info(format!("Select a {} first", kind.noun()));
-        return Vec::new();
+        return state.just_say(format!("Select a {} first", kind.noun()));
     };
     let pr = branch.and_then(|b| b.pr);
     let open_pr = pr.filter(|(_, s)| *s == crate::api::browse::PrState::Open);
     if branch.is_some_and(|b| b.default) {
-        state.info(format!(
+        return state.just_say(format!(
             "{name} is the default branch: GitHub doesn't delete it (another must be the default first, in the repository's settings)"
         ));
-        return Vec::new();
     }
     let mut facts = Vec::new();
     if kind == RefKind::Branch {
-        let key = (repo.clone(), name.clone());
-        match state.writing.housekeeping.rules.get(&key) {
+        let key = DataKey::BranchRules(repo.clone(), name.clone());
+        match state.answer::<BranchRules>(&key) {
             None => {
-                state.writing.housekeeping.rules.insert(key, Look::Asking);
-                state.info(format!("Asking GitHub whether {name} is protected…"));
-                return vec![Cmd::Write(Writes::Housekeeping(Work::Rules(
-                    repo.clone(),
-                    name,
-                )))];
+                let cmds = state.ensure(key, false);
+                state.info(if cmds.is_empty() {
+                    format!("Still asking GitHub whether {name} is protected")
+                } else {
+                    format!("Asking GitHub whether {name} is protected…")
+                });
+                state.housekeeping.deleting = Some((repo.clone(), name));
+                return cmds;
             }
-            Some(Look::Asking) => {
-                state.info(format!("Still asking GitHub whether {name} is protected"));
-                return Vec::new();
-            }
-            Some(Look::Failed(why)) => {
+            Some(Err(why)) => {
                 facts.push((
                     format!("GitHub didn't say whether it's protected: {why}"),
                     true,
                 ));
             }
-            Some(Look::Found(BranchRules {
+            Some(Ok(BranchRules {
                 protected: true, ..
             })) => {
-                state.info(format!(
+                return state.just_say(format!(
                     "{name} is protected: GitHub's branch protection keeps it from being deleted"
                 ));
-                return Vec::new();
             }
-            Some(Look::Found(BranchRules {
+            Some(Ok(BranchRules {
                 undeletable: true, ..
             })) => {
-                state.info(format!(
+                return state.just_say(format!(
                     "{name} is protected: a ruleset of the repository's keeps it from being deleted"
                 ));
-                return Vec::new();
             }
-            Some(Look::Found(_)) => {}
+            Some(Ok(_)) => {}
         }
     }
     let clone = match clone_here(state, repo) {
@@ -303,44 +273,34 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec
             }
         }
     }
+    let title = format!("Delete the {} {name}?", kind.noun());
+    let delete = super::Answer::Delete(Subject::Ref(repo.clone(), kind, name));
     ask(
         state,
-        Some(Subject::Ref {
-            repo: repo.clone(),
-            kind,
-            name: name.clone(),
-            from: None,
-        }),
-        format!("Delete the {} {name}?", kind.noun()),
+        title,
         facts,
-        vec![(format!("Delete {}", kind.noun()), super::Answer::Delete)],
+        vec![(format!("Delete {}", kind.noun()), delete)],
     );
     Vec::new()
 }
 
-/// GitHub's rules for a branch: asked again, if it's still the one
-/// selected.
+/// Once GitHub says whether the branch asked about is protected: its
+/// deletion is asked about, if it's still the one selected.
 #[must_use]
-pub(super) fn on_rules(
-    state: &mut State,
-    repo: &RepoId,
-    name: &str,
-    result: Result<BranchRules, String>,
-) -> Vec<Cmd> {
-    let look = match result {
-        Ok(rules) => Look::Found(rules),
-        Err(why) => Look::Failed(why),
+pub(crate) fn follow(state: &mut State) -> Vec<Cmd> {
+    let Some((repo, name)) = state.housekeeping.deleting.clone() else {
+        return Vec::new();
     };
-    state
-        .writing
-        .housekeeping
-        .rules
-        .insert((repo.clone(), name.to_owned()), look);
-    let still = state.route() == Some(&Route::Branches(repo.clone()))
+    let key = DataKey::BranchRules(repo.clone(), name.clone());
+    if state.answer::<BranchRules>(&key).is_none() {
+        return Vec::new();
+    }
+    state.housekeeping.deleting = None;
+    let still = state.route() == Some(&Route::Code(code::Branches(repo.clone())))
         && picked(state, RefKind::Branch).is_some_and(|(n, _)| n == name)
         && state.overlay.is_none();
     if still {
-        return ask_delete(state, repo, RefKind::Branch);
+        return ask_delete(state, &repo, RefKind::Branch);
     }
     Vec::new()
 }
@@ -355,106 +315,102 @@ pub(super) fn send(
     name: String,
     from: Option<String>,
 ) -> Vec<Cmd> {
-    let clone = match state.creating.clones.get(&repo) {
-        Some(Look::Found(clone)) => clone.clone(),
-        _ => None,
-    };
+    let clone = state.clone_of(&repo).flatten().cloned();
     let write = match from {
         Some(from) => RefWrite::Create(from),
         None => RefWrite::Delete,
     };
-    crate::writes::sending(state);
+    crate::forms::sending(state);
     let doing = match (&write, &clone) {
         (RefWrite::Create(_), Some(_)) => "Pushing",
         (RefWrite::Create(_), None) => "Creating",
         (RefWrite::Delete, _) => "Deleting",
     };
     state.info(format!("{doing} the {} {name}…", kind.noun()));
-    vec![Cmd::Write(Writes::Housekeeping(Work::Ref {
+    work::start(Save {
         repo,
         kind,
         name,
         write,
         clone,
-    }))]
+    })
 }
 
-/// Does it: GitHub names the commit, then git or GitHub's API makes the
-/// branch or tag there.
-pub(super) async fn run(
-    gh: &GitHub,
-    repo: &RepoId,
-    kind: RefKind,
-    name: &str,
-    write: &RefWrite,
-    clone: Option<&Clone>,
-) -> Result<(), String> {
-    let why = |err: crate::api::ApiError| crate::writes::reason(&err);
-    match write {
-        RefWrite::Create(from) => {
-            let full_sha = from.len() == 40 && from.chars().all(|c| c.is_ascii_hexdigit());
-            let sha = if full_sha {
-                from.clone()
-            } else {
-                gh.commit_of(repo, from).await.map_err(why)?
-            };
-            match clone {
-                Some(c) => super::git::push_new_ref(&c.top, &c.remote, kind, name, &sha).await,
-                None => gh.create_ref(repo, kind, name, &sha).await.map_err(why),
+impl Job for Save {
+    type Out = ();
+
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        let Save {
+            repo,
+            kind,
+            name,
+            write,
+            clone,
+        } = self;
+        let (gh, kind, git) = (&cx.gh, *kind, |e: String| Failure::msg(e));
+        // GitHub names the commit, then git or GitHub's API makes the branch or
+        // tag there.
+        match (write, clone) {
+            (RefWrite::Create(from), clone) => {
+                let full_sha = from.len() == 40 && from.chars().all(|c| c.is_ascii_hexdigit());
+                let sha = if full_sha {
+                    from.clone()
+                } else {
+                    gh.commit_of(repo, from).await?
+                };
+                match clone {
+                    Some(c) => (super::git::push_new_ref(&c.top, &c.remote, kind, name, &sha)
+                        .await)
+                        .map_err(git),
+                    None => Ok(gh.create_ref(repo, kind, name, &sha).await?),
+                }
             }
+            (RefWrite::Delete, Some(c)) => {
+                (super::git::push_delete(&c.top, &c.remote, kind, name).await).map_err(git)
+            }
+            (RefWrite::Delete, None) => Ok(gh.delete_ref(repo, kind, name).await?),
         }
-        RefWrite::Delete => match clone {
-            Some(c) => super::git::push_delete(&c.top, &c.remote, kind, name).await,
-            None => gh.delete_ref(repo, kind, name).await.map_err(why),
-        },
     }
-}
 
-/// GitHub's answer: the list follows it until it shows the change.
-#[must_use]
-pub(super) fn on_done(state: &mut State, work: Work, result: Result<(), String>) -> Vec<Cmd> {
-    let Work::Ref {
-        repo,
-        kind,
-        name,
-        write,
-        ..
-    } = work
-    else {
-        return Vec::new();
-    };
-    if let Err(why) = result {
-        crate::writes::say(state, why);
-        return Vec::new();
+    /// GitHub's answer: the list follows it until it shows the change.
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        let work = self;
+        let Save {
+            repo,
+            kind,
+            name,
+            write,
+            ..
+        } = work;
+        if let Err(why) = result {
+            return crate::forms::say(state, why.to_string());
+        }
+        let page = match kind {
+            RefKind::Branch => Route::Code(code::Branches(repo.clone())),
+            RefKind::Tag => Route::Code(code::Tags(repo.clone())),
+        };
+        crate::forms::close_sender(state, &page);
+        let there = matches!(write, RefWrite::Create(_));
+        // A branch made again with its name is asked about again.
+        (state.data).remove(&DataKey::BranchRules(repo.clone(), name.clone()));
+        state.info(format!(
+            "{} the {} {name}",
+            if there { "Created" } else { "Deleted" },
+            kind.noun()
+        ));
+        if state.route() != Some(&page) {
+            return Vec::new();
+        }
+        expect(state, page.clone(), Expected::Ref(repo, kind, name, there));
+        state.ensure_route(&page, true)
     }
-    let page = match kind {
-        RefKind::Branch => Route::Branches(repo.clone()),
-        RefKind::Tag => Route::Tags(repo.clone()),
-    };
-    crate::writes::close_sender(state, &page);
-    let there = matches!(write, RefWrite::Create(_));
-    state
-        .writing
-        .housekeeping
-        .rules
-        .remove(&(repo.clone(), name.clone()));
-    state.info(format!(
-        "{} the {} {name}",
-        if there { "Created" } else { "Deleted" },
-        kind.noun()
-    ));
-    if state.route() != Some(&page) {
-        return Vec::new();
-    }
-    expect(state, page.clone(), Expected::Ref(repo, kind, name, there));
-    state.ensure_route(&page, true)
 }
 
 /// The menu's rows on the branches and tags.
 pub(super) fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
     let (repo, kind) = match route {
-        Route::Branches(repo) => (repo, RefKind::Branch),
-        Route::Tags(repo) => (repo, RefKind::Tag),
+        Route::Code(code::Branches(repo)) => (repo, RefKind::Branch),
+        Route::Code(code::Tags(repo)) => (repo, RefKind::Tag),
         _ => return,
     };
     let why = refused(state, repo, what(kind));

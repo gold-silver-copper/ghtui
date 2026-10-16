@@ -19,12 +19,11 @@ use std::time::{Duration, Instant};
 use crate::api::browse::{Refs, Results, SearchKind, SearchResults};
 use crate::api::model::{Capped, RepoId};
 use crate::api::{ApiError, GitHub};
-use crate::browse::{Data, DataKey};
+use crate::data::{Data, DataKey};
 use crate::diff_job::GitContext;
 use crate::git::read::{self, Grep, ReadError, RemoteRefs};
 use crate::git::repo::Repo;
 use crate::git::{GitError, Oid};
-use crate::route::Route;
 
 /// How long what GitHub says its branches and tags are is taken as true.
 const REFS_FRESH: Duration = Duration::from_secs(30);
@@ -120,40 +119,11 @@ pub fn by_git(key: &DataKey, after: Option<&str>) -> bool {
         | DataKey::LastCommits(..)
         | DataKey::Refs(..)
         | DataKey::Tags(..)
-        | DataKey::RefIn(..) => true,
+        | DataKey::RefIn(..)
+        | DataKey::Activity(_) => true,
         DataKey::Search(SearchKind::Code, query) => code_search(query).is_some(),
-        DataKey::Site(key) => key.by_git(),
         _ => false,
     }
-}
-
-/// The data a page reads that git can answer, whose source it says.
-pub fn shown(route: &Route) -> Option<DataKey> {
-    let key = match route {
-        Route::Tree { repo, rev, path } => DataKey::Tree(repo.clone(), rev.clone(), path.clone()),
-        Route::Blob {
-            repo, rev, path, ..
-        } => DataKey::Blob(repo.clone(), rev.clone(), path.clone()),
-        Route::Blame {
-            repo, rev, path, ..
-        } => DataKey::Blame(repo.clone(), rev.clone(), path.clone()),
-        Route::Commits { repo, rev, path } => {
-            DataKey::History(repo.clone(), rev.clone(), path.clone())
-        }
-        Route::Commit { repo, oid, .. } => DataKey::Commit(repo.clone(), oid.clone()),
-        Route::Compare { repo, spec } => DataKey::Compare(repo.clone(), spec.clone()),
-        Route::Tags(repo) => DataKey::Tags(repo.clone()),
-        Route::Site(crate::site::Page::Insights {
-            repo,
-            tab: crate::site::InsightsTab::Contributors | crate::site::InsightsTab::Commits,
-        }) => DataKey::Site(crate::site::Key::Activity(repo.clone())),
-        Route::Search {
-            kind: SearchKind::Code,
-            query,
-        } => DataKey::Search(SearchKind::Code, query.clone()),
-        _ => return None,
-    };
-    Some(key)
 }
 
 /// The repository a key reads.
@@ -169,9 +139,9 @@ fn repo_of(key: &DataKey) -> Option<RepoId> {
         | DataKey::History(repo, ..)
         | DataKey::Refs(repo)
         | DataKey::Tags(repo)
-        | DataKey::RefIn(repo, _) => Some(repo.clone()),
+        | DataKey::RefIn(repo, _)
+        | DataKey::Activity(repo) => Some(repo.clone()),
         DataKey::Search(SearchKind::Code, query) => code_search(query).map(|s| s.repo),
-        DataKey::Site(key) => key.git_repo().cloned(),
         _ => None,
     }
 }
@@ -347,6 +317,11 @@ impl Local {
         })
     }
 
+    /// Where clones and git's credentials are.
+    pub fn git(&self) -> &GitContext {
+        &self.git
+    }
+
     fn clones(&self) -> std::sync::MutexGuard<'_, HashMap<String, Slot>> {
         self.clones.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -365,7 +340,7 @@ impl Local {
         after: Option<String>,
     ) -> (Result<Data, ApiError>, From) {
         let Some(repo) = repo_of(key) else {
-            let result = crate::runtime::fetch(gh, key, after, None).await;
+            let result = crate::data::load::fetch(gh, &self.git, key, after, None).await;
             return (result, From::Api("git doesn't know it".into()));
         };
         let why = match self.clone_of(gh, &repo).await {
@@ -416,7 +391,7 @@ impl Local {
             }
         };
         tracing::info!(?key, %why, "read through the API");
-        let result = crate::runtime::fetch(gh, key, after, None).await;
+        let result = crate::data::load::fetch(gh, &self.git, key, after, None).await;
         (result, From::Api(why))
     }
 
@@ -557,8 +532,7 @@ impl Local {
             Ok(listed) => {
                 refs.listed = Some((Instant::now(), listed.clone()));
                 refs.old = None;
-                gh.remember(&kept_key("refs", repo), Kept::of(&listed))
-                    .await;
+                gh.remember(&kept_key("refs", repo), &Kept::of(&listed));
                 Ok(listed)
             }
             Err(err) => {
@@ -673,7 +647,7 @@ impl Local {
                             refs.head = Some((Instant::now(), oid.clone()));
                             refs.old = None;
                             let kept = Kept::of_head(&name, &oid);
-                            gh.remember(&kept_key("head", repo), kept).await;
+                            gh.remember(&kept_key("head", repo), &kept);
                             Some(oid)
                         }
                         Err(err) => {
@@ -849,12 +823,11 @@ impl Local {
                 let found = SearchResults::Code(results);
                 Answer::Data(Data::Search(Box::new(found)), Some(oid))
             }
-            DataKey::Site(crate::site::Key::Activity(_)) => {
+            DataKey::Activity(_) => {
                 let oid = at("HEAD".into()).await?;
                 let now = crate::store::now();
                 let activity = crate::site::insights::activity(clone, &oid, now).await?;
-                let value = crate::site::Value::Activity(activity);
-                Answer::Data(Data::Site(Box::new(value)), Some(oid))
+                Answer::Data(Data::Activity(Box::new(activity)), Some(oid))
             }
             _ => return Err(ReadError::Limit("git doesn't know it".into())),
         })
@@ -864,9 +837,10 @@ impl Local {
 /// How long git gets for `key` before the API answers.
 fn wait(key: &DataKey) -> Duration {
     Duration::from_secs(match key {
-        DataKey::Blame(..) | DataKey::Compare(..) | DataKey::Search(..) => 20,
+        DataKey::Blame(..) | DataKey::Compare(..) | DataKey::Search(..) | DataKey::Activity(_) => {
+            20
+        }
         DataKey::LastCommits(..) => 12,
-        DataKey::Site(key) => key.git_wait(),
         _ => 6,
     })
 }
@@ -958,9 +932,7 @@ mod tests {
         assert!(!by_git(&history, Some("Y3Vyc29y")), "GitHub's own cursor");
     }
 
-    async fn git(dir: &Path, args: &[&str]) -> String {
-        crate::git::run(Some(dir), args).await.unwrap()
-    }
+    use crate::git::set_up as git;
 
     /// Pages read from the cache's clone at the commit GitHub's branch is
     /// at, fetching it when GitHub's moved on; what isn't there is "not

@@ -1,8 +1,8 @@
 //! Checks, and Actions: workflows, runs, jobs and their logs.
 
 use super::*;
-use crate::api::actions::{Annotation, Artifact, Input, InputKind, Level};
-use crate::ui::page::DispatchLink;
+use crate::api::workflows::{Annotation, Artifact, Input, InputKind, Level};
+use crate::ui::form::Row;
 
 pub(super) fn outcome_mark(o: CheckOutcome) -> (&'static str, Role) {
     match o {
@@ -855,7 +855,7 @@ pub fn dispatch_form(page: &mut Page, v: &DispatchView<'_>) {
         vec![Seg::new("Use workflow from", Role::Strong)],
         Vec::new(),
     );
-    item(page, Link::Dispatch(DispatchLink::Ref), |page, link| {
+    item(page, Link::Form(Row::Ref), |page, link| {
         let segs = vec![
             Seg::new("Branch  ", Role::Meta),
             Seg::linked(format!("{} ▾", v.git_ref), Role::Code, link),
@@ -886,7 +886,7 @@ pub fn dispatch_form(page: &mut Page, v: &DispatchView<'_>) {
                 .unwrap_or_else(|| input.start());
             item(
                 page,
-                Link::Dispatch(DispatchLink::Input(input.name.clone())),
+                Link::Form(Row::Input(input.name.clone())),
                 |page, link| {
                     let mut segs = vec![Seg::linked(input.name.clone(), Role::Strong, link)];
                     if input.required {
@@ -922,7 +922,7 @@ pub fn dispatch_form(page: &mut Page, v: &DispatchView<'_>) {
             Frame::None,
         );
     }
-    item(page, Link::Dispatch(DispatchLink::Run), |page, link| {
+    item(page, Link::Form(Row::Save), |page, link| {
         let label = if v.sending {
             "Starting the run…"
         } else {

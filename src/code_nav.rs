@@ -6,20 +6,20 @@
 //! used (`gR`). GitHub's code search is asked only when there's no clone
 //! to read, or it can't be read in time.
 
+use crate::route::{Route, Target, code};
 use std::time::Duration;
 
 use crate::api::browse::Blob;
 use crate::api::model::RepoId;
 use crate::api::{ApiError, GitHub};
-use crate::browse::DataKey;
 use crate::code_index::{Indexer, Snapshot, Stage, settle};
+use crate::data::DataKey;
 use crate::diff::Language;
 use crate::diff::anchor::{LinePos, Side};
 use crate::diff::scope::{self, Scope};
 use crate::diff::text::Text;
 use crate::git::index::grep_word;
 use crate::picker::{Choice, Kind};
-use crate::route::{Route, Target};
 use crate::state::{Cmd, Git, Screen, State};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::text;
@@ -142,12 +142,12 @@ fn no_symbols(path: &str) -> String {
 fn here(state: &State) -> Result<Here, String> {
     match state.screen() {
         Screen::Page(p) => {
-            let (Route::Blob {
+            let (Route::Code(code::Blob {
                 repo, rev, path, ..
-            }
-            | Route::Blame {
+            })
+            | Route::Code(code::Blame {
                 repo, rev, path, ..
-            }) = &p.route
+            })) = &p.route
             else {
                 return Err("Symbols are a file's: open one, or Files changed".to_owned());
             };
@@ -210,10 +210,10 @@ fn symbol_rows(scopes: &[Scope]) -> Vec<(PaletteItem, Choice)> {
         let depth = around
             .filter(|o| o.lines.contains(&start) && o.lines.contains(&end))
             .count();
-        let item = PaletteItem {
-            label: format!("{}{}", "  ".repeat(depth), s.name),
-            hint: format!("line {start}"),
-        };
+        let item = crate::picker::item(
+            format!("{}{}", "  ".repeat(depth), s.name),
+            format!("line {start}"),
+        );
         rows.push((item, Choice::Line(start)));
     }
     rows
@@ -233,10 +233,7 @@ fn name_here(state: &mut State, word: Option<String>) -> Option<String> {
 fn ask(state: &mut State, here: &Here, want: Want) -> Vec<Cmd> {
     match here.ask(want) {
         Some(ask) => vec![Cmd::Git(Git::Code(ask))],
-        None => {
-            state.info("The diff's head commit isn't known yet");
-            Vec::new()
-        }
+        None => state.just_say("The diff's head commit isn't known yet"),
     }
 }
 
@@ -265,10 +262,7 @@ pub fn symbols(state: &mut State) -> Vec<Cmd> {
 pub fn repo_symbols(state: &mut State) -> Vec<Cmd> {
     match here(state) {
         Ok(here) => ask(state, &here, Want::Symbols),
-        Err(why) => {
-            state.info(why);
-            Vec::new()
-        }
+        Err(why) => state.just_say(why),
     }
 }
 
@@ -279,8 +273,7 @@ pub fn references(state: &mut State) -> Vec<Cmd> {
     let here = match here(state) {
         Ok(here) => here,
         Err(why) => {
-            state.info(why);
-            return Vec::new();
+            return state.just_say(why);
         }
     };
     let Some(word) = name_here(state, here.word.clone()) else {
@@ -327,8 +320,7 @@ pub fn definition(state: &mut State) -> Vec<Cmd> {
     let here = match here(state) {
         Ok(here) => here,
         Err(why) => {
-            state.info(why);
-            return Vec::new();
+            return state.just_say(why);
         }
     };
     let Some(word) = name_here(state, here.word.clone()) else {
@@ -353,10 +345,9 @@ pub fn definition(state: &mut State) -> Vec<Cmd> {
         }
     }
     if family(&here.path).is_none() {
-        state.info(format!(
+        return state.just_say(format!(
             "Can't tell where “{word}” is defined: ghtui reads {LANGUAGES} only"
         ));
-        return Vec::new();
     }
     state.info(format!(
         "“{word}” isn't defined in this file: looking in {}",
@@ -394,12 +385,12 @@ pub fn answered(state: &mut State, ask: &Ask, answer: Result<Answer, String>) ->
         if p.path == ask.path {
             return Choice::Line(p.line);
         }
-        let route = Route::Blob {
+        let route = Route::Code(code::Blob {
             repo: ask.repo.clone(),
             rev: ask.rev.clone(),
             path: p.path.clone(),
             lines: Some((p.line, p.line)),
-        };
+        });
         Choice::Go(Target::Page(route).into())
     };
     let title = match &ask.want {
@@ -411,8 +402,8 @@ pub fn answered(state: &mut State, ask: &Ask, answer: Result<Answer, String>) ->
     let note = answer.note.clone();
     let cmds = match (&ask.want, answer.places.as_slice()) {
         (_, []) => {
-            state.info(note.map_or(answer.none.clone(), |n| format!("{} · {n}", answer.none)));
-            return Vec::new();
+            return state
+                .just_say(note.map_or(answer.none.clone(), |n| format!("{} · {n}", answer.none)));
         }
         (Want::Definition(word), [one]) => {
             let cmds = match open(one) {
@@ -428,10 +419,7 @@ pub fn answered(state: &mut State, ask: &Ask, answer: Result<Answer, String>) ->
         }
         (_, places) => {
             let rows = places.iter().map(|p| {
-                let item = PaletteItem {
-                    label: p.label.clone(),
-                    hint: format!("{}:{}", p.path, p.line),
-                };
+                let item = crate::picker::item(p.label.clone(), format!("{}:{}", p.path, p.line));
                 (item, open(p))
             });
             let rows = rows.collect();

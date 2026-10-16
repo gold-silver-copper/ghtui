@@ -11,6 +11,7 @@
 //! What another author wrote since you started looking is marked New and
 //! said in the status bar; what you wrote isn't.
 
+use crate::route::{Route, discussions, issues, runs};
 use std::collections::HashSet;
 
 use crate::api::browse::{
@@ -19,8 +20,7 @@ use crate::api::browse::{
 };
 use crate::api::model::RepoId;
 use crate::api::{ApiError, Polled};
-use crate::browse::{DataKey, Need};
-use crate::route::Route;
+use crate::data::DataKey;
 use crate::state::{Api, Cmd, Screen, State};
 use crate::ui::text::noun;
 
@@ -133,7 +133,7 @@ fn watched(state: &State) -> Option<Watched> {
         return None;
     };
     Some(match &p.route {
-        Route::Job { repo, job, .. } => {
+        Route::Runs(runs::Job { repo, job, .. }) => {
             let j = state.picked::<Job>(&DataKey::Job(repo.clone(), *job))?;
             if !running(j) {
                 return None;
@@ -143,21 +143,21 @@ fn watched(state: &State) -> Option<Watched> {
                 job: *job,
             }
         }
-        Route::WorkflowRun { repo, run, attempt } => Watched::Run {
+        Route::Runs(runs::WorkflowRun { repo, run, attempt }) => Watched::Run {
             repo: repo.clone(),
             run: *run,
             attempt: *attempt,
         },
-        Route::Actions { repo, query } => Watched::Runs {
+        Route::Runs(runs::Actions { repo, query }) => Watched::Runs {
             repo: repo.clone(),
             query: query.clone(),
         },
-        Route::Workflow { repo, file } => Watched::Runs {
+        Route::Runs(runs::Workflow { repo, file }) => Watched::Runs {
             repo: repo.clone(),
             query: format!("workflow:{file}"),
         },
         // Not one that's a pull request (it redirects).
-        Route::Issue { repo, number } => {
+        Route::Issues(issues::Issue { repo, number }) => {
             let key = DataKey::Issue(repo.clone(), *number);
             state.picked::<Option<Box<IssueDetail>>>(&key)?.as_ref()?;
             Watched::Issue {
@@ -165,7 +165,7 @@ fn watched(state: &State) -> Option<Watched> {
                 number: *number,
             }
         }
-        Route::Discussion { of, number } => Watched::Discussion {
+        Route::Discussions(discussions::Discussion { of, number }) => Watched::Discussion {
             of: of.clone(),
             number: *number,
         },
@@ -202,7 +202,7 @@ pub fn watches(key: &DataKey) -> bool {
 /// fetched fresh (a cached copy may be old: what's new waits for GitHub's).
 fn seen_now(state: &State, what: &Watched) -> Option<HashSet<u64>> {
     let k = key(what);
-    let remote = state.data.get(&k)?;
+    let remote = state.remote(&k)?;
     if remote.cached_at.is_some() || remote.loading && remote.data.is_none() {
         return None;
     }
@@ -263,13 +263,13 @@ pub fn schedule(state: &mut State) -> Vec<Cmd> {
         let ended = matches!(
             (&state.page_watch, &here, state.screen()),
             (Some(PageWatch { what: Watched::Job { job, .. }, .. }), None, Screen::Page(p))
-                if matches!(&p.route, Route::Job { job: on, .. } if on == job)
+                if matches!(&p.route, Route::Runs(runs::Job { job: on, .. }) if on == job)
         );
         if !ended {
             state.page_watch = here.map(|what| PageWatch::new(what, state));
             // A followed job's page shows where it's at from now.
             if state.page_watch.as_ref().is_some_and(|w| w.follows) {
-                state.data_gen += 1;
+                state.shown_gen += 1;
                 state.sync_page();
             }
         }
@@ -400,8 +400,8 @@ pub fn on_watched(
                 .is_ok_and(|j| j.outcome() != CheckOutcome::Pending)
     });
     let k = key(what);
-    let busy = state.data.get(&k).and_then(|r| r.data.as_ref());
-    let running = busy.is_some_and(crate::browse::Data::running);
+    let busy = state.remote(&k).and_then(|r| r.data.as_ref());
+    let running = busy.is_some_and(crate::data::Data::running);
     let extended = state
         .data
         .get(&k)
@@ -417,12 +417,11 @@ pub fn on_watched(
     // More pages loaded would go: say so instead.
     if extended {
         let refresh = state.first_key(crate::keymap::Action::Refresh);
-        state.info(format!("New on the list: {refresh} shows it"));
-        return Vec::new();
+        return state.just_say(format!("New on the list: {refresh} shows it"));
     }
-    let mut cmds = state.ensure(Need::Data(k), true);
+    let mut cmds = state.ensure(k, true);
     if ended && let Watched::Job { repo, job } = what {
-        cmds.extend(state.ensure(Need::Data(DataKey::JobLog(repo.clone(), *job)), true));
+        cmds.extend(state.ensure(DataKey::JobLog(repo.clone(), *job), true));
     }
     cmds
 }
@@ -535,7 +534,7 @@ fn same_text(a: &str, b: Option<&str>) -> bool {
 /// The discussion on screen, as loaded.
 fn discussion_here(state: &State) -> Option<&DiscussionDetail> {
     match state.route()? {
-        Route::Discussion { of, number } => {
+        Route::Discussions(discussions::Discussion { of, number }) => {
             state.picked::<DiscussionDetail>(&DataKey::Discussion(of.clone(), *number))
         }
         _ => None,
@@ -607,7 +606,7 @@ pub fn loaded(state: &mut State, key: &DataKey) {
         }
     }
     if new > 0 {
-        state.data_gen += 1;
+        state.shown_gen += 1;
         state.info(format!("New on {place}: {new} {}", noun(new, word)));
     }
 }
@@ -639,12 +638,13 @@ fn job_loaded(state: &mut State, key: &DataKey) {
 pub fn fresh<'a>(state: &'a State, route: &Route) -> Option<&'a HashSet<u64>> {
     let w = state.page_watch.as_ref()?;
     let here = match (&w.what, route) {
-        (Watched::Issue { repo, number }, Route::Issue { repo: r, number: n }) => {
+        (Watched::Issue { repo, number }, Route::Issues(issues::Issue { repo: r, number: n })) => {
             repo == r && number == n
         }
-        (Watched::Discussion { of, number }, Route::Discussion { of: o, number: n }) => {
-            of == o && number == n
-        }
+        (
+            Watched::Discussion { of, number },
+            Route::Discussions(discussions::Discussion { of: o, number: n }),
+        ) => of == o && number == n,
         _ => false,
     };
     here.then_some(&w.new)

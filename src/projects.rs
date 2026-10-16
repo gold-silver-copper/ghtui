@@ -16,36 +16,46 @@ use crate::api::project::{
     FieldKind, FieldValue, ItemContent, Layout, Project, ProjectChange, ProjectField, ProjectItem,
     ProjectRef, grouped,
 };
-use crate::review::ComposeTarget;
+use crate::compose;
+use crate::route::{Route, issues, projects, pulls};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::page::Link;
 use crate::ui::pages::item_link;
 
-use crate::act::{By, Subject, awaiting_here};
-use crate::browse::DataKey;
+use crate::act::{By, Step, Subject, awaiting_here};
+use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::picker::{Kind, fuzzy_score};
-use crate::route::Route;
-use crate::state::{Api, Cmd, Screen, State};
+use crate::picker::{Choice, Kind, Rows, entry, fuzzy_score};
+use crate::state::{Cmd, Screen, State};
 
-/// The actions on a project's pages.
-pub const ACTIONS: [Action; 8] = [
+/// A project's own actions.
+const ACTIONS: &[Action] = &[
     Action::PrevColumn,
     Action::NextColumn,
     Action::MoveItem,
     Action::SetField,
     Action::AddItem,
     Action::ArchiveItem,
-    Action::EditComment,
-    Action::EditTitle,
 ];
+
+/// What projects add: their own actions, and editing a draft on a
+/// project's pages.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: ACTIONS,
+    takes,
+    act,
+    offers: doables,
+    ..crate::features::Feature::NONE
+};
 
 /// Whether `action` is the project's on screen to do: its own, and
 /// editing (a draft's text); on an issue or pull request, setting its
 /// fields in its projects.
-pub fn takes(state: &State, action: Action) -> bool {
-    (ACTIONS.contains(&action) && here(state).is_some())
+fn takes(state: &State, action: Action) -> bool {
+    let on_page =
+        ACTIONS.contains(&action) || matches!(action, Action::EditComment | Action::EditTitle);
+    (on_page && here(state).is_some())
         || (action == Action::SetField && sidebar::here(state).is_some())
 }
 
@@ -84,10 +94,10 @@ impl Drafting {
             },
         };
         let about = Subject::Project(self.project.clone(), self.view);
-        Ok(vec![Cmd::Api(Api::Change(
+        Ok(vec![crate::act::send(
             Change::Project(change),
             By::Edit(about),
-        ))])
+        )])
     }
 }
 
@@ -200,20 +210,6 @@ impl Pick {
     }
 }
 
-/// What choosing a row does.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Chosen {
-    /// List this field's values.
-    Field(At, NodeId),
-    /// List this project's fields.
-    Project(At),
-    Set(At, Change),
-    /// Add an issue or pull request to the project at a view.
-    Add(ProjectRef, Option<u64>, Change),
-    /// Write a new draft, starting from its title.
-    Draft(Drafting, String),
-}
-
 /// The project on screen at its view, as loaded, and its item that's
 /// selected (on a view) or shown (on an item's page).
 struct Here<'a> {
@@ -230,12 +226,12 @@ fn here(state: &State) -> Option<Here<'_>> {
         return None;
     };
     let (project, view, number) = match &p.route {
-        Route::Project { project, view } => (project, *view, None),
-        Route::ProjectItem {
+        Route::Projects(projects::Project { project, view }) => (project, *view, None),
+        Route::Projects(projects::ProjectItem {
             project,
             view,
             item,
-        } => (project, *view, Some(*item)),
+        }) => (project, *view, Some(*item)),
         _ => return None,
     };
     let data = state.picked::<Project>(&DataKey::Project(project.clone(), view));
@@ -393,29 +389,22 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
         if !is_draft && matches!(action, Action::EditComment | Action::EditTitle) {
             continue;
         }
-        out.push(Doable {
-            section,
-            action,
-            label: label.to_owned(),
-            short,
-            unavailable: why_not(state, &h, action),
-        });
+        let why = why_not(state, &h, action);
+        out.push(crate::nav::row(section, action, label, short, why));
     }
 }
 
-/// Runs one of [`ACTIONS`] on a project's page.
+/// Runs one of [`ACTIONS`], or an edit, on a project's page.
 #[must_use]
 pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
     let Some(h) = here(state) else {
         if action == Action::SetField && sidebar::here(state).is_some() {
             return sidebar::act(state);
         }
-        state.info(action.not_here());
-        return Vec::new();
+        return state.just_say(action.not_here());
     };
     if let Some(why) = why_not(state, &h, action) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let (project, view) = (h.project.clone(), h.view);
     let item = h.item.map(|it| it.id.clone());
@@ -439,38 +428,28 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
             let about = Subject::Project(project, view);
             if !archived {
                 state.info("Restoring it…");
-                return vec![Cmd::Api(Api::Change(change, By::Act(about)))];
+                return vec![crate::act::send(change, By::Act(about))];
             }
             // GitHub asks first.
             let title = crate::ui::text::truncate(it.title(), 50);
             let restore = state.first_key(Action::ArchiveItem);
-            let confirm = crate::act::Confirm {
-                action,
-                about,
-                title: format!("Archive “{title}”?"),
-                facts: vec![(
-                    format!(
-                        "It leaves the project's views; {restore} on it under Archived restores it"
-                    ),
-                    false,
-                )],
-                choices: vec![("Archive".into(), change)],
-                selected: 0,
-                sending: false,
-                error: None,
-            };
-            state.overlay = Some(crate::state::Overlay::Confirm(Box::new(confirm)));
+            let facts = vec![(
+                format!(
+                    "It leaves the project's views; {restore} on it under Archived restores it"
+                ),
+                false,
+            )];
+            let title = format!("Archive “{title}”?");
+            let choices = vec![("Archive".into(), change)];
+            let confirm = crate::act::confirm(action, about, title, facts, choices);
+            state.overlay = Some(crate::state::Overlay::Ask(Box::new(confirm)));
             Vec::new()
         }
         (Action::EditComment | Action::EditTitle, _) => {
             let Ok(d) = draft(state, &h) else {
                 return Vec::new();
             };
-            let text = if d.body.trim().is_empty() {
-                format!("{}\n\n", d.title)
-            } else {
-                format!("{}\n\n{}", d.title, d.body)
-            };
+            let text = format!("{}\n\n{}", d.title, d.body);
             let drafting = Drafting {
                 project,
                 view,
@@ -478,7 +457,7 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
                 draft: Some(d.id.clone()),
                 title: "Edit the draft: its title on the first line, then its text".into(),
             };
-            state.compose(ComposeTarget::ProjectDraft(drafting), &text)
+            state.compose(compose::Target::ProjectDraft(drafting), &text)
         }
         (Action::MoveItem, Some(item)) => {
             let at = At {
@@ -563,14 +542,7 @@ fn column_step(state: &mut State, next: bool) {
 }
 
 /// A picker's rows: what each says, and what choosing it does.
-pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
-    let row = |label: String, hint: &str, chosen: Option<Chosen>| {
-        let item = PaletteItem {
-            label,
-            hint: hint.to_owned(),
-        };
-        (item, chosen)
-    };
+pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
     let at = match pick {
         Pick::Column(at) | Pick::Field(at) | Pick::Value(at, _) => at,
         Pick::Add(project, view) => return adding(state, project, *view, q),
@@ -581,7 +553,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
             On::View(..) => "The item is no longer in the view",
             On::Sidebar(..) => "It's no longer in the project",
         };
-        return vec![row(gone.into(), "", None)];
+        return vec![entry(gone, "", None)];
     };
     let set = |field: &ProjectField, value: Option<FieldValue>| {
         let said = match &value {
@@ -595,7 +567,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
             value,
             said,
         };
-        Some(Chosen::Set(at.clone(), change))
+        Some(Choice::Step(Step::Send(change, at.about())))
     };
     let field = match pick {
         Pick::Column(_) => p.column,
@@ -606,18 +578,14 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
                 .filter(|f| f.kind.settable() && fuzzy_score(q, &f.name).is_some())
                 .map(|f| {
                     let hint = p.value(&f.id).map_or("", FieldValue::text);
-                    let chosen = Chosen::Field(at.clone(), f.id.clone());
-                    row(f.name.clone(), hint, Some(chosen))
+                    let values = Pick::Value(at.clone(), f.id.clone());
+                    entry(f.name.clone(), hint, Some(listing(values)))
                 })
                 .collect();
         }
     };
     let Some(field) = field else {
-        return vec![row(
-            "The field is no longer in the project".into(),
-            "",
-            None,
-        )];
+        return vec![entry("The field is no longer in the project", "", None)];
     };
     let current = p.value(&field.id);
     let is_current = |v: &FieldValue| current.is_some_and(|c| c.same(v));
@@ -625,7 +593,11 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
     let mut choice = |value: FieldValue, hint: &str| {
         if fuzzy_score(q, value.text()).is_some() {
             let hint = if is_current(&value) { "current" } else { hint };
-            rows.push(row(value.text().to_owned(), hint, set(field, Some(value))));
+            rows.push(entry(
+                value.text().to_owned(),
+                hint,
+                set(field, Some(value)),
+            ));
         }
     };
     match &field.kind {
@@ -663,7 +635,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
             _ => format!("Clear {}", field.name),
         };
         if fuzzy_score(q, &label).is_some() {
-            rows.push(row(label, "", set(field, None)));
+            rows.push(entry(label, "", set(field, None)));
         }
     }
     rows
@@ -672,32 +644,24 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Cho
 /// The rows adding an item offers for what's typed: the issue or pull
 /// request it names (`owner/repo#123`, or its link), and a new draft
 /// titled with it.
-fn adding(
-    state: &State,
-    project: &ProjectRef,
-    view: Option<u64>,
-    q: &str,
-) -> Vec<(PaletteItem, Option<Chosen>)> {
-    let row = |label: String, hint: &str, chosen: Option<Chosen>| {
-        let item = PaletteItem {
-            label,
-            hint: hint.to_owned(),
-        };
-        (item, chosen)
-    };
+fn adding(state: &State, project: &ProjectRef, view: Option<u64>, q: &str) -> Rows {
     let q = q.trim();
     let key = DataKey::Project(project.clone(), view);
     let Some(p) = state.picked::<Project>(&key) else {
-        return vec![row("The project hasn't loaded yet".into(), "", None)];
+        return vec![entry("The project hasn't loaded yet", "", None)];
     };
     if q.is_empty() {
         let what = "Type owner/repo#123 or a link to add it, or a new draft's title";
-        return vec![row(what.into(), "", None)];
+        return vec![entry(what, "", None)];
     }
     let mut rows = Vec::new();
     let named = crate::route::parse_input(q, None).and_then(|dest| match dest.target {
-        crate::route::Target::Page(Route::Issue { repo, number }) => Some((repo, number)),
-        crate::route::Target::Page(Route::Pr { pr, .. }) => Some((pr.repo, pr.number)),
+        crate::route::Target::Page(Route::Issues(issues::Issue { repo, number })) => {
+            Some((repo, number))
+        }
+        crate::route::Target::Page(Route::Pulls(pulls::Pr { pr, .. })) => {
+            Some((pr.repo, pr.number))
+        }
         _ => None,
     });
     if let Some((repo, number)) = named {
@@ -710,17 +674,17 @@ fn adding(
         let label = format!("Add {repo}#{number}");
         match here {
             Some(it) if it.archived => {
-                rows.push(row(label, "archived: restore it", None));
+                rows.push(entry(label, "archived: restore it", None));
             }
-            Some(_) => rows.push(row(label, "already in the project", None)),
+            Some(_) => rows.push(entry(label, "already in the project", None)),
             None => {
                 let change = Change::Project(ProjectChange::Add {
                     project: p.id.clone(),
                     repo,
                     number,
                 });
-                let chosen = Chosen::Add(project.clone(), view, change);
-                rows.push(row(label, "↵", Some(chosen)));
+                let add = Step::Send(change, Subject::Project(project.clone(), view));
+                rows.push(entry(label, "↵", Some(Choice::Step(add))));
             }
         }
     }
@@ -731,10 +695,13 @@ fn adding(
         draft: None,
         title: "New draft: its title on the first line, then its text".into(),
     };
-    rows.push(row(
+    rows.push(entry(
         format!("New draft “{q}”"),
         "↵ writes it",
-        Some(Chosen::Draft(drafting, q.to_owned())),
+        Some(Choice::Step(Step::Compose(
+            compose::Target::ProjectDraft(drafting),
+            q.to_owned(),
+        ))),
     ));
     rows
 }
@@ -743,9 +710,9 @@ fn adding(
 fn typed(
     field: &ProjectField,
     q: &str,
-    set: impl Fn(&ProjectField, Option<FieldValue>) -> Option<Chosen>,
-) -> (PaletteItem, Option<Chosen>) {
-    let row = |label: String, chosen: Option<Chosen>| {
+    set: impl Fn(&ProjectField, Option<FieldValue>) -> Option<Choice>,
+) -> (PaletteItem, Option<Choice>) {
+    let row = |label: String, chosen: Option<Choice>| {
         let hint = if chosen.is_some() { "↵" } else { "" };
         let item = PaletteItem {
             label,
@@ -781,43 +748,9 @@ fn is_date(s: &str) -> bool {
             && (1..=31).contains(&d.parse::<u8>().unwrap_or(0)))
 }
 
-/// What choosing a row does: list a field's values, or send the change.
-#[must_use]
-pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
-    match chosen {
-        Chosen::Field(at, field) => state.open_picker(Kind::Project(Pick::Value(at, field))),
-        Chosen::Project(at) => state.open_picker(Kind::Project(Pick::Field(at))),
-        Chosen::Add(project, view, change) => {
-            if let Change::Project(c) = &change {
-                state.info(format!("{}…", doing(c)));
-            }
-            vec![Cmd::Api(Api::Change(
-                change,
-                By::Act(Subject::Project(project, view)),
-            ))]
-        }
-        Chosen::Draft(drafting, title) => {
-            state.overlay = None;
-            let cmds = state.compose(ComposeTarget::ProjectDraft(drafting), &title);
-            // Its text goes below the title.
-            if let Some(crate::state::Overlay::Compose(c)) = &mut state.overlay {
-                c.input.insert_newline();
-                c.input.insert_newline();
-            }
-            cmds
-        }
-        Chosen::Set(at, change) => {
-            if let Change::SetProjectField { said, value, .. } = &change {
-                let doing = if value.is_some() {
-                    "Setting"
-                } else {
-                    "Clearing"
-                };
-                state.info(format!("{doing} {said}…"));
-            }
-            vec![Cmd::Api(Api::Change(change, By::Act(at.about())))]
-        }
-    }
+/// The row that lists `pick`'s rows.
+fn listing(pick: Pick) -> Choice {
+    Choice::Step(Step::Pick(Kind::Project(pick)))
 }
 
 /// Whether the project at `view`, as loaded, shows `change`: the item has

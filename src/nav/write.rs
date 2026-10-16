@@ -1,30 +1,27 @@
 //! Writing: star and comment.
 
 use super::*;
+use crate::route::{code, discussions, issues, pulls};
 
 #[must_use]
 pub fn star(state: &mut State) -> Vec<Cmd> {
     let Some(repo) = state.route().and_then(Route::repo).cloned() else {
-        state.info("Open a repository to star it");
-        return Vec::new();
+        return state.just_say("Open a repository to star it");
     };
     let Some(overview) = state.overview(&repo) else {
-        state.info("The repository hasn't loaded yet");
-        return Vec::new();
+        return state.just_say("The repository hasn't loaded yet");
     };
     let (id, starred) = (overview.id.clone(), !overview.starred);
     set_starred(state, &repo, starred);
     let star = Change::Star { repo, id, starred };
-    vec![Cmd::Api(Api::Change(star, crate::act::By::Star))]
+    vec![crate::act::send(star, crate::act::By::Star)]
 }
 
 /// Shows a repository as starred or not (optimistically, before GitHub
 /// confirms).
 pub fn set_starred(state: &mut State, repo: &RepoId, starred: bool) {
-    if let Some(Remote {
-        data: Some(Data::Repo(o)),
-        ..
-    }) = state.data.get_mut(&DataKey::Repo(repo.clone()))
+    if let Some(remote) = state.data.get_mut(&DataKey::Repo(repo.clone()))
+        && let Some(Data::Repo(o)) = &mut remote.data
         && o.starred != starred
     {
         o.starred = starred;
@@ -33,8 +30,8 @@ pub fn set_starred(state: &mut State, repo: &RepoId, starred: bool) {
         } else {
             o.summary.stars.saturating_sub(1)
         };
+        remote.changed();
     }
-    state.data_gen += 1;
 }
 
 /// `>`: a reply quoting the selected comment, under it.
@@ -50,10 +47,9 @@ pub(super) fn quote_reply(state: &mut State) -> Vec<Cmd> {
         }
         _ => {
             let down = state.first_key(Action::NextItem);
-            state.info(format!(
+            state.just_say(format!(
                 "Select a comment to quote: {down} goes comment by comment"
-            ));
-            Vec::new()
+            ))
         }
     }
 }
@@ -63,7 +59,7 @@ pub(super) fn quote_reply(state: &mut State) -> Vec<Cmd> {
 #[must_use]
 pub(super) fn comment_with(state: &mut State, text: &str, quoting: Option<String>) -> Vec<Cmd> {
     let target = match state.route() {
-        Some(Route::Issue { repo, number }) => {
+        Some(Route::Issues(issues::Issue { repo, number })) => {
             let key = DataKey::Issue(repo.clone(), *number);
             match state.get(&key) {
                 Some(Data::Issue(Some(issue))) => {
@@ -72,29 +68,28 @@ pub(super) fn comment_with(state: &mut State, text: &str, quoting: Option<String
                 _ => None,
             }
         }
-        Some(Route::Pr { pr, .. }) => state.activity(pr).map(|a| (a.id.clone(), pr.to_string())),
-        // A new issue's or pull request's title and description.
-        Some(Route::NewIssue(_) | Route::NewPr(_)) => return crate::create::compose(state),
-        Some(Route::Discussion { .. }) => return crate::discuss::act(state, Action::Comment),
-        Some(route) if crate::writes::is_form(route) => return crate::writes::compose(state),
+        Some(Route::Pulls(pulls::Pr { pr, .. })) => {
+            state.activity(pr).map(|a| (a.id.clone(), pr.to_string()))
+        }
+        Some(Route::Discussions(discussions::Discussion { .. })) => {
+            return crate::discuss::act(state, Action::Comment);
+        }
         // A commit's comments.
-        Some(Route::Commit { repo, oid, .. }) => {
-            let target = ComposeTarget::Commit {
+        Some(Route::Code(code::Commit { repo, oid, .. })) => {
+            let target = compose::Target::Commit {
                 repo: repo.clone(),
                 oid: oid.clone(),
             };
             return state.compose(target, text);
         }
         _ => {
-            state.info("Comments go on issues and pull requests");
-            return Vec::new();
+            return state.just_say("Comments go on issues and pull requests");
         }
     };
     let Some((subject_id, name)) = target else {
-        state.info("Still loading");
-        return Vec::new();
+        return state.just_say("Still loading");
     };
-    let target = ComposeTarget::Conversation {
+    let target = compose::Target::Conversation {
         subject_id,
         name,
         quoting,

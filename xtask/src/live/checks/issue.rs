@@ -1,20 +1,22 @@
-//! An issue's life in ghtui: created, its description edited, a comment
-//! written, edited and deleted, a reaction, a label, a new title, closed.
+//! An issue: created with `,i`, commented on with `c`, a comment made on
+//! GitHub meanwhile shown live, and closed with `,x`.
 
 use std::time::Duration;
 
 use anyhow::{Result, ensure};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::live::{Check, Cx, gh, until};
 
 pub const CHECK: Check = Check::new(
     "issue",
-    "creating an issue, editing it, a comment written, edited and deleted, a reaction, a label, a title, closing",
+    ",i creates an issue, c comments on it, a comment made on GitHub shows live, ,x closes it",
     run,
 );
 
 const GITHUB: Duration = Duration::from_secs(30);
+/// An issue's page asks every 10s, doubling while nothing changes.
+const LIVE: Duration = Duration::from_secs(120);
 
 fn run(cx: &mut Cx) -> Result<()> {
     let title = cx.mark("issue");
@@ -52,103 +54,28 @@ fn run(cx: &mut Cx) -> Result<()> {
     );
 
     ghtui.wait_followed()?;
-    cx.step(",e edits the description")?;
-    ghtui.keys(", e")?;
-    ghtui.wait_for("Edit the description")?;
-    ghtui.type_text(" Edited.")?;
-    ghtui.keys("C-s")?;
-    until("the edited description", GITHUB, || {
-        Ok((gh::issue(number)?["body"] == "Written by ghtui's live check. Edited.").then_some(()))
-    })?;
-    ghtui.wait_for("live check. Edited.")?;
-
-    ghtui.wait_followed()?;
     cx.step("c writes a comment")?;
     let comment = format!("A comment from the live check {}", cx.env.run_id);
     ghtui.keys("c")?;
     ghtui.wait_for("open in $EDITOR")?;
     ghtui.type_text(&comment)?;
     ghtui.keys("C-s")?;
-    let id = until("the comment on GitHub", GITHUB, || {
+    until("the comment on GitHub", GITHUB, || {
         Ok(comments(number)?
             .iter()
-            .find(|c| c["body"] == comment.as_str())
-            .and_then(|c| c["id"].as_u64()))
+            .any(|c| c["body"] == comment.as_str())
+            .then_some(()))
     })?;
     ghtui.wait_for(&comment)?;
 
-    ghtui.wait_followed()?;
-    cx.step(",e on the selected comment edits it")?;
-    let selected = format!("⟦▌{comment}");
-    ghtui.select("gg }", "the comment", |s| s.contains(&selected))?;
-    ghtui.keys(", e")?;
-    ghtui.wait_for("open in $EDITOR")?;
-    ghtui.type_text(" (edited)")?;
-    ghtui.keys("C-s")?;
-    let edited = format!("{comment} (edited)");
-    until("the edited comment", GITHUB, || {
-        Ok(comments(number)?
-            .iter()
-            .any(|c| c["id"].as_u64() == Some(id) && c["body"] == edited.as_str())
-            .then_some(()))
-    })?;
-    ghtui.wait_for(&edited)?;
-
-    ghtui.wait_followed()?;
-    cx.step(",D deletes it, after asking")?;
-    ghtui.keys(", D")?;
-    ghtui.wait_for("Delete gold-silver-copper's comment?")?;
-    ghtui.keys("Enter")?;
-    until("the comment gone from GitHub", GITHUB, || {
-        Ok(comments(number)?.is_empty().then_some(()))
-    })?;
-    ghtui.wait_gone(&edited)?;
-
-    ghtui.wait_followed()?;
-    cx.step(",+ reacts to the issue")?;
-    ghtui.keys(", +")?;
-    ghtui.wait_for("gives or takes back your reaction")?;
-    ghtui.keys("Enter")?;
-    let login = cx.env.login.clone();
-    until("the 👍 on GitHub", GITHUB, || {
-        let reactions = gh::get(&format!("repos/{}/issues/{number}/reactions", gh::REPO))?;
-        Ok(reactions
-            .as_array()
-            .is_some_and(|r| {
-                r.iter()
-                    .any(|r| r["content"] == "+1" && r["user"]["login"] == login.as_str())
-            })
-            .then_some(()))
-    })?;
-    ghtui.wait_for("👍 1")?;
-
-    ghtui.wait_followed()?;
-    cx.step(",l labels it bug")?;
-    ghtui.keys(", l")?;
-    ghtui.wait_for("ctrl-s applies")?;
-    ghtui.type_text("bug")?;
-    ghtui.keys("Enter")?;
-    ghtui.wait_for("✓ bug")?;
-    ghtui.keys("C-s")?;
-    until("the label on GitHub", GITHUB, || {
-        let labels = gh::issue(number)?["labels"].clone();
-        Ok(
-            (labels.as_array().map(Vec::len) == Some(1) && labels[0]["name"] == "bug")
-                .then_some(()),
-        )
-    })?;
-
-    ghtui.wait_followed()?;
-    cx.step(",T renames it")?;
-    ghtui.keys(", T")?;
-    ghtui.wait_for("Edit the title")?;
-    ghtui.type_text(" (renamed)")?;
-    ghtui.keys("Enter")?;
-    let renamed = format!("{title} (renamed)");
-    until("the new title on GitHub", GITHUB, || {
-        Ok((gh::issue(number)?["title"] == renamed.as_str()).then_some(()))
-    })?;
-    ghtui.wait_for(&renamed)?;
+    cx.step("a comment made on GitHub shows, live")?;
+    let elsewhere = format!("A comment made elsewhere {}", cx.env.run_id);
+    gh::send(
+        "POST",
+        &format!("repos/{}/issues/{number}/comments", gh::REPO),
+        Some(&json!({"body": elsewhere})),
+    )?;
+    ghtui.wait_for_within(&elsewhere, LIVE)?;
 
     ghtui.wait_followed()?;
     cx.step(",x closes it as completed, after asking")?;

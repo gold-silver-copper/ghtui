@@ -4,8 +4,8 @@
 //! you are is decided once, by [`plan`]: the key, the menu and the command
 //! palette all ask it, so they can't disagree, and it asks GitHub's own
 //! word on what you may do. Every change goes to GitHub as a [`Change`]
-//! and comes back as [`Msg::Changed`], handled by [`on_changed`]; the page
-//! then follows GitHub ([`follow`]) until it shows the change.
+//! ([`Changing`]) and its answer is handled by [`on_changed`]; the page
+//! then follows GitHub until it shows the change ([`Shows`]).
 
 use crate::api::ApiError;
 use crate::api::browse::{CheckOutcome, IssueState, Job, PrState, WorkflowRun};
@@ -15,13 +15,15 @@ use crate::api::model::{
 };
 use crate::api::notifications::Inbox;
 use crate::api::project::ProjectRef;
-use crossterm::event::{KeyCode, KeyEvent};
+use crate::route::{Route, discussions, issues, projects, pulls, runs, search, security, settings};
 
-use crate::browse::{DataKey, Need};
+use crate::data::{DataKey, Picked};
+use crate::follow::{Expectation, Shown};
+use crate::forms::{About, Answer, Ask};
 use crate::keymap::Action;
 use crate::nav;
-use crate::route::Route;
 use crate::state::{Api, Cmd, Overlay, Screen, State};
+use crate::work::{self, Cx, Failure};
 
 mod inbox;
 mod merge;
@@ -40,30 +42,23 @@ pub const ACTIONS: [Action; 10] = [
     Action::Close,
 ];
 
-/// A change to confirm: what it is, what's worth knowing first, and the
-/// ways to make it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Confirm {
-    /// What asked for it: planned again as GitHub's answers arrive, so
-    /// the facts stay true and a change that no longer applies closes.
-    pub action: Action,
-    /// What it changes, kept: on a list, the selection may move on.
-    pub about: Subject,
-    pub title: String,
-    /// Each with whether it's a problem.
-    pub facts: Vec<(String, bool)>,
-    pub choices: Vec<(String, Change)>,
-    pub selected: usize,
-    pub sending: bool,
-    pub error: Option<String>,
+/// A question before an action's change ([`Ask`]): what it is, what's
+/// worth knowing first, and the ways to make it.
+pub fn confirm(
+    action: Action,
+    about: Subject,
+    title: String,
+    facts: Vec<(String, bool)>,
+    choices: Vec<(String, Change)>,
+) -> Ask {
+    Ask::new(About::Act(action, about), title, facts, answers(choices))
 }
 
-impl Confirm {
-    /// What's happening while GitHub answers.
-    pub fn busy(&self) -> Option<String> {
-        let (_, change) = self.choices.get(self.selected).filter(|_| self.sending)?;
-        Some(format!("{}…", doing(change)))
-    }
+/// Ways to make a change, as a question's answers.
+fn answers(choices: Vec<(String, Change)>) -> Vec<(String, Answer)> {
+    (choices.into_iter())
+        .map(|(label, change)| (label, Answer::Change(change)))
+        .collect()
 }
 
 /// What sent a change: GitHub's answer goes back there, and only there.
@@ -83,44 +78,92 @@ pub enum By {
     Edit(Subject),
 }
 
-/// A change GitHub accepted that the page it was made on doesn't show
-/// yet: GitHub can take a while (a cancel, a minute or more). While that
-/// page is on screen, what it's about is fetched again until it shows it.
+/// What a page shows once GitHub has a change made on it: GitHub can
+/// take a while (a cancel, a minute or more), so what it's about is
+/// fetched again until it shows it ([`crate::follow`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Awaiting {
+pub struct Shows {
     pub change: Change,
-    /// The page it was made on.
-    pub route: Route,
     /// What it changed: the page's own subject, or a row's on a list.
     pub about: Subject,
-    polls: u32,
 }
 
-/// An action asked for on something not loaded yet (a list's row): it
-/// runs once that's in, if you're still on the page.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// An action asked for on something not loaded yet (a list's row, a
+/// pull request to check out): it runs once that's in, if you're still
+/// on the page.
+#[derive(Debug, Clone)]
 pub struct Pending {
-    pub action: Action,
-    pub subject: Subject,
-    pub route: Option<Route>,
+    action: Action,
+    subject: Subject,
+    route: Option<Route>,
+    then: fn(&mut State, Subject, Action) -> Vec<Cmd>,
 }
-
-/// How many times a page is fetched again for a change before giving up:
-/// a few minutes, at the live refresh's pace.
-const POLLS: u32 = 40;
 
 /// What an action does here.
 #[derive(Debug)]
-enum Plan {
+pub(crate) enum Plan {
     /// Ask first: what, what's worth knowing (each with whether it's a
     /// problem), and the ways to make it.
     Ask(String, Vec<(String, bool)>, Vec<(String, Change)>),
     Do(Change),
     Approve(PrRef),
     /// It's about something that has to load first.
-    Load(Need),
+    Load,
     /// Choose why to dismiss a security alert.
     Dismiss(crate::security::Dismissing),
+}
+
+/// What an action on what's on screen does, once its feature has planned
+/// it, or a picker's row: what [`take`] goes ahead with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Step {
+    /// Say what's being done, and send it.
+    Send(Change, Subject),
+    /// Ask first.
+    Ask(Box<Ask>),
+    /// Choose in a picker.
+    Pick(crate::picker::Kind),
+    /// Write it in the composer, starting with this text.
+    Compose(crate::compose::Target, String),
+    /// Say what's being done, and start the job.
+    Start(String, work::Work),
+    /// Set a form's row to this ([`crate::forms::fill`]).
+    Fill(Route, crate::ui::form::Row, String),
+}
+
+/// Goes ahead with a planned step, or says why it can't.
+#[must_use]
+pub fn take(state: &mut State, planned: Result<Step, String>) -> Vec<Cmd> {
+    match planned {
+        Err(why) => state.just_say(why),
+        Ok(Step::Send(change, about)) => {
+            state.info(format!("{}…", doing(&change)));
+            vec![send(change, By::Act(about))]
+        }
+        Ok(Step::Ask(ask)) => {
+            state.overlay = Some(Overlay::Ask(ask));
+            Vec::new()
+        }
+        Ok(Step::Pick(kind)) => state.open_picker(kind),
+        Ok(Step::Compose(target, text)) => state.compose(target, &text),
+        Ok(Step::Start(doing, job)) => {
+            state.info(doing);
+            work::start(job)
+        }
+        Ok(Step::Fill(route, row, value)) => crate::forms::fill(state, &route, &row, value),
+    }
+}
+
+/// Why what's on screen can't be acted on yet: GitHub hasn't shown the
+/// last change, so it's old.
+pub fn settled(state: &State) -> Result<(), String> {
+    match awaiting_here(state) {
+        Some(waiting) => Err(format!(
+            "GitHub hasn't shown the last change yet ({}): wait a moment",
+            doing(&waiting.change).to_lowercase()
+        )),
+        None => Ok(()),
+    }
 }
 
 /// Runs one of [`ACTIONS`] on what's on screen, or on the selected row
@@ -128,8 +171,7 @@ enum Plan {
 #[must_use]
 pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
     let Some(subject) = subject(state, action) else {
-        state.info(elsewhere(action));
-        return Vec::new();
+        return state.just_say(elsewhere(action));
     };
     // A row's may be an old copy (from the cache, before a change); a
     // page keeps its own fresh.
@@ -145,42 +187,37 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
 
 #[must_use]
 fn act_on(state: &mut State, subject: Subject, action: Action) -> Vec<Cmd> {
-    match plan_for(state, &subject, action) {
-        Err(why) => {
-            state.info(why);
-            Vec::new()
-        }
-        Ok(Plan::Ask(title, facts, choices)) => {
-            let confirm = Confirm {
-                action,
-                about: subject,
-                title,
-                facts,
-                choices,
-                selected: 0,
-                sending: false,
-                error: None,
-            };
-            state.overlay = Some(Overlay::Confirm(Box::new(confirm)));
-            Vec::new()
-        }
-        Ok(Plan::Do(change)) => {
-            state.info(format!("{}…", doing(&change)));
-            vec![Cmd::Api(Api::Change(change, By::Act(subject)))]
-        }
-        Ok(Plan::Approve(pr)) => crate::review::open_approve(state, pr),
-        Ok(Plan::Dismiss(d)) => crate::security::open_dismiss(state, d),
-        Ok(Plan::Load(need)) => {
-            state.info(format!("Loading {}…", subject.name()));
-            let route = state.route().cloned();
-            state.pending = Some(Pending {
-                action,
-                subject,
-                route,
-            });
-            state.ensure(need, false)
-        }
-    }
+    let step = match plan_for(state, &subject, action) {
+        Err(why) => Err(why),
+        Ok(Plan::Ask(title, facts, choices)) => Ok(Step::Ask(Box::new(confirm(
+            action, subject, title, facts, choices,
+        )))),
+        Ok(Plan::Do(change)) => Ok(Step::Send(change, subject)),
+        Ok(Plan::Dismiss(d)) => Ok(Step::Pick(crate::picker::Kind::Alert(d))),
+        Ok(Plan::Approve(pr)) => return crate::review::open_approve(state, pr),
+        Ok(Plan::Load) => return wait(state, action, subject, act_on),
+    };
+    take(state, step)
+}
+
+/// Loads what `action` is about, then does it (`then`), if you're still
+/// on the page: with what's loaded, or saying why it couldn't be.
+#[must_use]
+pub fn wait(
+    state: &mut State,
+    action: Action,
+    subject: Subject,
+    then: fn(&mut State, Subject, Action) -> Vec<Cmd>,
+) -> Vec<Cmd> {
+    state.info(format!("Loading {}…", subject.name()));
+    let need = subject.need();
+    state.pending = Some(Pending {
+        action,
+        subject,
+        route: state.route().cloned(),
+        then,
+    });
+    state.ensure(need, false)
 }
 
 /// What an action changes: a pull request, an issue, a run, a job, a
@@ -215,16 +252,22 @@ impl Subject {
     /// The subject of a page about one thing.
     fn of(route: &Route) -> Option<Self> {
         Some(match route {
-            Route::Pr { pr, .. } => Subject::Pr(pr.clone()),
-            Route::Issue { repo, number } => Subject::Issue(repo.clone(), *number),
-            Route::WorkflowRun { repo, run, attempt } => Subject::Run(repo.clone(), *run, *attempt),
-            Route::Job { repo, run, job, .. } => Subject::Job(repo.clone(), *run, *job),
-            Route::Alert { repo, kind, number } => Subject::Alert(crate::api::security::AlertRef {
-                repo: repo.clone(),
-                kind: *kind,
-                number: *number,
-            }),
-            Route::Discussion { of, number } => Subject::Discussion(of.clone(), *number),
+            Route::Pulls(pulls::Pr { pr, .. }) => Subject::Pr(pr.clone()),
+            Route::Issues(issues::Issue { repo, number }) => Subject::Issue(repo.clone(), *number),
+            Route::Runs(runs::WorkflowRun { repo, run, attempt }) => {
+                Subject::Run(repo.clone(), *run, *attempt)
+            }
+            Route::Runs(runs::Job { repo, run, job, .. }) => Subject::Job(repo.clone(), *run, *job),
+            Route::Security(security::Alert { repo, kind, number }) => {
+                Subject::Alert(crate::api::security::AlertRef {
+                    repo: repo.clone(),
+                    kind: *kind,
+                    number: *number,
+                })
+            }
+            Route::Discussions(discussions::Discussion { of, number }) => {
+                Subject::Discussion(of.clone(), *number)
+            }
             _ => return None,
         })
     }
@@ -233,61 +276,61 @@ impl Subject {
     fn route(&self) -> Route {
         match self {
             Subject::Pr(pr) => Route::pr(pr.clone()),
-            Subject::Issue(repo, number) => Route::Issue {
+            Subject::Issue(repo, number) => Route::Issues(issues::Issue {
                 repo: repo.clone(),
                 number: *number,
-            },
-            Subject::Run(repo, run, attempt) => Route::WorkflowRun {
+            }),
+            Subject::Run(repo, run, attempt) => Route::Runs(runs::WorkflowRun {
                 repo: repo.clone(),
                 run: *run,
                 attempt: *attempt,
-            },
-            Subject::Job(repo, run, job) => Route::Job {
+            }),
+            Subject::Job(repo, run, job) => Route::Runs(runs::Job {
                 repo: repo.clone(),
                 run: *run,
                 job: *job,
                 step: None,
                 query: String::new(),
-            },
-            Subject::Thread { query, .. } | Subject::Inbox { query } => Route::Notifications {
-                query: query.clone(),
-            },
-            Subject::Project(project, view) => Route::Project {
+            }),
+            Subject::Thread { query, .. } | Subject::Inbox { query } => {
+                Route::Search(search::Notifications {
+                    query: query.clone(),
+                })
+            }
+            Subject::Project(project, view) => Route::Projects(projects::Project {
                 project: project.clone(),
                 view: *view,
-            },
-            Subject::Alert(a) => Route::Alert {
+            }),
+            Subject::Alert(a) => Route::Security(security::Alert {
                 repo: a.repo.clone(),
                 kind: a.kind,
                 number: a.number,
-            },
-            Subject::Discussion(of, number) => Route::Discussion {
+            }),
+            Subject::Discussion(of, number) => Route::Discussions(discussions::Discussion {
                 of: of.clone(),
                 number: *number,
-            },
-            Subject::Settings(repo, page) => Route::Settings {
+            }),
+            Subject::Settings(repo, page) => Route::Settings(settings::Page {
                 repo: repo.clone(),
                 page: *page,
-            },
+            }),
         }
     }
 
     /// What planning for it reads.
-    fn need(&self) -> Need {
+    fn need(&self) -> DataKey {
         match self {
-            Subject::Pr(pr) => Need::Pr(pr.clone()),
-            Subject::Issue(repo, number) => Need::Data(DataKey::Issue(repo.clone(), *number)),
-            Subject::Run(repo, run, attempt) => {
-                Need::Data(DataKey::Run(repo.clone(), *run, *attempt))
-            }
-            Subject::Job(repo, _, job) => Need::Data(DataKey::Job(repo.clone(), *job)),
+            Subject::Pr(pr) => DataKey::Pr(pr.clone()),
+            Subject::Issue(repo, number) => DataKey::Issue(repo.clone(), *number),
+            Subject::Run(repo, run, attempt) => DataKey::Run(repo.clone(), *run, *attempt),
+            Subject::Job(repo, _, job) => DataKey::Job(repo.clone(), *job),
             Subject::Thread { query, .. } | Subject::Inbox { query } => {
-                Need::Data(DataKey::Notifications(query.clone()))
+                DataKey::Notifications(query.clone())
             }
-            Subject::Project(project, view) => Need::Data(DataKey::Project(project.clone(), *view)),
-            Subject::Alert(a) => Need::Data(DataKey::Alert(a.clone())),
-            Subject::Discussion(of, number) => Need::Data(DataKey::Discussion(of.clone(), *number)),
-            Subject::Settings(repo, page) => Need::Data(DataKey::Settings(repo.clone(), *page)),
+            Subject::Project(project, view) => DataKey::Project(project.clone(), *view),
+            Subject::Alert(a) => DataKey::Alert(a.clone()),
+            Subject::Discussion(of, number) => DataKey::Discussion(of.clone(), *number),
+            Subject::Settings(repo, page) => DataKey::Settings(repo.clone(), *page),
         }
     }
 
@@ -335,7 +378,7 @@ pub(crate) fn subject(state: &State, action: Action) -> Option<Subject> {
     }
     if matches!(action, Action::MarkAllRead | Action::MarkAllDone) {
         let query = state.route().and_then(|r| match r {
-            Route::Notifications { query } => Some(query.clone()),
+            Route::Search(search::Notifications { query }) => Some(query.clone()),
             _ => None,
         });
         return query.map(|query| Subject::Inbox { query });
@@ -359,7 +402,7 @@ fn thread(state: &State) -> Option<Subject> {
     let Screen::Page(p) = state.screen() else {
         return None;
     };
-    let Route::Notifications { query } = &p.route else {
+    let Route::Search(search::Notifications { query }) = &p.route else {
         return None;
     };
     let key = DataKey::Notifications(query.clone());
@@ -387,13 +430,7 @@ fn elsewhere(action: Action) -> &'static str {
 
 fn plan_for(state: &State, subject: &Subject, action: Action) -> Result<Plan, String> {
     let plan = plan_here(state, subject, action)?;
-    // GitHub hasn't shown the last change yet: what's on screen is old.
-    if let Some(waiting) = awaiting_here(state) {
-        return Err(format!(
-            "GitHub hasn't shown the last change yet ({}): wait a moment",
-            doing(&waiting.change).to_lowercase()
-        ));
-    }
+    settled(state)?;
     Ok(plan)
 }
 
@@ -419,18 +456,19 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
     let name = subject.name();
     match subject {
         Subject::Pr(pr) => {
-            let Some(detail) = loaded(state.prs.get(pr), &name)? else {
-                return Ok(Plan::Load(subject.need()));
+            let loaded = loaded(state.pr_remote(pr), &name)?;
+            let Some(detail) = loaded.and_then(PrDetail::pick) else {
+                return Ok(Plan::Load);
             };
             pr_plan(state, pr, detail, action)
         }
         Subject::Issue(repo, number) => {
             let key = DataKey::Issue(repo.clone(), *number);
-            let Some(data) = loaded(state.data.get(&key), &name)? else {
-                return Ok(Plan::Load(subject.need()));
+            let Some(data) = loaded(state.remote(&key), &name)? else {
+                return Ok(Plan::Load);
             };
             // A number that's a pull request is one.
-            let crate::browse::Data::Issue(Some(issue)) = data else {
+            let crate::data::Data::Issue(Some(issue)) = data else {
                 return Err(elsewhere(action).to_owned());
             };
             let issue_id = issue.id.clone();
@@ -481,8 +519,8 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         }
         Subject::Run(repo, run, attempt) => {
             let key = DataKey::Run(repo.clone(), *run, *attempt);
-            if loaded(state.data.get(&key), &name)?.is_none() {
-                return Ok(Plan::Load(subject.need()));
+            if loaded(state.remote(&key), &name)?.is_none() {
+                return Ok(Plan::Load);
             }
             let run = state
                 .picked::<WorkflowRun>(&key)
@@ -496,8 +534,8 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         }
         Subject::Job(repo, _, job) => {
             let key = DataKey::Job(repo.clone(), *job);
-            if loaded(state.data.get(&key), &name)?.is_none() {
-                return Ok(Plan::Load(subject.need()));
+            if loaded(state.remote(&key), &name)?.is_none() {
+                return Ok(Plan::Load);
             }
             let job = state
                 .picked::<Job>(&key)
@@ -513,8 +551,8 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         }
         Subject::Thread { id, query } => {
             let key = DataKey::Notifications(query.clone());
-            if loaded(state.data.get(&key), &name)?.is_none() {
-                return Ok(Plan::Load(subject.need()));
+            if loaded(state.remote(&key), &name)?.is_none() {
+                return Ok(Plan::Load);
             }
             let n = state
                 .picked::<Inbox>(&key)
@@ -530,24 +568,21 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         }
         Subject::Inbox { query } => {
             let key = DataKey::Notifications(query.clone());
-            let Some(data) = loaded(state.data.get(&key), &name)? else {
-                return Ok(Plan::Load(subject.need()));
+            let Some(data) = loaded(state.remote(&key), &name)? else {
+                return Ok(Plan::Load);
             };
-            let crate::browse::Data::Notifications(list) = data else {
+            let crate::data::Data::Notifications(list) = data else {
                 return Err("GitHub sent something else for your notifications".into());
             };
-            let fetched = (state.data.get(&key)).and_then(|r| r.cached_at.or(r.asked_at));
+            let fetched = (state.remote(&key)).and_then(|r| r.cached_at.or(r.asked_at));
             inbox::plan(query, list, fetched, action)
         }
-        Subject::Alert(a) => Ok(match crate::security::plan(state, a)? {
-            crate::security::Plan::Load(need) => Plan::Load(need),
-            crate::security::Plan::Ask(title, facts, choices) => Plan::Ask(title, facts, choices),
-            crate::security::Plan::Dismiss(d) => Plan::Dismiss(d),
-        }),
+        Subject::Alert(a) => crate::security::plan(state, a),
         Subject::Discussion(of, number) => {
+            loaded(state.remote(&subject.need()), &name)?;
             match crate::manage::discussion_close(state, of, *number)? {
                 Some((title, facts, choices)) => Ok(Plan::Ask(title, facts, choices)),
-                None => Ok(Plan::Load(subject.need())),
+                None => Ok(Plan::Load),
             }
         }
         Subject::Project(..) | Subject::Settings(..) => Err(elsewhere(action).to_owned()),
@@ -781,61 +816,55 @@ fn run_plan(
     }
 }
 
-/// Keys in the confirmation: choose, do it, or cancel.
+/// The change chosen in a question about what an action changes.
 #[must_use]
-pub fn on_confirm_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
-    let Some(Overlay::Confirm(confirm)) = &mut state.overlay else {
-        return Vec::new();
-    };
-    let n = confirm.choices.len().max(1);
-    match key.code {
-        KeyCode::Esc => state.overlay = None,
-        _ if confirm.sending => {}
-        KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
-            confirm.selected = (confirm.selected + 1) % n;
-        }
-        KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
-            confirm.selected = (confirm.selected + n - 1) % n;
-        }
-        KeyCode::Enter => {
-            if let Some((_, change)) = confirm.choices.get(confirm.selected) {
-                let (change, about) = (change.clone(), confirm.about.clone());
-                // A revert or a transfer answers with what it made; a
-                // duplicate is chosen first.
-                if let Some(cmds) = crate::manage::confirmed(state, &change, &about) {
-                    return cmds;
-                }
-                if let Some(Overlay::Confirm(confirm)) = &mut state.overlay {
-                    confirm.sending = true;
-                    confirm.error = None;
-                }
-                return vec![Cmd::Api(Api::Change(change, By::Confirm(about)))];
-            }
-        }
-        _ => {}
+pub fn confirmed(state: &mut State, change: Change, about: Subject) -> Vec<Cmd> {
+    // A revert or a transfer answers with what it made; a duplicate is
+    // chosen first.
+    if let Some(cmds) = crate::manage::confirmed(state, &change, &about) {
+        return cmds;
     }
-    Vec::new()
+    crate::forms::sending(state);
+    vec![send(change, By::Confirm(about))]
+}
+
+/// A change sent to GitHub, and what sent it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Changing {
+    pub change: Change,
+    pub by: By,
+}
+
+/// Sends `change` to GitHub; its answer goes back to `by`.
+pub fn send(change: Change, by: By) -> Cmd {
+    Cmd::Work(Changing { change, by }.into())
+}
+
+impl work::Job for Changing {
+    type Out = ();
+
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        Ok(cx.gh.change(&self.change).await?)
+    }
+
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        on_changed(state, &self.change, self.by, result)
+    }
 }
 
 /// GitHub's answer to a change, back to what sent it. Whatever was shown
 /// is fetched again (a write marks everything stale), so the page ends up
 /// as GitHub has it.
 #[must_use]
-pub fn on_changed(
-    state: &mut State,
-    change: &Change,
-    by: By,
-    result: Result<(), ApiError>,
-) -> Vec<Cmd> {
+fn on_changed(state: &mut State, change: &Change, by: By, result: Result<(), Failure>) -> Vec<Cmd> {
     // The dialog or the composer that sent it, if it's still waiting.
     let sender = match (&by, &state.overlay) {
-        (By::Confirm(_), Some(Overlay::Confirm(c))) => {
-            c.sending
-                && c.choices
-                    .get(c.selected)
-                    .is_some_and(|(_, sent)| sent == change)
+        (By::Confirm(_), Some(Overlay::Ask(c))) => {
+            c.sent.sending
+                && (c.choices.get(c.selected))
+                    .is_some_and(|(_, sent)| matches!(sent, Answer::Change(c) if c == change))
         }
-        (By::Compose | By::Reply(_) | By::Edit(_), Some(Overlay::Compose(c))) => c.sending,
+        (By::Compose | By::Reply(_) | By::Edit(_), Some(Overlay::Compose(c))) => c.sent.sending,
         _ => false,
     };
     match result {
@@ -845,7 +874,10 @@ pub fn on_changed(
             }
             state.info(done(change));
             // The unread count follows, as the inbox does.
-            let mut cmds = Vec::from_iter(notifies(change).then_some(Cmd::Api(Api::FetchUnread)));
+            let mut cmds = Vec::new();
+            if notifies(change) {
+                cmds.extend(state.ensure(DataKey::Unread, true));
+            }
             if let Change::Edit(_) = change {
                 cmds.extend(crate::edit::after(state));
             }
@@ -853,12 +885,10 @@ pub fn on_changed(
             cmds.extend(crate::settings::after(state, change));
             match by {
                 By::Confirm(about) | By::Act(about) | By::Edit(about) => {
-                    state.awaiting = state.route().map(|route| Awaiting {
-                        change: change.clone(),
-                        route: route.clone(),
-                        about,
-                        polls: 0,
-                    });
+                    if let Some(route) = state.route().cloned() {
+                        let change = change.clone();
+                        crate::follow::expect(state, route, Shows { change, about });
+                    }
                 }
                 // It shows in its thread.
                 By::Reply(pr) => return vec![Cmd::Api(Api::FetchThreads(pr))],
@@ -877,81 +907,88 @@ pub fn on_changed(
                 nav::set_starred(state, repo, !starred);
             }
             let text = failure(change, &err);
-            // A form's text comes back to edit.
-            if sender && crate::settings::refused(state, change, &text) {
-                return Vec::new();
+            // What was written comes back to edit.
+            let mut cmds = Vec::new();
+            if sender
+                && let Some(Overlay::Ask(confirm)) = &mut state.overlay
+                && let Some((target, written)) = confirm.back.take()
+            {
+                cmds = state.compose(target, &written);
             }
-            match &mut state.overlay {
-                Some(Overlay::Confirm(confirm)) if sender => {
-                    confirm.sending = false;
-                    confirm.error = Some(text);
-                }
-                Some(Overlay::Compose(compose)) if sender => {
-                    compose.sending = false;
-                    compose.error = Some(text);
-                }
-                _ => state.error(text),
+            if sender {
+                cmds.extend(crate::forms::say(state, text));
+            } else {
+                state.error(text);
             }
-            Vec::new()
+            cmds
         }
     }
 }
 
 /// The change the page on screen waits to see, if any.
-pub fn awaiting_here(state: &State) -> Option<&Awaiting> {
-    (state.awaiting.as_ref()).filter(|w| state.route() == Some(&w.route))
+pub fn awaiting_here(state: &State) -> Option<&Shows> {
+    crate::follow::here(state)
 }
 
-/// What the status bar says while GitHub hasn't shown a change.
-pub fn waiting(state: &State) -> Option<String> {
-    let what = match &awaiting_here(state)?.change {
-        Change::CancelRun { .. } => "Cancel requested: waiting for GitHub to stop the run",
-        Change::Rerun { .. } | Change::RerunJob { .. } => "Waiting for GitHub to start the re-run",
-        Change::Merge { .. } => "Waiting for GitHub to show the merge",
-        Change::EnableAutoMerge { .. } => "Waiting for GitHub to show auto-merge",
-        Change::Enqueue { .. } => "Waiting for GitHub to show it in the merge queue",
-        Change::UpdateBranch { .. } => "Waiting for GitHub to update the branch",
-        _ => "Waiting for GitHub to show the change",
-    };
-    Some(what.to_owned())
-}
+impl Expectation for Shows {
+    /// What the page is about, and its edits or project fields where the
+    /// change shows there.
+    fn needs(&self, _: &State, _: &Route) -> Vec<DataKey> {
+        let edit =
+            matches!(self.change, Change::Edit(_)) || crate::manage::polls_activity(&self.change);
+        let more = edit.then(|| crate::edit::polls(&self.about)).flatten();
+        let fields = crate::projects::sidebar::polls(&self.change, &self.about);
+        std::iter::once(self.about.need())
+            .chain(more.or(fields))
+            .collect()
+    }
 
-/// What the live refresh fetches again for the change the page waits to
-/// see: what the page is about. Past [`POLLS`], it stops waiting.
-pub fn poll(state: &mut State) -> Vec<Need> {
-    let Some((need, edit)) = awaiting_here(state).map(|w| {
-        let edit = matches!(w.change, Change::Edit(_)) || crate::manage::polls_activity(&w.change);
-        let more = edit.then(|| crate::edit::polls(&w.about)).flatten();
-        let fields = crate::projects::sidebar::polls(&w.change, &w.about);
-        (w.about.need(), more.or(fields))
-    }) else {
-        return Vec::new();
-    };
-    if let Some(w) = &mut state.awaiting {
-        w.polls += 1;
-        if w.polls > POLLS {
-            state.awaiting = None;
-            let key = state.first_key(Action::Refresh);
-            state.info(format!(
-                "GitHub doesn't show the change yet: {key} fetches the page again"
-            ));
-            return Vec::new();
+    fn waiting(&self) -> &'static str {
+        match &self.change {
+            Change::CancelRun { .. } => "Cancel requested: waiting for GitHub to stop the run",
+            Change::Rerun { .. } | Change::RerunJob { .. } => {
+                "Waiting for GitHub to start the re-run"
+            }
+            Change::Merge { .. } => "Waiting for GitHub to show the merge",
+            Change::EnableAutoMerge { .. } => "Waiting for GitHub to show auto-merge",
+            Change::Enqueue { .. } => "Waiting for GitHub to show it in the merge queue",
+            Change::UpdateBranch { .. } => "Waiting for GitHub to update the branch",
+            _ => "Waiting for GitHub to show the change",
         }
     }
-    std::iter::once(need).chain(edit).collect()
+
+    /// On another page (a re-run) only when it was made on its own page,
+    /// not a list's row.
+    fn shown(&self, state: &State, route: &Route) -> Shown {
+        match shown(state, &self.change, &self.about) {
+            Shown::There(..) if Subject::of(route).as_ref() != Some(&self.about) => Shown::Yes,
+            shown => shown,
+        }
+    }
+
+    /// The rest of the page (a pull request's commits, or the list the
+    /// row was on) follows too.
+    fn then(&self, state: &mut State, route: &Route) -> Vec<Cmd> {
+        let mut cmds = state.ensure_route(route, true);
+        // GitHub may count the unread later than it marks them.
+        if notifies(&self.change) {
+            cmds.extend(state.ensure(DataKey::Unread, true));
+        }
+        cmds
+    }
 }
 
-/// Whether the page shows a change GitHub accepted.
-enum Shown {
-    No,
-    Yes,
-    /// On another page: the run's latest attempt, the job re-run.
-    There(Subject),
+/// `change` shown on `about`'s page, to follow there.
+fn there(change: &Change, about: Subject) -> Shown {
+    let change = change.clone();
+    Shown::There(about.route(), Box::new(Shows { change, about }))
 }
 
+/// Whether the page shows a change GitHub accepted: on another page, the
+/// run's latest attempt, the job re-run.
 fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
     let yes = |b: bool| if b { Shown::Yes } else { Shown::No };
-    let pr = |pr: &PrRef| state.prs.get(pr).and_then(|r| r.data.as_ref());
+    let pr = |pr: &PrRef| state.pr(pr);
     match (change, about) {
         (Change::Manage(m), about) => yes(crate::manage::shows(state, m, about)),
         (Change::Settings(c), Subject::Settings(repo, page)) => {
@@ -995,7 +1032,7 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
             yes(open == matches!(change, Change::ReopenIssue { .. }))
         }
         (Change::Rerun { .. }, Subject::Run(repo, run, Some(_))) => {
-            Shown::There(Subject::Run(repo.clone(), *run, None))
+            there(change, Subject::Run(repo.clone(), *run, None))
         }
         (Change::Rerun { .. } | Change::CancelRun { .. }, Subject::Run(repo, run, attempt)) => {
             let key = DataKey::Run(repo.clone(), *run, *attempt);
@@ -1016,7 +1053,7 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
             let running = j.run.outcome == CheckOutcome::Pending;
             match (change, j.run.rerun) {
                 (Change::CancelRun { .. }, _) => yes(!running),
-                (_, Some(rerun)) => Shown::There(Subject::Job(repo.clone(), *run, rerun)),
+                (_, Some(rerun)) => there(change, Subject::Job(repo.clone(), *run, rerun)),
                 // Following it here, or its re-run left this job out.
                 (Change::Rerun { failed_only, .. }, None) => yes((latest
                     && running
@@ -1054,62 +1091,40 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
     }
 }
 
-/// After GitHub's data arrives: stops waiting for a change the page now
-/// shows (going to the re-run, if that's where it is), and plans an open
-/// confirmation again, so it says what's true now, or closes, saying why,
-/// if the change no longer applies.
+/// After GitHub's data arrives: runs an action that waited for what it's
+/// about, and plans an open confirmation again, so it says what's true
+/// now, or closes, saying why, if the change no longer applies.
 #[must_use]
 pub fn follow(state: &mut State) -> Vec<Cmd> {
     let mut cmds = Vec::new();
-    if let Some(w) = awaiting_here(state).cloned() {
-        match shown(state, &w.change, &w.about) {
-            Shown::No => {}
-            Shown::There(about) if Subject::of(&w.route).as_ref() == Some(&w.about) => {
-                let route = about.route();
-                state.awaiting = Some(Awaiting {
-                    route: route.clone(),
-                    about,
-                    ..w
-                });
-                cmds.extend(state.replace(route, false, None));
-            }
-            // The rest of the page (a pull request's commits, or the list
-            // the row was on) follows too.
-            Shown::Yes | Shown::There(_) => {
-                state.awaiting = None;
-                cmds.extend(state.ensure_route(&w.route, true));
-                // GitHub may count the unread later than it marks them.
-                if notifies(&w.change) {
-                    cmds.push(Cmd::Api(Api::FetchUnread));
-                }
-            }
-        }
-    }
     // An action asked for before what it's about loaded.
     if let Some(p) = state.pending.clone() {
         if state.route() != p.route.as_ref() {
             state.pending = None;
-        } else if !matches!(plan_for(state, &p.subject, p.action), Ok(Plan::Load(_))) {
+        } else if !matches!(loaded(state.remote(&p.subject.need()), ""), Ok(None)) {
             state.pending = None;
-            cmds.extend(act_on(state, p.subject, p.action));
+            cmds.extend((p.then)(state, p.subject, p.action));
         }
     }
-    let Some(Overlay::Confirm(confirm)) = &state.overlay else {
+    let Some(Overlay::Ask(ask)) = &state.overlay else {
         return cmds;
     };
-    // Another module's confirmation (deleting a comment) is its own.
-    if confirm.sending || !ACTIONS.contains(&confirm.action) {
+    // Another module's question (deleting a comment, a form's) is its own.
+    let About::Act(action, about) = &ask.about else {
+        return cmds;
+    };
+    if ask.sent.sending || !ACTIONS.contains(action) {
         return cmds;
     }
-    let planned = plan_for(state, &confirm.about, confirm.action);
+    let planned = plan_for(state, about, *action);
     match (planned, &mut state.overlay) {
         (Err(why), _) => {
             state.overlay = None;
             state.info(why);
         }
-        (Ok(Plan::Ask(title, facts, choices)), Some(Overlay::Confirm(confirm))) => {
-            confirm.selected = confirm.selected.min(choices.len().saturating_sub(1));
-            (confirm.title, confirm.facts, confirm.choices) = (title, facts, choices);
+        (Ok(Plan::Ask(title, facts, choices)), Some(Overlay::Ask(ask))) => {
+            ask.selected = ask.selected.min(choices.len().saturating_sub(1));
+            (ask.title, ask.facts, ask.choices) = (title, facts, answers(choices));
         }
         _ => {}
     }
@@ -1128,8 +1143,8 @@ fn notifies(change: &Change) -> bool {
 }
 
 /// What a change is doing while GitHub answers: "Merging".
-fn doing(change: &Change) -> &'static str {
-    match change {
+pub(crate) fn doing(change: &Change) -> std::borrow::Cow<'static, str> {
+    let doing = match change {
         Change::Comment { .. } | Change::CommitComment { .. } | Change::Reply { .. } => "Posting",
         Change::Star { starred: true, .. } => "Starring",
         Change::Star { .. } => "Unstarring",
@@ -1150,13 +1165,20 @@ fn doing(change: &Change) -> &'static str {
         Change::MarkEach { .. } => "Marking them done",
         Change::Edit(edit) => crate::edit::doing(edit),
         Change::Discussion(d) => crate::discuss::doing(d),
-        Change::SetProjectField { value: None, .. } => "Clearing the field",
-        Change::SetProjectField { .. } => "Setting the field",
+        Change::SetProjectField { said, value, .. } => {
+            let doing = if value.is_some() {
+                "Setting"
+            } else {
+                "Clearing"
+            };
+            return format!("{doing} {said}").into();
+        }
         Change::Alert(c) => crate::security::doing(c),
         Change::Project(c) => crate::projects::doing(c),
         Change::Manage(m) => crate::manage::doing(m),
         Change::Settings(c) => crate::settings::doing(c),
-    }
+    };
+    doing.into()
 }
 
 /// What a change did, once GitHub said so.
@@ -1246,7 +1268,7 @@ pub fn needs(change: &Change) -> &'static str {
 
 /// Why a change failed, in GitHub's words, and the permission it needs
 /// when GitHub says the token lacks one.
-fn failure(change: &Change, err: &ApiError) -> String {
+fn failure(change: &Change, err: &Failure) -> String {
     let what = match change {
         Change::Comment { .. } | Change::CommitComment { .. } => "the comment",
         Change::Reply { .. } => "the reply",
@@ -1275,14 +1297,13 @@ fn failure(change: &Change, err: &ApiError) -> String {
         Change::Manage(m) => crate::manage::what(m),
         Change::Settings(c) => crate::settings::what(c),
     };
-    let reason = match err {
-        ApiError::GraphQl(messages) => messages.join("; "),
-        ApiError::Http { message, .. } => message.clone(),
-        err => err.to_string(),
-    };
+    let reason = err.to_string();
     // GitHub refuses with 403 for other reasons too ("already running"),
     // so only its words say it's a permission.
-    let denied = matches!(err, ApiError::Http { .. } | ApiError::GraphQl(_)) && {
+    let denied = matches!(
+        err.api(),
+        Some(ApiError::Http { .. } | ApiError::GraphQl(_))
+    ) && {
         let reason = reason.to_lowercase();
         ["not accessible", "permission", "must have", "forbidden"]
             .iter()
@@ -1310,34 +1331,47 @@ fn failure(change: &Change, err: &ApiError) -> String {
     text
 }
 
-/// The changes the menu offers for what's on screen: each action, its
-/// label, and why it can't be made now, if it can't.
-pub fn doables(state: &State) -> Vec<(Action, String, Option<String>)> {
-    (ACTIONS.into_iter())
-        .filter_map(|action| {
-            let subject = subject(state, action).filter(|s| s.fits(action))?;
-            let label = match (action, &subject) {
-                (Action::Close, Subject::Run(..) | Subject::Job(..)) => "Cancel the run",
-                (Action::Close, Subject::Alert(_)) => "Dismiss or reopen the alert",
-                (Action::Close, Subject::Discussion(..)) => "Close or reopen the discussion",
-                (Action::ReadyForReview, Subject::Pr(pr)) => {
-                    match state.prs.get(pr).and_then(|r| r.data.as_ref()) {
-                        Some(d) if d.state.is_open() && d.state != PrState::Draft => {
-                            "Convert to draft"
-                        }
-                        _ => "Mark the draft ready for review",
-                    }
-                }
-                (Action::Close, _) => "Close or reopen",
-                (Action::Merge, Subject::Pr(pr)) => (state.prs.get(pr))
-                    .and_then(|r| r.data.as_ref())
-                    .map_or(action.description(), merge::label),
-                (action, _) => action.description(),
-            };
-            let why = plan_for(state, &subject, action).err();
-            Some((action, label.to_owned(), why))
-        })
-        .collect()
+/// What issue and pull request actions add: their own actions, wherever
+/// what they're about is.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &ACTIONS,
+    act,
+    offers,
+    follow,
+    ..crate::features::Feature::NONE
+};
+
+/// The changes the menu offers for what's on screen, and why one can't be
+/// made now, if it can't.
+fn offers(state: &State, out: &mut Vec<crate::nav::Doable>) {
+    let rows = (ACTIONS.into_iter()).filter_map(|action| {
+        let subject = subject(state, action).filter(|s| s.fits(action))?;
+        let label = match (action, &subject) {
+            (Action::Close, Subject::Run(..) | Subject::Job(..)) => "Cancel the run",
+            (Action::Close, Subject::Alert(_)) => "Dismiss or reopen the alert",
+            (Action::Close, Subject::Discussion(..)) => "Close or reopen the discussion",
+            (Action::ReadyForReview, Subject::Pr(pr)) => match state.pr(pr) {
+                Some(d) if d.state.is_open() && d.state != PrState::Draft => "Convert to draft",
+                _ => "Mark the draft ready for review",
+            },
+            (Action::Close, _) => "Close or reopen",
+            (Action::Merge, Subject::Pr(pr)) => {
+                state.pr(pr).map_or(action.description(), merge::label)
+            }
+            (action, _) => action.description(),
+        };
+        let short = match action {
+            Action::Merge => "merge",
+            Action::Approve => "approve",
+            Action::Rerun => "re-run",
+            Action::MarkRead => "read",
+            Action::MarkDone => "done",
+            _ => "",
+        };
+        let why = plan_for(state, &subject, action).err();
+        Some(crate::nav::row("Change", action, label, short, why))
+    });
+    out.extend(rows);
 }
 
 #[cfg(test)]
@@ -1352,9 +1386,11 @@ mod tests {
             repo: RepoId::new("o", "r"),
             job: 9,
         };
-        let refused = |message: &str| ApiError::Http {
-            status: 403,
-            message: message.into(),
+        let refused = |message: &str| {
+            Failure::from(ApiError::Http {
+                status: 403,
+                message: message.into(),
+            })
         };
         let busy = failure(
             &rerun,

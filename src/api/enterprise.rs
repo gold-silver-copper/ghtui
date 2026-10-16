@@ -444,8 +444,7 @@ pub struct Rewritten {
 /// `query` without what `lacks` names, or `None` if it names none of it
 /// (or doesn't parse, when it's sent as it is).
 pub fn rewrite(query: &str, lacks: &[Lack]) -> Option<Rewritten> {
-    let tokens = tokenize(query)?;
-    let mut doc = Parser { tokens, at: 0 }.document()?;
+    let mut doc = document(query)?;
     let mut edit = Edit {
         lacks,
         fills: Vec::new(),
@@ -690,95 +689,108 @@ impl Edit<'_> {
 
 // ---- reading and writing GraphQL's documents ---------------------------------------
 
-#[derive(Debug, Clone, PartialEq)]
-enum Tok {
-    Name(String),
-    Punct(char),
-    Spread,
-    /// A string, number or variable, as written.
-    Raw(String),
+/// A query's definitions, read by cynic's parser into what [`Edit`]
+/// changes and the printer writes; scalars, variables and types are kept
+/// as written.
+fn document(query: &str) -> Option<Vec<Def>> {
+    use cynic_parser::executable::ExecutableDefinition;
+    let doc = cynic_parser::parse_executable_document(query).ok()?;
+    let text = |span: cynic_parser::Span| query.get(span.start..span.end).unwrap_or_default();
+    let defs = doc.definitions().map(|def| match def {
+        ExecutableDefinition::Operation(op) => {
+            let mut head = Vec::new();
+            if op.operation_type_span().is_some() {
+                head.push(op.operation_type().as_str().to_owned());
+            }
+            head.extend(op.name().map(str::to_owned));
+            let vars = (op.variable_definitions())
+                .map(|v| {
+                    let mut rest = text(v.ty().span()).to_owned();
+                    if let Some(default) = v.default_value() {
+                        rest.push_str(" = ");
+                        rest.push_str(text(default.span()));
+                    }
+                    rest.push_str(&directives(v.directives(), &text));
+                    VarDef {
+                        name: v.name().to_owned(),
+                        rest,
+                    }
+                })
+                .collect();
+            Def::Op {
+                head,
+                vars,
+                directives: directives(op.directives(), &text),
+                set: selections(op.selection_set(), &text),
+            }
+        }
+        ExecutableDefinition::Fragment(f) => Def::Fragment {
+            head: ["fragment", f.name(), "on", f.type_condition()]
+                .map(str::to_owned)
+                .to_vec(),
+            set: selections(f.selection_set(), &text),
+        },
+    });
+    Some(defs.collect())
 }
 
-/// GraphQL's tokens (commas are white space).
-fn tokenize(text: &str) -> Option<Vec<Tok>> {
-    let chars: Vec<char> = text.chars().collect();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while let Some(&c) = chars.get(i) {
-        match c {
-            c if c.is_whitespace() || c == ',' => i += 1,
-            '#' => {
-                while chars.get(i).is_some_and(|c| *c != '\n') {
-                    i += 1;
-                }
-            }
-            '.' if chars.get(i..i + 3) == Some(&['.', '.', '.']) => {
-                out.push(Tok::Spread);
-                i += 3;
-            }
-            '"' => {
-                let start = i;
-                let block = chars.get(i..i + 3) == Some(&['"', '"', '"']);
-                i += if block { 3 } else { 1 };
-                loop {
-                    match chars.get(i)? {
-                        '\\' if !block => i += 2,
-                        '"' if block => {
-                            if chars.get(i..i + 3) == Some(&['"', '"', '"']) {
-                                i += 3;
-                                break;
-                            }
-                            i += 1;
-                        }
-                        '"' => {
-                            i += 1;
-                            break;
-                        }
-                        _ => i += 1,
-                    }
-                }
-                out.push(Tok::Raw(chars.get(start..i)?.iter().collect()));
-            }
-            c if c.is_ascii_alphabetic() || c == '_' => {
-                let start = i;
-                while chars
-                    .get(i)
-                    .is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_')
-                {
-                    i += 1;
-                }
-                out.push(Tok::Name(chars.get(start..i)?.iter().collect()));
-            }
-            c if c.is_ascii_digit() || c == '-' => {
-                let start = i;
-                i += 1;
-                while chars
-                    .get(i)
-                    .is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-'))
-                {
-                    i += 1;
-                }
-                out.push(Tok::Raw(chars.get(start..i)?.iter().collect()));
-            }
-            '$' => {
-                let start = i;
-                i += 1;
-                while chars
-                    .get(i)
-                    .is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_')
-                {
-                    i += 1;
-                }
-                out.push(Tok::Raw(chars.get(start..i)?.iter().collect()));
-            }
-            '{' | '}' | '(' | ')' | '[' | ']' | ':' | '=' | '@' | '!' | '|' | '&' => {
-                out.push(Tok::Punct(c));
-                i += 1;
-            }
-            _ => return None,
-        }
+fn selections<'a>(
+    set: impl Iterator<Item = cynic_parser::executable::Selection<'a>>,
+    text: &impl Fn(cynic_parser::Span) -> &'a str,
+) -> Vec<Sel> {
+    use cynic_parser::executable::Selection;
+    set.map(|sel| match sel {
+        Selection::Field(f) => Sel::Field(Field {
+            alias: f.alias().map(str::to_owned),
+            name: f.name().to_owned(),
+            args: arguments(f.arguments(), text),
+            directives: directives(f.directives(), text),
+            set: f
+                .selection_set_span()
+                .map(|_| selections(f.selection_set(), text)),
+        }),
+        Selection::InlineFragment(i) => Sel::Inline {
+            on: i.type_condition().map(str::to_owned),
+            directives: directives(i.directives(), text),
+            set: selections(i.selection_set(), text),
+        },
+        Selection::FragmentSpread(s) => Sel::Spread(s.fragment_name().to_owned()),
+    })
+    .collect()
+}
+
+fn arguments<'a>(
+    args: impl Iterator<Item = cynic_parser::executable::Argument<'a>>,
+    text: &impl Fn(cynic_parser::Span) -> &'a str,
+) -> Vec<(String, Val)> {
+    args.map(|a| (a.name().to_owned(), value(a.value(), text)))
+        .collect()
+}
+
+/// Directives, as printed.
+fn directives<'a>(
+    dirs: impl Iterator<Item = cynic_parser::executable::Directive<'a>>,
+    text: &impl Fn(cynic_parser::Span) -> &'a str,
+) -> String {
+    dirs.map(|d| {
+        let args = print_args(&arguments(d.arguments(), text));
+        format!(" @{}{args}", d.name())
+    })
+    .collect()
+}
+
+fn value<'a>(v: cynic_parser::Value<'a>, text: &impl Fn(cynic_parser::Span) -> &'a str) -> Val {
+    use cynic_parser::Value;
+    match v {
+        Value::Enum(e) => Val::Enum(e.name().to_owned()),
+        Value::List(l) => Val::List(l.items().map(|i| value(i, text)).collect()),
+        Value::Object(o) => Val::Object(
+            (o.fields())
+                .map(|f| (f.name().to_owned(), value(f.value(), text)))
+                .collect(),
+        ),
+        v => Val::Raw(text(v.span()).to_owned()),
     }
-    Some(out)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -841,225 +853,6 @@ enum Val {
     Object(Vec<(String, Val)>),
     /// A variable, string, number, boolean or null, as written.
     Raw(String),
-}
-
-struct Parser {
-    tokens: Vec<Tok>,
-    at: usize,
-}
-
-impl Parser {
-    fn peek(&self) -> Option<&Tok> {
-        self.tokens.get(self.at)
-    }
-
-    fn next(&mut self) -> Option<Tok> {
-        let t = self.tokens.get(self.at).cloned();
-        self.at += 1;
-        t
-    }
-
-    fn eat(&mut self, c: char) -> bool {
-        if self.peek() == Some(&Tok::Punct(c)) {
-            self.at += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn name(&mut self) -> Option<String> {
-        match self.next()? {
-            Tok::Name(n) => Some(n),
-            _ => None,
-        }
-    }
-
-    fn document(&mut self) -> Option<Vec<Def>> {
-        let mut defs = Vec::new();
-        while self.peek().is_some() {
-            defs.push(self.definition()?);
-        }
-        Some(defs)
-    }
-
-    fn definition(&mut self) -> Option<Def> {
-        let mut head = Vec::new();
-        while let Some(Tok::Name(n)) = self.peek() {
-            head.push(n.clone());
-            self.at += 1;
-        }
-        if head.first().map(String::as_str) == Some("fragment") {
-            self.expect('{')?;
-            let set = self.selection_set()?;
-            return Some(Def::Fragment { head, set });
-        }
-        let mut vars = Vec::new();
-        if self.eat('(') {
-            while !self.eat(')') {
-                vars.push(self.var_def()?);
-            }
-        }
-        let directives = self.directives()?;
-        self.expect('{')?;
-        let set = self.selection_set()?;
-        Some(Def::Op {
-            head,
-            vars,
-            directives,
-            set,
-        })
-    }
-
-    fn expect(&mut self, c: char) -> Option<()> {
-        self.eat(c).then_some(())
-    }
-
-    fn var_def(&mut self) -> Option<VarDef> {
-        let name = match self.next()? {
-            Tok::Raw(r) => r.strip_prefix('$')?.to_owned(),
-            _ => return None,
-        };
-        self.expect(':')?;
-        let mut rest = String::new();
-        // Its type, then a default if it has one.
-        loop {
-            match self.peek()? {
-                Tok::Raw(r) if r.starts_with('$') => break,
-                Tok::Punct(')') => break,
-                Tok::Punct('=') => {
-                    self.at += 1;
-                    rest.push_str(" = ");
-                    print_val(&self.value()?, &mut rest);
-                }
-                Tok::Punct('@') => rest.push_str(&self.directives()?),
-                _ => {
-                    let t = self.next()?;
-                    print_tok(&t, &mut rest);
-                }
-            }
-        }
-        Some(VarDef { name, rest })
-    }
-
-    /// Directives, as written.
-    fn directives(&mut self) -> Option<String> {
-        let mut out = String::new();
-        while self.eat('@') {
-            out.push_str(" @");
-            out.push_str(&self.name()?);
-            if self.peek() == Some(&Tok::Punct('(')) {
-                out.push_str(&print_args(&self.arguments()?));
-            }
-        }
-        Some(out)
-    }
-
-    fn arguments(&mut self) -> Option<Vec<(String, Val)>> {
-        let mut args = Vec::new();
-        if !self.eat('(') {
-            return Some(args);
-        }
-        while !self.eat(')') {
-            let name = self.name()?;
-            self.expect(':')?;
-            args.push((name, self.value()?));
-        }
-        Some(args)
-    }
-
-    fn value(&mut self) -> Option<Val> {
-        Some(match self.next()? {
-            Tok::Name(n) if matches!(n.as_str(), "true" | "false" | "null") => Val::Raw(n),
-            Tok::Name(n) => Val::Enum(n),
-            Tok::Raw(r) => Val::Raw(r),
-            Tok::Punct('[') => {
-                let mut items = Vec::new();
-                while !self.eat(']') {
-                    items.push(self.value()?);
-                }
-                Val::List(items)
-            }
-            Tok::Punct('{') => {
-                let mut fields = Vec::new();
-                while !self.eat('}') {
-                    let name = self.name()?;
-                    self.expect(':')?;
-                    fields.push((name, self.value()?));
-                }
-                Val::Object(fields)
-            }
-            _ => return None,
-        })
-    }
-
-    /// Selections up to the `}` that closes them.
-    fn selection_set(&mut self) -> Option<Vec<Sel>> {
-        let mut set = Vec::new();
-        while !self.eat('}') {
-            if self.peek() == Some(&Tok::Spread) {
-                self.at += 1;
-                if let Some(Tok::Name(n)) = self.peek()
-                    && n != "on"
-                {
-                    let name = n.clone();
-                    self.at += 1;
-                    self.directives()?;
-                    set.push(Sel::Spread(name));
-                    continue;
-                }
-                let on = if self.peek() == Some(&Tok::Name("on".into())) {
-                    self.at += 1;
-                    Some(self.name()?)
-                } else {
-                    None
-                };
-                let directives = self.directives()?;
-                self.expect('{')?;
-                let inner = self.selection_set()?;
-                set.push(Sel::Inline {
-                    on,
-                    directives,
-                    set: inner,
-                });
-                continue;
-            }
-            let first = self.name()?;
-            let (alias, name) = if self.eat(':') {
-                (Some(first), self.name()?)
-            } else {
-                (None, first)
-            };
-            let args = self.arguments()?;
-            let directives = self.directives()?;
-            let inner = if self.eat('{') {
-                Some(self.selection_set()?)
-            } else {
-                None
-            };
-            set.push(Sel::Field(Field {
-                alias,
-                name,
-                args,
-                directives,
-                set: inner,
-            }));
-        }
-        Some(set)
-    }
-}
-
-fn print_tok(t: &Tok, out: &mut String) {
-    match t {
-        Tok::Name(s) | Tok::Raw(s) => {
-            if out.ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_') {
-                out.push(' ');
-            }
-            out.push_str(s);
-        }
-        Tok::Punct(c) => out.push(*c),
-        Tok::Spread => out.push_str("..."),
-    }
 }
 
 fn print_val(v: &Val, out: &mut String) {
@@ -1265,7 +1058,7 @@ mod tests {
     }
 
     #[test]
-    fn versions_and_rest_paths() {
+    fn versions_parse_and_new_servers_still_lack_rest_advisories() {
         assert_eq!(Version::parse("3.18.2"), Some(Version(3, 18)));
         assert_eq!(Version::parse("3.9"), Some(Version(3, 9)));
         assert!(Version(3, 9) < Version(3, 18));

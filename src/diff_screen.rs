@@ -24,8 +24,8 @@ use crate::join;
 use crate::keymap::Action;
 use crate::notice::Notices;
 use crate::picker;
-use crate::review::{annotations, on_submitted};
-use crate::state::{Api, Cmd, DiffMsg, Git, Overlay, Problem, Remote, State};
+use crate::review::annotations;
+use crate::state::{Cmd, DiffMsg, Git, Overlay, Problem, Remote, State};
 
 /// What GitHub says about your last submitted review of a PR.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -74,7 +74,7 @@ impl DiffOf {
     pub fn url(&self) -> String {
         match self {
             DiffOf::Pr(_) => self.page(),
-            DiffOf::Commit(..) | DiffOf::Range(..) => format!("{}#files", self.page()),
+            DiffOf::Commit(..) | DiffOf::Range(..) => links::files(&self.page()),
         }
     }
 
@@ -91,7 +91,7 @@ impl DiffOf {
             Some((start, end)) => format!("{}-{}", line(start), line(end)),
             None => String::new(),
         };
-        format!("{}#diff-{}{lines}", self.page(), path_hash(path))
+        links::diff_file(&self.page(), path, &lines)
     }
 
     /// The page its files are on.
@@ -186,6 +186,9 @@ pub struct DiffScreen {
     /// (`diff-<hash>L3-R5`), or a review comment (`discussion_r<id>`,
     /// `r<id>`).
     pub anchor: Option<String>,
+    /// The cursor jumped (to a search's match, a link's thread): the view
+    /// is to show it with the threads under it.
+    pub reveal: bool,
 }
 
 impl DiffScreen {
@@ -205,6 +208,7 @@ impl DiffScreen {
             shift: 0,
             word: None,
             anchor: None,
+            reveal: false,
         }
     }
 
@@ -264,7 +268,7 @@ pub struct DiffInputs {
     /// Threads and comments that came in since you started looking.
     pub fresh: HashSet<NodeId>,
     /// What the head's check runs say about its lines, by check.
-    pub checks: Vec<(String, crate::api::actions::Annotation)>,
+    pub checks: Vec<(String, crate::api::workflows::Annotation)>,
 }
 
 impl DiffInputs {
@@ -275,11 +279,14 @@ impl DiffInputs {
         }
     }
 
-    /// Marks thread `id` resolved or not.
+    /// Marks thread `id` resolved or not. GitHub says only whether you may
+    /// do what applies now; who may resolve a thread may unresolve it.
     pub fn set_resolved(&mut self, id: &NodeId, resolved: bool) {
         let mut threads = self.threads.data.iter_mut().flatten();
         if let Some(t) = threads.find(|t| t.id == *id) {
+            let may = t.can_resolve || t.can_unresolve;
             t.resolved = resolved;
+            (t.can_resolve, t.can_unresolve) = (may, may);
         }
     }
 
@@ -408,7 +415,7 @@ impl DiffState {
             reviewed: i.review.reviewed_hunks.iter().cloned().collect(),
             annotations: (annotations(i.thread_list(), &self.mapped, &i.review.pending, &i.fresh))
                 .into_iter()
-                .chain(crate::actions::in_diff(&i.checks))
+                .chain(crate::workflows::in_diff(&i.checks))
                 .collect(),
         }
     }
@@ -1007,6 +1014,24 @@ fn face_thread(screen: &mut DiffScreen, state: &DiffState) {
     }
 }
 
+/// Unless the cursor's row and the thread rows under it are all in view,
+/// scrolls them into it: the cursor in the middle, as vim's `n` puts a
+/// match off screen, or higher when the threads would run off the bottom.
+fn reveal(screen: &mut DiffScreen, doc: &Doc, height: usize) {
+    let cursor = doc.to_global(screen.cursor);
+    let threads = (cursor + 1..doc.total_rows())
+        .take_while(|&g| matches!(doc.row(doc.to_pos(g)), Some(Row::Thread(_))))
+        .count();
+    let rows = (threads + 1).min(height);
+    // Row 0 of the view is the sticky header's, but on a file's header.
+    let first = doc.to_global(screen.top) + usize::from(screen.cursor.row != 0);
+    if cursor >= first && cursor + rows <= doc.to_global(screen.top) + height {
+        return;
+    }
+    let above = (height / 2).min(height - rows).max(1);
+    screen.top = doc.to_pos(cursor.saturating_sub(above));
+}
+
 /// Puts `pos` at the top of the view with the cursor on it.
 fn jump(screen: &mut DiffScreen, pos: Pos) {
     screen.cursor = pos;
@@ -1015,16 +1040,15 @@ fn jump(screen: &mut DiffScreen, pos: Pos) {
 
 /// Starts a search from the cursor, down or (`?`) up.
 pub fn search(screen: &mut DiffScreen, state: &DiffState, query: String, forward: bool) -> Notice {
-    let notice = match state.doc.search(&query, screen.cursor, forward) {
-        Some(pos) => {
+    let notice = match state.doc.search_counted(&query, screen.cursor, forward) {
+        (Some(pos), n) => {
             go_to_match(screen, &state.doc, pos, &query);
-            let n = state.doc.count_matches(&query);
             Notice::Info(format!(
                 "{n} line{} match “{query}”",
                 if n == 1 { "" } else { "s" }
             ))
         }
-        None => Notice::Error(format!("No match for “{query}”")),
+        (None, _) => Notice::Error(format!("No match for “{query}”")),
     };
     screen.search = Some(query);
     notice
@@ -1034,6 +1058,7 @@ pub fn search(screen: &mut DiffScreen, state: &DiffState, query: String, forward
 /// there's one, on the first word there that has `query`.
 fn go_to_match(screen: &mut DiffScreen, doc: &Doc, pos: Pos, query: &str) {
     screen.cursor = pos;
+    screen.reveal = true;
     let Some(code) = doc
         .code_at(pos, screen.half)
         .filter(|_| screen.word.is_some())
@@ -1069,20 +1094,20 @@ fn toggle_viewed(screen: &mut DiffScreen, state: &mut DiffState, notice: &mut No
     } else {
         Viewed::Viewed
     };
-    let cmd = Cmd::Api(Api::SetViewed {
+    let job = crate::review::SetViewed {
         pr,
         pull_request_id: viewed.pull_request_id.clone(),
         path: path.clone(),
         viewed: now == Viewed::Viewed,
         previous,
-    });
+    };
     // Optimistic: show it now, roll back if GitHub refuses.
     state.edit(|i| i.set_viewed(path, now));
     screen.cursor = Pos {
         file: index,
         row: 0,
     };
-    vec![cmd]
+    crate::work::start(job)
 }
 
 #[must_use]
@@ -1105,16 +1130,6 @@ fn toggle_reviewed(screen: &DiffScreen, state: &mut DiffState, notice: &mut Noti
             hunks.sort();
         }
     })
-}
-
-/// How GitHub names a file in its diffs' anchors: the SHA-256 of its path,
-/// in hex.
-pub fn path_hash(path: &str) -> String {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(path.as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
 }
 
 /// The link to what's under the cursor: the lines selected, or the line
@@ -1172,7 +1187,7 @@ fn anchor_pos(anchor: &str, state: &DiffState, pr: bool) -> Option<Option<Landin
     if let Some(rest) = anchor.strip_prefix("diff-") {
         let (hash, lines) = rest.split_at_checked(64).unwrap_or((rest, ""));
         let Some((file, f)) =
-            (doc.files().iter().enumerate()).find(|(_, f)| path_hash(f.meta.path()) == hash)
+            (doc.files().iter().enumerate()).find(|(_, f)| links::path_hash(f.meta.path()) == hash)
         else {
             return Some(None);
         };
@@ -1259,7 +1274,10 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
                         screen.selection = (from != cursor).then_some(from);
                         screen.top = state.doc.offset(from, -2);
                     }
-                    None => face_thread(screen, state),
+                    None => {
+                        face_thread(screen, state);
+                        screen.reveal = true;
+                    }
                 }
             }
             // A review comment waits for the threads.
@@ -1270,6 +1288,9 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
     let doc = &state.doc;
     screen.cursor = doc.clamp(screen.cursor);
     let height = usize::from(lay.diff.height).max(1);
+    if std::mem::take(&mut screen.reveal) {
+        reveal(screen, doc, height);
+    }
     let total = doc.total_rows();
     let cursor = doc.to_global(screen.cursor);
     let mut top = doc.to_global(screen.top).min(total.saturating_sub(height));
@@ -1386,7 +1407,7 @@ fn change<R>(state: &mut State, of: &DiffOf, f: impl FnOnce(&mut DiffState) -> R
 }
 
 /// Changes the inputs of `of`'s diff, if it's still open.
-fn edit(state: &mut State, of: &DiffOf, f: impl FnOnce(&mut DiffInputs)) {
+pub(crate) fn edit(state: &mut State, of: &DiffOf, f: impl FnOnce(&mut DiffInputs)) {
     change(state, of, |d| d.edit(f));
 }
 
@@ -1433,17 +1454,6 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
                 state.error(format!("Couldn't load viewed files: {err}"));
             }
         },
-        DiffMsg::ViewedSaved {
-            path,
-            previous,
-            result,
-        } => {
-            if let Err(err) = result {
-                tracing::warn!(%pr, %err, "viewed state update failed");
-                edit(state, of, |i| i.set_viewed(path, previous));
-                state.error(format!("GitHub didn't save “viewed”: {err}"));
-            }
-        }
         // Approving from the pull request's page: its drafts go with it.
         DiffMsg::ReviewLoaded(Ok(saved)) if !state.diffs.contains_key(of) => {
             if let Some(Overlay::Submit(dialog)) = &mut state.overlay
@@ -1484,17 +1494,8 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
         DiffMsg::PatchesLoaded(Err(err)) => {
             tracing::warn!(%pr, %err, "GitHub patches unavailable; using local hunks");
         }
-        DiffMsg::ResolvedSet {
-            thread_id,
-            resolved,
-            result: Err(err),
-        } => {
-            edit(state, of, |i| i.set_resolved(&thread_id, !resolved));
-            state.error(format!("GitHub didn't save that: {err}"));
-        }
         // Jobs are handled above.
-        DiffMsg::ResolvedSet { .. } | DiffMsg::Job(..) => {}
-        DiffMsg::ReviewSubmitted(outcome) => return on_submitted(state, &pr, &outcome),
+        DiffMsg::Job(..) => {}
         DiffMsg::PendingReview(result) => match (result, &mut state.overlay) {
             (Ok(n), Some(Overlay::Submit(dialog))) if dialog.pr == pr => {
                 dialog.on_github = Some(n);

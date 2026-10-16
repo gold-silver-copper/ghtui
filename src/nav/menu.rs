@@ -170,8 +170,7 @@ pub(super) fn run_menu_keys(state: &mut State, [pressed]: [crate::keymap::Key; 1
         None => {
             menu.typed.clear();
             let shown = crate::keymap::pretty_keys(&typed);
-            state.info(format!("{shown}: no row here has those keys"));
-            Vec::new()
+            state.just_say(format!("{shown}: no row here has those keys"))
         }
     }
 }
@@ -184,8 +183,7 @@ pub(super) fn run_menu_row(state: &mut State, row: Option<Doable>) -> Vec<Cmd> {
         return Vec::new();
     };
     if let Some(why) = d.unavailable {
-        state.info(format!("Can't: {why}"));
-        return Vec::new();
+        return state.just_say(format!("Can't: {why}"));
     }
     state.overlay = None;
     apply(state, d.action)

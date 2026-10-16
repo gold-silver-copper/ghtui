@@ -6,6 +6,7 @@
 //! long-lived `cat-file --batch` reader.
 
 pub mod blobs;
+pub mod commit;
 pub mod credentials;
 pub mod files;
 pub mod index;
@@ -41,6 +42,13 @@ pub enum GitError {
     Version(String),
     #[error("unexpected git output: {0}")]
     Parse(String),
+}
+
+/// Git's failure, where git answers a read ([`crate::data::load`]).
+impl From<GitError> for crate::api::ApiError {
+    fn from(err: GitError) -> Self {
+        crate::api::ApiError::Git(err.to_string())
+    }
 }
 
 pub use oid::Oid;
@@ -148,6 +156,12 @@ pub(crate) fn piped<T>(handle: Option<T>, name: &str) -> Result<T, GitError> {
 
 pub(crate) async fn run(dir: Option<&Path>, args: &[&str]) -> Result<String, GitError> {
     stdout(&git(dir).args(args).output().await?, &args.join(" "))
+}
+
+/// Runs git in `dir` to set a test's repositories up.
+#[cfg(test)]
+pub(crate) async fn set_up(dir: &Path, args: &[&str]) -> String {
+    run(Some(dir), args).await.unwrap()
 }
 
 /// What `git <what>` printed, or its complaint if it failed.

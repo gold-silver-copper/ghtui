@@ -1,10 +1,11 @@
 //! The palette, the search box and pickers.
 
 use super::*;
+use crate::route::{app, code, issues, search};
 
 #[test]
 fn palette_goes_places_and_runs_actions() {
-    let mut state = with_home(1);
+    let mut state = with_prs(1);
     press(&mut state, ":");
     assert!(matches!(state.overlay, Some(Overlay::Picker(_))));
     let cmds = fetches(press(&mut state, "a/b#9<Enter>"));
@@ -23,17 +24,17 @@ fn palette_goes_places_and_runs_actions() {
     let cmds = fetched(&mut state, key, Data::Issue(None));
     let pr = PrRef::parse("a/b#9").unwrap();
     assert_eq!(route(&state), Route::pr(pr.clone()));
-    assert_eq!(cmds[0], Cmd::Api(Api::FetchPr(pr)));
+    assert_eq!(cmds[0], crate::fixtures::fetch_pr(&pr));
     assert_eq!(state.screens.len(), 2, "replaced, not pushed");
 
     // A bare number resolves against the repo on screen.
     press(&mut state, ":12<Enter>");
     assert_eq!(
         route(&state),
-        Route::Issue {
+        Route::Issues(issues::Issue {
             repo: RepoId::new("a", "b"),
             number: 12
-        }
+        })
     );
 
     press(&mut state, ":@octocat<Enter>");
@@ -57,14 +58,15 @@ fn an_older_suggestion_reply_does_not_replace_a_newer_one() {
     let mut state = with_repo();
     press(&mut state, "g/");
     press(&mut state, "ra");
+    let suggest = |q: &str| DataKey::Suggest(q.into());
     let cmds = update(&mut state, Msg::SuggestDue("ra".into()));
-    assert_eq!(cmds, vec![Cmd::Api(Api::Suggest("ra".into()))]);
+    assert_eq!(fixtures::asked(&cmds), [suggest("ra")]);
     press(&mut state, "t");
     let cmds = update(&mut state, Msg::SuggestDue("rat".into()));
-    assert_eq!(cmds, vec![Cmd::Api(Api::Suggest("rat".into()))]);
-    let repos = |name: &str| Ok(vec![crate::fixtures::repo_summary(name, 5)]);
-    update(&mut state, Msg::Suggested("rat".into(), repos("o/ratatui")));
-    update(&mut state, Msg::Suggested("ra".into(), repos("o/rails")));
+    assert_eq!(fixtures::asked(&cmds), [suggest("rat")]);
+    let repos = |name: &str| Data::Suggestions(vec![crate::fixtures::repo_summary(name, 5)]);
+    fixtures::fetched(&mut state, suggest("rat"), repos("o/ratatui"));
+    fixtures::fetched(&mut state, suggest("ra"), repos("o/rails"));
     let sb = overlay!(state, Search);
     let picks: Vec<nav::Pick> = state
         .suggestions(sb)
@@ -74,7 +76,7 @@ fn an_older_suggestion_reply_does_not_replace_a_newer_one() {
     assert_eq!(
         picks.last(),
         Some(&nav::Pick::Go(
-            Target::Page(Route::Repo(RepoId::new("o", "ratatui"))).into()
+            Target::Page(Route::Code(code::Repo(RepoId::new("o", "ratatui")))).into()
         )),
         "the suggestions for `rat` vanished"
     );
@@ -92,7 +94,7 @@ fn palette_searches_github() {
     assert_eq!(
         state.commands("ratatui/ratatui")[0].1,
         Some(Choice::Go(
-            Target::Page(Route::Repo(RepoId::new("ratatui", "ratatui"))).into()
+            Target::Page(Route::Code(code::Repo(RepoId::new("ratatui", "ratatui")))).into()
         ))
     );
 }
@@ -108,10 +110,10 @@ fn palette_links_keep_their_anchor() {
     );
     assert_eq!(
         route(&s),
-        Route::Issue {
+        Route::Issues(issues::Issue {
             repo: RepoId::new("o", "r"),
             number: 1
-        }
+        })
     );
     assert_eq!(page(&s).anchor.as_deref(), Some("issuecomment-5"));
 }
@@ -148,10 +150,10 @@ fn a_picker_list_that_failed_says_why() {
     for (keys, key, why) in [
         (
             "f",
-            DataKey::Files(repo(), "main".into()),
+            DataKey::Files(ghtui(), "main".into()),
             "Couldn't load files",
         ),
-        ("B", DataKey::Refs(repo()), "Couldn't load branches"),
+        ("B", DataKey::Refs(ghtui()), "Couldn't load branches"),
     ] {
         assert_eq!(press(&mut state, keys), vec![fetch(key.clone())]);
         let result = Err(ApiError::Network("timed out".into()));
@@ -162,6 +164,7 @@ fn a_picker_list_that_failed_says_why() {
                 key: key.clone(),
                 result,
                 cached_at,
+                source: None,
             },
         );
         let f = overlay!(state, Picker);
@@ -181,7 +184,7 @@ fn a_picker_list_that_failed_says_why() {
 fn go_to_file_and_switch_branches() {
     let mut state = with_repo();
     let cmds = press(&mut state, "f");
-    let files = DataKey::Files(repo(), "main".into());
+    let files = DataKey::Files(ghtui(), "main".into());
     assert_eq!(cmds, vec![fetch(files.clone())]);
     fetched(
         &mut state,
@@ -206,10 +209,10 @@ fn go_to_file_and_switch_branches() {
     press(&mut state, "<Enter>");
     assert_eq!(route(&state), blob("main", "src/main.rs"));
     let cmds = press(&mut state, "B");
-    assert_eq!(cmds, vec![fetch(DataKey::Refs(repo()))]);
+    assert_eq!(cmds, vec![fetch(DataKey::Refs(ghtui()))]);
     fetched(
         &mut state,
-        DataKey::Refs(repo()),
+        DataKey::Refs(ghtui()),
         Data::Refs(Box::new(crate::api::browse::Refs {
             branches: crate::api::model::Capped::new(vec!["main".into(), "next".into()], 300),
             tags: vec!["v1.0".into()].into(),
@@ -252,15 +255,11 @@ fn search_box_jumps_searches_and_loads_more() {
         "on a repository, its own issues first"
     );
     // Live suggestions arrive after a pause, below what's there.
+    let key = DataKey::Suggest("bug".into());
     let cmds = update(&mut state, Msg::SuggestDue("bug".into()));
-    assert_eq!(cmds, vec![Cmd::Api(Api::Suggest("bug".into()))]);
-    update(
-        &mut state,
-        Msg::Suggested(
-            "bug".into(),
-            Ok(vec![crate::fixtures::repo_summary("o/bugs", 5)]),
-        ),
-    );
+    assert!(fixtures::asks(&cmds, &key));
+    let bugs = vec![crate::fixtures::repo_summary("o/bugs", 5)];
+    fixtures::fetched(&mut state, key, Data::Suggestions(bugs));
     let sb = overlay!(state, Search);
     let picks: Vec<nav::Pick> = state
         .suggestions(sb)
@@ -270,7 +269,7 @@ fn search_box_jumps_searches_and_loads_more() {
     assert_eq!(
         picks.last(),
         Some(&nav::Pick::Go(
-            Target::Page(Route::Repo(RepoId::new("o", "bugs"))).into()
+            Target::Page(Route::Code(code::Repo(RepoId::new("o", "bugs")))).into()
         ))
     );
     press(&mut state, "<Enter>");
@@ -301,12 +300,17 @@ fn search_box_jumps_searches_and_loads_more() {
     }
     update(
         &mut state,
-        Msg::FetchedMore(key.clone(), "c1".into(), Ok(Data::Search(Box::new(more)))),
+        Msg::FetchedMore(
+            key.clone(),
+            "c1".into(),
+            Ok(Data::Search(Box::new(more))),
+            None,
+        ),
     );
     let Some(Data::Search(results)) = state.get(&key) else {
         panic!()
     };
-    assert_eq!(browse::next_cursor(results), None);
+    assert_eq!(results.next(), None);
     let SearchResults::Issues(r) = &**results else {
         panic!()
     };
@@ -323,10 +327,7 @@ fn search_box_jumps_searches_and_loads_more() {
     press(&mut state, "G<Enter>");
     assert_eq!(state.busy().as_deref(), Some("Loading more"));
     let cmds = press(&mut state, "r");
-    assert!(
-        cmds.iter()
-            .any(|c| matches!(c, Cmd::Api(Api::Fetch { .. })))
-    );
+    assert!(!crate::fixtures::asked(&cmds).is_empty(), "{cmds:?}");
     fetched(
         &mut state,
         key.clone(),
@@ -338,6 +339,7 @@ fn search_box_jumps_searches_and_loads_more() {
             key.clone(),
             "c2".into(),
             Ok(Data::Search(Box::new(crate::fixtures::issue_results(None)))),
+            None,
         ),
     );
     let Some(Data::Search(results)) = state.get(&key) else {
@@ -353,7 +355,7 @@ fn search_box_jumps_searches_and_loads_more() {
 fn visited_pages_come_back_as_suggestions() {
     let mut state = with_repo();
     let _ = state.push(Route::user("octocat"));
-    let _ = state.push(Route::Home);
+    let _ = state.push(Route::App(app::Home));
     press(&mut state, "g/");
     let sb = overlay!(state, Search);
     let labels: Vec<String> = state
@@ -373,7 +375,7 @@ fn visited_pages_come_back_as_suggestions() {
     assert_eq!(route(&state), Route::user("octocat"));
     // Its letters scattered in a visited page's title aren't that page:
     // ↵ searches for what's typed.
-    let _ = state.push(Route::Home);
+    let _ = state.push(Route::App(app::Home));
     press(&mut state, "g/occat<Enter>");
     assert!(route(&state).search().is_some(), "{:?}", route(&state));
 }
@@ -390,10 +392,10 @@ fn a_link_typed_after_a_scope_or_a_filter_opens() {
     );
     assert_eq!(route(&state), pr);
 
-    let search = Route::Search {
+    let search = Route::Search(search::Search {
         kind: crate::api::browse::SearchKind::Issues,
         query: "repo:gold-silver-copper/ghtui bug".into(),
-    };
+    });
     let _ = state.push(search.clone());
     press(&mut state, "/");
     assert!(overlay!(state, Search).filter);
@@ -403,7 +405,7 @@ fn a_link_typed_after_a_scope_or_a_filter_opens() {
     // Words stay a filter.
     let _ = state.push(search);
     press(&mut state, "/label:bug<Enter>");
-    let Route::Search { query, .. } = route(&state) else {
+    let Route::Search(search::Search { query, .. }) = route(&state) else {
         panic!("not a search");
     };
     assert_eq!(query, "repo:gold-silver-copper/ghtui bug label:bug");
@@ -414,10 +416,10 @@ fn a_link_typed_after_a_scope_or_a_filter_opens() {
 #[test]
 fn a_people_search_has_no_open_or_closed() {
     let mut state = with_repo();
-    let route = Route::Search {
+    let route = Route::Search(search::Search {
         kind: crate::api::browse::SearchKind::Users,
         query: "octo".into(),
-    };
+    });
     let _ = state.push(route.clone());
     assert!(press(&mut state, "t").is_empty());
     assert_eq!(super::route(&state), route);

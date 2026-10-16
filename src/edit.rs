@@ -7,6 +7,7 @@
 //! GitHub as a [`Change::Edit`], and the page follows GitHub until it
 //! shows it (see [`crate::act`]).
 
+use crate::route::{Route, issues, pulls};
 use std::collections::BTreeSet;
 
 use crate::api::change::Change;
@@ -14,13 +15,12 @@ use crate::api::edit::{Edit, Editable, Named, ReactionContent, Sidebar, Written}
 use crate::api::model::{Capped, NodeId, PrRef, RepoId};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::act::{By, Confirm, Subject};
-use crate::browse::{Data, DataKey, Need};
+use crate::act::{By, Step, Subject};
+use crate::compose;
+use crate::data::{Data, DataKey};
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::{self, Choice};
-use crate::review::ComposeTarget;
-use crate::route::Route;
 use crate::state::{Api, Cmd, Overlay, Remote, Screen, State};
 use crate::ui::annotations::{AnnotationKey, ThreadRowKind};
 use crate::ui::diff_doc::{Pos, Row};
@@ -152,15 +152,6 @@ fn numbered(about: &Subject) -> Option<(RepoId, u64)> {
     }
 }
 
-/// What an action does here.
-enum Plan {
-    /// Open the composer on it, with its text.
-    Edit(Editing, String),
-    /// Ask before deleting it.
-    Delete(Box<Confirm>),
-    Choose(Choosing),
-}
-
 /// A comment or description on screen.
 struct Spot {
     of: Written,
@@ -186,8 +177,10 @@ impl Spot {
 fn subject_here(state: &State) -> Option<Subject> {
     match state.screen() {
         Screen::Page(p) => match &p.route {
-            Route::Issue { repo, number } => Some(Subject::Issue(repo.clone(), *number)),
-            Route::Pr { pr, .. } => Some(Subject::Pr(pr.clone())),
+            Route::Issues(issues::Issue { repo, number }) => {
+                Some(Subject::Issue(repo.clone(), *number))
+            }
+            Route::Pulls(pulls::Pr { pr, .. }) => Some(Subject::Pr(pr.clone())),
             _ => None,
         },
         Screen::Diff(d) => d.of.pr().cloned().map(Subject::Pr),
@@ -207,7 +200,7 @@ fn issue<'a>(
 }
 
 fn pr_detail<'a>(state: &'a State, pr: &PrRef) -> Option<&'a crate::api::model::PrDetail> {
-    state.prs.get(pr).and_then(|r| r.data.as_ref())
+    state.pr(pr)
 }
 
 /// The description of the issue or pull request on screen, as a spot.
@@ -373,7 +366,7 @@ fn elsewhere(action: Action) -> String {
     }
 }
 
-fn plan(state: &State, action: Action) -> Result<Plan, String> {
+fn plan(state: &State, action: Action) -> Result<Step, String> {
     let about = subject_here(state).ok_or_else(|| elsewhere(action))?;
     let diff = matches!(state.screen(), Screen::Diff(_));
     match action {
@@ -392,7 +385,7 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
                 at: spot.at.clone(),
                 name: spot.name(),
             };
-            Ok(Plan::Edit(editing, spot.body))
+            Ok(Step::Compose(compose::Target::Edit(editing), spot.body))
         }
         Action::DeleteComment => {
             let spot = spot(state, &about, false)?;
@@ -418,26 +411,23 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
                 of: spot.of,
                 id: spot.editable.id.clone(),
             });
-            Ok(Plan::Delete(Box::new(Confirm {
+            Ok(Step::Ask(Box::new(crate::act::confirm(
                 action,
-                about: spot.about,
+                spot.about,
                 title,
                 facts,
-                choices: vec![("Delete".into(), delete)],
-                selected: 0,
-                sending: false,
-                error: None,
-            })))
+                vec![("Delete".into(), delete)],
+            ))))
         }
         Action::React => {
             let spot = spot(state, &about, true)?;
             if !spot.editable.can_react {
                 return Err(format!("GitHub doesn't let you react to {}", spot.name()));
             }
-            Ok(Plan::Choose(Choosing::React {
+            choose(Choosing::React {
                 about: spot.about,
                 target: spot.editable,
-            }))
+            })
         }
         _ if diff => Err(format!("{}: on the conversation", action.description())),
         Action::EditTitle => {
@@ -455,11 +445,11 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
                 Subject::Pr(pr) => pr_detail(state, pr).map(|d| d.title.clone()),
                 _ => None,
             };
-            Ok(Plan::Choose(Choosing::Title {
+            choose(Choosing::Title {
                 about,
                 id: spot.editable.id,
                 was: was.unwrap_or_default(),
-            }))
+            })
         }
         Action::EditLabels
         | Action::EditAssignees
@@ -496,18 +486,18 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
                 Action::RequestReviews if !may.reviewers => {
                     Err(format!("GitHub doesn't let you ask for reviews: {triage}"))
                 }
-                Action::EditMilestone => Ok(Plan::Choose(Choosing::Milestone { about })),
+                Action::EditMilestone => choose(Choosing::Milestone { about }),
                 _ => {
                     let field = match action {
                         Action::EditLabels => Field::Labels,
                         Action::EditAssignees => Field::Assignees,
                         _ => Field::Reviewers,
                     };
-                    Ok(Plan::Choose(Choosing::Many {
+                    choose(Choosing::Many {
                         field,
                         about,
                         chosen: None,
-                    }))
+                    })
                 }
             }
         }
@@ -515,38 +505,25 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
     }
 }
 
+/// What editing issues and pull requests adds: its own actions.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &ACTIONS,
+    act,
+    offers: |state, out| out.extend(doables(state)),
+    ..crate::features::Feature::NONE
+};
+
 /// Runs one of [`ACTIONS`] on what's on screen.
 #[must_use]
 pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
-    let planned = plan(state, action).and_then(|plan| {
-        // GitHub hasn't shown the last change yet: what's on screen is old.
-        match crate::act::awaiting_here(state) {
-            Some(_) => Err("GitHub hasn't shown the last change yet: wait a moment".to_owned()),
-            None => Ok(plan),
-        }
-    });
-    match planned {
-        Err(why) => {
-            state.info(why);
-            Vec::new()
-        }
-        Ok(Plan::Edit(editing, body)) => state.compose(ComposeTarget::Edit(editing), &body),
-        Ok(Plan::Delete(confirm)) => {
-            state.overlay = Some(Overlay::Confirm(confirm));
-            Vec::new()
-        }
-        Ok(Plan::Choose(choosing)) => {
-            let title = match &choosing {
-                Choosing::Title { was, .. } => Some(was.clone()),
-                _ => None,
-            };
-            let cmds = state.open_picker(picker::Kind::Edit(choosing));
-            if let (Some(title), Some(Overlay::Picker(p))) = (title, &mut state.overlay) {
-                p.input.insert_str(title);
-            }
-            cmds
-        }
-    }
+    let planned = plan(state, action).and_then(|step| crate::act::settled(state).map(|()| step));
+    crate::act::take(state, planned)
+}
+
+/// Choosing in the picker.
+#[expect(clippy::unnecessary_wraps, reason = "a plan's step")]
+fn choose(choosing: Choosing) -> Result<Step, String> {
+    Ok(Step::Pick(picker::Kind::Edit(choosing)))
 }
 
 /// The edits the menu offers here: each action, its label, and why it
@@ -567,6 +544,8 @@ pub fn doables(state: &State) -> Vec<Doable> {
                 )
         })
         .filter(|a| *a != Action::RequestReviews || matches!(about, Subject::Pr(_)))
+        // A draft's are your drafts' ([`crate::review::takes`]).
+        .filter(|a| !crate::review::takes(state, *a))
         .map(|action| {
             let label = match action {
                 Action::EditComment => format!("Edit {what}"),
@@ -579,30 +558,21 @@ pub fn doables(state: &State) -> Vec<Doable> {
                 Action::EditMilestone => "Milestone".into(),
                 _ => action.description().into(),
             };
-            Doable {
-                section: "Edit",
-                action,
-                label,
-                short: "",
-                unavailable: plan(state, action).err(),
-            }
+            crate::nav::row("Edit", action, label, "", plan(state, action).err())
         })
         .collect()
 }
 
 // ---- pickers --------------------------------------------------------------------
 
-type Rows = Vec<(PaletteItem, Option<Choice>)>;
+use crate::picker::Rows;
 
 fn row(
     label: impl Into<String>,
     hint: impl Into<String>,
     pick: Option<Pick>,
 ) -> (PaletteItem, Option<Choice>) {
-    let item = PaletteItem {
-        label: label.into(),
-        hint: hint.into(),
-    };
+    let item = crate::picker::item(label, hint);
     (item, pick.map(Choice::Edit))
 }
 
@@ -613,8 +583,8 @@ fn sidebar<'a>(state: &'a State, c: &Choosing) -> Result<&'a Sidebar, Rows> {
         return Err(Vec::new());
     };
     #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
-    let listed = Remote::fetched(state.data.get(&key), "")
-        .pick(<Sidebar as crate::browse::Picked>::pick)
+    let listed = Remote::fetched(state.remote(&key), "")
+        .pick(<Sidebar as crate::data::Picked>::pick)
         .text("the sidebar");
     listed.map_err(|why| vec![row(why, "", None)])
 }
@@ -883,8 +853,7 @@ fn send_pick(state: &mut State, pick: Pick) -> Vec<Cmd> {
             };
             if s.milestone.as_ref().map(|m| &m.name) == name.as_ref() {
                 state.overlay = None;
-                state.info("That's its milestone now");
-                return Vec::new();
+                return state.just_say("That's its milestone now");
             }
             let milestone = name.and_then(|name| {
                 (s.milestones.iter())
@@ -910,7 +879,7 @@ fn send_pick(state: &mut State, pick: Pick) -> Vec<Cmd> {
 fn send(state: &mut State, about: Subject, edit: Edit) -> Vec<Cmd> {
     state.overlay = None;
     state.info(format!("{}…", doing(&edit)));
-    vec![Cmd::Api(Api::Change(Change::Edit(edit), By::Edit(about)))]
+    vec![crate::act::send(Change::Edit(edit), By::Edit(about))]
 }
 
 /// ctrl-s in a picker of many: sends what changed from what's set.
@@ -937,8 +906,7 @@ fn apply(state: &mut State) -> Vec<Cmd> {
     let now = chosen.clone().unwrap_or_else(|| was.clone());
     if now == was {
         state.overlay = None;
-        state.info("Nothing changed");
-        return Vec::new();
+        return state.just_say("Nothing changed");
     }
     // Each name once, what's set first.
     let mut all: Vec<&Named> = set.clone();
@@ -963,8 +931,8 @@ fn apply(state: &mut State) -> Vec<Cmd> {
         },
         Field::Reviewers => {
             if s.requested.left_out > 0 {
-                state.info("GitHub listed only some of its reviewers: change them on GitHub");
-                return Vec::new();
+                return state
+                    .just_say("GitHub listed only some of its reviewers: change them on GitHub");
             }
             // Asking replaces who's asked: everyone chosen, by kind.
             let r = &s.requested;
@@ -1099,9 +1067,9 @@ pub fn shown(state: &State, edit: &Edit, about: &Subject) -> bool {
 
 /// What else the page fetches again while it waits for an edit: a pull
 /// request's comments and reviewers are its conversation's.
-pub fn polls(about: &Subject) -> Option<Need> {
+pub fn polls(about: &Subject) -> Option<DataKey> {
     match about {
-        Subject::Pr(pr) => Some(Need::Data(DataKey::PrActivity(pr.clone()))),
+        Subject::Pr(pr) => Some(DataKey::PrActivity(pr.clone())),
         _ => None,
     }
 }

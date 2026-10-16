@@ -134,7 +134,7 @@ impl std::fmt::Display for NodeId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RepoId {
     pub owner: String,
     pub name: String,
@@ -222,15 +222,16 @@ impl std::fmt::Display for PrRef {
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
-#[cynic(graphql_type = "PullRequestReviewDecision", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequestReviewDecision")]
 pub enum ReviewDecision {
     Approved,
     ChangesRequested,
     ReviewRequired,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IssueState {
+    #[default]
     Open,
     Closed,
     /// Closed as not planned (or duplicate).
@@ -239,8 +240,9 @@ pub enum IssueState {
 
 /// Only a pull request is a draft or merged, and only an issue is closed
 /// as not planned: each has its own states.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PrState {
+    #[default]
     Open,
     Draft,
     Closed,
@@ -265,7 +267,7 @@ pub enum Status {
 /// in, and only it makes a [`PrState`], so none can get the state without
 /// the flag or forget that an open draft is a draft.
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequest", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequest")]
 pub struct PrStatus {
     is_draft: bool,
     state: q::PullRequestState,
@@ -290,8 +292,8 @@ pub enum ChecksState {
 }
 
 /// Whether a pull request can merge now, and if not, why.
-#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
-#[cynic(graphql_type = "MergeStateStatus", schema_module = "schema")]
+#[derive(cynic::Enum, Debug, Clone, Default, Copy, PartialEq, Eq)]
+#[cynic(graphql_type = "MergeStateStatus")]
 pub enum MergeState {
     /// Its branch is behind its base, which requires it to be up to date.
     Behind,
@@ -302,22 +304,24 @@ pub enum MergeState {
     Dirty,
     Draft,
     HasHooks,
+    #[default]
     Unknown,
     /// Some checks didn't pass, but they aren't required.
     Unstable,
 }
 
-#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
-#[cynic(graphql_type = "MergeableState", schema_module = "schema")]
+#[derive(cynic::Enum, Debug, Clone, Default, Copy, PartialEq, Eq)]
+#[cynic(graphql_type = "MergeableState")]
 pub enum Mergeable {
     #[cynic(rename = "MERGEABLE")]
     Yes,
     Conflicting,
+    #[default]
     Unknown,
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
-#[cynic(graphql_type = "PullRequestReviewState", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequestReviewState")]
 pub enum ReviewState {
     Approved,
     ChangesRequested,
@@ -335,7 +339,7 @@ pub struct Label {
 
 /// A pull request, as its page shows it. Where it is (a [`PrRef`]) is
 /// what it's fetched and kept by, not part of it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrDetail {
     /// What changes name it by.
     pub id: NodeId,
@@ -432,7 +436,7 @@ pub struct Queued {
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
-#[cynic(graphql_type = "MergeQueueEntryState", schema_module = "schema")]
+#[cynic(graphql_type = "MergeQueueEntryState")]
 pub enum QueueState {
     /// Its checks in the queue are running.
     AwaitingChecks,
@@ -507,7 +511,7 @@ impl MilestoneRef {
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[cynic(graphql_type = "FileViewedState", schema_module = "schema")]
+#[cynic(graphql_type = "FileViewedState")]
 pub enum ViewedState {
     #[default]
     Unviewed,
@@ -524,16 +528,17 @@ pub struct ViewedFiles {
     pub states: std::collections::HashMap<String, ViewedState>,
 }
 
-#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cynic(graphql_type = "DiffSide", schema_module = "schema")]
+#[derive(cynic::Enum, Debug, Clone, Default, Copy, PartialEq, Eq, Hash)]
+#[cynic(graphql_type = "DiffSide")]
 pub enum Side {
     /// Base (old) lines.
     Left,
     /// Head (new) lines.
+    #[default]
     Right,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewComment {
     pub id: NodeId,
     pub author: String,
@@ -550,7 +555,7 @@ pub struct ReviewComment {
     pub review: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewThread {
     pub id: NodeId,
     pub path: String,

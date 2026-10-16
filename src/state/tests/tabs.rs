@@ -1,11 +1,12 @@
 use super::*;
+use crate::route::{code, issues, releases};
 
 /// Two routes to tell tabs apart by.
 fn issue(n: u64) -> Route {
-    Route::Issue {
-        repo: repo(),
+    Route::Issues(issues::Issue {
+        repo: ghtui(),
         number: n,
-    }
+    })
 }
 
 #[test]
@@ -124,11 +125,11 @@ fn a_tab_from_a_diff_link_reopens_on_it() {
 /// reopens on that branch, not on `feature` with `x` as a path.
 #[test]
 fn a_tab_on_a_slashed_branch_reopens_on_it() {
-    let tree = Route::Tree {
+    let tree = Route::Code(code::Tree {
         repo: RepoId::new("o", "r"),
         rev: "feature/x".into(),
         path: "src".into(),
-    };
+    });
     let mut s = state();
     let _ = s.push(tree.clone());
     let urls = s.tab_urls();
@@ -141,15 +142,12 @@ fn a_tab_on_a_slashed_branch_reopens_on_it() {
 /// last of the reopened tabs.
 #[test]
 fn the_page_asked_for_loads_after_reopened_tabs() {
-    let releases = Route::Releases(RepoId::new("o", "r"));
+    let releases = Route::Releases(releases::Releases(RepoId::new("o", "r")));
     let mut s = state();
     s.restore_tabs(&[issue(1).url(), releases.url()]);
     let cmds = s.start_at(Target::Page(releases).into());
     assert_eq!(s.tab_count(), 3);
-    let fetches = |key: &DataKey| {
-        cmds.iter()
-            .any(|c| matches!(c, Cmd::Api(Api::Fetch { key: k, .. }) if k == key))
-    };
+    let fetches = |key: &DataKey| crate::fixtures::asks(&cmds, key);
     assert!(
         fetches(&DataKey::Releases(RepoId::new("o", "r"))),
         "{cmds:?}"
@@ -183,30 +181,30 @@ fn anchors_survive_every_way_in() {
 fn plain_links_open_the_branch_github_names() {
     let mut s = with_repo();
     let url = "https://github.com/gold-silver-copper/ghtui/blob/feature/x/src/lib.rs#L2";
-    let key = DataKey::RefIn(repo(), "feature/x/src/lib.rs".into());
+    let key = DataKey::RefIn(ghtui(), "feature/x/src/lib.rs".into());
     assert_eq!(fetches(s.go(Dest::from_url(url))), vec![fetch(key.clone())]);
     let depth = s.screens.len();
     let cmds = fetched(&mut s, key, Data::RefIn(Some("feature/x".into())));
-    let file = Route::Blob {
-        repo: repo(),
+    let file = Route::Code(code::Blob {
+        repo: ghtui(),
         rev: "feature/x".into(),
         path: "src/lib.rs".into(),
         lines: Some((2, 2)),
-    };
+    });
     assert_eq!(route(&s), file);
     assert_eq!(s.screens.len(), depth, "in its place");
-    let text = DataKey::Blob(repo(), "feature/x".into(), "src/lib.rs".into());
+    let text = DataKey::Blob(ghtui(), "feature/x".into(), "src/lib.rs".into());
     assert_eq!(fetches(cmds), vec![fetch(text)]);
 
     let base = "https://github.com/gold-silver-copper/ghtui";
     let _ = s.go(Dest::from_url(&format!("{base}/tree/feature/x/src")));
     assert_eq!(
         route(&s),
-        Route::Tree {
-            repo: repo(),
+        Route::Code(code::Tree {
+            repo: ghtui(),
             rev: "feature/x".into(),
             path: "src".into()
-        }
+        })
     );
     let _ = s.go(Dest::from_url(&format!("{base}/blob/main/README.md")));
     assert_eq!(route(&s), blob("main", "README.md"));

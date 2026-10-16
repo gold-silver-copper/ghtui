@@ -10,24 +10,19 @@
 //! gh-dash's history is full of these: crashes on empty or missing data,
 //! duplicate rows after a quick refresh, the wrong row acted on.
 
+use crate::route::{Route, code, search};
 use std::collections::{HashMap, HashSet};
 
 use proptest::prelude::*;
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
 
 use crate::api::ApiError;
 use crate::api::browse::{
     BranchInfo, IssueState, PrState, Results, SearchKind, SearchResults, Status,
 };
 use crate::api::model::RepoId;
-use crate::theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
-use crate::ui::Icons;
 
-use crate::browse::{Data, DataKey};
+use crate::data::{Data, DataKey};
 use crate::fixtures::{self, press};
-use crate::keymap::Keymap;
-use crate::route::Route;
 use crate::state::{Msg, Remote, Screen, State, update};
 
 /// Totals at or above this mark fresh data; below, cached copies.
@@ -40,19 +35,19 @@ fn repo() -> RepoId {
 /// The list pages the sequences visit.
 fn routes() -> [Route; 3] {
     [
-        Route::Search {
+        Route::Search(search::Search {
             kind: SearchKind::Issues,
             query: "repo:o/r".into(),
-        },
-        Route::Branches(repo()),
-        Route::Repo(repo()),
+        }),
+        Route::Code(code::Branches(repo())),
+        Route::Code(code::Repo(repo())),
     ]
 }
 
 fn key_of(route: &Route) -> DataKey {
     match route {
-        Route::Search { kind, query } => DataKey::Search(*kind, query.clone()),
-        Route::Branches(repo) => DataKey::Branches(repo.clone()),
+        Route::Search(search::Search { kind, query }) => DataKey::Search(*kind, query.clone()),
+        Route::Code(code::Branches(repo)) => DataKey::Branches(repo.clone()),
         _ => DataKey::Repo(repo()),
     }
 }
@@ -62,7 +57,7 @@ fn key_of(route: &Route) -> DataKey {
 fn page(route: &Route, start: u64, len: u8, total: u64, next: bool) -> Data {
     let next = next.then(|| format!("c{start}"));
     match route {
-        Route::Search { .. } => {
+        Route::Search(search::Search { .. }) => {
             let items = (start..start + u64::from(len))
                 .map(|n| {
                     fixtures::issue_summary(
@@ -81,7 +76,7 @@ fn page(route: &Route, start: u64, len: u8, total: u64, next: bool) -> Data {
                 next,
             })))
         }
-        Route::Branches(_) => {
+        Route::Code(code::Branches(_)) => {
             let base = fixtures::branches().items.into_iter().next();
             let items = (start..start + u64::from(len))
                 .filter_map(|n| {
@@ -271,6 +266,7 @@ fn apply(state: &mut State, model: &mut Model, event: &Event) {
                     key,
                     result: Ok(data),
                     cached_at,
+                    source: None,
                 },
             );
         }
@@ -290,7 +286,7 @@ fn apply(state: &mut State, model: &mut Model, event: &Event) {
             let start = end.saturating_sub(u64::from(*overlap));
             let data = page(route, start, *len, FRESH + model.counter, *next);
             model.ends.insert(key.clone(), start + u64::from(*len));
-            update(state, Msg::FetchedMore(key, after, Ok(data)));
+            update(state, Msg::FetchedMore(key, after, Ok(data), None));
         }
         Event::Fail(route) => {
             let key = key_of(&routes[*route]);
@@ -300,23 +296,16 @@ fn apply(state: &mut State, model: &mut Model, event: &Event) {
                     key,
                     result: Err(ApiError::Network("down".into())),
                     cached_at: None,
+                    source: None,
                 },
             );
         }
     }
 }
 
-fn fail(e: impl std::fmt::Display) -> TestCaseError {
-    TestCaseError::fail(e.to_string())
-}
-
 fn check(state: &State, model: &Model) -> Result<(), TestCaseError> {
     // Renders at its size.
-    let (w, h) = state.size;
-    let mut terminal = Terminal::new(TestBackend::new(w, h)).map_err(fail)?;
-    terminal
-        .draw(|frame| crate::view::view(state, frame, 0))
-        .map_err(fail)?;
+    crate::state::tests::draw(state);
     // The selection is on an item.
     if let Screen::Page(p) = state.screen() {
         prop_assert!(
@@ -352,18 +341,6 @@ fn check(state: &State, model: &Model) -> Result<(), TestCaseError> {
     Ok(())
 }
 
-fn new_state() -> State {
-    let mut state = State::new(
-        Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::TrueColor),
-        Icons::default(),
-        Keymap::default(),
-        (100, 30),
-    );
-    state.viewer = Some("octocat".into());
-    state.clock = || 1_700_000_000;
-    state
-}
-
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: 256,
@@ -373,7 +350,7 @@ proptest! {
 
     #[test]
     fn any_sequence_of_events_keeps_the_app_sound(events in proptest::collection::vec(event(), 1..60)) {
-        let mut state = new_state();
+        let mut state = crate::state::tests::state();
         let mut model = Model::default();
         for event in &events {
             apply(&mut state, &mut model, event);
@@ -395,7 +372,7 @@ fn joined_diff_work_is_the_same_in_every_arrival_order() {
 
     let pr = PrRef::parse("o/r#1").unwrap();
     let of = DiffOf::Pr(pr.clone());
-    let detail = crate::snapshot_tests::pr_detail();
+    let detail = crate::fixtures::pr_detail();
     let orders = [
         [0, 1, 2],
         [0, 2, 1],
@@ -405,12 +382,8 @@ fn joined_diff_work_is_the_same_in_every_arrival_order() {
         [2, 1, 0],
     ];
     for order in orders {
-        let mut state = new_state();
-        let cached = crate::store::Cached {
-            value: detail.clone(),
-            fetched_at: 0,
-        };
-        state.prs.insert(pr.clone(), Remote::cached(Some(cached)));
+        let mut state = crate::state::tests::state();
+        crate::fixtures::pr_cached(&mut state, &pr, detail.clone());
         let mut cmds = state.open_diff(of.clone(), None);
         let job = cmds
             .iter()
@@ -441,7 +414,12 @@ fn joined_diff_work_is_the_same_in_every_arrival_order() {
                     let threads = vec![fixtures::thread("old", None, false, true)];
                     Msg::Diff(of.clone(), DiffMsg::ThreadsLoaded(Ok(threads)))
                 }
-                _ => Msg::Pr(pr.clone(), Box::new(Ok(detail.clone()))),
+                _ => Msg::Fetched {
+                    key: DataKey::Pr(pr.clone()),
+                    result: Ok(Data::Pr(Box::new(detail.clone()))),
+                    cached_at: None,
+                    source: None,
+                },
             };
             cmds.extend(update(&mut state, msg));
         }

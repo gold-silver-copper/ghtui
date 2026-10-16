@@ -1,6 +1,7 @@
 //! Actions jobs and their logs.
 
 use super::*;
+use crate::route::{code, runs};
 
 /// On a wide screen, output (a job's log) takes the whole width, lists
 /// grow to 200 columns, and reading (an issue) stays at 160 with a
@@ -19,13 +20,13 @@ fn output_takes_the_screen_and_reading_stays_narrow() {
             aside,
         )
     };
-    let job = Route::Job {
-        repo: repo(),
+    let job = Route::Runs(runs::Job {
+        repo: ghtui(),
         run: Some(7),
         job: 2,
         step: None,
         query: String::new(),
-    };
+    });
     assert!(width(220, job).0 > 200);
     assert_eq!(width(220, issues(OPEN)), (200, None));
     assert_eq!(width(220, issue(1)), (160, Some(36)));
@@ -38,23 +39,15 @@ fn output_takes_the_screen_and_reading_stays_narrow() {
 /// on the same page as it was.
 #[test]
 fn a_jobs_log_search_goes_through_its_matches() {
-    let mut s = with_repo();
-    let job_route = Route::Job {
-        repo: repo(),
-        run: Some(7),
-        job: 2,
-        step: Some((1, 1)),
-        query: String::new(),
-    };
-    let _ = s.push(job_route.clone());
+    let mut s = with_job(Some((1, 1)));
+    let job_route = route(&s);
     let depth = s.screens.len();
-    let (job, log) = crate::fixtures::job();
-    fetched(&mut s, DataKey::Job(repo(), 2), Data::Job(Box::new(job)));
-    fetched(&mut s, DataKey::JobLog(repo(), 2), Data::Log(Arc::new(log)));
     press(&mut s, "/");
     press(&mut s, "TEST");
     press(&mut s, "<Enter>");
-    assert!(matches!(route(&s), Route::Job { query, step: Some(_), .. } if query == "TEST"));
+    assert!(
+        matches!(route(&s), Route::Runs(runs::Job { query, step: Some(_), .. }) if query == "TEST")
+    );
     let Screen::Page(p) = s.screen() else {
         panic!()
     };
@@ -97,17 +90,7 @@ fn a_jobs_log_search_goes_through_its_matches() {
 /// selected.
 #[test]
 fn a_failed_job_opens_at_its_first_error() {
-    let mut s = with_repo();
-    let _ = s.push(Route::Job {
-        repo: repo(),
-        run: Some(7),
-        job: 2,
-        step: None,
-        query: String::new(),
-    });
-    let (job, log) = crate::fixtures::job();
-    fetched(&mut s, DataKey::Job(repo(), 2), Data::Job(Box::new(job)));
-    fetched(&mut s, DataKey::JobLog(repo(), 2), Data::Log(Arc::new(log)));
+    let s = with_job(None);
     let Screen::Page(p) = s.screen() else {
         panic!()
     };
@@ -130,44 +113,26 @@ fn a_failed_job_opens_at_its_first_error() {
 /// job ends), are fetched again when their page is back on screen.
 #[test]
 fn a_running_jobs_log_is_checked_again() {
-    let mut s = with_repo();
-    let job_route = Route::Job {
-        repo: repo(),
-        run: Some(7),
-        job: 2,
-        step: None,
-        query: String::new(),
-    };
-    let _ = s.push(job_route);
+    let mut s = with_job(None);
     let (mut job, _) = crate::fixtures::job();
     job.outcome = crate::api::browse::CheckOutcome::Pending;
     let running = crate::api::browse::JobLog {
         running: true,
         ..Default::default()
     };
-    fetched(&mut s, DataKey::Job(repo(), 2), Data::Job(Box::new(job)));
+    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::Job(Box::new(job)));
     fetched(
         &mut s,
-        DataKey::JobLog(repo(), 2),
+        DataKey::JobLog(ghtui(), 2),
         Data::Log(Arc::new(running)),
     );
-    let _ = s.push(Route::Repo(repo()));
-    let fetched_keys = |cmds: Vec<Cmd>| -> Vec<DataKey> {
-        fetches(cmds)
-            .into_iter()
-            .filter_map(|c| match c {
-                Cmd::Api(Api::Fetch { key, .. }) => Some(key),
-                _ => None,
-            })
-            .collect()
-    };
-    let keys = fetched_keys(s.back());
-    assert!(keys.contains(&DataKey::JobLog(repo(), 2)), "{keys:?}");
-    assert!(keys.contains(&DataKey::Job(repo(), 2)), "{keys:?}");
+    let _ = s.push(Route::Code(code::Repo(ghtui())));
+    let cmds = s.back();
+    let keys = crate::fixtures::asked(&cmds);
+    assert!(keys.contains(&DataKey::JobLog(ghtui(), 2)), "{keys:?}");
+    assert!(keys.contains(&DataKey::Job(ghtui(), 2)), "{keys:?}");
     // A finished one isn't.
-    let (job, log) = crate::fixtures::job();
-    fetched(&mut s, DataKey::Job(repo(), 2), Data::Job(Box::new(job)));
-    fetched(&mut s, DataKey::JobLog(repo(), 2), Data::Log(Arc::new(log)));
-    let _ = s.push(Route::Repo(repo()));
-    assert_eq!(fetched_keys(s.back()), Vec::new());
+    crate::fixtures::served(&mut s, &cmds);
+    let _ = s.push(Route::Code(code::Repo(ghtui())));
+    assert_eq!(crate::fixtures::asked(&s.back()), Vec::new());
 }

@@ -1,4 +1,4 @@
-//! Page data and key presses for tests and snapshots.
+//! Page data and key presses for tests.
 
 use crate::api::ApiError;
 use crate::api::browse::{
@@ -8,23 +8,27 @@ use crate::api::browse::{
     DiscussionDetail, DiscussionHit, DiscussionList, DiscussionSummary, EntryKind, Gist, GistFile,
     GistSummary, IssueDetail, IssueKind, IssueState, IssueSummary, Job, JobSummary, Login,
     MilestoneDetail, MilestoneInfo, MilestoneList, MonthActivity, Person, PrActivity, PrState,
-    Profile, Readme, Release, RepoOverview, RepoSummary, Results, Reviewer, RunSummary,
+    Profile, Readme, Release, RepoOverview, RepoSummary, Results, Reviewer, RunSummary, SearchKind,
     SearchResults, Status, Step, TagInfo, TeamDetail, TeamRepo, TeamSummary, TreeEntry,
     UserSummary, Week, WikiPage, Workflow, WorkflowRun,
 };
 use crate::api::model::{
-    Capped, Label, NodeId, PrRef, RepoId, ReviewComment, ReviewState, ReviewThread, Side,
+    Capped, Label, NodeId, PrDetail, PrRef, RepoId, ReviewComment, ReviewState, ReviewThread,
 };
 use crate::api::notifications::{Inbox, Notification};
 use crate::api::timeline::{Event, Item, Latest, Linked, LinkedState, Requested, Review, What};
 use crossterm::event::KeyEvent;
+use std::sync::Arc;
 
-use crate::store::{DraftComment, DraftSide};
+use crate::store::DraftComment;
 use crate::ui::bars::Notice;
 
-use crate::browse::{Data, DataKey};
+use crate::act::By;
+use crate::api::change::Change;
+use crate::data::{Data, DataKey};
 use crate::diff_screen::DiffOf;
 use crate::state::{Api, Cmd, DiffMsg, Msg, State, update};
+use crate::work::{Failure, Sent, Work};
 
 /// Asserts the status bar says `part`, as information.
 #[track_caller]
@@ -58,10 +62,82 @@ pub(crate) fn press(state: &mut State, keys: &str) -> Vec<Cmd> {
 
 /// GitHub's answer to the one change `sent` holds.
 pub(crate) fn answer(state: &mut State, sent: &[Cmd], result: Result<(), ApiError>) -> Vec<Cmd> {
-    let [Cmd::Api(Api::Change(change, by))] = sent else {
-        panic!("{sent:?}")
-    };
-    update(state, Msg::Changed(change.clone(), by.clone(), result))
+    let (change, by) = sent_change(sent);
+    let (change, by) = (change.clone(), by.clone());
+    changed(state, change, by, result)
+}
+
+/// Sending `change` to GitHub, from `by`.
+pub(crate) fn change(change: Change, by: By) -> Cmd {
+    crate::act::send(change, by)
+}
+
+/// The changes `cmds` send.
+pub(crate) fn changes(cmds: &[Cmd]) -> Vec<(&Change, &By)> {
+    (cmds.iter())
+        .filter_map(|c| match c {
+            Cmd::Work(Work::Change(c)) => Some((&c.change, &c.by)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The one change `cmds` hold, and nothing else.
+#[track_caller]
+pub(crate) fn sent_change(cmds: &[Cmd]) -> (&Change, &By) {
+    match (changes(cmds).as_slice(), cmds.len()) {
+        ([one], 1) => *one,
+        _ => panic!("not one change: {cmds:?}"),
+    }
+}
+
+/// GitHub's answer to `change`, sent from `by`.
+pub(crate) fn changed(
+    state: &mut State,
+    change: Change,
+    by: By,
+    result: Result<(), ApiError>,
+) -> Vec<Cmd> {
+    let job = crate::act::Changing { change, by };
+    done(state, job, result.map_err(Failure::from))
+}
+
+/// Starting `job`.
+pub(crate) fn start(job: impl Into<Work>) -> Cmd {
+    Cmd::Work(job.into())
+}
+
+/// The jobs of `J`'s kind `cmds` start.
+pub(crate) fn jobs<J: Sent>(cmds: &[Cmd]) -> Vec<J> {
+    (cmds.iter())
+        .filter_map(|c| match c {
+            Cmd::Work(work) => J::of(work).cloned(),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The one job of `J`'s kind `cmds` start.
+#[track_caller]
+pub(crate) fn sent<J: Sent>(cmds: &[Cmd]) -> J {
+    match jobs::<J>(cmds).as_slice() {
+        [one] => one.clone(),
+        _ => panic!("not one {}: {cmds:?}", std::any::type_name::<J>()),
+    }
+}
+
+/// What came of `job`, delivered.
+pub(crate) fn done<J: Sent>(
+    state: &mut State,
+    job: J,
+    result: Result<J::Out, Failure>,
+) -> Vec<Cmd> {
+    update(state, Msg::Done(job.answered(result)))
+}
+
+/// Why a job failed, as tests say it.
+pub(crate) fn failure(why: &str) -> Failure {
+    Failure::msg(why.to_owned())
 }
 
 /// Delivers freshly fetched page data.
@@ -74,8 +150,65 @@ pub(crate) fn fetched(state: &mut State, key: DataKey, data: Data) -> Vec<Cmd> {
             key,
             result,
             cached_at,
+            source: None,
         },
     )
+}
+
+/// What `cmds` fetch, by key.
+pub(crate) fn asked(cmds: &[Cmd]) -> Vec<DataKey> {
+    (cmds.iter())
+        .filter_map(|c| match c {
+            Cmd::Api(Api::Fetch { key, .. }) => Some(key.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether `cmds` fetch `key`.
+pub(crate) fn asks(cmds: &[Cmd], key: &DataKey) -> bool {
+    asked(cmds).contains(key)
+}
+
+/// Whether `cmds` fetch pull request `pr`.
+pub(crate) fn asks_pr(cmds: &[Cmd], pr: &PrRef) -> bool {
+    asks(cmds, &DataKey::Pr(pr.clone()))
+}
+
+/// Fetching pull request `pr` for the first time.
+pub(crate) fn fetch_pr(pr: &PrRef) -> Cmd {
+    let key = DataKey::Pr(pr.clone());
+    Cmd::Api(Api::Fetch { key, cached: true })
+}
+
+/// Delivers GitHub's answer for pull request `pr`.
+pub(crate) fn pr_fetched(
+    state: &mut State,
+    pr: &PrRef,
+    result: Result<PrDetail, ApiError>,
+) -> Vec<Cmd> {
+    let key = DataKey::Pr(pr.clone());
+    let result = result.map(|d| Data::Pr(Box::new(d)));
+    let cached_at = None;
+    update(
+        state,
+        Msg::Fetched {
+            key,
+            result,
+            cached_at,
+            source: None,
+        },
+    )
+}
+
+/// Puts pull request `pr` in the state as the disk cache had it.
+pub(crate) fn pr_cached(state: &mut State, pr: &PrRef, detail: PrDetail) {
+    let cached = crate::store::Cached {
+        value: Data::Pr(Box::new(detail)),
+        fetched_at: 0,
+    };
+    let key = DataKey::Pr(pr.clone());
+    (state.data).insert(key, crate::state::Remote::cached(Some(cached)));
 }
 
 /// Fills Home's section `i` with a search's results.
@@ -86,11 +219,7 @@ pub(crate) fn section(state: &mut State, i: usize, results: SearchResults) -> Ve
 
 /// Pull requests as a search finds them, of `total`.
 pub(crate) fn found_prs(items: Vec<IssueSummary>, total: u64) -> SearchResults {
-    SearchResults::Issues(Results {
-        total,
-        items,
-        next: None,
-    })
+    SearchResults::Issues(page(total, items, None))
 }
 
 /// A pull request a search found.
@@ -126,12 +255,9 @@ pub(crate) fn draft(id: u64, line: u32, body: &str) -> DraftComment {
         id,
         path: "src/point.rs".into(),
         body: body.into(),
-        side: DraftSide::Right,
         line: Some(line),
-        start_line: None,
-        start_side: None,
         commit: "e".repeat(40),
-        error: None,
+        ..Default::default()
     }
 }
 
@@ -140,31 +266,25 @@ pub(crate) fn thread(id: &str, line: Option<u32>, resolved: bool, outdated: bool
     ReviewThread {
         id: NodeId::new(id),
         path: "src/point.rs".into(),
-        side: Side::Right,
-        start_side: None,
         line,
-        start_line: None,
         original_line: Some(3),
-        original_start_line: None,
         outdated,
         resolved,
-        file_level: false,
         can_reply: true,
-        can_resolve: true,
-        can_unresolve: true,
+        // As GitHub says: only what applies now.
+        can_resolve: !resolved,
+        can_unresolve: resolved,
         comments: vec![ReviewComment {
             id: NodeId::new(format!("{id}-c")),
             author: "alice".into(),
             body: format!("Thread {id}"),
             created_at: "2026-10-03T09:00:00Z".into(),
-            url: String::new(),
             original_commit: Some("abc".into()),
-            pending: false,
             editable: editable(&format!("{id}-c")),
-            review: None,
+            ..Default::default()
         }]
         .into(),
-        diff_hunk: String::new(),
+        ..Default::default()
     }
 }
 
@@ -176,7 +296,7 @@ pub fn editable(id: &str) -> crate::api::edit::Editable {
         can_update: true,
         can_delete: true,
         can_react: true,
-        reactions: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -232,9 +352,7 @@ pub fn repo_summary(repo: &str, stars: u64) -> RepoSummary {
         language: Some("Rust".into()),
         language_color: Some("#dea584".into()),
         pushed_at: Some("2026-10-02T12:00:00Z".into()),
-        private: false,
-        fork: false,
-        archived: false,
+        ..Default::default()
     }
 }
 
@@ -312,10 +430,7 @@ pub fn overview() -> RepoOverview {
             date: "2026-10-03T10:00:00Z".into(),
         }),
         commits: 412,
-        parent: None,
-        starred: false,
         can_write: true,
-        can_admin: false,
         id: NodeId::new("R_ghtui"),
         has_issues: true,
         has_discussions: true,
@@ -335,6 +450,7 @@ pub fn overview() -> RepoOverview {
             entry("Cargo.toml", EntryKind::File, Some(1530)),
             entry("README.md", EntryKind::File, Some(2210)),
         ],
+        ..Default::default()
     }
 }
 
@@ -402,78 +518,69 @@ pub fn commit() -> CommitDetail {
     }
 }
 
+/// A comment on a line of [`commit`].
+pub fn commit_comment() -> crate::api::commit_comments::CommitComment {
+    crate::api::commit_comments::CommitComment {
+        id: 7,
+        node_id: "CC_7".into(),
+        author: "hubot".into(),
+        body: "This one broke the 256-color theme.".into(),
+        created_at: "2026-10-02T12:00:00Z".into(),
+        path: Some("src/theme.rs".into()),
+        line: Some(12),
+        ..Default::default()
+    }
+}
+
 /// A page of a branch's history.
 pub fn history(next: Option<&str>) -> Results<CommitInfo> {
     let commits = activity().commits;
-    Results {
-        total: 40,
-        items: commits.items,
-        next: next.map(str::to_owned),
-    }
+    page(40, commits.items, next)
 }
 
 /// Checks on a commit: a failure, a run still going, passes, a skip, and
 /// a commit status from another service.
 pub fn checks() -> Checks {
-    let run = |name: &str,
-               group: &str,
-               outcome,
-               took: Option<(&str, &str)>,
-               summary: Option<&str>,
-               job: u32| {
-        CheckItem {
+    use CheckOutcome::{Failure, Pending, Skipped, Success};
+    let failed = Some("Process completed with exit code 101.");
+    let runs = [
+        (
+            "test (ubuntu)",
+            "CI",
+            Failure,
+            Some(("00:00", "04:12")),
+            failed,
+        ),
+        (
+            "test (macos)",
+            "CI",
+            Pending,
+            Some(("01:00", "01:00")),
+            None,
+        ),
+        ("clippy", "CI", Success, Some(("00:00", "01:31")), None),
+        ("fmt", "CI", Success, Some(("00:00", "00:14")), None),
+        ("deploy", "Release", Skipped, None, None),
+    ];
+    let mut items: Vec<_> = (runs.into_iter().zip(1u32..))
+        .map(|((name, group, outcome, took, summary), job)| CheckItem {
             name: name.into(),
             group: group.into(),
             outcome,
             started_at: took.map(|(s, _)| format!("2026-10-03T12:{s}Z")),
             completed_at: took
                 .map(|(_, e)| format!("2026-10-03T12:{e}Z"))
-                .filter(|_| outcome != CheckOutcome::Pending),
+                .filter(|_| outcome != Pending),
             summary: summary.map(str::to_owned),
             url: Some(format!(
                 "https://github.com/gold-silver-copper/ghtui/actions/runs/7/job/{job}"
             )),
             annotations: match outcome {
-                CheckOutcome::Failure => vec![check_annotation()].into(),
+                Failure => vec![check_annotation()].into(),
                 _ => Default::default(),
             },
-        }
-    };
-    let mut items = vec![
-        run(
-            "test (ubuntu)",
-            "CI",
-            CheckOutcome::Failure,
-            Some(("00:00", "04:12")),
-            Some("Process completed with exit code 101."),
-            1,
-        ),
-        run(
-            "test (macos)",
-            "CI",
-            CheckOutcome::Pending,
-            Some(("01:00", "01:00")),
-            None,
-            2,
-        ),
-        run(
-            "clippy",
-            "CI",
-            CheckOutcome::Success,
-            Some(("00:00", "01:31")),
-            None,
-            3,
-        ),
-        run(
-            "fmt",
-            "CI",
-            CheckOutcome::Success,
-            Some(("00:00", "00:14")),
-            None,
-            4,
-        ),
-        run("deploy", "Release", CheckOutcome::Skipped, None, None, 5),
-    ];
+        })
+        .collect();
     items.push(CheckItem {
         name: "codecov/patch".into(),
         group: "Statuses".into(),
@@ -491,13 +598,18 @@ pub fn checks() -> Checks {
 }
 
 pub fn blob() -> Blob {
+    file(
+        "src/main.rs",
+        "use std::io;\n\n/// Says hello.\nfn main() -> io::Result<()> {\n    println!(\"hello, {}\", 42);\n    Ok(())\n}\n",
+    )
+}
+
+/// The file at `path`, all of it.
+pub fn file(path: &str, text: &str) -> Blob {
     Blob {
-        path: "src/main.rs".into(),
-        text: Some(
-            "use std::io;\n\n/// Says hello.\nfn main() -> io::Result<()> {\n    println!(\"hello, {}\", 42);\n    Ok(())\n}\n"
-                .into(),
-        ),
-        size: 96,
+        path: path.into(),
+        text: Some(text.into()),
+        size: text.len() as u64,
         truncated: false,
     }
 }
@@ -536,7 +648,7 @@ pub fn gist() -> Gist {
         language: Some(language.into()),
         size: text.len() as u64,
         text: Some(text.into()),
-        truncated: false,
+        ..Default::default()
     };
     Gist {
         id: "6cad326836d38bd3a7ae".into(),
@@ -567,14 +679,14 @@ pub fn gists() -> Results<GistSummary> {
         stars: 26,
         comments: 3,
     };
-    Results {
-        total: 8,
-        items: vec![
+    page(
+        8,
+        vec![
             gist("6cad326836d38bd3a7ae", "hello.rs", "Hello world!"),
             gist("9257657", ".gitignore", ""),
         ],
-        next: Some("g1".into()),
-    }
+        Some("g1"),
+    )
 }
 fn team_summary(slug: &str, name: &str, secret: bool) -> TeamSummary {
     TeamSummary {
@@ -589,15 +701,15 @@ fn team_summary(slug: &str, name: &str, secret: bool) -> TeamSummary {
 
 /// Three teams.
 pub fn teams() -> Results<TeamSummary> {
-    Results {
-        total: 3,
-        items: vec![
+    page(
+        3,
+        vec![
             team_summary("core", "Core", false),
             team_summary("security", "Security", true),
             team_summary("triage", "Triage", false),
         ],
-        next: None,
-    }
+        None,
+    )
 }
 
 /// A team with a parent, two of its seven members, one of its two
@@ -606,8 +718,7 @@ pub fn team() -> TeamDetail {
     let member = |login: &str, name: Option<&str>| UserSummary {
         login: login.into(),
         name: name.map(Into::into),
-        bio: None,
-        is_org: false,
+        ..Default::default()
     };
     TeamDetail {
         team: team_summary("core", "Core", false),
@@ -640,7 +751,6 @@ pub fn advisory() -> Advisory {
         severity: crate::api::browse::Severity::High,
         published_at: Some("2026-10-02T12:00:00Z".into()),
         updated_at: Some("2026-10-02T12:00:00Z".into()),
-        withdrawn_at: None,
         cvss: Some((
             "7.2".into(),
             "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:N/I:L/A:L".into(),
@@ -654,6 +764,7 @@ pub fn advisory() -> Advisory {
         }],
         credits: vec!["octocat".into()],
         references: vec!["https://nvd.nist.gov/vuln/detail/CVE-2026-41510".into()],
+        ..Default::default()
     }
 }
 
@@ -718,11 +829,7 @@ pub fn notifications() -> Inbox {
     ];
     Inbox {
         searched: items.len() as u64,
-        list: Results {
-            total: items.len() as u64,
-            items,
-            next: Some("2".into()),
-        },
+        list: page(items.len() as u64, items, Some("2")),
         cut: false,
     }
 }
@@ -788,15 +895,15 @@ pub fn issue_summary(number: u64, state: Status) -> IssueSummary {
 }
 
 pub fn issue_results(next: Option<&str>) -> SearchResults {
-    SearchResults::Issues(Results {
-        total: 7,
-        items: vec![
+    SearchResults::Issues(page(
+        7,
+        vec![
             issue_summary(14, Status::Issue(IssueState::Open)),
             issue_summary(11, Status::Issue(IssueState::Open)),
             issue_summary(8, Status::Issue(IssueState::Open)),
         ],
-        next: next.map(str::to_owned),
-    })
+        next,
+    ))
 }
 
 pub fn issue() -> IssueDetail {
@@ -824,9 +931,9 @@ pub fn issue() -> IssueDetail {
                 created_at: "2026-10-02T12:00:00Z".into(),
                 editable: Some(editable("IC_1")),
                 hiding: crate::api::manage::Hiding {
-                    reason: None,
                     can_hide: true,
                     can_unhide: true,
+                    ..Default::default()
                 },
             }),
             event(
@@ -841,26 +948,19 @@ pub fn issue() -> IssueDetail {
         .into(),
         comment_count: 1,
         closed_by: vec![linked_pr(12, "Cap the reading width")].into(),
-        branches: Capped::default(),
-        parent: None,
-        sub_issues: Capped::default(),
-        progress: None,
-        blocked_by: Capped::default(),
-        blocking: Capped::default(),
         issue_type: Some("Bug".into()),
         id: NodeId::new("I_14"),
         can_close: true,
         can_reopen: true,
-        locked: None,
-        pinned: false,
         can_write: true,
         editable: editable("I_14"),
         sidebar: crate::api::edit::SidebarPermits {
             labels: true,
             assignees: true,
             milestone: true,
-            reviewers: false,
+            ..Default::default()
         },
+        ..Default::default()
     }
 }
 
@@ -962,59 +1062,120 @@ pub fn reviews() -> Capped<Review> {
 }
 
 /// The two commits of the fixture pull request.
-fn pr_commits() -> Vec<CommitInfo> {
-    vec![
-        CommitInfo {
-            oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
-            headline: "Theme: derive syntax colors from the seed".into(),
-            author: Person::User(Login::unchecked("octocat")),
-            date: "2026-09-30T12:00:00Z".into(),
-        },
-        CommitInfo {
-            oid: "1b2c3d4e5f60718293a4b5c6d7e8f9012345678a".into(),
-            headline: "Check every syntax role against diff backgrounds".into(),
-            author: Person::User(Login::unchecked("octocat")),
-            date: "2026-10-01T12:00:00Z".into(),
-        },
+fn pr_commits() -> [CommitInfo; 2] {
+    let commit = |oid: &str, headline: &str, date: &str| CommitInfo {
+        oid: oid.into(),
+        headline: headline.into(),
+        author: Person::User(Login::unchecked("octocat")),
+        date: date.into(),
+    };
+    [
+        commit(
+            "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+            "Theme: derive syntax colors from the seed",
+            "2026-09-30T12:00:00Z",
+        ),
+        commit(
+            "1b2c3d4e5f60718293a4b5c6d7e8f9012345678a",
+            "Check every syntax role against diff backgrounds",
+            "2026-10-01T12:00:00Z",
+        ),
     ]
 }
 
+/// gold-silver-copper/ghtui#12, open, approved, failing checks and in
+/// conflict.
+pub(crate) fn pr_detail() -> crate::api::model::PrDetail {
+    use crate::api::model::{ChecksState, Mergeable, ReviewDecision};
+    crate::api::model::PrDetail {
+        id: crate::api::model::NodeId::new("PR_12"),
+        merge_state: crate::api::model::MergeState::Dirty,
+        behind_by: Some(2),
+        may: crate::api::model::PrPermits {
+            merge: true,
+            close: true,
+            reopen: true,
+            edit: true,
+            push_head: true,
+            ..Default::default()
+        },
+        merge_methods: vec![
+            crate::api::change::MergeMethod::Squash,
+            crate::api::change::MergeMethod::Merge,
+        ],
+        auto_merge_allowed: true,
+        title: "Theme: generate syntax palette from seed".into(),
+        author: "octocat".into(),
+        state: PrState::Open,
+        updated_at: "2026-10-03T09:00:00Z".into(),
+        additions: 120,
+        deletions: 34,
+        review: Some(ReviewDecision::Approved),
+        checks: Some(ChecksState::Failing),
+        body: "Derives keyword, string and type colors from the seed's HCT palettes.\n\n\
+               Every syntax role is now checked against every diff background, in both \
+               schemes and at both color depths."
+            .into(),
+        created_at: "2026-09-30T12:00:00Z".into(),
+        base_ref: "main".into(),
+        head_ref: "syntax-palette".into(),
+        base_oid: "0123456789abcdef0123456789abcdef01234567".into(),
+        head_oid: "fedcba9876543210fedcba9876543210fedcba98".into(),
+        head_repo: Some("octocat/ghtui".into()),
+        changed_files: 7,
+        mergeable: Mergeable::Conflicting,
+        milestone: Some(crate::api::model::MilestoneRef {
+            number: 3,
+            title: "Links".into(),
+        }),
+        labels: vec![
+            Label {
+                name: "enhancement".into(),
+                color: "a2eeef".into(),
+            },
+            Label {
+                name: "theme".into(),
+                color: "7057ff".into(),
+            },
+        ]
+        .into(),
+        assignees: vec!["octocat".into()].into(),
+        editable: editable("PR_12"),
+        sidebar: crate::api::edit::SidebarPermits {
+            labels: true,
+            assignees: true,
+            milestone: true,
+            reviewers: true,
+        },
+        ..Default::default()
+    }
+}
+
 pub fn activity() -> PrActivity {
-    let mut commits = pr_commits().into_iter().map(|c| {
-        let at = c.date.clone();
-        event("octocat", &at, What::Committed(c))
-    });
-    let (first, second) = (commits.next(), commits.next());
+    let committed = |c: CommitInfo| event("octocat", &c.date.clone(), What::Committed(c));
+    let [first, second] = pr_commits().map(committed);
     // hubot's review started a thread on the theme, which octocat answered.
     let mut thread = thread("PRRT_1", Some(42), false, false);
     thread.path = "src/theme.rs".into();
     thread.original_line = Some(42);
     thread.diff_hunk = "@@ -40,3 +40,4 @@ impl Theme {\n     fn syntax(&self) -> Syntax {\n-        Syntax::default()\n+        let seed = self.seed;\n+        Syntax::from_seed(seed)".into();
-    let said = thread.comments.items.clone();
-    thread.comments = said
-        .into_iter()
-        .flat_map(|c| {
-            [
-                ReviewComment {
-                    body: "Is the seed's tone checked against the diff backgrounds?".into(),
-                    author: "hubot".into(),
-                    review: Some(2_000_002),
-                    url: "https://github.com/gold-silver-copper/ghtui/pull/12#discussion_r3000001"
-                        .into(),
-                    ..c.clone()
-                },
-                ReviewComment {
-                    id: NodeId::new("PRRC_2"),
-                    body: "Yes, in `contrast_tests`.".into(),
-                    author: "octocat".into(),
-                    created_at: "2026-10-01T11:00:00Z".into(),
-                    review: Some(2_000_003),
-                    ..c
-                },
-            ]
-        })
-        .collect::<Vec<_>>()
-        .into();
+    let asked = ReviewComment {
+        body: "Is the seed's tone checked against the diff backgrounds?".into(),
+        author: "hubot".into(),
+        review: Some(2_000_002),
+        url: "https://github.com/gold-silver-copper/ghtui/pull/12#discussion_r3000001".into(),
+        ..thread.comments.items[0].clone()
+    };
+    let answered = ReviewComment {
+        id: NodeId::new("PRRC_2"),
+        body: "Yes, in `contrast_tests`.".into(),
+        author: "octocat".into(),
+        created_at: "2026-10-01T11:00:00Z".into(),
+        review: Some(2_000_003),
+        url: String::new(),
+        ..asked.clone()
+    };
+    thread.comments = vec![asked, answered].into();
     let mut commented = review(
         2_000_002,
         "hubot",
@@ -1023,41 +1184,47 @@ pub fn activity() -> PrActivity {
         "2026-10-01T10:00:00Z",
     );
     commented.comments = 1;
+    let latest = |author: &str, state, id, at: &str, commit: &str, teams: &[&str]| Latest {
+        author: author.into(),
+        state,
+        id: Some(id),
+        at: at.into(),
+        commit: Some(commit.into()),
+        for_teams: teams.iter().map(|t| (*t).to_owned()).collect(),
+    };
     PrActivity {
         id: NodeId::new("PR_12"),
-        timeline: first
-            .into_iter()
-            .chain([Item::Comment(Comment {
+        timeline: vec![
+            first,
+            Item::Comment(Comment {
                 id: Some(1_000_001),
                 author: "hubot".into(),
                 body: "Does this cover the 256-color fallback?".into(),
                 created_at: "2026-10-01T09:00:00Z".into(),
                 editable: Some(editable("IC_2")),
-                hiding: crate::api::manage::Hiding::default(),
-            })])
-            .chain([Item::Review(commented)])
-            .chain(second)
-            .chain([
-                event(
-                    "octocat",
-                    "2026-10-01T12:30:00Z",
-                    What::ReviewRequested {
-                        who: Some(Reviewer::User("defunkt".into())),
-                        added: true,
-                    },
-                ),
-                Item::Review(review(
-                    2_000_001,
-                    "monalisa",
-                    ReviewState::Approved,
-                    "",
-                    "2026-10-02T09:00:00Z",
-                )),
-            ])
-            .collect::<Vec<_>>()
-            .into(),
+                ..Default::default()
+            }),
+            Item::Review(commented),
+            second,
+            event(
+                "octocat",
+                "2026-10-01T12:30:00Z",
+                What::ReviewRequested {
+                    who: Some(Reviewer::User("defunkt".into())),
+                    added: true,
+                },
+            ),
+            Item::Review(review(
+                2_000_001,
+                "monalisa",
+                ReviewState::Approved,
+                "",
+                "2026-10-02T09:00:00Z",
+            )),
+        ]
+        .into(),
         comment_count: 1,
-        commits: pr_commits().into(),
+        commits: pr_commits().to_vec().into(),
         requested: vec![
             Requested {
                 who: Reviewer::User("defunkt".into()),
@@ -1070,22 +1237,22 @@ pub fn activity() -> PrActivity {
         ]
         .into(),
         latest: vec![
-            Latest {
-                author: "hubot".into(),
-                state: ReviewState::Commented,
-                id: Some(2_000_002),
-                at: "2026-10-01T10:00:00Z".into(),
-                commit: Some("0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into()),
-                for_teams: Vec::new(),
-            },
-            Latest {
-                author: "monalisa".into(),
-                state: ReviewState::Approved,
-                id: Some(2_000_001),
-                at: "2026-10-02T09:00:00Z".into(),
-                commit: Some("1b2c3d4e5f60718293a4b5c6d7e8f9012345678a".into()),
-                for_teams: vec!["octo-org/design".into()],
-            },
+            latest(
+                "hubot",
+                ReviewState::Commented,
+                2_000_002,
+                "2026-10-01T10:00:00Z",
+                "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+                &[],
+            ),
+            latest(
+                "monalisa",
+                ReviewState::Approved,
+                2_000_001,
+                "2026-10-02T09:00:00Z",
+                "1b2c3d4e5f60718293a4b5c6d7e8f9012345678a",
+                &["octo-org/design"],
+            ),
         ]
         .into(),
         closing: vec![Linked {
@@ -1110,7 +1277,6 @@ pub fn profile() -> Profile {
         website: Some("https://github.blog".into()),
         followers: Some(21_400),
         following: Some(9),
-        is_org: false,
         pinned: vec![repo_summary("octocat/Hello-World", 3100)],
         repos: Capped::new(
             vec![
@@ -1128,9 +1294,8 @@ pub fn profile() -> Profile {
             "https://hachyderm.io/@octocat".into(),
         )],
         orgs: vec!["github".into(), "ratatui".into()].into(),
-        verified: false,
-        people: Capped::default(),
         contributions: Some(contributions()),
+        ..Default::default()
     }
 }
 
@@ -1185,19 +1350,18 @@ pub fn contributions() -> Contributions {
                     12,
                     "Theme: generate syntax palette from seed",
                 )],
-                issues: Vec::new(),
                 reviews: vec![item("ratatui/ratatui", 1900, "Add a scrollbar widget")],
+                ..Default::default()
             },
             MonthActivity {
                 month: "2026-09".into(),
                 commits: vec![("gold-silver-copper/ghtui".into(), 17)],
-                pulls: Vec::new(),
                 issues: vec![item(
                     "ratatui/ratatui",
                     1888,
                     "Unicode width of emoji in tables",
                 )],
-                reviews: Vec::new(),
+                ..Default::default()
             },
         ],
         // More reviews than were fetched, from October back.
@@ -1210,11 +1374,7 @@ pub fn contributions() -> Contributions {
 
 /// The first page of a profile's repositories.
 pub fn profile_repos() -> Results<RepoSummary> {
-    Results {
-        total: 8,
-        items: profile().repos.items,
-        next: Some("p1".into()),
-    }
+    page(8, profile().repos.items, Some("p1"))
 }
 
 /// An organization: verified, with members and a README.
@@ -1231,37 +1391,27 @@ pub fn org_profile() -> Profile {
         login: "ratatui".into(),
         name: Some("Ratatui".into()),
         bio: Some("Rust library for cooking up terminal user interfaces".into()),
-        company: None,
-        location: None,
         website: Some("https://ratatui.rs".into()),
-        followers: None,
-        following: None,
         is_org: true,
-        pinned: Vec::new(),
         repos: Capped::new(repos, 24),
-        star_count: 0,
         readme: Some(
             "Welcome to **Ratatui**. Start with the [tutorial](https://ratatui.rs).\n".into(),
         ),
-        status: None,
-        pronouns: None,
-        socials: Vec::new(),
-        orgs: Vec::new().into(),
         verified: true,
         people: Capped::new(vec!["joshka".into(), "orhun".into(), "kdheepak".into()], 14),
-        contributions: None,
+        ..Default::default()
     }
 }
 
 pub fn repo_results() -> SearchResults {
-    SearchResults::Repos(Results {
-        total: 1243,
-        items: vec![
+    SearchResults::Repos(page(
+        1243,
+        vec![
             repo_summary("sxyazi/yazi", 42_600),
             repo_summary("jarun/nnn", 22_000),
         ],
-        next: Some("c2".into()),
-    })
+        Some("c2"),
+    ))
 }
 
 /// A page of people, with more to load.
@@ -1270,29 +1420,29 @@ pub fn people() -> Results<UserSummary> {
         login: login.into(),
         name: name.map(str::to_owned),
         bio: bio.map(str::to_owned),
-        is_org: false,
+        ..Default::default()
     };
-    Results {
-        total: 1234,
-        items: vec![
+    page(
+        1234,
+        vec![
             person("octocat", Some("The Octocat"), Some("GitHub's mascot.")),
             person("hubot", None, None),
             person("monalisa", Some("Mona Lisa Octocat"), None),
         ],
-        next: Some("u1".into()),
-    }
+        Some("u1"),
+    )
 }
 
 /// A page of a repository's forks.
 pub fn forks() -> Results<RepoSummary> {
-    Results {
-        total: 87,
-        items: vec![
+    page(
+        87,
+        vec![
             repo_summary("octocat/ghtui", 12),
             repo_summary("hubot/ghtui", 3),
         ],
-        next: Some("f1".into()),
-    }
+        Some("f1"),
+    )
 }
 
 /// A release, with notes and assets when it's on its own page.
@@ -1308,8 +1458,6 @@ pub fn release(full: bool) -> Release {
         name: "ghtui 0.2.0".into(),
         tag: "v0.2.0".into(),
         published_at: Some("2026-09-30T12:00:00Z".into()),
-        prerelease: false,
-        draft: false,
         latest: true,
         author: Some("octocat".into()),
         notes: full.then(|| {
@@ -1324,6 +1472,7 @@ pub fn release(full: bool) -> Release {
         } else {
             Vec::new().into()
         },
+        ..Default::default()
     }
 }
 
@@ -1335,11 +1484,7 @@ pub fn releases() -> Results<Release> {
     pre.latest = false;
     pre.prerelease = true;
     pre.published_at = Some("2026-09-20T12:00:00Z".into());
-    Results {
-        total: 9,
-        items: vec![release(false), pre],
-        next: Some("r1".into()),
-    }
+    page(9, vec![release(false), pre], Some("r1"))
 }
 
 pub fn tags() -> Results<TagInfo> {
@@ -1348,9 +1493,9 @@ pub fn tags() -> Results<TagInfo> {
         oid: Some(oid.into()),
         date: Some(date.into()),
     };
-    Results {
-        total: 2,
-        items: vec![
+    page(
+        2,
+        vec![
             tag(
                 "v0.2.0",
                 "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
@@ -1362,8 +1507,8 @@ pub fn tags() -> Results<TagInfo> {
                 "2026-06-01T12:00:00Z",
             ),
         ],
-        next: None,
-    }
+        None,
+    )
 }
 
 /// A workflow run with a failed job, one still going, and passes.
@@ -1395,7 +1540,7 @@ pub fn workflow_run() -> WorkflowRun {
             job(3, "test (macos)", CheckOutcome::Pending, None),
         ]
         .into(),
-        artifacts: vec![crate::api::actions::Artifact {
+        artifacts: vec![crate::api::workflows::Artifact {
             id: 31,
             name: "coverage-report".into(),
             size: 1_572_864,
@@ -1407,12 +1552,12 @@ pub fn workflow_run() -> WorkflowRun {
 }
 
 /// A failing test's annotation, on a line of a file.
-pub fn check_annotation() -> crate::api::actions::Annotation {
-    crate::api::actions::Annotation {
+pub fn check_annotation() -> crate::api::workflows::Annotation {
+    crate::api::workflows::Annotation {
         path: Some("src/theme.rs".into()),
         start_line: 3,
         end_line: 3,
-        level: crate::api::actions::Level::Failure,
+        level: crate::api::workflows::Level::Failure,
         title: "heat_levels_stay_apart".into(),
         message: "assertion failed: contrast(a, b) > 1.5".into(),
         url: Some(
@@ -1511,9 +1656,9 @@ pub fn workflow_runs() -> (Workflow, Results<RunSummary>) {
         path: ".github/workflows/ci.yml".into(),
         disabled: None,
     };
-    let runs = Results {
-        total: 412,
-        items: vec![
+    let runs = page(
+        412,
+        vec![
             run(
                 7,
                 412,
@@ -1527,8 +1672,8 @@ pub fn workflow_runs() -> (Workflow, Results<RunSummary>) {
                 CheckOutcome::Success,
             ),
         ],
-        next: Some("2".into()),
-    };
+        Some("2"),
+    );
     (workflow, runs)
 }
 
@@ -1544,9 +1689,9 @@ pub fn branches() -> Results<BranchInfo> {
         date: Some("2026-10-02T12:00:00Z".into()),
         pr,
     };
-    Results {
-        total: 14,
-        items: vec![
+    page(
+        14,
+        vec![
             branch(
                 "links",
                 false,
@@ -1566,8 +1711,8 @@ pub fn branches() -> Results<BranchInfo> {
                 Some((5, PrState::Merged)),
             ),
         ],
-        next: Some("b1".into()),
-    }
+        Some("b1"),
+    )
 }
 fn milestone_info(number: u64, title: &str, closed: bool) -> MilestoneInfo {
     MilestoneInfo {
@@ -1593,15 +1738,15 @@ pub fn milestones() -> MilestoneList {
     MilestoneList {
         open: 3,
         closed: 3,
-        results: Results {
-            total: 3,
-            items: vec![
+        results: page(
+            3,
+            vec![
                 milestone_info(3, "Links", false),
                 milestone_info(5, "Pages", false),
                 later,
             ],
-            next: None,
-        },
+            None,
+        ),
     }
 }
 
@@ -1609,14 +1754,14 @@ pub fn milestones() -> MilestoneList {
 pub fn milestone() -> MilestoneDetail {
     MilestoneDetail {
         info: milestone_info(3, "Links", false),
-        items: Results {
-            total: 10,
-            items: vec![
+        items: page(
+            10,
+            vec![
                 issue_summary(42, Status::Issue(IssueState::Open)),
                 issue_summary(6, Status::Pr(PrState::Merged)),
             ],
-            next: Some("m1".into()),
-        },
+            Some("m1"),
+        ),
         unsearchable: false,
     }
 }
@@ -1635,9 +1780,9 @@ pub fn deployments() -> DeploymentList {
     };
     DeploymentList {
         environments: vec!["production".into(), "staging".into()].into(),
-        results: Results {
-            total: 3,
-            items: vec![
+        results: page(
+            3,
+            vec![
                 deployment(
                     "production",
                     CheckOutcome::Success,
@@ -1647,8 +1792,8 @@ pub fn deployments() -> DeploymentList {
                 deployment("staging", CheckOutcome::Failure, "failure", None),
                 deployment("staging", CheckOutcome::Neutral, "inactive", None),
             ],
-            next: None,
-        },
+            None,
+        ),
     }
 }
 /// Two tags compared: the first of many commits.
@@ -1661,7 +1806,6 @@ pub fn comparison() -> Comparison {
     };
     Comparison {
         ahead: 120,
-        behind: 0,
         commits: Capped::new(
             vec![
                 commit('a', "Branches are a page", "2026-10-01T10:00:00Z"),
@@ -1673,9 +1817,9 @@ pub fn comparison() -> Comparison {
         from: "1".repeat(40),
         to: "c".repeat(40),
         files: 14,
-        files_capped: false,
         additions: 812,
         deletions: 40,
+        ..Default::default()
     }
 }
 /// A page of discussions with two categories.
@@ -1702,14 +1846,14 @@ pub fn discussions() -> DiscussionList {
             },
         ]
         .into(),
-        results: Results {
-            total: 48,
-            items: vec![
+        results: page(
+            48,
+            vec![
                 summary(14603, "How do I review a PR offline?", "Q&A", true),
                 summary(14590, "Show the contribution graph", "Ideas", false),
             ],
-            next: Some("d1".into()),
-        },
+            Some("d1"),
+        ),
     }
 }
 
@@ -1728,7 +1872,7 @@ pub fn discussion() -> DiscussionDetail {
             can_react: true,
             reactions: Vec::new(),
         }),
-        hiding: crate::api::manage::Hiding::default(),
+        ..Default::default()
     };
     let mut answer = DiscussionComment {
         comment: comment(
@@ -1739,13 +1883,13 @@ pub fn discussion() -> DiscussionDetail {
         ),
         upvotes: 5,
         answer: true,
-        can_mark: false,
         can_unmark: true,
         // More than came: the page says how many more.
         replies: Capped::new(
             vec![comment(18765030, "octocat", "That works, thanks!", 11)],
             3,
         ),
+        ..Default::default()
     };
     if let Some(e) = &mut answer.comment.editable {
         e.reactions = vec![Reaction {
@@ -1765,8 +1909,6 @@ pub fn discussion() -> DiscussionDetail {
         category: "Q&A".into(),
         answerable: true,
         answered: true,
-        locked: None,
-        closed: None,
         can_close: true,
         can_reopen: true,
         can_lock: true,
@@ -1774,40 +1916,35 @@ pub fn discussion() -> DiscussionDetail {
         editable: Editable {
             id: NodeId::new("D_14603"),
             can_update: true,
-            can_delete: false,
             can_react: true,
-            reactions: Vec::new(),
+            ..Default::default()
         },
-        answer: Some(Box::new(DiscussionComment {
-            replies: Capped::default(),
-            ..answer.clone()
-        })),
+        answer: Some(Box::new(DiscussionComment { ..answer.clone() })),
         answer_by: Some("octocat".into()),
         comments: vec![
             answer,
             DiscussionComment {
                 comment: comment(18765100, "monalisa", "Drafts are saved locally too.", 12),
                 upvotes: 1,
-                answer: false,
                 can_mark: true,
-                can_unmark: false,
-                replies: Capped::default(),
+                ..Default::default()
             },
         ]
         .into(),
+        ..Default::default()
     }
 }
 /// A discussion search's result.
 pub fn discussion_results() -> SearchResults {
     let summary = discussions().results.items.remove(0);
-    SearchResults::Discussions(Results {
-        total: 6065,
-        items: vec![DiscussionHit {
+    SearchResults::Discussions(page(
+        6065,
+        vec![DiscussionHit {
             repo: RepoId::new("cli", "cli"),
             summary,
         }],
-        next: Some("2".into()),
-    })
+        Some("2"),
+    ))
 }
 
 /// A commit search's results.
@@ -1821,14 +1958,14 @@ pub fn commit_results() -> SearchResults {
             date: "2026-10-01T12:00:00Z".into(),
         },
     };
-    SearchResults::Commits(Results {
-        total: 60,
-        items: vec![
+    SearchResults::Commits(page(
+        60,
+        vec![
             hit('a', "perf(terminal): skip a redundant clear"),
             hit('b', "feat: a tui widget"),
         ],
-        next: Some("2".into()),
-    })
+        Some("2"),
+    ))
 }
 
 /// A code search's results.
@@ -1840,23 +1977,22 @@ pub fn code_results() -> SearchResults {
         lines: Vec::new(),
         rev: None,
     };
-    SearchResults::Code(Results {
-        total: 158,
-        items: vec![hit("ratatui-termina/src/lib.rs"), hit("src/terminal.rs")],
-        next: Some("2".into()),
-    })
+    SearchResults::Code(page(
+        158,
+        vec![hit("ratatui-termina/src/lib.rs"), hit("src/terminal.rs")],
+        Some("2"),
+    ))
 }
 pub fn user_results() -> SearchResults {
-    SearchResults::Users(Results {
-        total: 1,
-        items: vec![UserSummary {
+    SearchResults::Users(page(
+        1,
+        vec![UserSummary {
             login: "octocat".into(),
             name: Some("The Octocat".into()),
-            bio: None,
-            is_org: false,
+            ..Default::default()
         }],
-        next: None,
-    })
+        None,
+    ))
 }
 
 /// An organization's projects.
@@ -1875,11 +2011,11 @@ pub fn projects() -> Results<crate::api::project::ProjectSummary> {
         updated_at: "2026-10-02T09:00:00Z".into(),
         items: 5,
     };
-    Results {
-        total: 2,
-        items: vec![project(1, "Roadmap", false), project(2, "Launch", true)],
-        next: None,
-    }
+    page(
+        2,
+        vec![project(1, "Roadmap", false), project(2, "Launch", true)],
+        None,
+    )
 }
 
 /// gold-silver-copper's Roadmap project: a board by Status and a table,
@@ -1936,8 +2072,6 @@ pub fn project() -> crate::api::project::Project {
         ProjectView {
             number: 1,
             name: "Board".into(),
-            layout: Layout::Board,
-            filter: String::new(),
             fields: ids(&[
                 "F_title",
                 "F_status",
@@ -1946,8 +2080,7 @@ pub fn project() -> crate::api::project::Project {
                 "F_estimate",
             ]),
             column: Some(NodeId::new("F_status")),
-            group: None,
-            sort: Vec::new(),
+            ..Default::default()
         },
         ProjectView {
             number: 2,
@@ -1962,9 +2095,8 @@ pub fn project() -> crate::api::project::Project {
                 "F_sprint",
                 "F_due",
             ]),
-            column: None,
-            group: None,
             sort: vec![(NodeId::new("F_estimate"), true)],
+            ..Default::default()
         },
     ];
     let repo = RepoId::new("gold-silver-copper", "ghtui");
@@ -2047,7 +2179,7 @@ pub fn project() -> crate::api::project::Project {
                 id: NodeId::new("DI_3"),
                 title: "Write the board's docs".into(),
                 body: "Explain **h** and **l**, and moving cards.".into(),
-                assignees: Capped::new(Vec::new(), 0),
+                ..Default::default()
             }),
             vec![status("O_todo", "Todo")],
         ),
@@ -2064,8 +2196,7 @@ pub fn project() -> crate::api::project::Project {
             ItemContent::Draft(Draft {
                 id: NodeId::new("DI_5"),
                 title: "Someday: roadmaps".into(),
-                body: String::new(),
-                assignees: Capped::new(Vec::new(), 0),
+                ..Default::default()
             }),
             Vec::new(),
         ),
@@ -2081,28 +2212,23 @@ pub fn project() -> crate::api::project::Project {
         views: Capped::new(views, 2),
         fields: Capped::new(fields, 7),
         view: 1,
-        items: Results {
-            total: 5,
-            items,
-            next: None,
-        },
-        archived: Results {
-            total: 1,
-            items: vec![ProjectItem {
+        items: page(5, items, None),
+        archived: page(
+            1,
+            vec![ProjectItem {
                 archived: true,
                 ..item(
                     6,
                     ItemContent::Draft(Draft {
                         id: NodeId::new("DI_6"),
                         title: "Classic projects".into(),
-                        body: String::new(),
-                        assignees: Capped::new(Vec::new(), 0),
+                        ..Default::default()
                     }),
                     vec![status("O_done", "Done")],
                 )
             }],
-            next: None,
-        },
+            None,
+        ),
     }
 }
 
@@ -2113,4 +2239,168 @@ pub fn subscription() -> crate::api::watch::Subscription {
         state: Some(crate::api::watch::SubscriptionState::Subscribed),
         can: true,
     }
+}
+
+/// A page of `total` items, `next` after it.
+pub(crate) fn page<T>(total: u64, items: Vec<T>, next: Option<&str>) -> Results<T> {
+    let next = next.map(str::to_owned);
+    Results { total, items, next }
+}
+
+/// Answers every fetch `cmds` start, and every fetch those answers
+/// start, with its [`sample`].
+pub(crate) fn served(state: &mut State, cmds: &[Cmd]) {
+    let mut asked = asked(cmds);
+    let mut answered = std::collections::HashSet::new();
+    while let Some(key) = asked.pop() {
+        if answered.insert(key.clone()) {
+            let data = sample(&key);
+            asked.extend(self::asked(&fetched(state, key, data)));
+        }
+    }
+}
+
+/// What GitHub might answer for `key`.
+pub(crate) fn sample(key: &DataKey) -> Data {
+    use crate::housekeeping::fixtures as housekeeping;
+    use crate::site::fixtures as site;
+    use DataKey as K;
+    let search = |kind: &SearchKind| match kind {
+        SearchKind::Repos => repo_results(),
+        SearchKind::Issues | SearchKind::Pulls => issue_results(Some("c1")),
+        SearchKind::Users => user_results(),
+        SearchKind::Discussions => discussion_results(),
+        SearchKind::Commits => commit_results(),
+        SearchKind::Code => code_results(),
+    };
+    match key {
+        K::Repo(_) => Data::Repo(Box::new(overview())),
+        K::Readme(_) => Data::Readme(Some(Box::new(readme()))),
+        K::Tree(..) => Data::Tree(tree()),
+        K::Blob(..) => Data::Blob(Box::new(blob())),
+        K::Search(kind, _) => Data::Search(Box::new(search(kind))),
+        K::StateCounts(_) => {
+            Data::StateCounts(crate::api::browse::StateCounts { open: 2, closed: 5 })
+        }
+        K::Issue(..) => Data::Issue(Some(Box::new(issue()))),
+        K::Pr(_) => Data::Pr(Box::new(pr_detail())),
+        K::PrActivity(_) => Data::PrActivity(Box::new(activity())),
+        K::Reviews(_) => Data::Reviews(Box::new(reviews())),
+        K::CommitComments(..) => Data::CommitComments(Box::new(vec![commit_comment()].into())),
+        K::Lines(..) => Data::Lines(Arc::default()),
+        K::InProjects(..) => Data::InProjects(Box::new(in_projects())),
+        K::Profile(login) if login == "ratatui" => Data::Profile(Box::new(org_profile())),
+        K::Profile(_) => Data::Profile(Box::new(profile())),
+        K::Files(..) => Data::Files(Arc::new(vec!["README.md".into()]), false),
+        K::Refs(_) => Data::Refs(Box::default()),
+        K::NewForm(_) => Data::NewForm(Box::new(new_form())),
+        K::RefIn(..) => Data::RefIn(None),
+        K::LastCommits(..) => Data::LastCommits(Arc::new(last_commits())),
+        K::Commit(..) => Data::Commit(Box::new(commit())),
+        K::History(..) => Data::History(Box::new(history(Some("h1")))),
+        K::PrChecks(_) | K::CommitChecks(..) => Data::Checks(Box::new(checks())),
+        K::Users(_) => Data::Users(Box::new(people())),
+        K::Forks(_) => Data::RepoPage(Box::new(forks())),
+        K::OwnerRepos(..) | K::Stars(_) => Data::RepoPage(Box::new(profile_repos())),
+        K::Releases(_) => Data::Releases(Box::new(releases())),
+        K::Release(..) => Data::Release(Box::new(release(true))),
+        K::Tags(_) => Data::Tags(Box::new(tags())),
+        K::Branches(_) => Data::Branches(Box::new(branches())),
+        K::Wiki(..) => Data::Wiki(Box::new(wiki())),
+        K::Advisories(_) => {
+            let items = advisories();
+            let total = items.len() as u64;
+            Data::Advisories(Box::new(page(total, items, None)))
+        }
+        K::Advisory(..) => Data::Advisory(Box::new(advisory())),
+        K::Sidebar(..) => Data::Sidebar(Box::new(sidebar())),
+        K::Teams(_) => Data::Teams(Box::new(teams())),
+        K::Team(..) => Data::Team(Box::new(team())),
+        K::Gist(_) => Data::Gist(Box::new(gist())),
+        K::Gists(_) => Data::Gists(Box::new(gists())),
+        K::Blame(..) => Data::Blame(Box::new(blame())),
+        K::Compare(..) => Data::Compare(Box::new(comparison())),
+        K::Deployments(..) => Data::Deployments(Box::new(deployments())),
+        K::Milestones(..) => Data::Milestones(Box::new(milestones())),
+        K::Milestone(..) => Data::Milestone(Box::new(milestone())),
+        K::Discussions(..) => Data::Discussions(Box::new(discussions())),
+        K::Discussion(..) => Data::Discussion(Box::new(discussion())),
+        K::Run(..) => Data::Run(Box::new(workflow_run())),
+        K::Job(..) => Data::Job(Box::new(job().0)),
+        K::JobLog(..) => Data::Log(Arc::new(job().1)),
+        K::Workflow(..) => Data::Workflow(Box::new(workflow_runs().0)),
+        K::Runs(..) => Data::Runs(Box::new(workflow_runs().1)),
+        K::Notifications(_) => Data::Notifications(Box::new(notifications())),
+        K::Projects(_) => Data::Projects(Box::new(projects())),
+        K::Project(..) => Data::Project(Box::new(project())),
+        K::Alerts(_, kind, _) => Data::Alerts(Box::new(crate::security::fixtures::alerts(*kind))),
+        K::Alert(a) => Data::Alert(Box::new(crate::security::fixtures::alert(a.kind, a.number))),
+        K::Subscription(_) => Data::Subscription(Box::new(subscription())),
+        K::Activity(_) => Data::Activity(Box::new(site::activity())),
+        K::Traffic(_) => Data::Traffic(Box::new(site::traffic())),
+        K::Dependencies(_) => Data::Dependencies(Box::new(site::dependencies())),
+        K::Featured => Data::Topics(Box::new(site::featured())),
+        K::Topic(_) => Data::Topic(Box::new(site::rust())),
+        K::StarLists(_) => Data::StarLists(Box::new(site::star_lists())),
+        K::StarList(..) => Data::StarList(Box::new(site::list_page())),
+        K::MyLists(_) => Data::MyLists(Box::new(site::my_lists())),
+        K::Packages(_) => Data::Packages(Box::new(site::packages())),
+        K::Package(_) => Data::Package(Box::new(site::package_detail())),
+        K::SavedReplies => Data::SavedReplies(Box::new(site::saved_replies())),
+        K::Labels(_) => Data::Labels(Box::new(housekeeping::labels())),
+        K::Owners => Data::Owners(Box::new(housekeeping::owners())),
+        K::Templates => Data::Templates(Box::new(housekeeping::templates())),
+        K::Settings(_, page) => Data::Settings(Box::new(crate::settings::fixtures::page(*page))),
+        K::OpenIssues(_) => Data::OpenIssues(Box::new(vec![(7, "Wrapping".into())].into())),
+        K::MoveTargets(_) => Data::MoveTargets(Box::default()),
+        K::Categories(_) => Data::Categories(Box::new(crate::api::manage::Categories {
+            repo: NodeId::new("R_1"),
+            categories: Capped::default(),
+        })),
+        K::Clone(_) => Data::Clone(None),
+        K::Head { .. } => Data::Head(Box::new(crate::create::HeadState {
+            local: None,
+            commits: Capped::default(),
+        })),
+        K::TagLook(..) => Data::TagLook(Box::new(crate::api::release::TagLook {
+            exists: true,
+            release: None,
+        })),
+        K::BranchRules(..) => Data::BranchRules(Box::new(crate::api::housekeeping::BranchRules {
+            protected: false,
+            undeletable: false,
+        })),
+        K::FileLook(..) => Data::FileLook(Box::new(file_look())),
+        K::Mentionable(_) => Data::Mentionable(Box::default()),
+        K::Suggest(_) => Data::Suggestions(Vec::new()),
+        K::Unread => Data::Unread(crate::api::notifications::Unread {
+            count: 3,
+            more: false,
+            poll_secs: 60,
+        }),
+    }
+}
+
+/// Where a file's form starts: the README on main.
+pub fn file_look() -> crate::api::housekeeping::FileLook {
+    let oid = "8d1a76430406c877b35d0b627e7f796dcf0dfeca";
+    crate::api::housekeeping::FileLook {
+        repo_id: NodeId::new("R_1"),
+        branch_head: Some(oid.into()),
+        commit: oid.into(),
+        file: Some(crate::api::housekeeping::FileAt {
+            oid: "b10b".into(),
+            text: blob().text,
+        }),
+    }
+}
+
+/// Git's answer to whether ghtui runs in a clone of `repo`.
+pub(crate) fn cloned(
+    state: &mut State,
+    repo: &crate::api::model::RepoId,
+    clone: Option<crate::git::local::Clone>,
+) -> Vec<Cmd> {
+    let key = DataKey::Clone(repo.clone());
+    fetched(state, key, Data::Clone(clone.map(Box::new)))
 }

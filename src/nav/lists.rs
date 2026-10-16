@@ -1,6 +1,7 @@
 //! Lists: their state and sort.
 
 use super::*;
+use crate::route::{people, runs, search, security};
 
 /// The list query with its state (`is:open`, `is:unread`…) replaced by
 /// `state`.
@@ -33,7 +34,7 @@ pub(super) fn next_list_state(route: &Route, query: &str) -> &'static str {
         "open" => "closed",
         "unread" => "read",
         "closed" | "read" => "all",
-        _ if matches!(route, Route::Notifications { .. }) => "unread",
+        _ if matches!(route, Route::Search(search::Notifications { .. })) => "unread",
         _ => "open",
     }
 }
@@ -41,7 +42,7 @@ pub(super) fn next_list_state(route: &Route, query: &str) -> &'static str {
 /// The list on screen and its filter.
 pub(super) fn list_query(state: &State) -> Option<(Route, String)> {
     let route = state.route()?;
-    Some((route.clone(), route.list_query()?.to_owned()))
+    Some((route.clone(), route.family().query()?.to_owned()))
 }
 
 #[must_use]
@@ -49,7 +50,7 @@ pub(super) fn set_list_state(state: &mut State, which: &str) -> Vec<Cmd> {
     let Some((route, query)) = list_query(state) else {
         return Vec::new();
     };
-    match route.with_query(with_state(&query, which)) {
+    match route.family().with_query(with_state(&query, which)) {
         Some(r) if r != route => state.replace(r, true, None),
         _ => Vec::new(),
     }
@@ -60,7 +61,7 @@ pub(super) fn set_list_state(state: &mut State, which: &str) -> Vec<Cmd> {
 pub(super) fn plain_search(route: &Route) -> Option<&'static str> {
     use crate::api::browse::SearchKind as K;
     match route {
-        Route::Search { kind, .. } => match kind {
+        Route::Search(search::Search { kind, .. }) => match kind {
             K::Repos => Some("Repositories"),
             K::Users => Some("People"),
             K::Commits => Some("Commits"),
@@ -74,19 +75,16 @@ pub(super) fn plain_search(route: &Route) -> Option<&'static str> {
 #[must_use]
 pub(super) fn cycle_state(state: &mut State) -> Vec<Cmd> {
     if let Some(what) = state.route().and_then(plain_search) {
-        state.info(format!("{what} aren't open or closed"));
-        return Vec::new();
+        return state.just_say(format!("{what} aren't open or closed"));
     }
-    if let Some(Route::Actions { .. }) = state.route() {
+    if let Some(Route::Runs(runs::Actions { .. })) = state.route() {
         let filter = state.first_key(Action::Search);
-        state.info(format!(
+        return state.just_say(format!(
             "Runs aren't open or closed · {filter} filters them: is:failure, is:success…"
         ));
-        return Vec::new();
     }
     let Some((route, query)) = list_query(state) else {
-        state.info("Only lists have open and closed");
-        return Vec::new();
+        return state.just_say("Only lists have open and closed");
     };
     set_list_state(state, next_list_state(&route, &query))
 }
@@ -94,38 +92,34 @@ pub(super) fn cycle_state(state: &mut State) -> Vec<Cmd> {
 #[must_use]
 pub(super) fn cycle_sort(state: &mut State) -> Vec<Cmd> {
     // A profile's repositories sort by GraphQL order, not a search word.
-    if let Some(Route::User {
+    if let Some(Route::People(people::User {
         login,
         tab: ProfileTab::Repositories(sort),
-    }) = state.route()
+    })) = state.route()
     {
         let next = sort.next();
-        let route = Route::User {
+        let route = Route::People(people::User {
             login: login.clone(),
             tab: ProfileTab::Repositories(next),
-        };
+        });
         state.info(format!("Sorted: {}", next.label()));
         return state.replace(route, true, None);
     }
-    if let Some(Route::Actions { .. }) = state.route() {
-        state.info("Runs are newest first: GitHub doesn't sort them otherwise");
-        return Vec::new();
+    if let Some(Route::Runs(runs::Actions { .. })) = state.route() {
+        return state.just_say("Runs are newest first: GitHub doesn't sort them otherwise");
     }
-    if let Some(Route::Notifications { .. }) = state.route() {
-        state.info("Notifications are newest first: GitHub doesn't sort them otherwise");
-        return Vec::new();
+    if let Some(Route::Search(search::Notifications { .. })) = state.route() {
+        return state
+            .just_say("Notifications are newest first: GitHub doesn't sort them otherwise");
     }
-    if let Some(Route::Alerts { .. }) = state.route() {
-        state.info("Alerts are newest first: ghtui doesn't sort them otherwise");
-        return Vec::new();
+    if let Some(Route::Security(security::Alerts { .. })) = state.route() {
+        return state.just_say("Alerts are newest first: ghtui doesn't sort them otherwise");
     }
     if let Some(what) = state.route().and_then(plain_search) {
-        state.info(format!("{what} come in GitHub's best-match order"));
-        return Vec::new();
+        return state.just_say(format!("{what} come in GitHub's best-match order"));
     }
     let Some((route, query)) = list_query(state) else {
-        state.info("Only lists can be sorted");
-        return Vec::new();
+        return state.just_say("Only lists can be sorted");
     };
     let current = pages::sort_label(&query);
     let i = pages::SORTS
@@ -144,7 +138,7 @@ pub(super) fn cycle_sort(state: &mut State) -> Vec<Cmd> {
         words.push(&sort);
     }
     state.info(format!("Sorted: {label}"));
-    match route.with_query(words.join(" ")) {
+    match route.family().with_query(words.join(" ")) {
         Some(r) => state.replace(r, true, None),
         None => Vec::new(),
     }

@@ -133,6 +133,18 @@ fn split_half(left: Option<u32>, right: Option<u32>, half: Side) -> Option<(Side
     }
 }
 
+/// Annotations by the path they're on, with their places in `all`.
+fn by_path(all: &[Annotation]) -> HashMap<&str, Vec<(u32, &Annotation)>> {
+    let mut by_path: HashMap<&str, Vec<_>> = HashMap::new();
+    for (i, a) in all.iter().enumerate() {
+        by_path
+            .entry(a.path.as_str())
+            .or_default()
+            .push((idx(i), a));
+    }
+    by_path
+}
+
 impl Row {
     /// The alignment entries a line row shows (none for other rows).
     pub fn entries(self) -> impl Iterator<Item = u32> {
@@ -193,6 +205,9 @@ pub struct DocFile {
     by_line: HashMap<LinePos, Vec<u32>>,
     /// Commentable ranges reconstructed locally.
     local_commentable: Option<Commentable>,
+    /// `(move index, entries, is the removed side)` in this file, as
+    /// last built.
+    moves: Vec<(u32, Range<u32>, bool)>,
 }
 
 impl DocFile {
@@ -316,6 +331,17 @@ impl DocFile {
             };
             self.push_thread_row(ann, kind, line);
         }
+    }
+
+    /// Its annotations, unchanged, moved in the document's list from
+    /// `was` to `is`: its rows name them by their new places.
+    fn renumber(&mut self, was: &[(u32, &Annotation)], is: &[(u32, &Annotation)]) {
+        let moved: HashMap<u32, u32> = was.iter().zip(is).map(|(w, i)| (w.0, i.0)).collect();
+        let renumber = |ann: &mut u32| *ann = moved.get(ann).copied().unwrap_or(*ann);
+        self.thread_rows
+            .iter_mut()
+            .for_each(|r| renumber(&mut r.ann));
+        self.by_line.values_mut().flatten().for_each(renumber);
     }
 
     fn push_thread_row(&mut self, ann: u32, kind: ThreadRowKind, line: CommentLine) {
@@ -822,6 +848,7 @@ impl Doc {
                     thread_rows: Vec::new(),
                     by_line: HashMap::new(),
                     local_commentable: None,
+                    moves: Vec::new(),
                 }
             })
             .collect();
@@ -834,39 +861,41 @@ impl Doc {
         doc
     }
 
-    /// Shows new inputs, rebuilding files whose viewed state changed
-    /// (collapsing them), or everything if the threads or drafts did.
+    /// Shows new inputs, rebuilding the files whose viewed state changed
+    /// (collapsing them), or whose threads or drafts did.
     pub fn set_inputs(&mut self, inputs: DocInputs) {
         let old = std::mem::replace(&mut self.inputs, inputs);
-        let all = old.annotations != self.inputs.annotations;
+        let (was, is) = (by_path(&old.annotations), by_path(&self.inputs.annotations));
         let viewed = &self.inputs.viewed;
         let mut changed = Vec::new();
         for (i, f) in self.files.iter_mut().enumerate() {
             let now = viewed.get(f.meta.path()).copied().unwrap_or_default();
+            let none = Vec::new();
+            let was = was.get(f.meta.path()).unwrap_or(&none);
+            let is = is.get(f.meta.path()).unwrap_or(&none);
+            let same = was.iter().map(|(_, a)| a).eq(is.iter().map(|(_, a)| a));
             if f.viewed != now {
                 (f.viewed, f.open) = (now, None);
-            } else if !all {
+            } else if same {
+                if was.iter().map(|w| w.0).ne(is.iter().map(|i| i.0)) {
+                    f.renumber(was, is);
+                }
                 continue;
             }
             changed.push(i);
         }
-        changed.iter().for_each(|&i| self.rebuild_file(i));
         if !changed.is_empty() {
-            self.reindex();
+            self.rebuild_files(changed);
         }
     }
 
     fn rebuild_all(&mut self) {
-        for index in 0..self.files.len() {
-            self.rebuild_file(index);
-        }
-        self.reindex();
+        self.rebuild_files(0..self.files.len());
     }
 
     fn rebuild(&mut self, index: usize) {
         if index < self.files.len() {
-            self.rebuild_file(index);
-            self.reindex();
+            self.rebuild_files([index]);
         }
     }
 
@@ -878,7 +907,9 @@ impl Doc {
         }
     }
 
-    fn rebuild_file(&mut self, index: usize) {
+    /// Rebuilds the rows of files `which`, finding each one's annotations
+    /// and moves among the document's once for them all.
+    fn rebuild_files(&mut self, which: impl IntoIterator<Item = usize>) {
         let Doc {
             files,
             opts,
@@ -889,38 +920,34 @@ impl Doc {
             since_active,
             ..
         } = self;
-        let Some(file) = files.get_mut(index) else {
-            return;
-        };
-        let path = file.meta.path().to_owned();
+        let anns = by_path(annotations);
         // Moves index the exact alignment.
-        let file_moves: Vec<(u32, Range<u32>, bool)> = if opts.whitespace == Whitespace::Exact {
-            moves
-                .iter()
-                .enumerate()
-                .flat_map(|(i, m)| {
-                    let from = (m.from.0 == index).then(|| (idx(i), m.from.1.clone(), true));
-                    let to = (m.to.0 == index).then(|| (idx(i), m.to.1.clone(), false));
-                    from.into_iter().chain(to)
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let anns: Vec<(u32, &Annotation)> = annotations
-            .iter()
-            .enumerate()
-            .filter(|(_, a)| a.path == path)
-            .map(|(i, a)| (idx(i), a))
-            .collect();
+        let mut file_moves: HashMap<usize, Vec<(u32, Range<u32>, bool)>> = HashMap::new();
+        if opts.whitespace == Whitespace::Exact {
+            for (i, m) in moves.iter().enumerate() {
+                let from = (m.from.0, (idx(i), m.from.1.clone(), true));
+                let to = (m.to.0, (idx(i), m.to.1.clone(), false));
+                for (file, mv) in [from, to] {
+                    file_moves.entry(file).or_default().push(mv);
+                }
+            }
+        }
         let open = |a: &Annotation| is_open(thread_open, a);
-        let extras = Extras {
-            anns: &anns,
-            open: &open,
-            since: since.as_ref().filter(|_| *since_active),
-            moves: &file_moves,
-        };
-        file.rebuild(*opts, &extras);
+        for index in which {
+            let Some(file) = files.get_mut(index) else {
+                continue;
+            };
+            let moves = file_moves.remove(&index).unwrap_or_default();
+            let extras = Extras {
+                anns: anns.get(file.meta.path()).map_or(&[], Vec::as_slice),
+                open: &open,
+                since: since.as_ref().filter(|_| *since_active),
+                moves: &moves,
+            };
+            file.rebuild(*opts, &extras);
+            file.moves = moves;
+        }
+        self.reindex();
     }
 
     pub fn set_moves(&mut self, moves: Vec<Move>) {
@@ -930,18 +957,9 @@ impl Doc {
 
     /// The move covering alignment entry `e` of `file`: `(index, removed side)`.
     pub fn move_at_entry(&self, file: usize, e: u32) -> Option<(u32, bool)> {
-        if self.opts.whitespace != Whitespace::Exact {
-            return None;
-        }
-        self.moves.iter().enumerate().find_map(|(i, m)| {
-            if m.from.0 == file && m.from.1.contains(&e) {
-                Some((idx(i), true))
-            } else if m.to.0 == file && m.to.1.contains(&e) {
-                Some((idx(i), false))
-            } else {
-                None
-            }
-        })
+        let moves = &self.files.get(file)?.moves;
+        let (mv, _, from) = moves.iter().find(|(_, entries, _)| entries.contains(&e))?;
+        Some((*mv, *from))
     }
 
     /// The move under the cursor (on `half` of a split row): on a "moved"
@@ -1147,7 +1165,10 @@ impl Doc {
             self.starts.push(total);
             total += file.rows.len();
         }
-        self.total = total;
+        // The space after each file separates it from the next: the last
+        // file has none, so the document ends on a row of the file.
+        let trailing = (self.files.last()).is_some_and(|f| f.rows.last() == Some(&Row::Spacer));
+        self.total = total - usize::from(trailing);
     }
 
     pub fn set_diff(&mut self, index: usize, diff: Arc<FileDiff>) {
@@ -1331,12 +1352,10 @@ impl Doc {
 
     /// Clamps a position to an existing row.
     pub fn clamp(&self, pos: Pos) -> Pos {
-        let Some(last) = self.files.len().checked_sub(1) else {
-            return Pos::default();
-        };
-        let file = pos.file.min(last);
-        let rows = self.files.get(file).map_or(0, |f| f.rows.len());
-        let row = pos.row.min(rows.saturating_sub(1));
+        let file = pos.file.min(self.files.len().saturating_sub(1));
+        let start = self.starts.get(file).copied().unwrap_or_default();
+        let end = self.starts.get(file + 1).copied().unwrap_or(self.total);
+        let row = pos.row.min(end.saturating_sub(start).saturating_sub(1));
         Pos { file, row }
     }
 
@@ -1467,73 +1486,87 @@ impl Doc {
         file.block_of(self.row(pos)?.entries().next()?)
     }
 
-    /// Searchable text of a row.
+    /// Searchable text of a row: a split row's halves, a line apart.
+    #[cfg(test)]
     pub fn row_text(&self, pos: Pos) -> String {
+        let mut parts = Vec::new();
+        self.row_has(pos, |part| {
+            parts.push(part.to_owned());
+            false
+        });
+        parts.join("\n")
+    }
+
+    /// Whether `test` passes any part of a row's searchable text (a split
+    /// row's halves are two).
+    fn row_has(&self, pos: Pos, mut test: impl FnMut(&str) -> bool) -> bool {
         let Some(file) = self.files.get(pos.file) else {
-            return String::new();
+            return false;
         };
         let text = |p: LinePos| file.text().map_or("", |t| t.line(p));
         match self.row(pos) {
-            Some(Row::Header) => file.meta.path().to_owned(),
-            Some(row @ Row::Line(_)) => file.line_of(row, Side::Right).map_or("", text).to_owned(),
-            Some(row @ Row::Split { .. }) => {
-                let halves: Vec<&str> = file.shows(row).map(text).collect();
-                halves.join("\n")
-            }
-            Some(Row::Thread(t)) => file
-                .thread_row(t)
-                .map(|r| r.line.text())
-                .unwrap_or_default(),
-            _ => String::new(),
-        }
-    }
-
-    /// Whether a row's text contains `query`, as [`Doc::search`] matches.
-    fn matcher(&self, query: &str) -> impl Fn(Pos) -> bool {
-        let smart_case = query.chars().any(char::is_uppercase);
-        let needle = if smart_case {
-            query.to_owned()
-        } else {
-            query.to_lowercase()
-        };
-        move |pos| {
-            let text = self.row_text(pos);
-            if smart_case {
-                crate::ui::text::has(&text, &needle)
-            } else {
-                crate::ui::text::has(&text.to_lowercase(), &needle)
-            }
+            Some(Row::Header) => test(file.meta.path()),
+            Some(row @ Row::Line(_)) => test(file.line_of(row, Side::Right).map_or("", text)),
+            Some(row @ Row::Split { .. }) => file.shows(row).map(text).any(test),
+            Some(Row::Thread(t)) => file.thread_row(t).is_some_and(|r| test(&r.line.text())),
+            _ => false,
         }
     }
 
     /// The next row (after `from`, wrapping) whose text contains `query`.
     /// Case-insensitive unless the query has uppercase letters.
     pub fn search(&self, query: &str, from: Pos, forward: bool) -> Option<Pos> {
-        if query.is_empty() || self.total == 0 {
-            return None;
-        }
-        let matches = self.matcher(query);
-        let start = self.to_global(from);
-        let n = self.total;
-        (1..=n)
-            .map(|k| {
-                if forward {
-                    (start + k) % n
-                } else {
-                    (start + n - k % n) % n
-                }
-            })
-            .map(|g| self.to_pos(g))
-            .find(|p| matches(*p))
+        self.scan(query, from, forward, false).0
     }
 
-    /// How many rows match `query`.
-    pub fn count_matches(&self, query: &str) -> usize {
-        if query.is_empty() {
-            return 0;
+    /// [`Self::search`], and how many rows match, in one pass.
+    pub fn search_counted(&self, query: &str, from: Pos, forward: bool) -> (Option<Pos>, usize) {
+        self.scan(query, from, forward, true)
+    }
+
+    fn scan(&self, query: &str, from: Pos, forward: bool, all: bool) -> (Option<Pos>, usize) {
+        if query.is_empty() || self.total == 0 {
+            return (None, 0);
         }
-        let matches = self.matcher(query);
-        (0..self.total).filter(|g| matches(self.to_pos(*g))).count()
+        let smart_case = query.chars().any(char::is_uppercase);
+        let needle = if smart_case {
+            query.to_owned()
+        } else {
+            query.to_lowercase()
+        };
+        // Lowercased into one buffer, not a string per row.
+        let mut lower = String::new();
+        let mut has = |text: &str| {
+            if smart_case {
+                return crate::ui::text::has(text, &needle);
+            }
+            lower.clear();
+            if text.is_ascii() {
+                lower.push_str(text);
+                lower.make_ascii_lowercase();
+            } else {
+                lower.push_str(&text.to_lowercase());
+            }
+            crate::ui::text::has(&lower, &needle)
+        };
+        let (start, n) = (self.to_global(from), self.total);
+        let (mut found, mut count) = (None, 0);
+        for k in 1..=n {
+            let g = if forward {
+                (start + k) % n
+            } else {
+                (start + n - k % n) % n
+            };
+            let pos = self.to_pos(g);
+            if self.row_has(pos, &mut has) {
+                found = found.or(Some(pos));
+                count += 1;
+                if !all {
+                    break;
+                }
+            }
+        }
+        (found, count)
     }
 }
 
@@ -1833,7 +1866,7 @@ pub(crate) mod tests {
         assert_eq!(doc.search("five", second, true), Some(first), "wraps");
         assert_eq!(doc.search("five", first, false), Some(second), "backwards");
         assert_eq!(doc.search("FIVE", Pos::default(), true), None);
-        assert_eq!(doc.count_matches("five"), 2);
+        assert_eq!(doc.search_counted("five", second, true), (Some(first), 2));
     }
 
     #[test]
@@ -1924,6 +1957,48 @@ pub(crate) mod tests {
             let row = line_row(file, |l| l.right().is_some_and(|p| p.line == 5)).unwrap();
             assert!(matches!(file.rows()[row + 1], Row::Thread(_)));
             assert_eq!(doc.annotation_at(Pos { file: 0, row }), Some(0));
+        }
+
+        /// A change to one file's threads rebuilds that file only; another
+        /// file's, moved along in the document's list, are named by their
+        /// new places.
+        #[test]
+        fn a_change_to_one_files_threads_rebuilds_only_it() {
+            let mut doc = doc();
+            let old = numbered(60);
+            doc.set_diff(
+                2,
+                compute("b.txt", &old, &old.replace("line 7\n", "seven\n")),
+            );
+            let on_b = Annotation {
+                path: "b.txt".into(),
+                ..ann("b", Side::Right, Some(7))
+            };
+            set_annotations(&mut doc, vec![on_b.clone()]);
+            // Rows built from another diff, were b.txt built again.
+            let rows = doc.files[2].rows().to_vec();
+            doc.files[2].diff = Some(compute("b.txt", "x\n", "y\n"));
+            set_annotations(&mut doc, vec![ann("a", Side::Right, Some(5)), on_b]);
+            assert!(rows_of(&doc).contains('T'), "{}", rows_of(&doc));
+            let b = &doc.files[2];
+            assert_eq!(b.rows(), rows);
+            assert_eq!(
+                b.annotations_at(LinePos {
+                    side: Side::Right,
+                    line: 7
+                }),
+                [1]
+            );
+            let threads: Vec<u32> = (b.rows().iter())
+                .filter_map(|r| match r {
+                    Row::Thread(t) => b.thread_row(*t).map(|t| t.ann),
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                !threads.is_empty() && threads.iter().all(|&a| a == 1),
+                "{threads:?}"
+            );
         }
 
         /// A fold row is not on the thread it hides, so Enter on it opens

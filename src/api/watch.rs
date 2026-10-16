@@ -8,7 +8,7 @@ use crate::api::queries::{NumberVariables, NumberVariablesFields};
 use crate::schema::schema;
 
 /// What a subscription is to.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Watched {
     /// A repository's notifications: its watch settings.
     Repo(RepoId),
@@ -36,7 +36,6 @@ impl std::fmt::Display for Watched {
 
 /// Whether you're notified, as GitHub says it.
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cynic(graphql_type = "SubscriptionState", schema_module = "schema")]
 pub enum SubscriptionState {
     /// Never notified.
     Ignored,
@@ -138,7 +137,7 @@ impl GitHub {
 macro_rules! watch_fragments {
     ($($name:ident = $graphql:literal),* $(,)?) => {$(
         #[derive(cynic::QueryFragment, Debug)]
-        #[cynic(graphql_type = $graphql, schema_module = "schema")]
+        #[cynic(graphql_type = $graphql)]
         pub struct $name {
             pub id: cynic::Id,
             pub viewer_subscription: Option<SubscriptionState>,
@@ -171,47 +170,35 @@ pub struct RepoNameVariables {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Query",
-    schema_module = "schema",
-    variables = "RepoNameVariables"
-)]
+#[cynic(graphql_type = "Query", variables = "RepoNameVariables")]
 pub struct RepoWatchQuery {
     #[arguments(owner: $owner, name: $name)]
     pub repository: Option<RepoWatchRepo>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", schema_module = "schema")]
+#[cynic(graphql_type = "Repository")]
 pub struct RepoWatchRepo {
     #[cynic(spread)]
     pub watch: RepoWatch,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Query",
-    schema_module = "schema",
-    variables = "NumberVariables"
-)]
+#[cynic(graphql_type = "Query", variables = "NumberVariables")]
 pub struct ThreadWatchQuery {
     #[arguments(owner: $owner, name: $name)]
     pub repository: Option<ThreadWatchRepo>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Repository",
-    schema_module = "schema",
-    variables = "NumberVariables"
-)]
+#[cynic(graphql_type = "Repository", variables = "NumberVariables")]
 pub struct ThreadWatchRepo {
     #[arguments(number: $number)]
     pub issue_or_pull_request: Option<ThreadWatchOf>,
 }
 
 #[derive(cynic::InlineFragments, Debug)]
-#[cynic(graphql_type = "IssueOrPullRequest", schema_module = "schema")]
+#[cynic(graphql_type = "IssueOrPullRequest")]
 pub enum ThreadWatchOf {
     Issue(IssueWatch),
     PullRequest(PrWatch),
@@ -220,22 +207,14 @@ pub enum ThreadWatchOf {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Query",
-    schema_module = "schema",
-    variables = "NumberVariables"
-)]
+#[cynic(graphql_type = "Query", variables = "NumberVariables")]
 pub struct DiscussionWatchQuery {
     #[arguments(owner: $owner, name: $name)]
     pub repository: Option<DiscussionWatchRepo>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Repository",
-    schema_module = "schema",
-    variables = "NumberVariables"
-)]
+#[cynic(graphql_type = "Repository", variables = "NumberVariables")]
 pub struct DiscussionWatchRepo {
     #[arguments(number: $number)]
     pub discussion: Option<DiscussionWatch>,
@@ -248,17 +227,13 @@ pub struct SubscribeVariables {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "UpdateSubscriptionPayload", schema_module = "schema")]
+#[cynic(graphql_type = "UpdateSubscriptionPayload")]
 pub struct SubscribePayload {
     pub client_mutation_id: Option<String>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "SubscribeVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "SubscribeVariables")]
 pub struct UpdateSubscription {
     #[arguments(input: { subscribableId: $id, state: $state })]
     pub update_subscription: Option<SubscribePayload>,

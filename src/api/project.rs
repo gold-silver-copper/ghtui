@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::api::browse::{Page, Results, wire};
+use crate::api::browse::{Page, Results, UserLogin as Login, wire};
 use crate::api::client::{ApiError, GitHub};
 use crate::api::model::{Capped, IssueState, Label, NodeId, PrState, RepoId, Status};
 use crate::api::raw;
@@ -99,14 +99,15 @@ pub struct Project {
 }
 
 /// How a view lays out its items.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Layout {
+    #[default]
     Board,
     Table,
     Roadmap,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectView {
     pub number: u64,
     pub name: String,
@@ -242,7 +243,7 @@ pub struct Linked {
 }
 
 /// A draft issue: only in the project.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Draft {
     /// What editing it names it by (not the item's).
     pub id: NodeId,
@@ -675,19 +676,6 @@ impl Page for Project {
     }
 }
 
-/// Cache keys.
-pub mod keys {
-    use super::{ProjectRef, ProjectsOf};
-
-    pub fn projects(of: &ProjectsOf) -> String {
-        format!("projects:{of:?}")
-    }
-
-    pub fn project(project: &ProjectRef, view: Option<u64>) -> String {
-        format!("project:{project}:{view:?}")
-    }
-}
-
 /// How many items a page of a project has.
 const ITEMS: usize = 50;
 
@@ -695,7 +683,7 @@ const ITEMS: usize = 50;
 pub const ALL_ITEMS: usize = 1000;
 
 /// A change to a project's items, other than setting a field.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ProjectChange {
     /// Add an issue or pull request, by its repository and number.
     Add {
@@ -732,13 +720,12 @@ fn scoped(err: ApiError) -> ApiError {
     let read = messages.iter().any(|m| m.contains("'read:project'"));
     let write = messages.iter().any(|m| m.contains("'project'"));
     if write {
-        ApiError::GraphQl(vec![
-            "changing a project takes the project scope, which your token lacks: `gh auth refresh -s project` adds it".into(),
-        ])
+        ApiError::GraphQl(vec![crate::api::scope_missing(
+            "Changing a project",
+            "project",
+        )])
     } else if read {
-        ApiError::GraphQl(vec![
-            "projects take the read:project scope, which your token lacks: `gh auth refresh -s read:project` adds it".into(),
-        ])
+        ApiError::GraphQl(vec![crate::api::scope_missing("Projects", "read:project")])
     } else {
         err
     }
@@ -752,7 +739,6 @@ impl GitHub {
         of: &ProjectsOf,
         after: Option<String>,
     ) -> Result<Results<ProjectSummary>, ApiError> {
-        let first = after.is_none();
         let (query, vars, at, what) = match of {
             ProjectsOf::Owner(owner) => (
                 raw::OWNER_PROJECTS,
@@ -772,7 +758,7 @@ impl GitHub {
             .map_err(scoped)?;
         self.check_connection(&wire, 30, &what);
         let list = wire.into_results(WireSummary::into_summary);
-        Ok(self.kept_page(first, &keys::projects(of), list).await)
+        Ok(list)
     }
 
     /// A project at view `view` (its first without one): the project, its
@@ -823,13 +809,8 @@ impl GitHub {
         let archived = if first {
             self.project_items(project, "", None, true).await?
         } else {
-            Results {
-                total: 0,
-                items: Vec::new(),
-                next: None,
-            }
+            Results::default()
         };
-        let key = keys::project(project, view);
         let found = Project {
             id: wire.id,
             title: wire.title,
@@ -844,7 +825,7 @@ impl GitHub {
             items,
             archived,
         };
-        Ok(self.kept_page(first, &key, found).await)
+        Ok(self.checked(found, format!("project {project}")))
     }
 
     /// The projects issue or pull request `number` is in (the first 10),
@@ -1231,11 +1212,6 @@ enum WireContent {
     },
     Issue(WireLinked),
     PullRequest(WireLinked),
-}
-
-#[derive(Deserialize)]
-struct Login {
-    login: String,
 }
 
 #[derive(Deserialize)]

@@ -1,7 +1,7 @@
 //! Making a release, as GitHub's "Draft a new release" does, editing
 //! one, and deleting one (then, asked again, its tag).
 //!
-//! The form is a page ([`Route::NewRelease`], or [`Route::EditRelease`]
+//! The form is a page (`releases::NewRelease`, or `releases::EditRelease`
 //! filled from the release): a tag (one GitHub has, or a new one GitHub
 //! makes at a branch or commit when the release is published), a title
 //! and notes written in the composer (the title on the first line),
@@ -13,24 +13,27 @@
 
 pub mod assets;
 
-use crate::api::GitHub;
+use std::borrow::Cow;
+
 use crate::api::browse::{BranchInfo, Release, Results, TagInfo};
 use crate::api::model::RepoId;
 use crate::api::release::{Made, NewRelease, Notes, TagLook};
-use crate::create::Look;
 use crate::create::templates;
-use crate::ui::overlays::PaletteItem;
-use crate::ui::page::{Link, Page, WriteLink};
+use crate::route::{Route, releases};
+use crate::ui::form::Row;
+use crate::ui::page::{Link, Page};
 use crate::ui::pages::{FormRow, Mark, TextBox, WriteFormView};
 
-use crate::browse::DataKey;
+use crate::data::DataKey;
+use crate::follow::{Expectation, Shown};
+use crate::forms::Answer;
+use crate::forms::{Fields, filling, say};
 use crate::keymap::Action;
-use crate::nav::Doable;
+use crate::nav::{Doable, row};
+use crate::picker::entry;
 use crate::picker::fuzzy_score;
-use crate::review::ComposeTarget;
-use crate::route::Route;
-use crate::state::{Cmd, Overlay, State};
-use crate::writes::{Answer, Chosen, Expected, Pick, Text, Work as Writes, item, row};
+use crate::state::{Cmd, State};
+use crate::work::{self, Cx, Failure, Job};
 
 /// A release, as written so far: a new one, or one being edited.
 #[derive(Debug, Clone)]
@@ -44,8 +47,6 @@ pub struct Form {
     /// filled from the release (an edit).
     pub started: bool,
     pub tag: Option<String>,
-    /// What GitHub has of the tag, for the tag it was asked for.
-    pub look: Option<(String, Look<TagLook>)>,
     /// What a new tag is made at: a branch or a commit (`None`: the
     /// default branch).
     pub target: Option<String>,
@@ -55,8 +56,28 @@ pub struct Form {
     pub editing: Option<Editing>,
     /// GitHub is writing the notes.
     pub generating: bool,
-    pub sending: bool,
-    pub error: Option<String>,
+}
+
+impl Fields for Form {
+    fn text(&mut self, _: usize) -> Option<&mut String> {
+        Some(&mut self.text)
+    }
+
+    fn title(&self, route: &Route, _: usize) -> String {
+        match route {
+            Route::Releases(releases::EditRelease { tag, .. }) => {
+                format!("Editing {tag}: its title on the first line, then its notes")
+            }
+            _ => "New release: its title on the first line, then its notes".into(),
+        }
+    }
+
+    fn save(&self, route: &Route) -> &'static str {
+        match route {
+            Route::Releases(releases::EditRelease { .. }) => "save…",
+            _ => "publish…",
+        }
+    }
 }
 
 /// The release a form edits, as it was.
@@ -75,14 +96,11 @@ impl Default for Form {
             filled: String::new(),
             started: false,
             tag: None,
-            look: None,
             target: None,
             prerelease: false,
             latest: true,
             editing: None,
             generating: false,
-            sending: false,
-            error: None,
         }
     }
 }
@@ -91,15 +109,10 @@ impl Form {
     /// A form editing `r`, with what it has.
     fn of(r: &Release, id: u64) -> Self {
         let text = templates::join(&r.name, r.notes.as_deref().unwrap_or_default());
-        let look = TagLook {
-            exists: true,
-            release: Some((r.draft, String::new())),
-        };
         Self {
             text,
             started: true,
             tag: Some(r.tag.clone()),
-            look: Some((r.tag.clone(), Look::Found(look))),
             prerelease: r.prerelease,
             latest: r.latest,
             editing: Some(Editing {
@@ -111,17 +124,28 @@ impl Form {
         }
     }
 
-    /// What GitHub has of the tag, once it's said.
-    fn tag_look(&self) -> Option<&Look<TagLook>> {
-        let (tag, look) = self.look.as_ref()?;
-        (Some(tag) == self.tag.as_ref()).then_some(look)
+    /// What GitHub has of the tag, once it's said: an edit's own tag is
+    /// its release's.
+    fn tag_look<'a>(
+        &self,
+        state: &'a State,
+        repo: &RepoId,
+    ) -> Option<Result<&'a TagLook, &'a str>> {
+        static OWN: TagLook = TagLook {
+            exists: true,
+            release: None,
+        };
+        if self.own_tag() {
+            return Some(Ok(&OWN));
+        }
+        state.answer(&DataKey::TagLook(repo.clone(), self.tag.clone()?))
     }
 
     /// The tag is a new one: GitHub makes it at the target.
-    fn new_tag(&self) -> bool {
+    fn new_tag(&self, state: &State, repo: &RepoId) -> bool {
         matches!(
-            self.tag_look(),
-            Some(Look::Found(TagLook { exists: false, .. }))
+            self.tag_look(state, repo),
+            Some(Ok(TagLook { exists: false, .. }))
         )
     }
 
@@ -131,119 +155,140 @@ impl Form {
     }
 }
 
-/// Work in the background.
+/// GitHub's notes for a release of the tag.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Work {
-    /// Whether the repository has the tag, and a release of it.
-    Look(RepoId, String),
-    /// GitHub's notes for a release of the tag.
-    Notes {
+pub struct Generate {
+    pub repo: RepoId,
+    pub tag: String,
+    pub target: Option<String>,
+}
+
+/// Makes the release written on the form at `route`, or (with an ID)
+/// changes that release to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Save {
+    pub route: Route,
+    pub id: Option<u64>,
+    pub new: NewRelease,
+}
+
+/// Deletes a release; its answer says whether its tag is on GitHub (a
+/// draft's new tag never was).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Delete {
+    pub repo: RepoId,
+    pub tag: String,
+    pub id: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteTag {
+    pub repo: RepoId,
+    pub tag: String,
+}
+
+/// What a release's page, or the releases, show once GitHub has a change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Expected {
+    /// A published release's page.
+    Release(RepoId, String),
+    /// A release's page, as it was edited.
+    Edited {
         repo: RepoId,
         tag: String,
-        target: Option<String>,
+        name: String,
+        notes: String,
+        prerelease: bool,
     },
-    /// Makes the release written on the form at `route`, or (with an ID)
-    /// changes that release to it.
-    Save {
-        route: Route,
-        id: Option<u64>,
-        new: NewRelease,
-    },
-    Delete {
+    /// A release no longer among the releases.
+    ReleaseGone(RepoId, String),
+    /// A release's page with its asset `name` (or without it).
+    Asset {
         repo: RepoId,
         tag: String,
-        id: u64,
+        name: String,
+        there: bool,
     },
-    DeleteTag(RepoId, String),
-    Asset(assets::Work),
+    /// A draft among the releases.
+    Draft(RepoId, String),
 }
 
-#[derive(Debug)]
-pub enum Done {
-    Looked(RepoId, String, Result<TagLook, String>),
-    Notes(RepoId, String, Result<Notes, String>),
-    Saved(Route, Result<Made, String>),
-    /// The release deleted, and whether its tag is on GitHub (a draft's
-    /// new tag never was).
-    Deleted(RepoId, String, Result<bool, String>),
-    TagDeleted(RepoId, String, Result<(), String>),
-    Asset(assets::Done),
-}
-
-impl Done {
-    pub fn wrote(&self) -> bool {
+impl Expectation for Expected {
+    fn waiting(&self) -> &'static str {
         match self {
-            Done::Looked(..) | Done::Notes(..) => false,
-            Done::Saved(_, r) => r.is_ok(),
-            Done::Deleted(.., r) => r.is_ok(),
-            Done::TagDeleted(.., r) => r.is_ok(),
-            Done::Asset(d) => d.wrote(),
-        }
-    }
-}
-
-impl Work {
-    pub fn failed(&self, why: String) -> Done {
-        match self.clone() {
-            Work::Look(repo, tag) => Done::Looked(repo, tag, Err(why)),
-            Work::Notes { repo, tag, .. } => Done::Notes(repo, tag, Err(why)),
-            Work::Save { route, .. } => Done::Saved(route, Err(why)),
-            Work::Delete { repo, tag, .. } => Done::Deleted(repo, tag, Err(why)),
-            Work::DeleteTag(repo, tag) => Done::TagDeleted(repo, tag, Err(why)),
-            Work::Asset(w) => Done::Asset(w.failed(why)),
+            Expected::Release(..) | Expected::Draft(..) | Expected::Edited { .. } => {
+                "Waiting for GitHub to show the release"
+            }
+            Expected::ReleaseGone(..) => "Waiting for GitHub to show the release gone",
+            Expected::Asset { there: true, .. } => "Waiting for GitHub to show the asset",
+            Expected::Asset { .. } => "Waiting for GitHub to show the asset gone",
         }
     }
 
-    pub async fn run(self, gh: &GitHub) -> Done {
-        let why = |err: crate::api::ApiError| crate::writes::reason(&err);
+    fn shown(&self, state: &State, _: &Route) -> Shown {
+        let release = |repo: &RepoId, tag: &String| {
+            state.picked::<Release>(&DataKey::Release(repo.clone(), tag.clone()))
+        };
+        let releases =
+            |repo: &RepoId| state.picked::<Results<Release>>(&DataKey::Releases(repo.clone()));
         match self {
-            Work::Look(repo, tag) => {
-                let look = gh.tag_look(&repo, &tag).await.map_err(why);
-                Done::Looked(repo, tag, look)
+            Expected::Release(repo, tag) => release(repo, tag).is_some(),
+            Expected::Edited {
+                repo,
+                tag,
+                name,
+                notes,
+                prerelease,
+            } => release(repo, tag).is_some_and(|r| {
+                r.name == *name
+                    && r.prerelease == *prerelease
+                    && r.notes.as_deref().unwrap_or_default().trim() == notes.trim()
+            }),
+            Expected::ReleaseGone(repo, tag) => {
+                releases(repo).is_some_and(|r| r.items.iter().all(|r| r.tag != *tag))
             }
-            Work::Notes { repo, tag, target } => {
-                let notes = gh.release_notes(&repo, &tag, target.as_deref()).await;
-                Done::Notes(repo, tag, notes.map_err(why))
+            Expected::Asset {
+                repo,
+                tag,
+                name,
+                there,
+            } => assets::shows(state, repo, tag, name, *there),
+            Expected::Draft(repo, tag) => {
+                releases(repo).is_some_and(|r| r.items.iter().any(|r| r.tag == *tag && r.draft))
             }
-            Work::Save { route, id, new } => {
-                let made = match id {
-                    Some(id) => gh.update_release(id, &new).await,
-                    None => gh.create_release(&new).await,
-                };
-                Done::Saved(route, made.map_err(why))
-            }
-            Work::Delete { repo, tag, id } => {
-                let done = match gh.delete_release(&repo, id).await {
-                    // Whether there's a tag to ask about.
-                    Ok(()) => Ok(gh.tag_look(&repo, &tag).await.is_ok_and(|l| l.exists)),
-                    Err(err) => Err(why(err)),
-                };
-                Done::Deleted(repo, tag, done)
-            }
-            Work::DeleteTag(repo, tag) => {
-                let done = gh.delete_tag(&repo, &tag).await.map_err(why);
-                Done::TagDeleted(repo, tag, done)
-            }
-            Work::Asset(w) => Done::Asset(w.run(gh).await),
         }
+        .into()
     }
 }
 
 /// The release form on screen: its page, its repository, and the form
 /// (blank until it's started).
-fn here(state: &State) -> Option<(Route, RepoId, &Form)> {
-    static BLANK: std::sync::LazyLock<Form> = std::sync::LazyLock::new(Form::default);
+fn here(state: &State) -> Option<(Route, RepoId, Cow<'_, Form>)> {
     let route = state.route()?;
-    let (Route::NewRelease(repo) | Route::EditRelease { repo, .. }) = route else {
-        return None;
-    };
-    let form = state.writing.releases.get(route).unwrap_or(&BLANK);
-    Some((route.clone(), repo.clone(), form))
+    let repo = form_repo(route)?;
+    Some((route.clone(), repo.clone(), state.forms.shown(route)))
 }
 
-fn form_mut<'a>(state: &'a mut State, route: &Route) -> &'a mut Form {
-    state.writing.releases.entry(route.clone()).or_default()
-}
+/// What releases add: making one wherever a repository is, and editing,
+/// deleting and uploading to the one on screen.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &[Action::NewRelease, Action::UploadAsset],
+    takes: |state, action| {
+        matches!(action, Action::EditComment | Action::DeleteComment)
+            && matches!(
+                state.route(),
+                Some(Route::Releases(releases::Release { .. }))
+            )
+    },
+    act: |state, action| match action {
+        Action::NewRelease => open(state),
+        Action::UploadAsset => assets::open_upload(state),
+        Action::EditComment => open_edit(state),
+        _ => ask_delete(state),
+    },
+    offers: doables,
+    ..crate::features::Feature::NONE
+};
 
 /// Why `repo` takes no release from you (nor changes to one), from
 /// what's known.
@@ -259,14 +304,12 @@ pub(crate) fn refused(state: &State, repo: &RepoId) -> Option<String> {
 #[must_use]
 pub fn open(state: &mut State) -> Vec<Cmd> {
     let Some(repo) = state.route().and_then(Route::repo).cloned() else {
-        state.info("Open a repository first: a release is of one");
-        return Vec::new();
+        return state.just_say("Open a repository first: a release is of one");
     };
     if let Some(why) = refused(state, &repo) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
-    let route = Route::NewRelease(repo);
+    let route = Route::Releases(releases::NewRelease(repo));
     if state.route() == Some(&route) {
         return compose(state);
     }
@@ -277,7 +320,7 @@ pub fn open(state: &mut State) -> Vec<Cmd> {
 
 /// The release on screen (its page's), as loaded.
 pub(crate) fn shown(state: &State) -> Option<(RepoId, String, &Release)> {
-    let Some(Route::Release { repo, tag }) = state.route() else {
+    let Some(Route::Releases(releases::Release { repo, tag })) = state.route() else {
         return None;
     };
     let r = state.picked::<Release>(&DataKey::Release(repo.clone(), tag.clone()))?;
@@ -300,13 +343,12 @@ pub(crate) fn unchangeable(state: &State) -> Option<String> {
 #[must_use]
 pub fn open_edit(state: &mut State) -> Vec<Cmd> {
     if let Some(why) = unchangeable(state) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let Some((repo, tag, _)) = shown(state) else {
         return Vec::new();
     };
-    let mut cmds = state.push(Route::EditRelease { repo, tag });
+    let mut cmds = state.push(Route::Releases(releases::EditRelease { repo, tag }));
     cmds.extend(follow(state));
     cmds
 }
@@ -315,96 +357,77 @@ pub fn open_edit(state: &mut State) -> Vec<Cmd> {
 /// release, starts a new one by choosing its tag, and asks GitHub about
 /// a tag it hasn't yet.
 #[must_use]
-pub fn follow(state: &mut State) -> Vec<Cmd> {
+fn follow(state: &mut State) -> Vec<Cmd> {
     let Some((route, repo, form)) = here(state) else {
         return Vec::new();
     };
-    if let Route::EditRelease { tag, .. } = &route
+    if let Route::Releases(releases::EditRelease { tag, .. }) = &route
         && !form.started
         && let Some(r) = state.picked::<Release>(&DataKey::Release(repo.clone(), tag.clone()))
         && let Some(id) = r.id
     {
-        let form = Form::of(r, id);
-        state.writing.releases.insert(route.clone(), form);
-        state.data_gen += 1;
+        *state.forms.edit(&route) = Form::of(r, id);
     }
     let mut cmds = Vec::new();
     let loaded = state.overview(&repo).is_some();
-    let form = form_mut(state, &route);
-    if let Some(tag) = form.tag.clone()
-        && form.tag_look().is_none()
-    {
-        form.look = Some((tag.clone(), Look::Asking));
-        cmds.push(Cmd::Write(Writes::Release(Work::Look(repo.clone(), tag))));
+    let form = state.forms.shown::<Form>(&route);
+    let (started, tag) = (form.started, form.tag.clone().filter(|_| !form.own_tag()));
+    if let Some(tag) = tag {
+        cmds.extend(state.ensure(DataKey::TagLook(repo.clone(), tag), false));
     }
-    let new = matches!(route, Route::NewRelease(_));
-    if new && loaded && !form.started && state.overlay.is_none() && refused(state, &repo).is_none()
-    {
-        form_mut(state, &route).started = true;
-        cmds.extend(crate::writes::open_picker(state, Pick::Tag(route)));
+    let new = matches!(route, Route::Releases(releases::NewRelease(_)));
+    if new && loaded && !started && state.overlay.is_none() && refused(state, &repo).is_none() {
+        state.forms.edit::<Form>(&route).started = true;
+        cmds.extend(state.open_picker(crate::picker::Kind::Tag(route)));
     }
     cmds
 }
 
 /// The composer, on the title and notes.
 #[must_use]
-pub fn compose(state: &mut State) -> Vec<Cmd> {
-    let Some((route, _, form)) = here(state) else {
+fn compose(state: &mut State) -> Vec<Cmd> {
+    let Some((route, ..)) = here(state) else {
         return Vec::new();
     };
-    if form.sending {
-        state.info("It's being saved");
-        return Vec::new();
-    }
-    let text = form.text.clone();
-    state.data_gen += 1;
-    let cmds = state.compose(ComposeTarget::Write(Text::Release(route)), &text);
-    if let Some(Overlay::Compose(c)) = &mut state.overlay {
-        c.input.move_cursor(ratatui_textarea::CursorMove::Top);
-        c.input.move_cursor(ratatui_textarea::CursorMove::End);
-    }
-    cmds
+    crate::forms::compose::<Form>(state, &route, 0, crate::forms::TITLE)
 }
 
-pub fn keep_text(state: &mut State, route: &Route, text: String) {
-    let form = form_mut(state, route);
-    form.text = text;
-    form.error = None;
-}
+/// What the release form does.
+pub const FORM: crate::forms::Kind = crate::forms::Kind {
+    compose: |state, _| compose(state),
+    row: on_row,
+    fill,
+    submit,
+    follow,
+    offers,
+};
 
 /// Enter on one of the form's rows.
 #[must_use]
-pub fn follow_link(state: &mut State, link: &WriteLink) -> Vec<Cmd> {
-    let Some((route, _, form)) = here(state) else {
+fn on_row(state: &mut State, link: &Row) -> Vec<Cmd> {
+    let Some((route, repo, form)) = here(state) else {
         return Vec::new();
     };
     match link {
-        WriteLink::Tag => crate::writes::open_picker(state, Pick::Tag(route)),
-        WriteLink::Target if form.new_tag() => {
-            crate::writes::open_picker(state, Pick::Target(route))
+        Row::Tag => state.open_picker(crate::picker::Kind::Tag(route)),
+        Row::Target if form.new_tag(state, &repo) => {
+            state.open_picker(crate::picker::Kind::Target(route))
         }
-        WriteLink::Target => {
-            state.info("The tag is GitHub's already: it's where it is");
-            Vec::new()
-        }
-        WriteLink::Notes => generate(state),
-        WriteLink::Prerelease => {
-            let form = form_mut(state, &route);
+        Row::Target => state.just_say("The tag is GitHub's already: it's where it is"),
+        Row::Notes => generate(state),
+        Row::Prerelease => {
+            let form = state.forms.edit::<Form>(&route);
             form.prerelease = !form.prerelease;
-            state.data_gen += 1;
             Vec::new()
         }
-        WriteLink::Latest if form.prerelease => {
-            state.info("A pre-release is never the latest release");
-            Vec::new()
+        Row::Latest if form.prerelease => {
+            state.just_say("A pre-release is never the latest release")
         }
-        WriteLink::Latest => {
-            let form = form_mut(state, &route);
+        Row::Latest => {
+            let form = state.forms.edit::<Form>(&route);
             form.latest = !form.latest;
-            state.data_gen += 1;
             Vec::new()
         }
-        WriteLink::Save => submit(state),
         _ => Vec::new(),
     }
 }
@@ -416,21 +439,16 @@ fn generate(state: &mut State) -> Vec<Cmd> {
         return Vec::new();
     };
     let Some(tag) = form.tag.clone() else {
-        state.info("Choose a tag first: GitHub writes the notes since the release before it");
-        return Vec::new();
+        return state
+            .just_say("Choose a tag first: GitHub writes the notes since the release before it");
     };
     if form.generating {
         return Vec::new();
     }
-    let target = form.target.clone().filter(|_| form.new_tag());
-    form_mut(state, &route).generating = true;
-    state.data_gen += 1;
+    let target = form.target.clone().filter(|_| form.new_tag(state, &repo));
+    state.forms.edit::<Form>(&route).generating = true;
     state.info("Asking GitHub for release notes…");
-    vec![Cmd::Write(Writes::Release(Work::Notes {
-        repo,
-        tag,
-        target,
-    }))]
+    work::start(Generate { repo, tag, target })
 }
 
 /// Whether `tag` can be a tag's name, as git's `check-ref-format` has it,
@@ -454,13 +472,14 @@ fn tag_problem(tag: &str) -> Option<&'static str> {
 /// The repository a form's page is of.
 fn form_repo(route: &Route) -> Option<&RepoId> {
     match route {
-        Route::NewRelease(repo) | Route::EditRelease { repo, .. } => Some(repo),
+        Route::Releases(releases::NewRelease(repo))
+        | Route::Releases(releases::EditRelease { repo, .. }) => Some(repo),
         _ => None,
     }
 }
 
 /// The tag picker's rows: a new tag typed, then the tags GitHub has.
-pub fn tag_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
+pub fn tag_rows(state: &State, route: &Route, q: &str) -> crate::picker::Rows {
     let Some(repo) = form_repo(route) else {
         return Vec::new();
     };
@@ -469,16 +488,16 @@ pub fn tag_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, Opti
     let known = tags.is_some_and(|t| t.items.iter().any(|t| t.name == q));
     if !q.is_empty() && !known {
         rows.push(match tag_problem(q) {
-            Some(why) => item(why, "", None),
-            None => item(
+            Some(why) => entry(why, "", None),
+            None => entry(
                 format!("Create new tag: {q}"),
                 "on publish",
-                Some(Chosen::Tag(route.clone(), q.to_owned())),
+                Some(filling(route, Row::Tag, q)),
             ),
         });
     }
     let Some(tags) = tags else {
-        rows.push(item("Loading the tags…", "", None));
+        rows.push(entry("Loading the tags…", "", None));
         return rows;
     };
     let mut hits: Vec<(usize, &TagInfo)> = (tags.items.iter())
@@ -490,16 +509,16 @@ pub fn tag_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, Opti
             .date
             .as_deref()
             .map_or("tag", |d| d.get(..10).unwrap_or(d));
-        rows.push(item(
+        rows.push(entry(
             t.name.clone(),
             hint,
-            Some(Chosen::Tag(route.clone(), t.name.clone())),
+            Some(filling(route, Row::Tag, &t.name)),
         ));
     }
     let more = tags.total.saturating_sub(tags.items.len() as u64);
     if more > 0 {
         let what = crate::ui::text::noun(more, "tag");
-        rows.push(item(
+        rows.push(entry(
             format!("{more} older {what} on GitHub: type one's name"),
             "",
             None,
@@ -509,7 +528,7 @@ pub fn tag_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, Opti
 }
 
 /// The target picker's rows: a commit typed, then the branches.
-pub fn target_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
+pub fn target_rows(state: &State, route: &Route, q: &str) -> crate::picker::Rows {
     let Some(repo) = form_repo(route) else {
         return Vec::new();
     };
@@ -517,14 +536,14 @@ pub fn target_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, O
     let mut rows = Vec::new();
     let known = branches.is_some_and(|b| b.items.iter().any(|b| b.name == q));
     if !q.is_empty() && !known {
-        rows.push(item(
+        rows.push(entry(
             format!("Use {q}"),
             "a branch or a commit's SHA",
-            Some(Chosen::Target(route.clone(), q.to_owned())),
+            Some(filling(route, Row::Target, q)),
         ));
     }
     let Some(branches) = branches else {
-        rows.push(item("Loading the branches…", "", None));
+        rows.push(entry("Loading the branches…", "", None));
         return rows;
     };
     let mut hits: Vec<(usize, &BranchInfo)> = (branches.items.iter())
@@ -537,35 +556,36 @@ pub fn target_rows(state: &State, route: &Route, q: &str) -> Vec<(PaletteItem, O
         } else {
             "branch"
         };
-        rows.push(item(
+        rows.push(entry(
             b.name.clone(),
             hint,
-            Some(Chosen::Target(route.clone(), b.name.clone())),
+            Some(filling(route, Row::Target, &b.name)),
         ));
     }
     rows
 }
 
 #[must_use]
-pub fn choose_tag(state: &mut State, route: &Route, tag: String) -> Vec<Cmd> {
-    let form = form_mut(state, route);
-    form.tag = Some(tag);
-    form.error = None;
-    let blank = form.text.trim().is_empty();
-    state.data_gen += 1;
-    let mut cmds = follow(state);
-    // Then its title and notes, as on GitHub.
-    if blank && state.overlay.is_none() {
-        cmds.extend(compose(state));
+/// A tag, or what a new tag is made at, chosen.
+fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Vec<Cmd> {
+    let form = state.forms.edit::<Form>(route);
+    match row {
+        Row::Tag => {
+            form.tag = Some(value);
+            let blank = form.text.trim().is_empty();
+            let mut cmds = follow(state);
+            // Then its title and notes, as on GitHub.
+            if blank && state.overlay.is_none() {
+                cmds.extend(compose(state));
+            }
+            cmds
+        }
+        Row::Target => {
+            form.target = Some(value);
+            Vec::new()
+        }
+        _ => Vec::new(),
     }
-    cmds
-}
-
-#[must_use]
-pub fn choose_target(state: &mut State, route: &Route, target: String) -> Vec<Cmd> {
-    form_mut(state, route).target = Some(target);
-    state.data_gen += 1;
-    Vec::new()
 }
 
 /// The default branch, for what a new tag is made at by default.
@@ -581,46 +601,40 @@ fn problem(state: &State, repo: &RepoId, form: &Form) -> Option<String> {
         return Some(why);
     }
     let tag = form.tag.as_deref()?;
-    match form.tag_look() {
-        None | Some(Look::Asking) => Some(format!("Still looking for {tag} on GitHub")),
-        Some(Look::Failed(why)) => Some(format!("Couldn't look for {tag} on GitHub: {why}")),
+    match form.tag_look(state, repo) {
+        None => Some(format!("Still looking for {tag} on GitHub")),
+        Some(Err(why)) => Some(format!("Couldn't look for {tag} on GitHub: {why}")),
         // Its own release, being edited.
-        Some(Look::Found(_)) if form.own_tag() => None,
-        Some(Look::Found(TagLook {
+        Some(Ok(_)) if form.own_tag() => None,
+        Some(Ok(TagLook {
             release: Some((true, _)),
             ..
         })) => Some(format!(
             "{tag} has a draft release already: publish or delete that one"
         )),
-        Some(Look::Found(TagLook {
+        Some(Ok(TagLook {
             release: Some(_), ..
         })) => Some(format!("{tag} has a release already")),
-        Some(Look::Found(_)) => None,
+        Some(Ok(_)) => None,
     }
 }
 
 /// `,s`, ctrl-s, or its button: asks whether to publish it or keep a
 /// draft.
 #[must_use]
-pub fn submit(state: &mut State) -> Vec<Cmd> {
+fn submit(state: &mut State) -> Vec<Cmd> {
     let Some((route, repo, form)) = here(state) else {
         return Vec::new();
     };
-    if form.sending {
-        crate::writes::say(state, "It's being saved".into());
-        return Vec::new();
-    }
     let Some(tag) = form.tag.clone() else {
-        crate::writes::say(state, "Choose a tag first (Enter on Tag)".into());
-        return Vec::new();
+        return say(state, "Choose a tag first (Enter on Tag)".into());
     };
-    if let Some(why) = problem(state, &repo, form) {
-        crate::writes::say(state, why);
-        return Vec::new();
+    if let Some(why) = problem(state, &repo, &form) {
+        return say(state, why);
     }
     let (title, notes) = templates::split(&form.text);
     let mut facts = vec![(
-        if form.new_tag() {
+        if form.new_tag(state, &repo) {
             let at = form
                 .target
                 .clone()
@@ -679,7 +693,7 @@ pub fn submit(state: &mut State) -> Vec<Cmd> {
             ],
         ),
     };
-    crate::writes::ask(state, route, question, facts, choices);
+    crate::forms::ask(state, route, question, facts, choices);
     Vec::new()
 }
 
@@ -689,7 +703,7 @@ pub fn create(state: &mut State, route: &Route, draft: bool) -> Vec<Cmd> {
     let Some(repo) = form_repo(route).cloned() else {
         return Vec::new();
     };
-    let Some(form) = state.writing.releases.get(route) else {
+    let Some(form) = state.forms.get::<Form>(route) else {
         return Vec::new();
     };
     let Some(tag) = form.tag.clone() else {
@@ -697,9 +711,9 @@ pub fn create(state: &mut State, route: &Route, draft: bool) -> Vec<Cmd> {
     };
     let (name, notes) = templates::split(&form.text);
     let new = NewRelease {
+        target: form.target.clone().filter(|_| form.new_tag(state, &repo)),
         repo,
         tag,
-        target: form.target.clone().filter(|_| form.new_tag()),
         name,
         notes,
         draft,
@@ -707,13 +721,12 @@ pub fn create(state: &mut State, route: &Route, draft: bool) -> Vec<Cmd> {
         latest: form.latest,
     };
     let id = form.editing.as_ref().map(|e| e.id);
-    form_mut(state, route).sending = true;
-    crate::writes::sending(state);
-    vec![Cmd::Write(Writes::Release(Work::Save {
+    crate::forms::form_sending(state, route);
+    work::start(Save {
         route: route.clone(),
         id,
         new,
-    }))]
+    })
 }
 
 /// `,D` on a release's page: deleting the asset selected, or the release,
@@ -721,8 +734,7 @@ pub fn create(state: &mut State, route: &Route, draft: bool) -> Vec<Cmd> {
 #[must_use]
 pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
     if let Some(why) = unchangeable(state) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     if let Some(name) = assets::selected(state) {
         return assets::ask_delete(state, &name);
@@ -741,254 +753,265 @@ pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
         false,
     ));
     let title = format!("Delete the release {}?", r.name);
-    let route = Route::Release { repo, tag };
+    let route = Route::Releases(releases::Release { repo, tag });
     let choices = vec![("Delete release".into(), Answer::DeleteRelease)];
-    crate::writes::ask(state, route, title, facts, choices);
+    crate::forms::ask(state, route, title, facts, choices);
     Vec::new()
 }
 
 /// The release on `route`'s page was asked to go: deletes it.
 #[must_use]
 pub fn delete(state: &mut State, route: &Route) -> Vec<Cmd> {
-    let Route::Release { repo, tag } = route else {
+    let Route::Releases(releases::Release { repo, tag }) = route else {
         return Vec::new();
     };
     let key = DataKey::Release(repo.clone(), tag.clone());
     let Some(id) = state.picked::<Release>(&key).and_then(|r| r.id) else {
         return Vec::new();
     };
-    crate::writes::sending(state);
-    vec![Cmd::Write(Writes::Release(Work::Delete {
+    crate::forms::sending(state);
+    work::start(Delete {
         repo: repo.clone(),
         tag: tag.clone(),
         id,
-    }))]
+    })
 }
 
 /// Deletes the tag of the release deleted from `route`, as asked.
 #[must_use]
 pub fn delete_tag(state: &mut State, route: &Route) -> Vec<Cmd> {
-    let Route::Release { repo, tag } = route else {
+    let Route::Releases(releases::Release { repo, tag }) = route else {
         return Vec::new();
     };
-    crate::writes::sending(state);
-    vec![Cmd::Write(Writes::Release(Work::DeleteTag(
-        repo.clone(),
-        tag.clone(),
-    )))]
-}
-
-/// Work's answers.
-#[must_use]
-pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
-    match done {
-        Done::Looked(repo, tag, result) => {
-            for (route, form) in &mut state.writing.releases {
-                if form_repo(route) == Some(&repo)
-                    && form.look.as_ref().is_some_and(|(t, _)| *t == tag)
-                {
-                    form.look = Some((
-                        tag.clone(),
-                        match &result {
-                            Ok(look) => Look::Found(look.clone()),
-                            Err(why) => Look::Failed(why.clone()),
-                        },
-                    ));
-                }
-            }
-            Vec::new()
-        }
-        Done::Notes(repo, tag, result) => {
-            let Some(route) = state
-                .route()
-                .cloned()
-                .filter(|r| form_repo(r) == Some(&repo))
-            else {
-                return Vec::new();
-            };
-            let Some(form) = state.writing.releases.get_mut(&route) else {
-                return Vec::new();
-            };
-            form.generating = false;
-            match result {
-                Ok(notes) => {
-                    // GitHub's title and notes in place of what's there,
-                    // unless you've written your own: then below them.
-                    let (title, _) = templates::split(&form.text);
-                    if form.text.trim().is_empty() || form.text == form.filled {
-                        let title = if title.is_empty() { notes.name } else { title };
-                        form.text = templates::join(&title, &notes.body);
-                        form.filled = form.text.clone();
-                    } else {
-                        form.text = format!("{}\n\n{}", form.text.trim_end(), notes.body);
-                    }
-                    let write = state.first_key(Action::Comment);
-                    state.info(format!(
-                        "GitHub wrote the notes for {tag}: {write} edits them"
-                    ));
-                }
-                Err(why) => state.error(format!("GitHub didn't write the notes: {why}")),
-            }
-            Vec::new()
-        }
-        Done::Saved(route, result) => saved(state, &route, result),
-        Done::Deleted(repo, tag, result) => deleted(state, &repo, &tag, result),
-        Done::TagDeleted(repo, tag, result) => {
-            let route = Route::Release {
-                repo: repo.clone(),
-                tag: tag.clone(),
-            };
-            match result {
-                Ok(()) => {
-                    crate::writes::close_sender(state, &route);
-                    state.info(format!("Deleted the tag {tag} on GitHub"));
-                    // The tags list, if it's shown, no longer has it.
-                    state.ensure(crate::browse::Need::Data(DataKey::Tags(repo)), true)
-                }
-                Err(why) => {
-                    crate::writes::say(state, format!("GitHub didn't delete the tag: {why}"));
-                    Vec::new()
-                }
-            }
-        }
-        Done::Asset(d) => assets::on_done(state, d),
-    }
-}
-
-/// GitHub saved the release: its page opens in place of the form's,
-/// and follows GitHub until it shows it.
-#[must_use]
-fn saved(state: &mut State, route: &Route, result: Result<Made, String>) -> Vec<Cmd> {
-    let Some(repo) = form_repo(route).cloned() else {
-        return Vec::new();
-    };
-    match result {
-        Ok(made) => {
-            let form = state.writing.releases.remove(route).unwrap_or_default();
-            crate::writes::close_sender(state, route);
-            let tag = made.tag_name;
-            let editing = form.editing.is_some();
-            let (page, what, said) = if made.draft {
-                let said = format!("Saved a draft release of {tag}");
-                (
-                    Route::Releases(repo.clone()),
-                    Expected::Draft(repo, tag),
-                    said,
-                )
-            } else {
-                let (name, notes) = templates::split(&form.text);
-                let what = if editing {
-                    Expected::Edited {
-                        repo: repo.clone(),
-                        tag: tag.clone(),
-                        name: if name.is_empty() { tag.clone() } else { name },
-                        notes,
-                        prerelease: form.prerelease,
-                    }
-                } else {
-                    Expected::Release(repo.clone(), tag.clone())
-                };
-                let said = if editing {
-                    format!("Updated {tag}")
-                } else {
-                    format!("Published {tag}")
-                };
-                (Route::Release { repo, tag }, what, said)
-            };
-            state.info(said);
-            if state.route() != Some(route) {
-                return Vec::new();
-            }
-            crate::writes::expect(state, page.clone(), what);
-            state.replace(page, true, None)
-        }
-        Err(why) => {
-            if let Some(form) = state.writing.releases.get_mut(route) {
-                form.sending = false;
-            }
-            crate::writes::say(state, format!("GitHub didn't save the release: {why}"));
-            Vec::new()
-        }
-    }
-}
-
-/// GitHub deleted the release: the releases follow until it's gone, and
-/// deleting its tag too is asked, apart.
-#[must_use]
-fn deleted(state: &mut State, repo: &RepoId, tag: &str, result: Result<bool, String>) -> Vec<Cmd> {
-    let route = Route::Release {
+    crate::forms::sending(state);
+    work::start(DeleteTag {
         repo: repo.clone(),
-        tag: tag.to_owned(),
-    };
-    let tagged = match result {
-        Ok(tagged) => tagged,
-        Err(why) => {
-            crate::writes::say(state, format!("GitHub didn't delete the release: {why}"));
-            return Vec::new();
-        }
-    };
-    crate::writes::close_sender(state, &route);
-    state.info(format!("Deleted the release of {tag}"));
-    let mut cmds = Vec::new();
-    if state.route() == Some(&route) {
-        let list = Route::Releases(repo.clone());
-        let gone = Expected::ReleaseGone(repo.clone(), tag.to_owned());
-        crate::writes::expect(state, list.clone(), gone);
-        cmds = state.replace(list, true, None);
-    }
-    if !tagged {
-        return cmds;
-    }
-    crate::writes::ask(
-        state,
-        route,
-        format!("Delete the tag {tag} as well?"),
-        vec![
-            (
-                format!(
-                    "The release is deleted; the tag {tag} stays on GitHub unless you delete it"
-                ),
-                false,
-            ),
-            ("A deleted tag can't be brought back from here".into(), true),
-        ],
-        vec![
-            (format!("Delete the tag {tag}"), Answer::DeleteTag),
-            ("Keep the tag".into(), Answer::KeepTag),
-        ],
-    );
-    cmds
+        tag: tag.clone(),
+    })
 }
 
-/// The menu's rows: making a release from a repository's pages, the
-/// form's own, and changing the release on screen.
-pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
-    let Some(repo) = route.repo() else {
-        return;
-    };
-    if let Some((_, repo, form)) = here(state) {
-        let mut write = row(
-            "This page",
-            Action::Comment,
-            "Write the title and notes",
-            "write",
-            None,
+impl Job for Generate {
+    type Out = Notes;
+    const WRITES: bool = false;
+
+    async fn run(&self, cx: &Cx) -> Result<Notes, Failure> {
+        let notes = cx
+            .gh
+            .release_notes(&self.repo, &self.tag, self.target.as_deref());
+        Ok(notes.await?)
+    }
+
+    fn done(self, state: &mut State, result: Result<Notes, Failure>) -> Vec<Cmd> {
+        let Generate { repo, tag, .. } = self;
+        let Some(route) = state
+            .route()
+            .cloned()
+            .filter(|r| form_repo(r) == Some(&repo))
+        else {
+            return Vec::new();
+        };
+        let Some(form) = state.forms.get_mut::<Form>(&route) else {
+            return Vec::new();
+        };
+        form.generating = false;
+        match result {
+            Ok(notes) => {
+                // GitHub's title and notes in place of what's there,
+                // unless you've written your own: then below them.
+                let (title, _) = templates::split(&form.text);
+                if form.text.trim().is_empty() || form.text == form.filled {
+                    let title = if title.is_empty() { notes.name } else { title };
+                    form.text = templates::join(&title, &notes.body);
+                    form.filled = form.text.clone();
+                } else {
+                    form.text = format!("{}\n\n{}", form.text.trim_end(), notes.body);
+                }
+                let write = state.first_key(Action::Comment);
+                state.info(format!(
+                    "GitHub wrote the notes for {tag}: {write} edits them"
+                ));
+            }
+            Err(why) => state.error(format!("GitHub didn't write the notes: {why}")),
+        }
+        Vec::new()
+    }
+}
+
+impl Job for DeleteTag {
+    type Out = ();
+
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        Ok(cx.gh.delete_tag(&self.repo, &self.tag).await?)
+    }
+
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        let DeleteTag { repo, tag } = self;
+        let route = Route::Releases(releases::Release {
+            repo: repo.clone(),
+            tag: tag.clone(),
+        });
+        match result {
+            Ok(()) => {
+                crate::forms::close_sender(state, &route);
+                state.info(format!("Deleted the tag {tag} on GitHub"));
+                // The tags list, if it's shown, no longer has it.
+                state.ensure(DataKey::Tags(repo), true)
+            }
+            Err(why) => say(state, format!("GitHub didn't delete the tag: {why}")),
+        }
+    }
+}
+
+impl Job for Save {
+    type Out = Made;
+
+    async fn run(&self, cx: &Cx) -> Result<Made, Failure> {
+        let gh = &cx.gh;
+        Ok(match self.id {
+            Some(id) => gh.update_release(id, &self.new).await?,
+            None => gh.create_release(&self.new).await?,
+        })
+    }
+
+    /// GitHub saved the release: its page opens in place of the form's,
+    /// and follows GitHub until it shows it.
+    fn done(self, state: &mut State, result: Result<Made, Failure>) -> Vec<Cmd> {
+        let route = &self.route;
+        let Some(repo) = form_repo(route).cloned() else {
+            return Vec::new();
+        };
+        match result {
+            Ok(made) => {
+                let form: Form = crate::forms::done(state, route);
+                let tag = made.tag_name;
+                let editing = form.editing.is_some();
+                let (page, what, said) = if made.draft {
+                    let said = format!("Saved a draft release of {tag}");
+                    (
+                        Route::Releases(releases::Releases(repo.clone())),
+                        Expected::Draft(repo, tag),
+                        said,
+                    )
+                } else {
+                    let (name, notes) = templates::split(&form.text);
+                    let what = if editing {
+                        Expected::Edited {
+                            repo: repo.clone(),
+                            tag: tag.clone(),
+                            name: if name.is_empty() { tag.clone() } else { name },
+                            notes,
+                            prerelease: form.prerelease,
+                        }
+                    } else {
+                        Expected::Release(repo.clone(), tag.clone())
+                    };
+                    let said = if editing {
+                        format!("Updated {tag}")
+                    } else {
+                        format!("Published {tag}")
+                    };
+                    (Route::Releases(releases::Release { repo, tag }), what, said)
+                };
+                state.info(said);
+                if state.route() != Some(route) {
+                    return Vec::new();
+                }
+                crate::follow::expect(state, page.clone(), what);
+                state.replace(page, true, None)
+            }
+            Err(why) => {
+                let why = format!("GitHub didn't save the release: {why}");
+                crate::forms::failed(state, route, why)
+            }
+        }
+    }
+}
+
+impl Job for Delete {
+    type Out = bool;
+
+    async fn run(&self, cx: &Cx) -> Result<bool, Failure> {
+        let (gh, repo) = (&cx.gh, &self.repo);
+        gh.delete_release(repo, self.id).await?;
+        // Whether there's a tag to ask about.
+        Ok(gh.tag_look(repo, &self.tag).await.is_ok_and(|l| l.exists))
+    }
+
+    /// GitHub deleted the release: the releases follow until it's gone, and
+    /// deleting its tag too is asked, apart.
+    fn done(self, state: &mut State, result: Result<bool, Failure>) -> Vec<Cmd> {
+        let Delete { repo, tag, .. } = &self;
+        let route = Route::Releases(releases::Release {
+            repo: repo.clone(),
+            tag: tag.to_owned(),
+        });
+        let tagged = match result {
+            Ok(tagged) => tagged,
+            Err(why) => {
+                return say(state, format!("GitHub didn't delete the release: {why}"));
+            }
+        };
+        crate::forms::close_sender(state, &route);
+        state.info(format!("Deleted the release of {tag}"));
+        let mut cmds = Vec::new();
+        if state.route() == Some(&route) {
+            let list = Route::Releases(releases::Releases(repo.clone()));
+            let gone = Expected::ReleaseGone(repo.clone(), tag.to_owned());
+            crate::follow::expect(state, list.clone(), gone);
+            cmds = state.replace(list, true, None);
+        }
+        if !tagged {
+            return cmds;
+        }
+        crate::forms::ask(
+            state,
+            route,
+            format!("Delete the tag {tag} as well?"),
+            vec![
+                (
+                    format!(
+                        "The release is deleted; the tag {tag} stays on GitHub unless you delete it"
+                    ),
+                    false,
+                ),
+                ("A deleted tag can't be brought back from here".into(), true),
+            ],
+            vec![
+                (format!("Delete the tag {tag}"), Answer::DeleteTag),
+                ("Keep the tag".into(), Answer::KeepTag),
+            ],
         );
-        write.unavailable = form.sending.then(|| "it's being saved".into());
-        out.push(write);
+        cmds
+    }
+}
+
+/// The form's rows in the menu: writing it, and saving it.
+fn offers(state: &State, out: &mut Vec<Doable>) {
+    if let Some((_, repo, form)) = here(state) {
         let why = match &form.tag {
             None => Some("choose a tag first".to_owned()),
-            Some(_) => problem(state, &repo, form),
+            Some(_) => problem(state, &repo, &form),
         };
         let publish = if form.editing.is_some() {
             "Save the release"
         } else {
             "Publish the release, or save a draft"
         };
-        out.push(row("This page", Action::Create, publish, "publish", why));
-        return;
+        let write = Some("Write the title and notes");
+        crate::forms::offer(state, write, (publish, "publish"), why, out);
     }
-    if matches!(route, Route::Release { .. }) {
+}
+
+/// The menu's rows: making a release from a repository's pages, and
+/// changing the release on screen.
+fn doables(state: &State, out: &mut Vec<Doable>) {
+    let Some(route) = state.route().filter(|_| here(state).is_none()) else {
+        return;
+    };
+    let Some(repo) = route.repo() else {
+        return;
+    };
+    if matches!(route, Route::Releases(releases::Release { .. })) {
         let why = unchangeable(state);
         out.push(row(
             "Edit",
@@ -1028,12 +1051,9 @@ pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
 
 /// The form's page.
 pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
-    let blank = Form::default();
-    let form = state.writing.releases.get(route).unwrap_or(&blank);
-    let composing = matches!(
-        &state.overlay,
-        Some(Overlay::Compose(c)) if c.target == ComposeTarget::Write(Text::Release(route.clone()))
-    );
+    let form = state.forms.shown::<Form>(route);
+    let form = form.as_ref();
+    let composing = crate::forms::composing(state, route, 0);
     let mut rows = vec![FormRow {
         name: "Tag",
         value: form
@@ -1041,40 +1061,40 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
             .as_ref()
             .map_or_else(|| "Choose a tag ▾".into(), |t| format!("{t} ▾")),
         unset: form.tag.is_none(),
-        link: Some(WriteLink::Tag),
+        chips: Vec::new(),
+        link: Some(Row::Tag),
     }];
     let mut status = Vec::new();
     if let Some(tag) = &form.tag {
-        let (text, mark) = match form.tag_look() {
-            None | Some(Look::Asking) => (format!("Looking for {tag} on GitHub…"), Mark::Waiting),
-            Some(Look::Failed(why)) => (format!("Couldn't look for {tag}: {why}"), Mark::Problem),
-            Some(Look::Found(_)) if form.own_tag() => {
-                (format!("{tag} is this release's tag"), Mark::Fine)
-            }
-            Some(Look::Found(TagLook {
+        let (text, mark) = match form.tag_look(state, repo) {
+            None => (format!("Looking for {tag} on GitHub…"), Mark::Waiting),
+            Some(Err(why)) => (format!("Couldn't look for {tag}: {why}"), Mark::Problem),
+            Some(Ok(_)) if form.own_tag() => (format!("{tag} is this release's tag"), Mark::Fine),
+            Some(Ok(TagLook {
                 release: Some(_), ..
             })) => (
                 problem(state, repo, form).unwrap_or_default(),
                 Mark::Problem,
             ),
-            Some(Look::Found(TagLook { exists: true, .. })) => {
+            Some(Ok(TagLook { exists: true, .. })) => {
                 (format!("{tag} is on GitHub already"), Mark::Fine)
             }
-            Some(Look::Found(_)) => (
+            Some(Ok(_)) => (
                 format!("{tag} is a new tag: GitHub makes it when the release is published"),
                 Mark::Fine,
             ),
         };
-        status.push((text, mark));
+        status.push((text, mark, None));
     }
-    if form.new_tag() {
+    if form.new_tag(state, repo) {
         let target = (form.target.clone())
             .unwrap_or_else(|| format!("{} (default branch)", default_branch(state, repo)));
         rows.push(FormRow {
             name: "Target",
             value: format!("{target} ▾"),
             unset: false,
-            link: Some(WriteLink::Target),
+            chips: Vec::new(),
+            link: Some(Row::Target),
         });
     }
     let check = |on: bool| if on { "☑" } else { "☐" };
@@ -1088,13 +1108,15 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
             name: "Notes",
             value: format!("Generate release notes · {notes}"),
             unset: false,
-            link: Some(WriteLink::Notes),
+            chips: Vec::new(),
+            link: Some(Row::Notes),
         },
         FormRow {
             name: "Pre-release",
             value: format!("{} Set as a pre-release", check(form.prerelease)),
             unset: false,
-            link: Some(WriteLink::Prerelease),
+            chips: Vec::new(),
+            link: Some(Row::Prerelease),
         },
         FormRow {
             name: "Latest",
@@ -1104,7 +1126,8 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
                 format!("{} Set as the latest release", check(form.latest))
             },
             unset: form.prerelease,
-            link: Some(WriteLink::Latest),
+            chips: Vec::new(),
+            link: Some(Row::Latest),
         },
     ];
     let (title, notes) = templates::split(&form.text);
@@ -1142,7 +1165,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
             markdown: true,
             empty: "No notes yet.",
             hint: "The first line is the title; then the notes, in Markdown (ctrl-e for $EDITOR)",
-            link: Link::Comment,
+            link: Link::Form(crate::ui::form::Row::Text(0)),
             actions: Vec::new(),
         }],
         after,
@@ -1150,7 +1173,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
         button: button.into(),
         save_key: &save_key,
         why_not,
-        error: form.error.as_deref(),
+        error: state.forms.sent(route).error.as_deref(),
     };
     crate::ui::pages::write_form(page, &view);
 }

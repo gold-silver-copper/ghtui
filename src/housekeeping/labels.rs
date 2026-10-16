@@ -4,18 +4,27 @@
 use crate::api::browse::Results;
 use crate::api::housekeeping::{LabelChange, LabelInfo};
 use crate::api::model::RepoId;
+use crate::route::{Route, issues};
 use crate::ui::page::Page;
 use crate::ui::pages::{Mark, WriteFormView};
 
 use super::{
-    Chosen, Expected, Field, Form, FormOf, Key, Subject, Work, ask, expect, failed, form, form_mut,
-    form_row, item, refused, selected,
+    Expected, Field, Form, FormOf, Subject, ask, expect, form, form_mut, form_row, item, refused,
+    selected, setting,
 };
-use crate::browse::DataKey;
+use crate::data::DataKey;
 use crate::keymap::Action;
-use crate::route::Route;
 use crate::state::{Cmd, State};
-use crate::writes::Work as Writes;
+use crate::work::{self, Cx, Failure, Job};
+
+/// Makes or changes a label (`was`: its name before), or (no change)
+/// deletes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Save {
+    pub repo: RepoId,
+    pub was: Option<String>,
+    pub change: Option<LabelChange>,
+}
 
 /// The colours GitHub offers for a new label.
 const COLOURS: &[(&str, &str)] = &[
@@ -39,30 +48,25 @@ const COLOURS: &[(&str, &str)] = &[
 
 /// The repository's labels, as loaded.
 pub(super) fn list<'a>(state: &'a State, repo: &RepoId) -> Option<&'a Results<LabelInfo>> {
-    state.picked(&DataKey::Housekeeping(Key::Labels(repo.clone())))
+    state.picked(&DataKey::Labels(repo.clone()))
 }
 
 /// The label selected on the labels page.
 pub(super) fn picked(state: &State) -> Option<&LabelInfo> {
-    let Some(Route::Labels(repo)) = state.route() else {
+    let Some(Route::Issues(issues::Labels(repo))) = state.route() else {
         return None;
     };
     let list = list(state, repo)?;
-    selected(state, &list.items, |l| label_url(repo, &l.name))
-}
-
-/// A label's link: its open issues.
-pub fn label_url(repo: &RepoId, name: &str) -> String {
-    use crate::ui::pages::url as links;
-    format!("{}/labels/{}", links::repo(repo), links::encode_path(name))
+    selected(state, &list.items, |l| {
+        crate::ui::pages::url::label(repo, &l.name)
+    })
 }
 
 /// `,o` or `,e`: the label's form.
 #[must_use]
 pub(super) fn open(state: &mut State, repo: &RepoId, name: Option<String>) -> Vec<Cmd> {
     if let Some(why) = refused(state, repo, "Changing labels") {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     super::open(
         state,
@@ -77,8 +81,7 @@ pub(super) fn open(state: &mut State, repo: &RepoId, name: Option<String>) -> Ve
 #[must_use]
 pub(super) fn edit(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
     let Some(name) = picked(state).map(|l| l.name.clone()) else {
-        state.info("Select a label first");
-        return Vec::new();
+        return state.just_say("Select a label first");
     };
     open(state, repo, Some(name))
 }
@@ -118,7 +121,6 @@ pub(super) fn follow(
         }
         None => f.set(Field::Colour, colour),
     }
-    state.data_gen += 1;
     // A new label starts with its name.
     if name.is_none() && state.overlay.is_none() {
         return super::open_field(state, route, Field::Name);
@@ -150,9 +152,9 @@ pub(super) fn colour_rows(
     q: &str,
 ) -> Vec<(
     crate::ui::overlays::PaletteItem,
-    Option<crate::writes::Chosen>,
+    Option<crate::picker::Choice>,
 )> {
-    let set = |c: &str| Some(Chosen::Field(route.clone(), Field::Colour, c.to_owned()));
+    let set = |c: &str| setting(route, Field::Colour, c);
     let mut rows = Vec::new();
     if !q.is_empty() {
         rows.push(match colour(q) {
@@ -194,14 +196,12 @@ pub(super) fn submit(
     was: Option<&str>,
 ) -> Vec<Cmd> {
     if let Some(why) = refused(state, repo, "Changing labels") {
-        crate::writes::say(state, why);
-        return Vec::new();
+        return crate::forms::say(state, why);
     }
-    let change = match change(form(state, route)) {
+    let change = match change(&form(state, route)) {
         Ok(c) => c,
         Err(why) => {
-            crate::writes::say(state, why);
-            return Vec::new();
+            return crate::forms::say(state, why);
         }
     };
     let taken = list(state, repo).is_some_and(|l| {
@@ -209,107 +209,114 @@ pub(super) fn submit(
             .any(|l| l.name.eq_ignore_ascii_case(&change.name) && Some(l.name.as_str()) != was)
     });
     if taken {
-        crate::writes::say(
+        return crate::forms::say(
             state,
             format!("{repo} has a label named {} already", change.name),
         );
-        return Vec::new();
     }
-    form_mut(state, route).sending = true;
-    crate::writes::sending(state);
+    crate::forms::form_sending(state, route);
     state.info(format!("Saving the label {}…", change.name));
-    vec![Cmd::Write(Writes::Housekeeping(Work::Label {
+    work::start(Save {
         repo: repo.clone(),
         was: was.map(str::to_owned),
         change: Some(change),
-    }))]
+    })
 }
 
 /// `,D` on the labels page: asks first, as GitHub does.
 #[must_use]
 pub(super) fn ask_delete(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
     if let Some(why) = refused(state, repo, "Changing labels") {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let Some(l) = picked(state).cloned() else {
-        state.info("Select a label first");
-        return Vec::new();
+        return state.just_say("Select a label first");
     };
     let on = match l.open {
         0 => "No open issue or pull request has it".to_owned(),
         1 => "It comes off its open issue or pull request (and any closed ones)".to_owned(),
         n => format!("It comes off its {n} open issues and pull requests (and any closed ones)"),
     };
+    let subject = Subject::Label(repo.clone(), l.name.clone());
     ask(
         state,
-        Some(Subject::Label(repo.clone(), l.name.clone())),
         format!("Delete the label {}?", l.name),
         vec![(on, l.open > 0), ("It can't be brought back".into(), true)],
-        vec![("Delete label".into(), super::Answer::Delete)],
+        vec![("Delete label".into(), super::Answer::Delete(subject))],
     );
     Vec::new()
 }
 
 #[must_use]
 pub(super) fn delete(state: &mut State, repo: RepoId, name: String) -> Vec<Cmd> {
-    crate::writes::sending(state);
-    vec![Cmd::Write(Writes::Housekeeping(Work::Label {
+    crate::forms::sending(state);
+    work::start(Save {
         repo,
         was: Some(name),
         change: None,
-    }))]
+    })
 }
 
-/// GitHub's answer: the labels page follows it until it shows the change.
-#[must_use]
-pub(super) fn on_done(state: &mut State, work: Work, result: Result<(), String>) -> Vec<Cmd> {
-    let Work::Label { repo, was, change } = work else {
-        return Vec::new();
-    };
-    let form = Route::Housekeeping(FormOf::Label {
-        repo: repo.clone(),
-        name: was.clone().filter(|_| change.is_some()),
-    });
-    let page = Route::Labels(repo.clone());
-    if let Err(why) = result {
-        failed(state, &form, why);
-        return Vec::new();
-    }
-    crate::writes::close_sender(state, &page);
-    crate::writes::close_sender(state, &form);
-    state.writing.housekeeping.forms.remove(&form);
-    let said = match (&change, &was) {
-        (Some(c), None) => format!("Created the label {}", c.name),
-        (Some(c), Some(_)) => format!("Saved the label {}", c.name),
-        (None, Some(was)) => format!("Deleted the label {was}"),
-        (None, None) => return Vec::new(),
-    };
-    state.info(said);
-    let mut cmds = Vec::new();
-    // The form goes back to the labels page.
-    if state.route() == Some(&form) {
-        cmds.extend(state.back());
-        state.forward.clear();
-        if state.route() != Some(&page) {
-            cmds.extend(state.replace(page.clone(), true, None));
+impl Job for Save {
+    type Out = ();
+
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        let (gh, repo) = (&cx.gh, &self.repo);
+        match (&self.was, &self.change) {
+            (None, Some(c)) => gh.create_label(repo, c).await?,
+            (Some(was), Some(c)) => gh.update_label(repo, was, c).await?,
+            (Some(was), None) => gh.delete_label(repo, was).await?,
+            (None, None) => {}
         }
+        Ok(())
     }
-    if state.route() == Some(&page) {
-        // Deleted or renamed: its old name is gone.
-        let gone = was.filter(|was| change.as_ref().is_none_or(|c| c.name != *was));
-        expect(
-            state,
-            page.clone(),
-            Expected::Label {
-                repo,
-                gone,
-                shown: change,
-            },
-        );
-        cmds.extend(state.ensure_route(&page, true));
+
+    /// GitHub's answer: the labels page follows it until it shows the change.
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        let work = self;
+        let Save { repo, was, change } = work;
+        let form = Route::Housekeeping(FormOf::Label {
+            repo: repo.clone(),
+            name: was.clone().filter(|_| change.is_some()),
+        });
+        let page = Route::Issues(issues::Labels(repo.clone()));
+        if let Err(why) = result {
+            return crate::forms::failed(state, &form, why.to_string());
+        }
+        crate::forms::close_sender(state, &page);
+        crate::forms::done::<Form>(state, &form);
+        let said = match (&change, &was) {
+            (Some(c), None) => format!("Created the label {}", c.name),
+            (Some(c), Some(_)) => format!("Saved the label {}", c.name),
+            (None, Some(was)) => format!("Deleted the label {was}"),
+            (None, None) => return Vec::new(),
+        };
+        state.info(said);
+        let mut cmds = Vec::new();
+        // The form goes back to the labels page.
+        if state.route() == Some(&form) {
+            cmds.extend(state.back());
+            state.forward.clear();
+            if state.route() != Some(&page) {
+                cmds.extend(state.replace(page.clone(), true, None));
+            }
+        }
+        if state.route() == Some(&page) {
+            // Deleted or renamed: its old name is gone.
+            let gone = was.filter(|was| change.as_ref().is_none_or(|c| c.name != *was));
+            expect(
+                state,
+                page.clone(),
+                Expected::Label {
+                    repo,
+                    gone,
+                    shown: change,
+                },
+            );
+            cmds.extend(state.ensure_route(&page, true));
+        }
+        cmds
     }
-    cmds
 }
 
 /// The form's page.
@@ -323,26 +330,30 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route) {
         None => format!("New label in {repo}"),
     };
     let mut status = Vec::new();
-    if let Ok(c) = change(f) {
-        status.push((format!("Shows as  {}  (#{})", c.name, c.color), Mark::Fine));
+    if let Ok(c) = change(&f) {
+        status.push((
+            format!("Shows as  {}  (#{})", c.name, c.color),
+            Mark::Fine,
+            None,
+        ));
     }
     let save_key = state.first_key(Action::Create);
     let view = WriteFormView {
         heading,
         base: None,
         rows: vec![
-            form_row(f, Field::Name, "Label name"),
-            form_row(f, Field::Description, "Description (optional)"),
-            form_row(f, Field::Colour, "#rrggbb"),
+            form_row(&f, Field::Name, "Label name"),
+            form_row(&f, Field::Description, "Description (optional)"),
+            form_row(&f, Field::Colour, "#rrggbb"),
         ],
         status,
         boxes: Vec::new(),
         after: Vec::new(),
         write: "",
-        button: super::button(&route_of(route), f),
+        button: super::button(&route_of(route), &f),
         save_key: &save_key,
         why_not: super::problem(state, route, &route_of(route)),
-        error: f.error.as_deref(),
+        error: state.forms.sent(route).error.as_deref(),
     };
     crate::ui::pages::write_form(page, &view);
 }

@@ -5,18 +5,19 @@
 //! asking. The page follows GitHub until it shows an upload or a
 //! deletion.
 
+use crate::route::{Route, releases};
 use std::path::{Path, PathBuf};
 
-use crate::api::GitHub;
+use crate::act::Step;
 use crate::api::browse::{Asset, Release};
 use crate::api::model::RepoId;
-use crate::browse::DataKey;
+use crate::data::DataKey;
+use crate::forms::Answer;
 use crate::keymap::Action;
-use crate::route::Route;
+use crate::picker::{Choice, entry};
 use crate::state::{Cmd, Screen, State};
-use crate::ui::overlays::PaletteItem;
-use crate::ui::page::{Link, WriteLink};
-use crate::writes::{Answer, Chosen, Expected, Pick, Work as Writes, item};
+use crate::ui::page::Link;
+use crate::work::{self, Cx, Failure, Job};
 
 /// An asset of a release, by REST's ID for the release and the asset's
 /// name (unique on a release).
@@ -28,64 +29,91 @@ pub struct Of {
     pub name: String,
 }
 
-/// Work in the background.
+/// Saving an asset to `path` (over a file there, with `replace`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Work {
-    Save {
-        of: Of,
-        path: PathBuf,
-        replace: bool,
-    },
-    Upload {
-        of: Of,
-        path: PathBuf,
-    },
-    Delete(Of),
+pub struct Save {
+    pub of: Of,
+    pub path: PathBuf,
+    pub replace: bool,
 }
 
-#[derive(Debug)]
-pub enum Done {
-    Saved(Of, PathBuf, Result<u64, String>),
-    Uploaded(Of, Result<(), String>),
-    Deleted(Of, Result<(), String>),
+/// Uploading the file at `path` as the asset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Upload {
+    pub of: Of,
+    pub path: PathBuf,
 }
 
-impl Done {
-    pub fn wrote(&self) -> bool {
-        match self {
-            Done::Saved(..) => false,
-            Done::Uploaded(_, r) | Done::Deleted(_, r) => r.is_ok(),
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Delete(pub Of);
+
+impl Job for Save {
+    /// Its size.
+    type Out = u64;
+    const WRITES: bool = false;
+
+    async fn run(&self, cx: &Cx) -> Result<u64, Failure> {
+        let Save { of, path, replace } = self;
+        let saved = cx
+            .gh
+            .download_asset(&of.repo, of.id, &of.name, path, *replace);
+        Ok(saved.await?)
+    }
+
+    fn done(self, state: &mut State, result: Result<u64, Failure>) -> Vec<Cmd> {
+        match result {
+            Ok(size) => {
+                let size = crate::ui::text::size(size);
+                let (name, path) = (self.of.name, self.path.display());
+                state.info(format!("Saved {name} to {path} ({size})"));
+            }
+            Err(why) => state.error(format!("Couldn't save {}: {why}", self.of.name)),
         }
+        Vec::new()
     }
 }
 
-impl Work {
-    pub fn failed(self, why: String) -> Done {
-        match self {
-            Work::Save { of, path, .. } => Done::Saved(of, path, Err(why)),
-            Work::Upload { of, .. } => Done::Uploaded(of, Err(why)),
-            Work::Delete(of) => Done::Deleted(of, Err(why)),
-        }
+impl Job for Upload {
+    type Out = ();
+
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        let of = &self.of;
+        Ok(cx
+            .gh
+            .upload_asset(&of.repo, of.id, &self.path, &of.name)
+            .await?)
     }
 
-    pub async fn run(self, gh: &GitHub) -> Done {
-        let why = |err: crate::api::ApiError| crate::writes::reason(&err);
-        match self {
-            Work::Save { of, path, replace } => {
-                let saved = gh
-                    .download_asset(&of.repo, of.id, &of.name, &path, replace)
-                    .await;
-                Done::Saved(of, path, saved.map_err(why))
-            }
-            Work::Upload { of, path } => {
-                let sent = gh.upload_asset(&of.repo, of.id, &path, &of.name).await;
-                Done::Uploaded(of, sent.map_err(why))
-            }
-            Work::Delete(of) => {
-                let done = gh.delete_asset(&of.repo, of.id, &of.name).await;
-                Done::Deleted(of, done.map_err(why))
-            }
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        if let Err(why) = result {
+            state.error(format!("GitHub didn't take {}: {why}", self.of.name));
+            return Vec::new();
         }
+        state.info(format!("Uploaded {}", self.of.name));
+        follow(state, self.of, true)
+    }
+}
+
+impl Job for Delete {
+    type Out = ();
+
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        let of = &self.0;
+        Ok(cx.gh.delete_asset(&of.repo, of.id, &of.name).await?)
+    }
+
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        let of = self.0;
+        if let Err(why) = result {
+            return crate::forms::say(state, format!("GitHub didn't delete {}: {why}", of.name));
+        }
+        let route = Route::Releases(releases::Release {
+            repo: of.repo.clone(),
+            tag: of.tag.clone(),
+        });
+        crate::forms::close_sender(state, &route);
+        state.info(format!("Deleted {}", of.name));
+        follow(state, of, false)
     }
 }
 
@@ -111,7 +139,7 @@ pub fn selected(state: &State) -> Option<String> {
         return None;
     };
     match p.selected_link()? {
-        Link::Write(WriteLink::Asset(name)) => Some(name.clone()),
+        Link::Asset(name) => Some(name.clone()),
         _ => None,
     }
 }
@@ -120,64 +148,35 @@ pub fn selected(state: &State) -> Option<String> {
 #[must_use]
 pub fn open(state: &mut State, name: &str) -> Vec<Cmd> {
     let Some(of) = of(state, name) else {
-        state.info("The release hasn't loaded yet");
-        return Vec::new();
+        return state.just_say("The release hasn't loaded yet");
     };
-    crate::writes::open_picker(state, Pick::SaveAsset(of))
+    state.open_picker(crate::picker::Kind::SaveAsset(of))
 }
 
 /// `,U`: a file to upload.
 #[must_use]
 pub fn open_upload(state: &mut State) -> Vec<Cmd> {
-    if !matches!(state.route(), Some(Route::Release { .. })) {
-        state.info("Assets are uploaded to a release: open its page");
-        return Vec::new();
+    if !matches!(
+        state.route(),
+        Some(Route::Releases(releases::Release { .. }))
+    ) {
+        return state.just_say("Assets are uploaded to a release: open its page");
     }
     if let Some(why) = super::unchangeable(state) {
-        state.info(why);
-        return Vec::new();
+        return state.just_say(why);
     }
     let Some(of) = of(state, "") else {
         return Vec::new();
     };
-    crate::writes::open_picker(state, Pick::Upload(of))
+    state.open_picker(crate::picker::Kind::Upload(of))
 }
 
-/// Where an asset `name` is saved for what's typed: in the current
-/// folder by default, in a folder named, or as the file named.
-fn save_path(typed: &str, name: &str) -> PathBuf {
-    let typed = typed.trim();
-    if typed.is_empty() {
-        return Path::new(".").join(name);
-    }
-    let path = PathBuf::from(typed);
-    if typed.ends_with('/') || path.is_dir() {
-        path.join(name)
-    } else {
-        path
-    }
-}
-
-/// The saving picker's row: saving where it's typed, or (where a file
-/// is) replacing it, which choosing is the asking.
-pub fn save_rows(of: &Of, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
-    let path = save_path(q, &of.name);
-    let shown = path.display().to_string();
-    let chosen = |replace| {
-        Some(Chosen::SaveAsset {
-            of: of.clone(),
-            path: path.clone(),
-            replace,
-        })
-    };
-    if path.is_dir() {
-        return vec![item(format!("{shown} is a folder"), "", None)];
-    }
-    if path.exists() {
-        vec![item(format!("Replace {shown}"), "it exists", chosen(true))]
-    } else {
-        vec![item(format!("Save to {shown}"), "", chosen(false))]
-    }
+/// The saving picker's row.
+pub fn save_rows(of: &Of, q: &str) -> crate::picker::Rows {
+    crate::picker::save_rows(q, &of.name, "", |path, replace| {
+        let of = of.clone();
+        Save { of, path, replace }.into()
+    })
 }
 
 /// How many files the upload picker lists of a folder.
@@ -185,7 +184,7 @@ const LISTED: usize = 50;
 
 /// The upload picker's rows: the file typed, else the files in the
 /// folder typed (or beside what's typed) whose names start as typed.
-pub fn upload_rows(state: &State, of: &Of, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
+pub fn upload_rows(state: &State, of: &Of, q: &str) -> crate::picker::Rows {
     let typed = q.trim();
     let release = (super::shown(state)).map(|(_, _, r)| r);
     let row = |path: &Path| {
@@ -197,20 +196,24 @@ pub fn upload_rows(state: &State, of: &Of, q: &str) -> Vec<(PaletteItem, Option<
         let shown = path.display().to_string();
         if release.is_some_and(|r| asset(r, &name).is_some()) {
             let delete = state.first_key(Action::DeleteComment);
-            return item(
+            return entry(
                 format!("{name} is on the release already"),
                 format!("{delete} on it deletes it"),
                 None,
             );
         }
         let up = Of { name, ..of.clone() };
-        item(
+        entry(
             format!("Upload {shown}"),
             crate::ui::text::size(size),
-            Some(Chosen::Upload {
-                of: up,
-                path: path.to_owned(),
-            }),
+            Some(Choice::Step(Step::Start(
+                format!("Uploading {shown}…"),
+                Upload {
+                    of: up,
+                    path: path.to_owned(),
+                }
+                .into(),
+            ))),
         )
     };
     let path = PathBuf::from(if typed.is_empty() { "." } else { typed });
@@ -231,7 +234,7 @@ pub fn upload_rows(state: &State, of: &Of, q: &str) -> Vec<(PaletteItem, Option<
         (dir, start)
     };
     let Ok(entries) = std::fs::read_dir(&dir) else {
-        return vec![item(format!("No file or folder {typed}"), "", None)];
+        return vec![entry(format!("No file or folder {typed}"), "", None)];
     };
     let mut files: Vec<PathBuf> = entries
         .filter_map(Result::ok)
@@ -246,14 +249,14 @@ pub fn upload_rows(state: &State, of: &Of, q: &str) -> Vec<(PaletteItem, Option<
     let more = files.len().saturating_sub(LISTED);
     let mut rows: Vec<_> = files.iter().take(LISTED).map(|p| row(p)).collect();
     if rows.is_empty() {
-        rows.push(item(
+        rows.push(entry(
             format!("No files in {} start with “{start}”", dir.display()),
             "",
             None,
         ));
     }
     if more > 0 {
-        rows.push(item(
+        rows.push(entry(
             format!("{more} more: type more of the name"),
             "",
             None,
@@ -263,22 +266,6 @@ pub fn upload_rows(state: &State, of: &Of, q: &str) -> Vec<(PaletteItem, Option<
 }
 
 /// Choosing a row: saving, or uploading.
-#[must_use]
-pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
-    let work = match chosen {
-        Chosen::SaveAsset { of, path, replace } => {
-            state.info(format!("Saving {} to {}…", of.name, path.display()));
-            Work::Save { of, path, replace }
-        }
-        Chosen::Upload { of, path } => {
-            state.info(format!("Uploading {}…", path.display()));
-            Work::Upload { of, path }
-        }
-        _ => return Vec::new(),
-    };
-    vec![Cmd::Write(Writes::Release(super::Work::Asset(work)))]
-}
-
 /// `,D` on an asset: asks first, as GitHub does.
 #[must_use]
 pub fn ask_delete(state: &mut State, name: &str) -> Vec<Cmd> {
@@ -300,9 +287,9 @@ pub fn ask_delete(state: &mut State, name: &str) -> Vec<Cmd> {
         ),
         true,
     )];
-    crate::writes::ask(
+    crate::forms::ask(
         state,
-        Route::Release { repo, tag },
+        Route::Releases(releases::Release { repo, tag }),
         format!("Delete {name}?"),
         facts,
         vec![("Delete asset".into(), Answer::DeleteAsset(name.to_owned()))],
@@ -316,67 +303,27 @@ pub fn delete(state: &mut State, name: &str) -> Vec<Cmd> {
     let Some(of) = of(state, name) else {
         return Vec::new();
     };
-    crate::writes::sending(state);
-    vec![Cmd::Write(Writes::Release(super::Work::Asset(
-        Work::Delete(of),
-    )))]
-}
-
-/// Work's answers: a saved file is said; the release's page follows an
-/// upload or a deletion.
-#[must_use]
-pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
-    match done {
-        Done::Saved(of, path, Ok(size)) => {
-            let size = crate::ui::text::size(size);
-            state.info(format!("Saved {} to {} ({size})", of.name, path.display()));
-            Vec::new()
-        }
-        Done::Saved(of, _, Err(why)) => {
-            state.error(format!("Couldn't save {}: {why}", of.name));
-            Vec::new()
-        }
-        Done::Uploaded(of, Ok(())) => {
-            state.info(format!("Uploaded {}", of.name));
-            follow(state, of, true)
-        }
-        Done::Uploaded(of, Err(why)) => {
-            state.error(format!("GitHub didn't take {}: {why}", of.name));
-            Vec::new()
-        }
-        Done::Deleted(of, Ok(())) => {
-            let route = Route::Release {
-                repo: of.repo.clone(),
-                tag: of.tag.clone(),
-            };
-            crate::writes::close_sender(state, &route);
-            state.info(format!("Deleted {}", of.name));
-            follow(state, of, false)
-        }
-        Done::Deleted(of, Err(why)) => {
-            crate::writes::say(state, format!("GitHub didn't delete {}: {why}", of.name));
-            Vec::new()
-        }
-    }
+    crate::forms::sending(state);
+    work::start(Delete(of))
 }
 
 /// The release's page, if it's on screen, follows GitHub until it shows
 /// the asset there (or gone).
 fn follow(state: &mut State, of: Of, there: bool) -> Vec<Cmd> {
-    let route = Route::Release {
+    let route = Route::Releases(releases::Release {
         repo: of.repo.clone(),
         tag: of.tag.clone(),
-    };
+    });
     if state.route() != Some(&route) {
         return Vec::new();
     }
-    let what = Expected::Asset {
+    let what = super::Expected::Asset {
         repo: of.repo,
         tag: of.tag,
         name: of.name,
         there,
     };
-    crate::writes::expect(state, route.clone(), what);
+    crate::follow::expect(state, route.clone(), what);
     state.ensure_route(&route, true)
 }
 
@@ -386,19 +333,4 @@ pub fn shows(state: &State, repo: &RepoId, tag: &str, name: &str, there: bool) -
     state
         .picked::<Release>(&key)
         .is_some_and(|r| asset(r, name).is_some() == there)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// An asset is saved by its own name in the current folder, in a
-    /// folder named, or as the file named.
-    #[test]
-    fn an_asset_is_saved_where_its_typed() {
-        let name = "ghtui.tar.gz";
-        assert_eq!(save_path("", name), Path::new(".").join(name));
-        assert_eq!(save_path("out/", name), Path::new("out/").join(name));
-        assert_eq!(save_path("x.tgz", name), PathBuf::from("x.tgz"));
-    }
 }

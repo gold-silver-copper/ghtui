@@ -232,9 +232,7 @@ fn parse_hit(line: &str, prefix: &str) -> Option<Hit> {
 mod tests {
     use super::*;
 
-    async fn git(dir: &Path, args: &[&str]) -> String {
-        crate::git::run(Some(dir), args).await.unwrap()
-    }
+    use crate::git::set_up as git;
 
     /// A repository with a commit of two Rust files and a binary one.
     async fn repo() -> (tempfile::TempDir, Repo, Oid) {

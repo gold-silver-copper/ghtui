@@ -1,8 +1,8 @@
-//! The forms for what used to need the browser: a new release, a gist
-//! made or changed, a wiki page written.
+//! The forms for writes made on GitHub: a new issue or pull request, a
+//! release, a gist made or changed, a wiki page written, housekeeping's.
 
 use super::*;
-use crate::ui::page::WriteLink;
+use crate::ui::form::Row;
 
 /// A row of a form: what it's called, what it's set to, and what Enter on
 /// it does (none: it only says).
@@ -11,7 +11,17 @@ pub struct FormRow {
     pub value: String,
     /// The value is a placeholder or a note, not what's set.
     pub unset: bool,
-    pub link: Option<WriteLink>,
+    /// Labels after the value: each name with its color.
+    pub chips: Vec<(String, String)>,
+    pub link: Option<Row>,
+}
+
+/// How a line about what's set reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mark {
+    Fine,
+    Waiting,
+    Problem,
 }
 
 /// A box of text the composer writes: its title (the first line, or a
@@ -29,7 +39,7 @@ pub struct TextBox<'a> {
     /// What Enter on it does.
     pub link: Link,
     /// What else can be done with it, by name ("rename", "remove").
-    pub actions: Vec<(&'static str, WriteLink)>,
+    pub actions: Vec<(&'static str, Row)>,
 }
 
 pub struct WriteFormView<'a> {
@@ -37,8 +47,9 @@ pub struct WriteFormView<'a> {
     /// Where its Markdown's relative links point.
     pub base: Option<LinkBase>,
     pub rows: Vec<FormRow>,
-    /// Lines about what's set, as GitHub's notes under a field.
-    pub status: Vec<(String, Mark)>,
+    /// Lines about what's set, as GitHub's notes under a field; Enter on
+    /// one with a row does what that row does.
+    pub status: Vec<(String, Mark, Option<Row>)>,
     pub boxes: Vec<TextBox<'a>>,
     pub after: Vec<FormRow>,
     /// The key that writes the text, and the one that saves.
@@ -58,17 +69,22 @@ pub fn write_form(page: &mut Page, v: &WriteFormView<'_>) {
     for row in &v.rows {
         form_row(page, row);
     }
-    for (text, mark) in &v.status {
+    for (text, mark, target) in &v.status {
         let (sign, role) = match mark {
             Mark::Fine => ("✓ ", Role::Success),
             Mark::Waiting => ("… ", Role::Meta),
             Mark::Problem => ("! ", Role::Error),
         };
-        page.wrapped(
-            vec![Seg::new(sign, role), Seg::new(text.clone(), Role::Body)],
-            0,
-            Frame::None,
-        );
+        let start = page.lines.len();
+        let link = target.clone().map(|t| page.link(Link::Form(t)));
+        let text = match link {
+            Some(link) => Seg::linked(text.clone(), Role::Body, link),
+            None => Seg::new(text.clone(), Role::Body),
+        };
+        page.wrapped(vec![Seg::new(sign, role), text], 0, Frame::None);
+        if let Some(link) = link {
+            page.item(start, link);
+        }
     }
     for b in &v.boxes {
         text_box(page, b, v);
@@ -78,7 +94,7 @@ pub fn write_form(page: &mut Page, v: &WriteFormView<'_>) {
         form_row(page, row);
     }
     page.blank();
-    item(page, Link::Write(WriteLink::Save), |page, link| {
+    item(page, Link::Form(Row::Save), |page, link| {
         let role = match v.why_not {
             Some(_) => Role::Chip(Bg::ContainerHigh),
             None => Role::Chip(Bg::SuccessContainer),
@@ -108,12 +124,20 @@ fn form_row(page: &mut Page, row: &FormRow) {
             None => Seg::new(row.value.clone(), role),
         }
     };
-    let name = Seg::new(format!("{:<12}", row.name), Role::Strong);
+    let segs = |link| {
+        let mut segs = vec![Seg::new(format!("{:<12}", row.name), Role::Strong)];
+        segs.push(value(link));
+        for (name, color) in &row.chips {
+            segs.push(Seg::new(format!(" {name} "), Role::Label(color.clone())));
+            segs.push(space());
+        }
+        segs
+    };
     match &row.link {
-        Some(target) => item(page, Link::Write(target.clone()), |page, link| {
-            page.wrapped(vec![name, value(Some(link))], 0, Frame::None);
+        Some(target) => item(page, Link::Form(target.clone()), |page, link| {
+            page.wrapped(segs(Some(link)), 0, Frame::None);
         }),
-        None => page.wrapped(vec![name, value(None)], 0, Frame::None),
+        None => page.wrapped(segs(None), 0, Frame::None),
     }
 }
 
@@ -127,7 +151,7 @@ fn text_box(page: &mut Page, b: &TextBox<'_>, v: &WriteFormView<'_>) {
     let right = vec![Seg::new(right, Role::Meta)];
     let title_start = page.lines.len();
     let title_link = match rename {
-        Some((_, target)) => page.link(Link::Write(target.clone())),
+        Some((_, target)) => page.link(Link::Form(target.clone())),
         None => page.link(b.link.clone()),
     };
     let title = if b.title.is_empty() {
@@ -167,7 +191,7 @@ fn text_box(page: &mut Page, b: &TextBox<'_>, v: &WriteFormView<'_>) {
         link,
     );
     for (name, target) in b.actions.iter().filter(|(name, _)| *name != "rename") {
-        item(page, Link::Write(target.clone()), |page, link| {
+        item(page, Link::Form(target.clone()), |page, link| {
             page.line(vec![Seg::linked(
                 format!("  {name} this file"),
                 Role::Link,

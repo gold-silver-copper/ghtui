@@ -6,7 +6,43 @@ use super::*;
 use crate::api::insights::{
     Activity, Counted, Counter, Dependencies, Popular, Traffic, WEEK, YEAR_WEEKS,
 };
-use crate::site::{InsightsTab, Page as Site};
+
+/// Insights' tabs, as GitHub's sidebar lists them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InsightsTab {
+    Contributors,
+    Commits,
+    Traffic,
+    Dependencies,
+}
+
+impl InsightsTab {
+    pub const ALL: [InsightsTab; 4] = [
+        InsightsTab::Contributors,
+        InsightsTab::Commits,
+        InsightsTab::Traffic,
+        InsightsTab::Dependencies,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            InsightsTab::Contributors => "Contributors",
+            InsightsTab::Commits => "Commit activity",
+            InsightsTab::Traffic => "Traffic",
+            InsightsTab::Dependencies => "Dependency graph",
+        }
+    }
+
+    /// Its path under the repository.
+    pub fn path(self) -> &'static str {
+        match self {
+            InsightsTab::Contributors => "graphs/contributors",
+            InsightsTab::Commits => "graphs/commit-activity",
+            InsightsTab::Traffic => "graphs/traffic",
+            InsightsTab::Dependencies => "network/dependencies",
+        }
+    }
+}
 
 /// The columns a chart of weeks takes at most.
 const CHART: usize = 160;
@@ -21,12 +57,8 @@ pub fn insights_nav(page: &mut Page, repo: &RepoId, on: InsightsTab) {
         if !segs.is_empty() {
             segs.push(Seg::new(" · ", Role::Meta));
         }
-        let target = crate::route::Route::Site(Site::Insights {
-            repo: repo.clone(),
-            tab,
-        });
         let role = if tab == on { Role::Strong } else { Role::Link };
-        segs.push(link_seg(page, tab.name(), target.url(), role));
+        segs.push(link_seg(page, tab.name(), url::insights(repo, tab), role));
     }
     page.wrapped(segs, 0, Frame::None);
     page.blank();

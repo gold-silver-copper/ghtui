@@ -2,7 +2,7 @@
 //! page's tabs.
 
 use super::*;
-use crate::api::project::ProjectsOf;
+use crate::route::{app, code};
 
 /// A page you visited, for "jump to" suggestions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,7 +25,10 @@ impl State {
     #[must_use]
     pub(crate) fn record_visit(&mut self, route: &Route) -> Vec<Cmd> {
         // An unsplit page is recorded as the page it turns out to be.
-        if matches!(route, Route::Home | Route::Unsplit { .. }) {
+        if matches!(
+            route,
+            Route::App(app::Home) | Route::Code(code::Unsplit { .. })
+        ) {
             return Vec::new();
         }
         let url = route.url();
@@ -74,8 +77,7 @@ impl State {
             self.forward.push(screen);
             return self.load_visible(false);
         }
-        self.info("This is the first page");
-        Vec::new()
+        self.just_say("This is the first page")
     }
 
     #[must_use]
@@ -85,10 +87,7 @@ impl State {
                 self.screens.push(screen);
                 self.load_visible(false)
             }
-            None => {
-                self.info("Nothing to go forward to");
-                Vec::new()
-            }
+            None => self.just_say("Nothing to go forward to"),
         }
     }
 
@@ -133,9 +132,9 @@ impl State {
             Link::Branch => self.open_finder(true),
             Link::FindFile => self.open_finder(false),
             Link::Section(i) => self.open_section(*i),
-            Link::Form(link) => crate::create::follow_link(self, link),
-            Link::Write(link) => crate::writes::follow_link(self, link),
-            Link::Artifact { .. } | Link::Dispatch(_) => crate::actions::follow_link(self, link),
+            Link::Form(row) => crate::forms::row(self, row),
+            Link::Artifact { id, name } => crate::workflows::save(self, *id, name),
+            Link::Asset(name) => crate::release::assets::open(self, name),
             Link::Review(link) => crate::talk::follow(self, link),
             Link::Setting(link) => crate::settings::follow_link(self, link),
             Link::Queued(id) => crate::offline::follow(self, *id),
@@ -146,17 +145,16 @@ impl State {
                     self.first_key(Action::QuoteReply),
                     self.first_key(Action::Comment),
                 );
-                self.info(format!(
+                self.just_say(format!(
                     "{quote} replies quoting this comment · {comment} comments"
-                ));
-                Vec::new()
+                ))
             }
         }
     }
 
     #[must_use]
     pub(super) fn load_more(&mut self) -> Vec<Cmd> {
-        let Some(key) = self.route().and_then(browse::paged) else {
+        let Some(key) = self.route().and_then(|r| r.family().paged()) else {
             return Vec::new();
         };
         let after = self.data.get_mut(&key).and_then(Remote::ask_more);
@@ -172,180 +170,10 @@ pub fn up_level(state: &mut State) -> Vec<Cmd> {
     let Some(route) = state.route().cloned() else {
         return Vec::new();
     };
-    match up(state, &route) {
+    match route.family().up(state) {
         Some(parent) => state.push(parent),
-        None => {
-            state.info("Already at the top");
-            Vec::new()
-        }
+        None => state.just_say("Already at the top"),
     }
-}
-
-/// The page above this one, like GitHub's breadcrumbs.
-pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
-    let default = |repo: &RepoId| state.overview(repo).and_then(|o| o.default_branch.clone());
-    let folder = |repo: &RepoId, rev: &str, path: &str| {
-        let parent = path.rsplit_once('/').map_or("", |(p, _)| p);
-        if parent.is_empty() && default(repo).as_deref() == Some(rev) {
-            Route::Repo(repo.clone())
-        } else {
-            Route::Tree {
-                repo: repo.clone(),
-                rev: rev.to_owned(),
-                path: parent.to_owned(),
-            }
-        }
-    };
-    Some(match route {
-        Route::Home => return None,
-        Route::Repo(repo) => Route::user(&repo.owner),
-        Route::Tree { repo, path, .. } if path.is_empty() => Route::Repo(repo.clone()),
-        Route::Tree { repo, rev, path }
-        | Route::Blob {
-            repo, rev, path, ..
-        } => folder(repo, rev, path),
-        Route::Blame {
-            repo, rev, path, ..
-        } => Route::blob(repo.clone(), rev.clone(), path.clone()),
-        Route::Settings {
-            repo,
-            page: crate::api::settings::SettingsPage::Hook(_),
-        } => Route::Settings {
-            repo: repo.clone(),
-            page: crate::api::settings::SettingsPage::Hooks,
-        },
-        Route::Issues { repo, .. }
-        | Route::Settings { repo, .. }
-        | Route::Discussions {
-            of: DiscussionsOf::Repo(repo),
-            ..
-        }
-        | Route::Pulls { repo, .. }
-        | Route::Commits { repo, .. }
-        | Route::Unsplit { repo, .. }
-        | Route::Stargazers(repo)
-        | Route::Watchers(repo)
-        | Route::Forks(repo)
-        | Route::Releases(repo)
-        | Route::Tags(repo)
-        | Route::Branches(repo)
-        | Route::Compare { repo, .. }
-        | Route::Deployments { repo, .. }
-        | Route::Milestones { repo, .. }
-        | Route::Wiki { repo, page: None }
-        | Route::Projects(ProjectsOf::Repo(repo))
-        | Route::Actions { repo, .. } => Route::Repo(repo.clone()),
-        Route::Discussion { of, .. } => Route::Discussions {
-            of: of.clone(),
-            category: None,
-        },
-        Route::Discussions {
-            of: DiscussionsOf::Org(org),
-            ..
-        } => Route::user(org),
-        Route::Release { repo, .. } | Route::NewRelease(repo) => Route::Releases(repo.clone()),
-        Route::EditRelease { repo, tag } => Route::Release {
-            repo: repo.clone(),
-            tag: tag.clone(),
-        },
-        Route::Dispatch { repo, file } => Route::Workflow {
-            repo: repo.clone(),
-            file: file.clone(),
-        },
-        Route::NewIssue(repo) | Route::Labels(repo) => Route::Issues {
-            repo: repo.clone(),
-            query: crate::route::OPEN.to_owned(),
-        },
-        Route::NewPr(repo) => Route::Pulls {
-            repo: repo.clone(),
-            query: crate::route::OPEN.to_owned(),
-        },
-        Route::Milestone { repo, .. } => Route::Milestones {
-            repo: repo.clone(),
-            closed: false,
-        },
-        Route::Housekeeping(of) => of.up()?,
-        Route::WorkflowRun { repo, .. }
-        | Route::Workflow { repo, .. }
-        | Route::Job {
-            repo, run: None, ..
-        } => Route::actions(repo.clone()),
-        Route::Job {
-            repo,
-            run: Some(run),
-            ..
-        } => Route::WorkflowRun {
-            repo: repo.clone(),
-            run: *run,
-            attempt: None,
-        },
-        Route::CommitChecks { repo, oid } => Route::Commit {
-            repo: repo.clone(),
-            oid: oid.clone(),
-            pr: None,
-        },
-        // A pull request's commit leads up to the pull request.
-        Route::Commit {
-            repo,
-            pr: Some(number),
-            ..
-        } => Route::pr(PrRef {
-            repo: repo.clone(),
-            number: *number,
-        }),
-        // A commit's history leads up to it.
-        Route::Commit { repo, oid, .. } => Route::Commits {
-            repo: repo.clone(),
-            rev: oid.clone(),
-            path: String::new(),
-        },
-        Route::Issue { repo, .. } => Route::Issues {
-            repo: repo.clone(),
-            query: crate::route::OPEN.into(),
-        },
-        Route::Pr { pr, .. } => Route::Pulls {
-            repo: pr.repo.clone(),
-            query: crate::route::OPEN.into(),
-        },
-        Route::User { .. }
-        | Route::Search { .. }
-        | Route::Notifications { .. }
-        | Route::Offline => Route::Home,
-        Route::Gist { owner, .. } => Route::Gists(owner.clone()?),
-        Route::NewGist => Route::Gists(state.viewer.clone()?),
-        Route::EditGist { owner, id } => Route::Gist {
-            owner: Some(owner.clone()),
-            id: id.clone(),
-        },
-        Route::WikiEdit { repo, page } => Route::Wiki {
-            repo: repo.clone(),
-            page: page.clone(),
-        },
-        Route::Gists(login) | Route::Teams(login) => Route::user(login),
-        Route::Team { org, .. } => Route::Teams(org.clone()),
-        Route::Wiki {
-            repo,
-            page: Some(_),
-        } => Route::Wiki {
-            repo: repo.clone(),
-            page: None,
-        },
-        Route::Advisory { repo, .. } => Route::Advisories(repo.clone()),
-        Route::Alert { repo, kind, .. } => Route::Alerts {
-            repo: repo.clone(),
-            kind: *kind,
-            query: crate::route::OPEN.into(),
-        },
-        Route::Alerts { repo, .. } => Route::Advisories(Some(repo.clone())),
-        Route::Advisories(repo) => repo.clone().map_or(Route::Home, Route::Repo),
-        Route::Projects(ProjectsOf::Owner(owner)) => Route::user(owner.login()),
-        Route::Project { project, .. } => Route::Projects(ProjectsOf::Owner(project.owner.clone())),
-        Route::ProjectItem { project, view, .. } => Route::Project {
-            project: project.clone(),
-            view: *view,
-        },
-        Route::Site(page) => page.up(),
-    })
 }
 
 /// Switches to the chrome's tab `n` (1-based).
@@ -353,12 +181,10 @@ pub(super) fn up(state: &State, route: &Route) -> Option<Route> {
 pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
     let chrome = state.chrome();
     let Some((tab, target)) = n.checked_sub(1).and_then(|i| chrome.tabs.get(i)).cloned() else {
-        state.info(format!("No tab {n} here"));
-        return Vec::new();
+        return state.just_say(format!("No tab {n} here"));
     };
     if chrome.active == Some(n - 1) {
-        state.info(format!("Already on {}", tab.label));
-        return Vec::new();
+        return state.just_say(format!("Already on {}", tab.label));
     }
     // A page's tabs aren't history: the tab replaces the screen, and the
     // one left is kept to come back to as it was.
@@ -388,10 +214,7 @@ pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
 pub fn review_glance(state: &mut State) -> Vec<Cmd> {
     match state.review_tab() {
         Some(n) => switch_tab(state, n),
-        None => {
-            state.info("A review at a glance is a pull request's");
-            Vec::new()
-        }
+        None => state.just_say("A review at a glance is a pull request's"),
     }
 }
 
@@ -434,8 +257,7 @@ pub fn step_tab(state: &mut State, forward: bool) -> Vec<Cmd> {
     let chrome = state.chrome();
     let n = chrome.tabs.len();
     let Some(active) = chrome.active.filter(|_| n > 1) else {
-        state.info("No other tabs here");
-        return Vec::new();
+        return state.just_say("No other tabs here");
     };
     let next = if forward {
         Some(active + 1).filter(|&i| i < n)
@@ -444,13 +266,10 @@ pub fn step_tab(state: &mut State, forward: bool) -> Vec<Cmd> {
     };
     match next {
         Some(i) => switch_tab(state, i + 1),
-        None => {
-            state.info(if forward {
-                "This is the last tab"
-            } else {
-                "This is the first tab"
-            });
-            Vec::new()
-        }
+        None => state.just_say(if forward {
+            "This is the last tab"
+        } else {
+            "This is the first tab"
+        }),
     }
 }

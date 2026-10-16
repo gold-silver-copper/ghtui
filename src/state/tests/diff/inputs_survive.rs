@@ -1,9 +1,5 @@
 use super::*;
-use crate::api::model::PatchFile;
-use crate::diff_job::{DiffFiles, JobMsg};
-use crate::diff_screen::DiffState;
-use crate::review::ComposeTarget;
-use std::sync::Arc;
+use crate::diff_job::DiffFiles;
 
 const PATH: &str = "lines.txt";
 
@@ -72,13 +68,7 @@ fn loading() -> (State, PrRef, crate::diff_job::JobId) {
         of,
         DiffPrefs::fit(120),
     ))));
-    s.prs.insert(
-        pr.clone(),
-        Remote::cached(Some(crate::store::Cached {
-            value: crate::snapshot_tests::pr_detail(),
-            fetched_at: 0,
-        })),
-    );
+    crate::fixtures::pr_cached(&mut s, &pr, crate::fixtures::pr_detail());
     diff_msg(
         &mut s,
         &pr,
@@ -88,7 +78,7 @@ fn loading() -> (State, PrRef, crate::diff_job::JobId) {
 }
 
 /// Where `c` on the changed line 15 would put a comment.
-fn comment_target(s: &mut State) -> ComposeTarget {
+fn comment_target(s: &mut State) -> compose::Target {
     press(s, "/");
     press(s, "fifteen changed<Enter>");
     press(s, "c");
@@ -98,13 +88,13 @@ fn comment_target(s: &mut State) -> ComposeTarget {
     target
 }
 
-fn is_file_comment(target: &ComposeTarget) -> bool {
+fn is_file_comment(target: &compose::Target) -> bool {
     matches!(
         target,
-        ComposeTarget::File {
+        compose::Target::Review(crate::review::Comment::File {
             reason: Some(_),
             ..
-        }
+        })
     )
 }
 
@@ -205,21 +195,9 @@ fn a_file_marked_viewed_stays_viewed_in_another_range() {
             states: std::collections::HashMap::new(),
         }))),
     );
-    let cmds = press(&mut s, ",v");
-    assert!(
-        cmds.iter()
-            .any(|c| matches!(c, Cmd::Api(Api::SetViewed { viewed: true, .. }))),
-        "{cmds:?}"
-    );
-    diff_msg(
-        &mut s,
-        &pr,
-        DiffMsg::ViewedSaved {
-            path: PATH.into(),
-            previous: Viewed::Unviewed,
-            result: Ok(()),
-        },
-    );
+    let job = fixtures::sent::<crate::review::SetViewed>(&press(&mut s, ",v"));
+    assert!(job.viewed && job.path == PATH);
+    fixtures::done(&mut s, job, Ok(()));
     let of = DiffOf::Pr(pr.clone());
     assert_eq!(s.diffs[&of].doc.files()[0].viewed, Viewed::Viewed);
 

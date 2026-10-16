@@ -1,7 +1,8 @@
 //! A repository's Settings tab, for its admins: branch protection rules
 //! and rulesets, collaborators, webhooks, deploy keys, and archiving.
 //! These change a repository for everyone, so every change asks first
-//! and names what it changes: a [`Confirm`] lists it, line by line.
+//! and names what it changes: a question ([`crate::forms::Ask`]) lists
+//! it, line by line.
 //! Rules, webhooks and deploy keys are written in the composer as a form
 //! of `Name: value` lines ([`Form`]); a role is picked ([`Pick`]);
 //! archiving asks twice, the second time for the repository's name, as
@@ -15,15 +16,15 @@ use crate::api::settings::{
     Checks, Enforcement, HookForm, Permission, Reviews, Role as Given, RuleForm, Settings,
     SettingsChange, SettingsPage,
 };
+use crate::route::{Route, settings};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::pages::{SettingKeys, SettingLink};
 
-use crate::act::{Confirm, Subject};
-use crate::browse::DataKey;
+use crate::act::{Step, Subject};
+use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::route::Route;
-use crate::state::{Cmd, Overlay, Screen, State};
+use crate::state::{Cmd, Screen, State};
 use crate::ui::page::{Link, Page};
 
 /// The actions this module takes as its own.
@@ -35,19 +36,12 @@ pub const ACTIONS: [Action; 5] = [
     Action::Redeliver,
 ];
 
-/// A form sent and not yet taken by GitHub: if GitHub refuses it, the
-/// composer opens again with its text.
-#[derive(Debug, Default)]
-pub struct Kept {
-    pub form: Option<(Form, String)>,
-}
-
 // ---- where you are ------------------------------------------------------------------
 
 /// The settings page on screen.
 fn here(state: &State) -> Option<(RepoId, SettingsPage)> {
     match state.route()? {
-        Route::Settings { repo, page } => Some((repo.clone(), *page)),
+        Route::Settings(settings::Page { repo, page }) => Some((repo.clone(), *page)),
         _ => None,
     }
 }
@@ -71,21 +65,14 @@ const LOADING: &str = "It's still loading";
 
 // ---- what a key does --------------------------------------------------------------
 
-/// What an action does here.
-enum Plan {
-    Ask(Box<Confirm>),
-    Pick(Pick),
-    Write(Form, String),
-}
-
 fn ask(
     action: Action,
     at: (&RepoId, SettingsPage),
     title: String,
     facts: Vec<(String, bool)>,
     choice: (&str, SettingsChange),
-) -> Plan {
-    Plan::Ask(asking(action, at, title, facts, choice))
+) -> Step {
+    Step::Ask(asking(action, at, title, facts, choice))
 }
 
 /// A confirmation of one change.
@@ -95,17 +82,14 @@ fn asking(
     title: String,
     facts: Vec<(String, bool)>,
     choice: (&str, SettingsChange),
-) -> Box<Confirm> {
-    Box::new(Confirm {
+) -> Box<crate::forms::Ask> {
+    Box::new(crate::act::confirm(
         action,
-        about: Subject::Settings(at.0.clone(), at.1),
+        Subject::Settings(at.0.clone(), at.1),
         title,
         facts,
-        choices: vec![(choice.0.to_owned(), Change::Settings(choice.1))],
-        selected: 0,
-        sending: false,
-        error: None,
-    })
+        vec![(choice.0.to_owned(), Change::Settings(choice.1))],
+    ))
 }
 
 fn elsewhere(action: Action) -> String {
@@ -115,16 +99,14 @@ fn elsewhere(action: Action) -> String {
     }
 }
 
-fn plan(state: &State, action: Action) -> Result<Plan, String> {
+fn plan(state: &State, action: Action) -> Result<Step, String> {
     let (repo, page) = here(state).ok_or_else(|| elsewhere(action))?;
     if state.overview(&repo).is_some_and(|o| !o.can_admin) {
         return Err(format!(
             "Changing {repo}'s settings takes admin access, which GitHub doesn't give you"
         ));
     }
-    if crate::act::awaiting_here(state).is_some() {
-        return Err("GitHub hasn't shown the last change yet: wait a moment".into());
-    }
+    crate::act::settled(state)?;
     let settings = data(state, &repo, page).ok_or(LOADING)?;
     let at = (&repo, page);
     let row = selected(state);
@@ -139,17 +121,17 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
                 repo_id: b.repo_id.clone(),
                 rule: None,
             };
-            Ok(Plan::Write(form, rule_text(&RuleForm::default())))
+            write(form, rule_text(&RuleForm::default()))
         }
-        (Action::AddSetting, Settings::Access(_)) => Ok(Plan::Pick(Pick::Invite { repo })),
+        (Action::AddSetting, Settings::Access(_)) => pick(Pick::Invite { repo }),
         (Action::AddSetting, Settings::Hooks(_) | Settings::Hook(_)) => {
             let form = Form::Hook { repo, hook: None };
-            Ok(Plan::Write(form, hook_text(&HookForm::default())))
+            write(form, hook_text(&HookForm::default()))
         }
-        (Action::AddSetting, Settings::Keys(_)) => Ok(Plan::Write(
+        (Action::AddSetting, Settings::Keys(_)) => write(
             Form::Key { repo },
             key_text("", "", false),
-        )),
+        ),
         (Action::AddSetting, Settings::General(_)) => Err(
             "Adding works on Collaborators, Branches, Webhooks and Deploy keys: the menu above goes there"
                 .into(),
@@ -174,7 +156,7 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
                                     rule.apps.clone(),
                                 ))),
                             };
-                            Ok(Plan::Write(form, rule_text(&rule.form)))
+                            write(form, rule_text(&rule.form))
                         }
                         Action::DeleteSetting => {
                             let pattern = &rule.form.pattern;
@@ -275,14 +257,14 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
             }
             .ok_or("They're gone from the list")?;
             match (action, invitation) {
-                (Action::EditSetting, _) => Ok(Plan::Pick(Pick::Role {
+                (Action::EditSetting, _) => pick(Pick::Role {
                     repo,
                     who: match invitation {
                         Some(id) => Who::Invitation(id, login),
                         None => Who::Person(login),
                     },
                     now: Some(now),
-                })),
+                }),
                 (_, Some(id)) => Ok(ask(
                     action,
                     at,
@@ -327,13 +309,13 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
             };
             let url = hook.form.url.clone();
             match action {
-                Action::EditSetting => Ok(Plan::Write(
+                Action::EditSetting => write(
                     Form::Hook {
                         repo,
                         hook: Some(Box::new((hook.id, hook.form.clone()))),
                     },
                     hook_text(&hook.form),
-                )),
+                ),
                 Action::DeleteSetting => Ok(ask(
                     action,
                     // From its own page, the list follows it.
@@ -440,10 +422,10 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
         (Action::ToggleSetting, Settings::General(g)) if !g.admin => Err(format!(
             "Archiving {repo} takes admin access, which GitHub doesn't give you"
         )),
-        (Action::ToggleSetting, Settings::General(g)) => Ok(Plan::Pick(Pick::Archive {
+        (Action::ToggleSetting, Settings::General(g)) => pick(Pick::Archive {
             repo,
             archived: !g.archived,
-        })),
+        }),
         (Action::ToggleSetting, _) => Err(
             "That turns a ruleset or a webhook on or off, and on General, archives the repository"
                 .into(),
@@ -453,29 +435,30 @@ fn plan(state: &State, action: Action) -> Result<Plan, String> {
     }
 }
 
-/// Whether this module takes `action`.
-pub fn claims(action: Action) -> bool {
-    ACTIONS.contains(&action)
-}
+/// What a repository's settings add: their own actions.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &ACTIONS,
+    act,
+    offers: doables,
+    ..crate::features::Feature::NONE
+};
 
 /// Runs one of [`ACTIONS`].
 #[must_use]
 pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
-    match plan(state, action) {
-        Err(why) => {
-            state.info(why);
-            Vec::new()
-        }
-        Ok(Plan::Ask(confirm)) => {
-            state.overlay = Some(Overlay::Confirm(confirm));
-            Vec::new()
-        }
-        Ok(Plan::Pick(pick)) => state.open_picker(crate::picker::Kind::Settings(pick)),
-        Ok(Plan::Write(form, text)) => {
-            let target = crate::review::ComposeTarget::Setting(form);
-            state.compose(target, &text)
-        }
-    }
+    crate::act::take(state, plan(state, action))
+}
+
+/// Choosing in one of this module's pickers.
+#[expect(clippy::unnecessary_wraps, reason = "a plan's step")]
+fn pick(pick: Pick) -> Result<Step, String> {
+    Ok(Step::Pick(crate::picker::Kind::Settings(pick)))
+}
+
+/// Writing a form's text in the composer.
+#[expect(clippy::unnecessary_wraps, reason = "a plan's step")]
+fn write(form: Form, text: String) -> Result<Step, String> {
+    Ok(Step::Compose(crate::compose::Target::Setting(form), text))
 }
 
 /// The menu's rows on a settings page.
@@ -483,18 +466,15 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
     let Some((repo, page)) = here(state) else {
         return;
     };
-    let row = |action: Action, label: &str| Doable {
-        section: "Change",
-        action,
-        label: label.to_owned(),
+    let row = |action, label: &str| {
         // The status bar names the page's main ones.
-        short: match action {
+        let short = match action {
             Action::AddSetting => "add",
             Action::EditSetting => "edit",
             Action::Redeliver => "redeliver",
             _ => "",
-        },
-        unavailable: plan(state, action).err(),
+        };
+        crate::nav::row("Change", action, label, short, plan(state, action).err())
     };
     let archived = matches!(data(state, &repo, page), Some(Settings::General(g)) if g.archived);
     let rows: &[(Action, &str)] = match page {
@@ -551,10 +531,10 @@ pub fn follow_link(state: &mut State, link: &SettingLink) -> Vec<Cmd> {
             state.push(Route::user(login))
         }
         SettingLink::Hook(id) => match here(state) {
-            Some((repo, _)) => state.push(Route::Settings {
+            Some((repo, _)) => state.push(Route::Settings(settings::Page {
                 repo,
                 page: SettingsPage::Hook(*id),
-            }),
+            })),
             None => Vec::new(),
         },
         SettingLink::Ruleset(_) | SettingLink::Delivery(_) | SettingLink::Key(_) => {
@@ -567,15 +547,13 @@ pub fn follow_link(state: &mut State, link: &SettingLink) -> Vec<Cmd> {
                 _ => (Action::DeleteSetting, "deletes the key"),
             };
             let key = state.first_key(action);
-            state.info(format!("{key} {what}"));
-            Vec::new()
+            state.just_say(format!("{key} {what}"))
         }
         SettingLink::DeleteRepo => {
             let open = state.first_key(Action::OpenInBrowser);
-            state.info(format!(
+            state.just_say(format!(
                 "ghtui never deletes a repository: that's done on github.com ({open} opens this page there)"
-            ));
-            Vec::new()
+            ))
         }
     }
 }
@@ -786,6 +764,19 @@ fn given<'a>(found: &'a [(&str, String)], name: &str, default: &'a str) -> &'a s
         .map_or(default, |(_, v)| v.as_str())
 }
 
+/// A form's text read against its `lines`: each field's value, or what
+/// it was in `lines` when it isn't written.
+fn read(text: &str, lines: Vec<(&'static str, String)>) -> Result<impl Fn(&str) -> String, String> {
+    let names: Vec<&'static str> = lines.iter().map(|(n, _)| *n).collect();
+    let found = fields(text, &names)?;
+    Ok(move |name: &str| {
+        let default = (lines.iter())
+            .find(|(n, _)| *n == name)
+            .map_or("", |(_, v)| v.as_str());
+        given(&found, name, default).to_owned()
+    })
+}
+
 fn list(value: &str) -> Vec<String> {
     (value.split(','))
         .map(str::trim)
@@ -796,15 +787,7 @@ fn list(value: &str) -> Vec<String> {
 
 /// A rule from the form's text; what isn't written stays as in `base`.
 pub fn parse_rule(text: &str, base: &RuleForm) -> Result<RuleForm, String> {
-    let names: Vec<&'static str> = rule_lines(base).iter().map(|(n, _)| *n).collect();
-    let found = fields(text, &names)?;
-    let lines = rule_lines(base);
-    let get = |name: &str| {
-        let default = (lines.iter())
-            .find(|(n, _)| *n == name)
-            .map_or("", |(_, v)| v.as_str());
-        given(&found, name, default).to_owned()
-    };
+    let get = read(text, rule_lines(base))?;
     let on = |name: &str| flag(name, &get(name));
     let pattern = get(PATTERN);
     if pattern.is_empty() {
@@ -870,15 +853,7 @@ pub fn hook_text(h: &HookForm) -> String {
 }
 
 pub fn parse_hook(text: &str, base: &HookForm) -> Result<HookForm, String> {
-    let names = [URL, CONTENT, SECRET, SSL, EVENTS, ACTIVE];
-    let found = fields(text, &names)?;
-    let lines = hook_lines(base);
-    let get = |name: &str| {
-        let default = (lines.iter())
-            .find(|(n, _)| *n == name)
-            .map_or("", |(_, v)| v.as_str());
-        given(&found, name, default).to_owned()
-    };
+    let get = read(text, hook_lines(base))?;
     let url = get(URL);
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err(format!(
@@ -950,7 +925,7 @@ fn differences(old: &[(&str, String)], new: &[(&str, String)]) -> Vec<(String, b
 
 /// What a form asks GitHub: the confirmation naming what changes, or why
 /// the form can't be sent.
-fn confirm(form: &Form, text: &str) -> Result<Confirm, String> {
+fn confirm(form: &Form, text: &str) -> Result<crate::forms::Ask, String> {
     let repo = form.repo().clone();
     let (action, title, facts, choice, change) = match form {
         Form::Rule { repo_id, rule, .. } => match rule {
@@ -1073,57 +1048,26 @@ fn confirm(form: &Form, text: &str) -> Result<Confirm, String> {
             )
         }
     };
-    Ok(Confirm {
+    Ok(crate::act::confirm(
         action,
-        about: Subject::Settings(repo, form.page()),
+        Subject::Settings(repo, form.page()),
         title,
         facts,
-        choices: vec![(choice.to_owned(), Change::Settings(change))],
-        selected: 0,
-        sending: false,
-        error: None,
-    })
+        vec![(choice.to_owned(), Change::Settings(change))],
+    ))
 }
 
 /// ctrl-s in the composer: asks about what the form changes.
 #[must_use]
 pub fn submit(state: &mut State, form: &Form, text: &str) -> Vec<Cmd> {
     match confirm(form, text) {
-        Err(why) => {
-            if let Some(Overlay::Compose(c)) = &mut state.overlay {
-                c.error = Some(why);
-            }
-        }
-        Ok(confirm) => {
-            state.settings.form = Some((form.clone(), text.to_owned()));
-            state.overlay = Some(Overlay::Confirm(Box::new(confirm)));
+        Err(why) => crate::forms::say(state, why),
+        Ok(mut confirm) => {
+            let target = crate::compose::Target::Setting(form.clone());
+            confirm.back = Some((target, text.to_owned()));
+            crate::act::take(state, Ok(crate::act::Step::Ask(Box::new(confirm))))
         }
     }
-    Vec::new()
-}
-
-/// GitHub refused a change: one sent from a form opens the form again,
-/// with its text and GitHub's words. Whether it did.
-pub fn refused(state: &mut State, change: &Change, why: &str) -> bool {
-    let Change::Settings(c) = change else {
-        return false;
-    };
-    let from_form = matches!(
-        c,
-        SettingsChange::CreateRule { .. }
-            | SettingsChange::UpdateRule { .. }
-            | SettingsChange::CreateHook { .. }
-            | SettingsChange::UpdateHook { .. }
-            | SettingsChange::AddKey { .. }
-    );
-    let Some((form, text)) = state.settings.form.take().filter(|_| from_form) else {
-        return false;
-    };
-    let _ = state.compose(crate::review::ComposeTarget::Setting(form), &text);
-    if let Some(Overlay::Compose(c)) = &mut state.overlay {
-        c.error = Some(why.to_owned());
-    }
-    true
 }
 
 /// After GitHub took a change: a webhook deleted from its own page goes
@@ -1133,21 +1077,20 @@ pub fn after(state: &mut State, change: &Change) -> Vec<Cmd> {
     let Change::Settings(c) = change else {
         return Vec::new();
     };
-    state.settings.form = None;
     let SettingsChange::DeleteHook { repo, id, .. } = c else {
         return Vec::new();
     };
-    let on_it = Route::Settings {
+    let on_it = Route::Settings(settings::Page {
         repo: repo.clone(),
         page: SettingsPage::Hook(*id),
-    };
+    });
     if state.route() != Some(&on_it) {
         return Vec::new();
     }
-    let list = Route::Settings {
+    let list = Route::Settings(settings::Page {
         repo: repo.clone(),
         page: SettingsPage::Hooks,
-    };
+    });
     state.replace(list, true, None)
 }
 
@@ -1206,20 +1149,6 @@ impl Pick {
     }
 }
 
-/// What choosing a row does.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Chosen {
-    Pick(Pick),
-    Ask(Box<Confirm>),
-}
-
-fn item(label: impl Into<String>, hint: impl Into<String>) -> PaletteItem {
-    PaletteItem {
-        label: label.into(),
-        hint: hint.into(),
-    }
-}
-
 /// Whether `s` can be a GitHub login.
 fn is_login(s: &str) -> bool {
     !s.is_empty()
@@ -1228,15 +1157,18 @@ fn is_login(s: &str) -> bool {
         && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
-pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
+pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Step>)> {
     match pick {
         Pick::Invite { repo } => {
             let login = q.trim().trim_start_matches('@');
             if login.is_empty() {
-                return vec![(item("Type their GitHub login", ""), None)];
+                return vec![(crate::picker::item("Type their GitHub login", ""), None)];
             }
             if !is_login(login) {
-                return vec![(item(format!("“{login}” isn't a GitHub login"), ""), None)];
+                return vec![(
+                    crate::picker::item(format!("“{login}” isn't a GitHub login"), ""),
+                    None,
+                )];
             }
             let next = Pick::Role {
                 repo: repo.clone(),
@@ -1244,8 +1176,8 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
                 now: None,
             };
             vec![(
-                item(format!("Invite @{login}"), "then choose their role"),
-                Some(Chosen::Pick(next)),
+                crate::picker::item(format!("Invite @{login}"), "then choose their role"),
+                Some(Step::Pick(crate::picker::Kind::Settings(next))),
             )]
         }
         Pick::Role { repo, who, now } => (Permission::ALL.into_iter())
@@ -1257,7 +1189,7 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
                 } else {
                     p.name().to_owned()
                 };
-                let row = item(label, p.about());
+                let row = crate::picker::item(label, p.about());
                 if is_now {
                     return (row, None);
                 }
@@ -1311,14 +1243,17 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
                     ),
                 };
                 let confirm = asking(Action::EditSetting, at, title, facts, (choice, change));
-                (row, Some(Chosen::Ask(confirm)))
+                (row, Some(Step::Ask(confirm)))
             })
             .collect(),
         Pick::Archive { repo, archived } => {
             let name = repo.to_string();
             if !q.trim().eq_ignore_ascii_case(&name) {
                 let verb = if *archived { "archive" } else { "unarchive" };
-                return vec![(item(format!("Type {name} to {verb} it"), ""), None)];
+                return vec![(
+                    crate::picker::item(format!("Type {name} to {verb} it"), ""),
+                    None,
+                )];
             }
             let at = (repo, SettingsPage::General);
             let (verb, facts) = if *archived {
@@ -1355,20 +1290,9 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
                 (&format!("{verb} repository"), change),
             );
             vec![(
-                item(format!("{verb} {name}"), "asks once more"),
-                Some(Chosen::Ask(confirm)),
+                crate::picker::item(format!("{verb} {name}"), "asks once more"),
+                Some(Step::Ask(confirm)),
             )]
-        }
-    }
-}
-
-#[must_use]
-pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
-    match chosen {
-        Chosen::Pick(pick) => state.open_picker(crate::picker::Kind::Settings(pick)),
-        Chosen::Ask(confirm) => {
-            state.overlay = Some(Overlay::Confirm(confirm));
-            Vec::new()
         }
     }
 }

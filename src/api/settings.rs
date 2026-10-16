@@ -9,7 +9,7 @@ use serde_json::{Map, Value, json};
 
 use crate::api::client::{ApiError, GitHub};
 use crate::api::model::{Capped, NodeId, RepoId};
-use crate::api::raw;
+use crate::api::{has_scope, raw, scope_missing};
 
 /// One page of the Settings tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -384,7 +384,7 @@ pub struct DeployKey {
 }
 
 /// A change to a repository's settings.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SettingsChange {
     CreateRule {
         repo_id: NodeId,
@@ -470,16 +470,6 @@ pub enum SettingsChange {
     },
 }
 
-/// The cache's keys.
-pub mod keys {
-    use super::SettingsPage;
-    use crate::api::model::RepoId;
-
-    pub fn page(repo: &RepoId, page: SettingsPage) -> String {
-        format!("settings:{repo}{}", page.slug())
-    }
-}
-
 /// How many a REST list asks for.
 const PER_PAGE: usize = 100;
 
@@ -489,14 +479,9 @@ fn refused(status: u16, scopes: Option<&str>, what: &str, scope: &str) -> Option
     if !matches!(status, 403 | 404) {
         return None;
     }
-    let lacks = scopes.is_some_and(|s| {
-        let has = |name: &str| s.split(',').any(|x| x.trim() == name);
-        !has("repo") && !has(scope)
-    });
+    let lacks = scopes.is_some_and(|s| !has_scope(s, "repo") && !has_scope(s, scope));
     Some(if lacks {
-        format!(
-            "{what} take the {scope} scope, which your token lacks: `gh auth refresh -s {scope}` adds it"
-        )
+        scope_missing(what, scope)
     } else {
         format!("GitHub shows {what} only to the repository's admins")
     })
@@ -543,8 +528,6 @@ impl GitHub {
                 Settings::Keys(self.listed(repo, "keys?", "deploy keys", wire::key).await?)
             }
         };
-        self.remember(&keys::page(repo, page), settings.clone())
-            .await;
         Ok(settings)
     }
 
@@ -554,24 +537,15 @@ impl GitHub {
         path: &str,
         what: &str,
     ) -> Result<crate::api::client::Answer, ApiError> {
-        let answer = self.rest_answer(path).await?;
-        if (200..300).contains(&answer.status()) {
-            return Ok(answer);
-        }
         let scope = if what == "webhooks" {
             "admin:repo_hook"
         } else {
             "repo"
         };
-        let scopes = answer.header("x-oauth-scopes");
-        if let Some(why) = refused(answer.status(), scopes, what, scope) {
-            return Err(ApiError::Denied(why));
-        }
-        answer.checked(what)?;
-        Err(ApiError::Decode(format!(
-            "{what}: status {}",
-            answer.status()
-        )))
+        let answer = self.rest_refusable(path, what, |status, _, answer| {
+            refused(status, answer.header("x-oauth-scopes"), what, scope)
+        });
+        answer.await?.map_err(ApiError::Denied)
     }
 
     /// The first page of a list of the repository's (`list` is its path
@@ -628,9 +602,7 @@ impl GitHub {
             .graphql_json(raw::PROTECTION_RULES, vars, repo, "/repository")
             .await?;
         let repo_id = NodeId::new(found.id);
-        let rules = found.branch_protection_rules;
-        let nodes = rules.nodes.into_iter().flatten().map(wire::rule).collect();
-        let rules = Capped::new(nodes, rules.total_count);
+        let rules = (found.branch_protection_rules).into_capped(|n| Some(wire::rule(n)));
         let rulesets = match self
             .admin_answer(
                 &format!("/repos/{repo}/rulesets?per_page={PER_PAGE}"),
@@ -902,21 +874,14 @@ mod wire {
     use serde::Deserialize;
 
     use super::*;
+    use crate::api::browse::wire::{Counted, Name};
 
     /// A branch protection rule, as GraphQL sends it.
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub(super) struct Rules {
         pub id: String,
-        pub branch_protection_rules: Connection<RuleNode>,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub(super) struct Connection<T> {
-        pub total_count: u64,
-        #[serde(default)]
-        pub nodes: Vec<Option<T>>,
+        pub branch_protection_rules: Counted<RuleNode>,
     }
 
     #[derive(Deserialize, Default)]
@@ -939,7 +904,7 @@ mod wire {
         is_admin_enforced: bool,
         allows_force_pushes: bool,
         allows_deletions: bool,
-        matching_refs: Option<Connection<Named>>,
+        matching_refs: Option<Counted<Name>>,
     }
 
     #[derive(Deserialize, Default)]
@@ -953,21 +918,14 @@ mod wire {
         id: String,
     }
 
-    #[derive(Deserialize, Default)]
-    struct Named {
-        name: String,
-    }
-
     pub(super) fn rule(n: RuleNode) -> Rule {
         let checks = n.required_status_checks.unwrap_or_default();
         let apps = (checks.iter())
             .filter_map(|c| Some((c.context.clone(), NodeId::new(&c.app.as_ref()?.id))))
             .collect();
         let contexts = checks.into_iter().map(|c| c.context).collect();
-        let (names, total) = n.matching_refs.map_or((Vec::new(), 0), |m| {
-            let names = m.nodes.into_iter().flatten().map(|r| r.name).collect();
-            (names, m.total_count)
-        });
+        let matching =
+            (n.matching_refs).map_or_else(Capped::default, |m| m.into_capped(|r| Some(r.name)));
         Rule {
             id: NodeId::new(n.id),
             form: RuleForm {
@@ -992,7 +950,7 @@ mod wire {
                 deletions: n.allows_deletions,
             },
             apps,
-            matching: Capped::new(names, total),
+            matching,
         }
     }
 
@@ -1040,18 +998,13 @@ mod wire {
     #[derive(Deserialize)]
     pub(super) struct InvitationWire {
         id: u64,
-        invitee: Option<Named2>,
+        invitee: Option<crate::api::browse::UserLogin>,
         #[serde(default)]
         permissions: String,
         #[serde(default)]
         created_at: String,
         #[serde(default)]
         expired: bool,
-    }
-
-    #[derive(Deserialize)]
-    struct Named2 {
-        login: String,
     }
 
     pub(super) fn invitation(i: InvitationWire) -> Option<Invitation> {

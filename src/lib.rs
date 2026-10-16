@@ -1,7 +1,8 @@
 //! `ghtui`: a keyboard-driven terminal client for GitHub. The binary runs
 //! [`main`]; the library is there so fuzz targets can reach its parts.
 
-// What used to be the workspace's libraries.
+// The parts that know nothing of the app: GitHub, diffs, git, storage,
+// the theme and drawing.
 pub mod api;
 pub mod diff;
 pub mod git;
@@ -12,21 +13,26 @@ pub mod theme;
 pub mod ui;
 
 mod act;
-mod actions;
 mod browse;
 mod chrome;
+mod clone;
 mod code_index;
 mod code_nav;
+mod compose;
 mod config;
 #[cfg(test)]
 mod crawl;
 mod create;
+mod data;
 mod diff_job;
 mod diff_screen;
 mod discuss;
 mod edit;
+mod features;
 #[cfg(test)]
 mod fixtures;
+mod follow;
+mod forms;
 mod gist;
 mod home;
 mod housekeeping;
@@ -48,8 +54,6 @@ mod security;
 mod sequence_tests;
 mod settings;
 mod site;
-#[cfg(test)]
-mod snapshot_tests;
 mod source;
 mod state;
 mod tabs;
@@ -58,8 +62,11 @@ mod typing;
 mod view;
 mod watch;
 pub mod wiki;
-mod writes;
+mod work;
+mod workflows;
+mod yaml;
 
+use crate::route::{Dest, Route, Target, issues, pulls};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -72,10 +79,10 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
 use crate::config::{Config, DepthSetting, ModeSetting};
+use crate::data::DataKey;
 use crate::diff_job::GitContext;
 use crate::diff_screen::DiffOf;
 use crate::keymap::Keymap;
-use crate::route::{Dest, Route, Target};
 use crate::state::{Api, Remote, State};
 
 /// How long to wait for the terminal to report its background color.
@@ -204,24 +211,23 @@ async fn run(started: Instant) -> Result<()> {
     // Home's sections, shown from the cache at once.
     state.home = home::sections(config.home.as_deref());
     state.config_path = config_path.clone();
-    for need in state.home_needs() {
-        if let browse::Need::Data(key) = need {
-            let cached = runtime::cached_data(&gh, &key)
-                .map(|(value, fetched_at)| crate::store::Cached { value, fetched_at });
-            state.data.insert(key, Remote::cached(cached));
-        }
+    for key in state.home_needs().into_iter().filter(DataKey::cache_first) {
+        let cached = data::load::cached(&gh, &key);
+        state.data.insert(key, Remote::cached(cached));
     }
     let tabs = gh
-        .cached::<Vec<String>>(crate::api::browse::keys::TABS)
+        .cached::<Vec<String>>(crate::store::TABS)
         .map(|c| c.value)
         .unwrap_or_default();
     state.restore_tabs(&tabs);
     let mut cmds = match target {
         Some(at) => {
-            if let Target::Page(Route::Pr { pr, .. }) | Target::Files(DiffOf::Pr(pr)) = &at.target {
-                state
-                    .prs
-                    .insert(pr.clone(), Remote::cached(gh.cached_pull_request(pr)));
+            if let Target::Page(Route::Pulls(pulls::Pr { pr, .. }))
+            | Target::Files(DiffOf::Pr(pr)) = &at.target
+            {
+                let key = DataKey::Pr(pr.clone());
+                let cached = data::load::cached(&gh, &key);
+                state.data.insert(key, Remote::cached(cached));
             }
             // The home page stays underneath (Esc goes there) and loads
             // when you get there. With tabs reopened, it's a new tab after
@@ -233,12 +239,11 @@ async fn run(started: Instant) -> Result<()> {
         None => state.load_visible(true),
     };
     state.visits = gh
-        .cached::<Vec<nav::Visit>>(crate::api::browse::keys::VISITS)
+        .cached::<Vec<nav::Visit>>(crate::store::VISITS)
         .map(|c| c.value)
         .unwrap_or_default();
     cmds.push(state::Cmd::Timer(state::Timer::Minute, 60_000));
-    cmds.push(state::Cmd::Api(Api::FetchUnread));
-    state.data_gen += 1;
+    cmds.extend(state.ensure(crate::data::DataKey::Unread, true));
     state.sync_page();
 
     install_panic_hook();
@@ -327,7 +332,7 @@ async fn resolve_target(target: &str) -> Result<PrRef> {
 async fn resolve_pr(target: &str) -> Result<Dest> {
     let dest = Dest::from_url(target);
     match dest.target {
-        Target::Page(Route::Pr { .. }) | Target::Files(DiffOf::Pr(_)) => Ok(dest),
+        Target::Page(Route::Pulls(pulls::Pr { .. })) | Target::Files(DiffOf::Pr(_)) => Ok(dest),
         _ => Ok(Target::Page(Route::pr(resolve_target(target).await?)).into()),
     }
 }
@@ -337,10 +342,10 @@ async fn resolve_open(target: &str) -> Result<Dest> {
     let number = target.trim_start_matches('#');
     if !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()) {
         let pr = resolve_target(number).await?;
-        return Ok(Target::Page(Route::Issue {
+        return Ok(Target::Page(Route::Issues(issues::Issue {
             repo: pr.repo,
             number: pr.number,
-        })
+        }))
         .into());
     }
     let shown = route::parse_input(target, None)

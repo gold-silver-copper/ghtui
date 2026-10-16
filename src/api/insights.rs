@@ -129,7 +129,7 @@ pub struct Dependency {
 }
 
 /// A manifest GitHub read, and the dependencies it found there.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
     /// Its path in the repository.
     pub path: String,
@@ -149,22 +149,6 @@ pub struct Dependencies {
 /// GitHub serves the dependency graph's dependencies only under this
 /// preview (without it, every manifest counts none).
 const HAWKGIRL: &str = "application/vnd.github.hawkgirl-preview+json";
-
-pub mod keys {
-    use crate::api::model::RepoId;
-
-    pub fn activity(repo: &RepoId) -> String {
-        format!("insights:activity:{repo}")
-    }
-
-    pub fn traffic(repo: &RepoId) -> String {
-        format!("insights:traffic:{repo}")
-    }
-
-    pub fn dependencies(repo: &RepoId) -> String {
-        format!("insights:dependencies:{repo}")
-    }
-}
 
 impl GitHub {
     /// A repository's commit activity and contributors, as GitHub's
@@ -188,7 +172,6 @@ impl GitHub {
         };
         let days = self.commit_days(repo).await;
         let activity = from_stats(contributors, days, crate::store::now());
-        self.remember(&keys::activity(repo), activity.clone()).await;
         Ok(activity)
     }
 
@@ -250,25 +233,16 @@ impl GitHub {
                 })
                 .collect(),
         };
-        self.remember(&keys::traffic(repo), traffic.clone()).await;
         Ok(traffic)
     }
 
     /// One of the traffic's answers, or what GitHub's refusal means.
     async fn traffic_part(&self, path: &str) -> Result<String, ApiError> {
-        let answer = self.rest_answer(path).await?;
-        if answer.status() == 403 {
-            #[derive(Deserialize)]
-            struct Message {
-                message: Option<String>,
-            }
-            let message = serde_json::from_str::<Message>(answer.body())
-                .ok()
-                .and_then(|m| m.message)
-                .unwrap_or_default();
-            return Err(ApiError::Denied(traffic_refusal(&message)));
-        }
-        answer.checked(path.trim_start_matches("/repos/"))?;
+        let what = path.trim_start_matches("/repos/");
+        let answer = self.rest_refusable(path, what, |status, message, _| {
+            (status == 403).then(|| traffic_refusal(message))
+        });
+        let answer = answer.await?.map_err(ApiError::Denied)?;
         Ok(answer.body().to_owned())
     }
 
@@ -285,8 +259,8 @@ impl GitHub {
                 HAWKGIRL,
             )
             .await?;
-        let manifests = (found.nodes.into_iter().flatten())
-            .map(|m| Manifest {
+        let manifests = found.into_capped(|m| {
+            Some(Manifest {
                 path: m.blob_path.map_or(m.filename, |p| blob_path(&p)),
                 dependencies: Capped::new(
                     (m.dependencies.nodes.into_iter().flatten())
@@ -302,12 +276,8 @@ impl GitHub {
                 unparseable: !m.parseable,
                 too_big: m.exceeds_max_size,
             })
-            .collect();
-        let deps = Dependencies {
-            manifests: Capped::new(manifests, found.total_count),
-        };
-        self.remember(&keys::dependencies(repo), deps.clone()).await;
-        Ok(deps)
+        });
+        Ok(Dependencies { manifests })
     }
 }
 
@@ -385,16 +355,13 @@ fn from_stats(contributors: Vec<wire::Contributor>, weekdays: [u32; 7], now: u64
 mod wire {
     use serde::Deserialize;
 
+    use crate::api::browse::UserLogin as Login;
+
     #[derive(Deserialize)]
     pub struct Contributor {
         pub author: Option<Login>,
         pub total: u64,
         pub weeks: Vec<StatWeek>,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Login {
-        pub login: String,
     }
 
     #[derive(Deserialize)]
@@ -456,12 +423,9 @@ mod wire {
         pub uniques: u64,
     }
 
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Manifests {
-        pub total_count: u64,
-        pub nodes: Vec<Option<Manifest>>,
-    }
+    use crate::api::browse::wire::{Counted as Connection, RepoName as Repo};
+
+    pub type Manifests = Connection<Manifest>;
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -472,14 +436,7 @@ mod wire {
         pub exceeds_max_size: bool,
         /// All of them: the connection's own count is only its page's.
         pub dependencies_count: Option<u64>,
-        pub dependencies: Dependencies,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Dependencies {
-        pub total_count: u64,
-        pub nodes: Vec<Option<Dependency>>,
+        pub dependencies: Connection<Dependency>,
     }
 
     #[derive(Deserialize)]
@@ -489,12 +446,6 @@ mod wire {
         pub package_manager: Option<String>,
         pub requirements: String,
         pub repository: Option<Repo>,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Repo {
-        pub name_with_owner: String,
     }
 }
 

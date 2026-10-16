@@ -123,14 +123,6 @@ pub fn topic_repos(topic: &str) -> String {
     format!("topic:{topic} sort:stars")
 }
 
-pub mod keys {
-    pub const FEATURED: &str = "explore:featured";
-
-    pub fn topic(name: &str) -> String {
-        format!("explore:topic:{name}")
-    }
-}
-
 impl GitHub {
     /// GitHub's featured topics.
     pub async fn featured_topics(&self) -> Result<Topics, ApiError> {
@@ -151,7 +143,6 @@ impl GitHub {
             topics,
             total: found.total_count,
         };
-        self.remember(keys::FEATURED, topics.clone()).await;
         Ok(topics)
     }
 
@@ -162,11 +153,7 @@ impl GitHub {
         #[serde(rename_all = "camelCase")]
         struct Graph {
             stargazer_count: u64,
-            related_topics: Vec<Named>,
-        }
-        #[derive(Deserialize)]
-        struct Named {
-            name: String,
+            related_topics: Vec<crate::api::browse::wire::Name>,
         }
         let path = format!(
             "/search/topics?q={}&per_page=10",
@@ -193,7 +180,6 @@ impl GitHub {
             }
             Err(err) => tracing::debug!(%err, "no stars or related topics for the topic"),
         }
-        self.remember(&keys::topic(name), topic.clone()).await;
         Ok(topic)
     }
 }

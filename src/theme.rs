@@ -203,6 +203,21 @@ impl Bg {
         (Bg::SuccessContainer, Fg::OnSuccessContainer),
     ];
 
+    const COUNT: usize = Bg::NEUTRAL.len() + Bg::FILLED.len() + 2 * DiffBg::ALL.len();
+
+    /// Where this role is in [`Bg::all`].
+    fn slot(self) -> Option<usize> {
+        let plain = Bg::NEUTRAL.len() + Bg::FILLED.len();
+        match self {
+            Bg::Diff(d) => Some(plain + d as usize),
+            Bg::DiffSelected(d) => Some(plain + DiffBg::ALL.len() + d as usize),
+            bg => (Bg::NEUTRAL.iter().position(|n| *n == bg)).or_else(|| {
+                let filled = Bg::FILLED.iter().position(|(f, _)| *f == bg)?;
+                Some(Bg::NEUTRAL.len() + filled)
+            }),
+        }
+    }
+
     pub fn all() -> Vec<Bg> {
         let mut all = Bg::NEUTRAL.to_vec();
         all.extend(Bg::FILLED.map(|(bg, _)| bg));
@@ -221,25 +236,40 @@ impl Bg {
 }
 
 impl Fg {
+    const PLAIN: [Fg; 16] = [
+        Fg::OnSurface,
+        Fg::OnSurfaceVariant,
+        Fg::Primary,
+        Fg::Tertiary,
+        Fg::Error,
+        Fg::Success,
+        Fg::Disabled,
+        Fg::OutlineVariant,
+        Fg::OnPrimary,
+        Fg::OnPrimaryContainer,
+        Fg::OnSecondaryContainer,
+        Fg::OnTertiaryContainer,
+        Fg::OnErrorContainer,
+        Fg::OnSuccessContainer,
+        Fg::DiffAddedSign,
+        Fg::DiffRemovedSign,
+    ];
+
+    const COUNT: usize = Fg::PLAIN.len() + Syntax::ALL.len() + HEAT_LEVELS.len();
+
+    /// Where this role is in [`Fg::all`].
+    fn slot(self) -> Option<usize> {
+        let syntax = Fg::PLAIN.len();
+        match self {
+            Fg::Syntax(role) => Some(syntax + role as usize),
+            Fg::Heat(level) => (HEAT_LEVELS.iter().position(|l| *l == level))
+                .map(|i| syntax + Syntax::ALL.len() + i),
+            fg => Fg::PLAIN.iter().position(|p| *p == fg),
+        }
+    }
+
     pub fn all() -> Vec<Fg> {
-        let mut all = vec![
-            Fg::OnSurface,
-            Fg::OnSurfaceVariant,
-            Fg::Primary,
-            Fg::Tertiary,
-            Fg::Error,
-            Fg::Success,
-            Fg::Disabled,
-            Fg::OutlineVariant,
-            Fg::OnPrimary,
-            Fg::OnPrimaryContainer,
-            Fg::OnSecondaryContainer,
-            Fg::OnTertiaryContainer,
-            Fg::OnErrorContainer,
-            Fg::OnSuccessContainer,
-            Fg::DiffAddedSign,
-            Fg::DiffRemovedSign,
-        ];
+        let mut all = Fg::PLAIN.to_vec();
         all.extend(Syntax::ALL.map(Fg::Syntax));
         all.extend(HEAT_LEVELS.map(Fg::Heat));
         all
@@ -319,6 +349,10 @@ pub struct Theme {
     pub depth: ColorDepth,
     bg: HashMap<Bg, Rgb>,
     fg: HashMap<Fg, Rgb>,
+    /// Each role's color as the terminal is sent it, by its slot: what
+    /// [`Theme::style`] looks up (finding a 256-color one is slow).
+    bg_term: [Color; Bg::COUNT],
+    fg_term: [Color; Fg::COUNT],
 }
 
 impl Theme {
@@ -458,15 +492,30 @@ impl Theme {
             previous = color;
         }
 
+        let missing = term_color(depth, MISSING);
         let mut theme = Theme {
             mode,
             depth,
             bg,
             fg,
+            bg_term: [missing; Bg::COUNT],
+            fg_term: [missing; Fg::COUNT],
         };
         for role in Fg::all() {
             let adjusted = enforce_contrast(&theme, role);
             theme.fg.insert(role, adjusted);
+        }
+        for role in Bg::all() {
+            let color = term_color(depth, theme.bg_rgb(role));
+            if let Some(slot) = role.slot().and_then(|i| theme.bg_term.get_mut(i)) {
+                *slot = color;
+            }
+        }
+        for role in Fg::all() {
+            let color = term_color(depth, theme.fg_rgb(role));
+            if let Some(slot) = role.slot().and_then(|i| theme.fg_term.get_mut(i)) {
+                *slot = color;
+            }
         }
         theme
     }
@@ -477,10 +526,7 @@ impl Theme {
     }
 
     fn term_color(&self, c: Rgb) -> Color {
-        match self.depth {
-            ColorDepth::TrueColor => Color::Rgb(c.r, c.g, c.b),
-            ColorDepth::Ansi256 => Color::Indexed(color::nearest_xterm(c)),
-        }
+        term_color(self.depth, c)
     }
 
     pub fn bg_rgb(&self, bg: Bg) -> Rgb {
@@ -492,11 +538,13 @@ impl Theme {
     }
 
     pub fn bg_color(&self, bg: Bg) -> Color {
-        self.term_color(self.bg_rgb(bg))
+        let shown = bg.slot().and_then(|i| self.bg_term.get(i)).copied();
+        shown.unwrap_or_else(|| self.term_color(MISSING))
     }
 
     pub fn fg_color(&self, fg: Fg) -> Color {
-        self.term_color(self.fg_rgb(fg))
+        let shown = fg.slot().and_then(|i| self.fg_term.get(i)).copied();
+        shown.unwrap_or_else(|| self.term_color(MISSING))
     }
 
     /// The style for `fg` text on `bg`. Panics in debug builds if the pair
@@ -548,7 +596,7 @@ impl Theme {
     /// Whether two background roles render identically at this color depth,
     /// meaning a boundary between them needs an outline instead of tone.
     pub fn tones_collapse(&self, a: Bg, b: Bg) -> bool {
-        self.displayed(self.bg_rgb(a)) == self.displayed(self.bg_rgb(b))
+        self.bg_color(a) == self.bg_color(b)
     }
 
     /// Whether added/removed lines can't be told from context by background
@@ -587,6 +635,13 @@ impl Theme {
             }
             None => self.fill(Bg::SecondaryContainer),
         }
+    }
+}
+
+fn term_color(depth: ColorDepth, c: Rgb) -> Color {
+    match depth {
+        ColorDepth::TrueColor => Color::Rgb(c.r, c.g, c.b),
+        ColorDepth::Ansi256 => Color::Indexed(color::nearest_xterm(c)),
     }
 }
 
@@ -647,6 +702,15 @@ pub(crate) fn adjust_tone(base: Rgb, targets: &[(Rgb, f64)], display: impl Fn(Rg
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_role_has_its_own_slot() {
+        let slots: Vec<_> = Bg::all().into_iter().map(Bg::slot).collect();
+        assert_eq!(slots, (0..Bg::COUNT).map(Some).collect::<Vec<_>>());
+        let slots: Vec<_> = Fg::all().into_iter().map(Fg::slot).collect();
+        assert_eq!(slots, (0..Fg::COUNT).map(Some).collect::<Vec<_>>());
+        assert_eq!(Fg::Heat(9).slot(), None);
+    }
 
     fn seeds() -> Vec<Rgb> {
         let mut seeds = vec![

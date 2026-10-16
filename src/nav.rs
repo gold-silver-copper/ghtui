@@ -6,9 +6,9 @@
 use std::mem;
 use std::sync::Arc;
 
-use crate::api::browse::{DiscussionsOf, RepoSummary, SearchKind};
+use crate::api::browse::{RepoSummary, SearchKind};
 use crate::api::change::Change;
-use crate::api::model::{PrRef, RepoId};
+use crate::api::model::RepoId;
 use crate::diff::anchor::Side;
 use crate::theme::{Bg, Theme};
 use crate::ui::chrome::{self, KeyRow, SuggestRow};
@@ -22,11 +22,12 @@ use ratatui::layout::Rect;
 use ratatui_textarea::TextArea;
 use serde::{Deserialize, Serialize};
 
-use crate::browse::{self, Data, DataKey};
+use crate::browse;
+use crate::compose;
+use crate::data::{Data, DataKey};
 use crate::diff_screen::{self, Pane};
 use crate::keymap::Action;
 use crate::picker::{fuzzy_score, move_in_list};
-use crate::review::ComposeTarget;
 use crate::route::{self, Dest, Route, Target};
 use crate::state::{Api, Cmd, Overlay, Remote, Screen, State, apply};
 

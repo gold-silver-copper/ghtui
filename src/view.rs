@@ -16,9 +16,9 @@ use crate::ui::diff_view::{DiffView, Keys};
 use crate::ui::file_tree::{FileTree, TREE_BG};
 use crate::ui::review_sheets::{ComposeSheet, ConfirmSheet, SubmitSheet};
 
+use crate::compose::{Compose, Target};
 use crate::diff_screen::{self, DiffScreen, Pane};
 use crate::keymap::Action;
-use crate::review::Compose;
 use crate::state::{Overlay, Screen, State};
 
 /// The single content pane is focused, so it sits one tone above surface.
@@ -89,11 +89,11 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             // edits, scrolled into view.
             let comment_box = composing.and_then(|c| {
                 let (at, under) = match &c.target {
-                    crate::review::ComposeTarget::Conversation {
+                    Target::Conversation {
                         quoting: Some(at), ..
                     } => (Some(at), true),
-                    crate::review::ComposeTarget::Edit(e) => (Some(&e.at), false),
-                    crate::review::ComposeTarget::Discussion(w) => w.place(),
+                    Target::Edit(e) => (Some(&e.at), false),
+                    Target::Discussion(w) => w.place(),
                     _ => (None, false),
                 };
                 let comment = at.and_then(|at| {
@@ -103,7 +103,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 });
                 // A form's text box, or the conversation's comment box.
                 let anchor = match &c.target {
-                    crate::review::ComposeTarget::Write(t) => t.anchor(),
+                    Target::Form(t) => Link::Form(crate::ui::form::Row::Text(t.part)),
                     _ => Link::Comment,
                 };
                 let (item, under) = match comment {
@@ -197,10 +197,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             .render(area, buf);
         }
         Some(Overlay::Compose(compose)) => {
-            let title = match &compose.target {
-                crate::review::ComposeTarget::Write(text) => text.title(state),
-                _ => compose.title(),
-            };
+            let title = compose.target.title(state);
             // Saved replies, while they're listed; else what an `@` or
             // `#` can be.
             let saved = crate::site::replies::shown(state);
@@ -233,24 +230,9 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                     .as_ref()
                     .map(|p| (p.start_line, p.original.as_slice(), p.suggested.as_slice())),
                 note: compose.note(),
-                error: compose.error.as_deref(),
-                sending: compose.sending,
-                save: match &compose.target {
-                    crate::review::ComposeTarget::Reply { .. } => "post reply",
-                    crate::review::ComposeTarget::Conversation { .. } => "post comment",
-                    crate::review::ComposeTarget::Form(crate::route::Route::NewPr(_)) => {
-                        "create pull request…"
-                    }
-                    crate::review::ComposeTarget::Form(_) => "create issue",
-                    crate::review::ComposeTarget::Write(t) => t.save(),
-                    crate::review::ComposeTarget::Edit(_) => "save",
-                    crate::review::ComposeTarget::Discussion(w) => w.save(),
-                    crate::review::ComposeTarget::ProjectDraft(d) if d.draft.is_some() => "save",
-                    crate::review::ComposeTarget::ProjectDraft(_) => "add draft",
-                    crate::review::ComposeTarget::NewDiscussion(_) => "start discussion",
-                    crate::review::ComposeTarget::Setting(f) => f.save(),
-                    _ => "add to review",
-                },
+                error: compose.sent.error.as_deref(),
+                sending: compose.sent.sending,
+                save: compose.target.save(state),
                 completions: (completions.as_deref())
                     .map(|c| (c, selected.min(c.len().saturating_sub(1)))),
             }
@@ -266,23 +248,9 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 pending: pending.len(),
                 on_github: dialog.on_github,
                 rejected,
-                error: dialog.error.as_deref(),
-                sending: dialog.sending,
+                error: dialog.sent.error.as_deref(),
+                sending: dialog.sent.sending,
                 quick: dialog.quick,
-            }
-            .render(area, buf);
-        }
-        Some(Overlay::Confirm(confirm)) => {
-            let choices: Vec<String> = confirm.choices.iter().map(|(l, _)| l.clone()).collect();
-            let busy = confirm.busy();
-            ConfirmSheet {
-                ctx,
-                title: &confirm.title,
-                facts: &confirm.facts,
-                choices: &choices,
-                selected: confirm.selected,
-                error: confirm.error.as_deref(),
-                sending: busy.as_deref(),
             }
             .render(area, buf);
         }
@@ -294,8 +262,8 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 facts: &ask.facts,
                 choices: &choices,
                 selected: ask.selected,
-                error: ask.error.as_deref(),
-                sending: ask.busy(),
+                error: ask.sent.error.as_deref(),
+                sending: ask.busy().as_deref(),
             }
             .render(area, buf);
         }
@@ -571,7 +539,7 @@ fn separate_collapsed_tones(ctx: Ctx<'_>, content: Rect, buf: &mut Buffer) {
 fn pr_title<'a>(state: &'a State, pr: &crate::api::model::PrRef) -> Line<'a> {
     let theme = &state.theme;
     let bar = Bg::Container;
-    let Some(d) = state.prs.get(pr).and_then(|r| r.data.as_ref()) else {
+    let Some(d) = state.pr(pr) else {
         return Line::from(Span::styled(pr.to_string(), theme.title(bar)));
     };
     let (text, bg) = crate::ui::pages::state_label(crate::api::browse::Status::Pr(d.state));

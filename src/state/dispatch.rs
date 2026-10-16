@@ -1,6 +1,7 @@
 //! Messages and keys: what each one does to the state.
 
 use super::*;
+use crate::route::{app, issues, runs, search};
 
 /// Handles a message and settles the screen.
 #[cfg(test)]
@@ -14,38 +15,25 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
 /// burst of background results, then settles once.
 #[must_use]
 pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
-    // Pages are built from GitHub's data; only these change it.
-    // A page opened from cached data alone brings no data: its forms
+    // What's followed until GitHub shows it is checked when data comes
+    // in. A page opened from cached data alone brings no data: its forms
     // still need filling in.
     let opened = state.route().cloned();
-    let data = matches!(
-        msg,
-        Msg::Viewer(_)
-            | Msg::Pr(..)
-            | Msg::PrCached(..)
-            | Msg::Fetched { .. }
-            | Msg::FetchedMore(..)
-            | Msg::Source(..)
-            | Msg::Changed(..)
-            | Msg::Create(_)
-            | Msg::Write(_)
-    );
-    if data {
-        state.data_gen += 1;
+    // Who's signed in, and what the writes' answers changed of the
+    // features' own state, show on pages too.
+    let shown = matches!(msg, Msg::Viewer(_) | Msg::Done(_));
+    let data = shown || matches!(msg, Msg::Fetched { .. } | Msg::FetchedMore(..));
+    if shown {
+        state.shown_gen += 1;
     }
     // A write changes what GitHub shows, wherever it shows it.
     let wrote = match &msg {
-        Msg::Changed(_, _, r) => r.is_ok(),
-        Msg::Create(crate::create::Done::Created(_, r)) => r.is_ok(),
-        Msg::Write(done) => done.wrote(),
+        Msg::Done(done) => done.wrote(),
         // A queued write reached GitHub.
         Msg::Offline(crate::offline::Msg::Queue(crate::offline::queue::Told::Taken(_))) => true,
-        // Drafts GitHub accepted wait in a pending review there.
-        Msg::Diff(_, DiffMsg::ReviewSubmitted(o)) => o.error.is_none() || !o.accepted.is_empty(),
         _ => false,
     };
     if wrote {
-        state.prs.values_mut().for_each(|r| r.stale = true);
         state.data.values_mut().for_each(|r| r.stale = true);
     }
     // The conversation's comments, fresh from GitHub.
@@ -54,6 +42,7 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
             key: DataKey::PrActivity(pr),
             result: Ok(_),
             cached_at: None,
+            ..
         } => Some(pr.clone()),
         _ => None,
     };
@@ -72,10 +61,22 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
             key,
             result: Ok(_),
             cached_at: None,
+            ..
         } => Some(key.clone()),
         _ => None,
     };
+    let unread = matches!(
+        &msg,
+        Msg::Fetched {
+            key: DataKey::Unread,
+            cached_at: None,
+            ..
+        }
+    );
     let mut cmds = handle(state, msg);
+    if unread {
+        cmds.extend(state.unread_polled());
+    }
     if let Some(pr) = activity {
         crate::live::activity_loaded(state, &pr);
         cmds.extend(crate::talk::want_lines(state, &pr));
@@ -84,14 +85,11 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
         crate::live::page::loaded(state, &key);
     }
     if let Some(pr) = checks {
-        crate::actions::checks_loaded(state, &pr);
+        crate::workflows::checks_loaded(state, &pr);
     }
-    if data {
-        cmds.extend(act::follow(state));
-        cmds.extend(crate::create::follow(state));
-        cmds.extend(crate::writes::follow(state));
-    } else if state.route() != opened.as_ref() {
-        cmds.extend(crate::writes::follow(state));
+    if data || state.route() != opened.as_ref() {
+        cmds.extend(crate::follow::follow(state));
+        cmds.extend(crate::features::follow(state));
     }
     cmds
 }
@@ -105,14 +103,14 @@ pub fn timers(state: &mut State) -> Vec<Cmd> {
         state.spinning = true;
         cmds.push(Cmd::Timer(Timer::Spin, 90));
     }
-    let awaiting = act::awaiting_here(state).is_some() || crate::writes::awaiting(state);
+    let awaiting = crate::follow::waiting(state).is_some();
     if !state.live && (!state.running_here().is_empty() || awaiting) {
         state.live = true;
         cmds.push(Cmd::Timer(Timer::Live, LIVE_MS));
     }
     cmds.extend(crate::live::schedule(state));
     // Home keeps itself fresh while it's on screen, and only then.
-    if !state.home_timer && state.route() == Some(&Route::Home) {
+    if !state.home_timer && state.route() == Some(&Route::App(app::Home)) {
         state.home_timer = true;
         cmds.push(Cmd::Timer(Timer::Home, crate::home::FRESH_SECS * 1000));
     }
@@ -126,38 +124,24 @@ pub(super) const LIVE_MS: u64 = 5_000;
 pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Diff(of, msg) => return diff_screen::update(state, &of, msg),
-        Msg::Create(done) => return crate::create::on_done(state, done),
-        Msg::Write(done) => return crate::writes::on_done(state, done),
-        Msg::Actions(done) => return crate::actions::on_done(state, done),
+        Msg::Done(done) => return done.apply(state),
         Msg::Key(key) => return on_key(state, key),
         Msg::Resize(w, h) => state.size = (w, h),
         Msg::Viewer(Ok(login)) => state.viewer = Some(login),
         Msg::Viewer(Err(err)) => tracing::warn!(%err, "could not fetch viewer"),
-        Msg::Unread(result) => return state.unread_polled(result),
         Msg::Timer(Timer::Unread(poll)) => return state.unread_due(poll),
-        Msg::Pr(pr, result) => {
-            if let Err(err) = result.as_ref() {
-                tracing::warn!(%pr, %err, "PR fetch failed");
-            }
-            state.prs.entry(pr).or_default().finish(*result);
-        }
-        Msg::PrCached(pr, cached) => {
-            let remote = state.prs.entry(pr).or_default();
-            if remote.data.is_none() {
-                remote.data = Some(cached.value);
-                remote.cached_at = Some(cached.fetched_at);
-            }
-        }
         Msg::Fetched {
             key,
             result,
             cached_at,
+            source,
         } => {
             if let Err(err) = &result {
                 tracing::warn!(?key, %err, "fetch failed");
             }
             let is_pr = matches!(result, Ok(Data::Issue(None)));
             let remote = state.data.entry(key.clone()).or_default();
+            remote.source = source.or(remote.source.take());
             match cached_at {
                 None => remote.finish(result),
                 // A first look while it loads: shown over nothing, or over
@@ -167,12 +151,13 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                     if older && let Ok(data) = result {
                         remote.data = Some(data);
                         remote.cached_at = Some(at);
+                        remote.changed();
                     }
                 }
             }
             // A write landed while this was on its way, so it may miss it.
             if remote.stale && !is_pr {
-                return state.ensure(Need::Data(key), false);
+                return state.ensure(key, false);
             }
             // Load more, asked while it reloaded.
             if !remote.loading
@@ -186,10 +171,10 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             if is_pr
                 && let DataKey::Issue(repo, number) = key
                 && state.route()
-                    == Some(&Route::Issue {
+                    == Some(&Route::Issues(issues::Issue {
                         repo: repo.clone(),
                         number,
-                    })
+                    }))
             {
                 let anchor = match state.screen() {
                     Screen::Page(p) => p.anchor.clone(),
@@ -198,14 +183,13 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 return state.replace(Route::pr(PrRef { repo, number }), true, anchor);
             }
         }
-        Msg::Source(key, from) => {
-            state.sources.insert(key, from);
-        }
-        Msg::FetchedMore(key, after, result) => {
+        Msg::FetchedMore(key, after, result, source) => {
             let Some(remote) = (state.data.get_mut(&key)).filter(|r| r.more == Some(after)) else {
                 return Vec::new();
             };
             remote.more = None;
+            remote.changed();
+            remote.source = source.or(remote.source.take());
             match result {
                 Ok(more) => {
                     if let Some(data) = &mut remote.data {
@@ -216,7 +200,6 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 Err(err) => state.error(format!("Couldn't load more: {err}")),
             }
         }
-        Msg::Changed(change, by, result) => return act::on_changed(state, &change, by, result),
         Msg::Mouse(ev) => return nav::on_mouse(state, ev),
         Msg::Timer(Timer::ExpireNotice(id)) => state.notices.expire(id),
         Msg::Timer(Timer::Spin) => {
@@ -227,8 +210,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.live = false;
             let mut cmds = Vec::new();
             let mut needs = state.running_here();
-            needs.extend(act::poll(state));
-            needs.extend(crate::writes::poll(state));
+            needs.extend(crate::follow::poll(state));
             for need in needs {
                 cmds.extend(state.ensure(need, true));
             }
@@ -236,24 +218,20 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         }
         Msg::Timer(Timer::Home) => {
             state.home_timer = false;
-            if state.route() == Some(&Route::Home) {
-                return state.ensure_route(&Route::Home, false);
+            if state.route() == Some(&Route::App(app::Home)) {
+                return state.ensure_route(&Route::App(app::Home), false);
             }
         }
+        // Settling rebuilds the page if a time it shows has moved on.
         Msg::Timer(Timer::Minute) => {
-            state.data_gen += 1;
+            state.minute = (state.clock)();
             return vec![Cmd::Timer(Timer::Minute, 60_000)];
         }
         Msg::SuggestDue(q) => {
             if let Some(Overlay::Search(sb)) = &state.overlay
                 && sb.query() == q
             {
-                return vec![Cmd::Api(Api::Suggest(q))];
-            }
-        }
-        Msg::Suggested(q, result) => {
-            if let (Some(Overlay::Search(sb)), Ok(repos)) = (&mut state.overlay, result) {
-                sb.suggested(q, repos);
+                return state.ensure(DataKey::Suggest(q), false);
             }
         }
         Msg::RateLimits(limits) => state.rate_limits = limits,
@@ -269,14 +247,9 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Watched(what, answers) => return crate::live::page::on_watched(state, &what, answers),
         Msg::Paste(text) => return crate::typing::on_paste(state, &text),
         Msg::Focus(focused) => crate::live::on_focus(state, focused),
-        Msg::Mentionable(repo, result) => crate::typing::on_mentionable(state, repo, result),
         Msg::Code(ask, result) => return crate::code_nav::answered(state, &ask, result),
         Msg::Edited(purpose, result) => return on_edited(state, purpose, result),
-        Msg::HomeEdited { edit, result, what } => return state.home_edited(&edit, result, what),
-        Msg::Offline(msg) => {
-            state.data_gen += 1;
-            return crate::offline::on_msg(state, msg);
-        }
+        Msg::Offline(msg) => return crate::offline::on_msg(state, msg),
         Msg::Timer(Timer::Probe) => return crate::offline::on_timer(state),
     }
     Vec::new()
@@ -285,7 +258,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
 #[must_use]
 pub(super) fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-        state.quit = crate::review::may_discard(state, "ctrl-c", "quit and discard");
+        state.quit = crate::compose::may_discard(state, "ctrl-c", "quit and discard");
         return Vec::new();
     }
     match &mut state.overlay {
@@ -294,10 +267,9 @@ pub(super) fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         Some(Overlay::Search(_)) => return nav::on_search_box_key(state, key),
         Some(Overlay::Hints(_)) => return nav::on_hints_key(state, key),
         Some(Overlay::Menu(_)) => return nav::on_menu_key(state, key),
-        Some(Overlay::Compose(_)) => return on_compose_key(state, key),
+        Some(Overlay::Compose(_)) => return crate::compose::on_key(state, key),
         Some(Overlay::Submit(_)) => return on_submit_key(state, key),
-        Some(Overlay::Confirm(_)) => return act::on_confirm_key(state, key),
-        Some(Overlay::Ask(_)) => return crate::create::on_ask_key(state, key),
+        Some(Overlay::Ask(_)) => return crate::forms::on_ask_key(state, key),
         None => {}
     }
     // Any keypress dismisses the last notice; Esc on an error does only
@@ -427,7 +399,7 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
             }
             state.info("Cleared");
         }
-        Action::Cancel if matches!(state.route(), Some(Route::Job { query, .. }) if !query.is_empty()) =>
+        Action::Cancel if matches!(state.route(), Some(Route::Runs(runs::Job { query, .. })) if !query.is_empty()) =>
         {
             nav::search_log(state, "");
         }
@@ -459,8 +431,10 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
             let n = Action::OPEN_TABS.iter().position(|a| *a == action);
             return state.switch_to_tab(n.unwrap_or(0));
         }
-        Action::GoHome if state.route() == Some(&Route::Home) => state.info("Already home"),
-        Action::GoHome => return state.push(Route::Home),
+        Action::GoHome if state.route() == Some(&Route::App(app::Home)) => {
+            state.info("Already home");
+        }
+        Action::GoHome => return state.push(Route::App(app::Home)),
         Action::Search | Action::SearchBack if diff.is_some() || !nav::searches_itself(state) => {
             state.backwards = action == Action::SearchBack;
             let input = nav::new_input(&state.theme, Bg::Container);
@@ -479,9 +453,9 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::RepoSymbols => return crate::code_nav::repo_symbols(state),
         Action::References => return crate::code_nav::references(state),
         Action::Notifications => {
-            let inbox = Route::Notifications {
+            let inbox = Route::Search(search::Notifications {
                 query: String::new(),
-            };
+            });
             if state.route() == Some(&inbox) {
                 state.info("Already in your notifications");
             } else {
@@ -505,35 +479,18 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
             let kept = state.notices.log().iter().cloned().collect();
             return state.open_picker(picker::Kind::Messages(kept));
         }
-        // Queued writes, keeping repositories offline, and refreshing
-        // while GitHub can't be reached.
-        _ if crate::offline::claims(state, action) => return crate::offline::act(state, action),
-        Action::Refresh => return state.load_visible(true),
-        Action::Copy => return nav::copy_link(state),
-        Action::OpenInBrowser => return state.go(Target::External(state.here_url()).into()),
-        _ if crate::settings::claims(action) => return crate::settings::act(state, action),
-        _ if crate::manage::claims(state, action) => return crate::manage::act(state, action),
-        // Labels, milestones, branches and tags, forks, new repositories
-        // and files: before closing (a milestone's), editing and deleting.
-        _ if crate::housekeeping::claims(state, action) => {
-            return crate::housekeeping::act(state, action);
-        }
-        _ if act::ACTIONS.contains(&action) => return act::act(state, action),
         // The diff's links are in its threads' comments.
         Action::Hints | Action::HintsBrowser if diff.is_some() => {
             nav::start_hints(state, action == Action::HintsBrowser);
         }
-        // A discussion's and a project's own ways to write and edit.
-        _ if crate::discuss::takes(state, action) => return crate::discuss::act(state, action),
-        _ if crate::projects::takes(state, action) => return crate::projects::act(state, action),
-        _ if crate::writes::claims(state, action) => return crate::writes::act(state, action),
-        _ if crate::edit::ACTIONS.contains(&action) => return crate::edit::act(state, action),
-        Action::RunWorkflow => return crate::actions::action(state),
-        Action::NewIssue
-        | Action::NewPr
-        | Action::Create
-        | Action::PushBranch
-        | Action::Checkout => return crate::create::action(state, action),
+        // What a feature does: queued writes and refreshing while GitHub
+        // can't be reached among them.
+        _ if let Some(feature) = crate::features::of(state, action) => {
+            return (feature.act)(state, action);
+        }
+        Action::Refresh => return state.load_visible(true),
+        Action::Copy => return nav::copy_link(state),
+        Action::OpenInBrowser => return state.go(Target::External(state.here_url()).into()),
         _ if diff.is_some() => return diff_action(state, action),
         _ => return nav::page_action(state, action),
     }

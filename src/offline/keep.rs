@@ -9,6 +9,7 @@
 //! when GitHub is back) what changed since is fetched again: an item
 //! updated since it was kept, and the lists.
 
+use crate::route::{Route, code, discussions, issues, pulls};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,8 +21,8 @@ use tokio::sync::mpsc;
 use crate::api::browse::{DiscussionsOf, IssueKind, SearchKind, SearchResults};
 use crate::api::model::{PrRef, RepoId};
 use crate::api::{ApiError, GitHub};
-use crate::browse::{DataKey, Need};
-use crate::route::Route;
+use crate::data::DataKey;
+use crate::diff_job::GitContext;
 use crate::ui::pages::PrTab;
 
 /// How much is kept, from `config.toml`'s `[offline]`.
@@ -150,7 +151,7 @@ pub fn start(
                 Err(_) => keeper.take(Op::Now),
             }
             wait = EVERY;
-            gh.remember(KEY, keeper.kept.clone()).await;
+            gh.remember(KEY, &keeper.kept);
             tell(&keeper.kept);
             while gh.offline_since().is_none()
                 && let Some(one) = keeper.next()
@@ -163,7 +164,7 @@ pub fn start(
                 while let Ok(op) = rx.try_recv() {
                     keeper.take(op);
                 }
-                gh.remember(KEY, keeper.kept.clone()).await;
+                gh.remember(KEY, &keeper.kept);
                 tell(&keeper.kept);
             }
         }
@@ -238,23 +239,23 @@ async fn refresh(
         Err(why) => kept.problem = Some(format!("The clone: {why}")),
     }
     let tabs = [
-        Route::Repo(repo.clone()),
-        Route::Issues {
+        Route::Code(code::Repo(repo.clone())),
+        Route::Issues(issues::Issues {
             repo: repo.clone(),
             query: crate::route::OPEN.into(),
-        },
-        Route::Pulls {
+        }),
+        Route::Pulls(pulls::Pulls {
             repo: repo.clone(),
             query: crate::route::OPEN.into(),
-        },
-        Route::Discussions {
+        }),
+        Route::Discussions(discussions::Discussions {
             of: DiscussionsOf::Repo(repo.clone()),
             category: None,
-        },
+        }),
     ];
-    let pages = tabs.iter().flat_map(crate::browse::needs);
+    let pages = tabs.iter().flat_map(|r| r.family().needs());
     tracing::info!(%repo, "keeping offline: its tabs");
-    if let Err(err) = fetch_all(gh, pages.collect()).await {
+    if let Err(err) = fetch_all(gh, local.git(), pages.collect()).await {
         kept.problem = Some(err.to_string());
         return kept;
     }
@@ -278,11 +279,11 @@ async fn refresh(
             .into_iter()
             .filter(|(key, updated, _)| kept.seen.get(key) != Some(updated))
             .collect();
-        let needs: Vec<Need> = changed
+        let needs: Vec<DataKey> = changed
             .iter()
-            .flat_map(|(_, _, r)| crate::browse::needs(r))
+            .flat_map(|(_, _, r)| r.family().needs())
             .collect();
-        if let Err(err) = fetch_all(gh, needs).await {
+        if let Err(err) = fetch_all(gh, local.git(), needs).await {
             kept.problem = Some(err.to_string());
             return kept;
         }
@@ -338,20 +339,20 @@ async fn recent(
                         let (key, route) = match i.kind {
                             IssueKind::Pr { .. } => (
                                 format!("p{}", i.number),
-                                Route::Pr {
+                                Route::Pulls(pulls::Pr {
                                     pr: PrRef {
                                         repo: repo.clone(),
                                         number: i.number,
                                     },
                                     tab: PrTab::Conversation,
-                                },
+                                }),
                             ),
                             IssueKind::Issue(_) => (
                                 format!("i{}", i.number),
-                                Route::Issue {
+                                Route::Issues(issues::Issue {
                                     repo: repo.clone(),
                                     number: i.number,
-                                },
+                                }),
                             ),
                         };
                         (key, i.updated_at, route)
@@ -369,10 +370,10 @@ async fn recent(
                 };
                 let page: Vec<_> = (list.results.items.into_iter())
                     .map(|d| {
-                        let route = Route::Discussion {
+                        let route = Route::Discussions(discussions::Discussion {
                             of: of.clone(),
                             number: d.number,
-                        };
+                        });
                         (format!("d{}", d.number), d.updated_at, route)
                     })
                     .collect();
@@ -400,17 +401,15 @@ async fn recent(
 /// Fetches what the pages need into the cache, a few at a time; stops at
 /// the first sign GitHub's gone. Other failures (an item since deleted)
 /// are left for the page to say.
-async fn fetch_all(gh: &GitHub, needs: Vec<Need>) -> Result<(), ApiError> {
+async fn fetch_all(gh: &GitHub, git: &GitContext, needs: Vec<DataKey>) -> Result<(), ApiError> {
     let mut needs = needs;
     needs.dedup();
-    let mut asks = futures::stream::iter(needs.into_iter().filter(worth_keeping))
-        .map(|need| async move {
-            match need {
-                Need::Pr(pr) => gh.pull_request(&pr).await.map(drop),
-                Need::Data(key) => crate::runtime::fetch(gh, &key, None, None).await.map(drop),
-            }
-        })
-        .buffer_unordered(AT_ONCE);
+    let mut asks =
+        futures::stream::iter(needs.into_iter().filter(worth_keeping))
+            .map(|key| async move {
+                (crate::data::load::fetch(gh, git, &key, None, None).await).map(drop)
+            })
+            .buffer_unordered(AT_ONCE);
     while let Some(result) = asks.next().await {
         match result {
             Err(
@@ -426,23 +425,9 @@ async fn fetch_all(gh: &GitHub, needs: Vec<Need>) -> Result<(), ApiError> {
 }
 
 /// Whether a page's need is kept in the cache. What git answers comes
-/// from the clone; some data isn't cached at all.
-fn worth_keeping(need: &Need) -> bool {
-    match need {
-        Need::Pr(_) => true,
-        Need::Data(key) if crate::source::by_git(key, None) => false,
-        Need::Data(key) => !matches!(
-            key,
-            DataKey::InProjects(..)
-                | DataKey::Sidebar(..)
-                | DataKey::NewForm(..)
-                | DataKey::Subscription(..)
-                | DataKey::CommitComments(..)
-                | DataKey::JobLog(..)
-                | DataKey::Lines(..)
-                | DataKey::Wiki(..)
-        ),
-    }
+/// from the clone.
+fn worth_keeping(key: &DataKey) -> bool {
+    key.kept() && !crate::source::by_git(key, None)
 }
 
 /// How many bytes the files under `path` take.
@@ -469,24 +454,26 @@ pub fn disk_size(path: &std::path::Path) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::route::Family;
 
     #[test]
     fn what_is_kept_is_what_the_cache_keeps() {
         let repo = RepoId::new("o", "r");
-        let issue = crate::browse::needs(&Route::Issue {
+        let issue = issues::Issue {
             repo: repo.clone(),
             number: 1,
-        });
-        let kept: Vec<&Need> = issue.iter().filter(|n| worth_keeping(n)).collect();
+        }
+        .needs();
+        let kept: Vec<&DataKey> = issue.iter().filter(|n| worth_keeping(n)).collect();
         assert_eq!(
             kept,
             [
-                &Need::Data(DataKey::Repo(repo.clone())),
-                &Need::Data(DataKey::Issue(repo.clone(), 1))
+                &DataKey::Repo(repo.clone()),
+                &DataKey::Issue(repo.clone(), 1)
             ]
         );
         // The code comes from the clone.
-        let tree = Need::Data(DataKey::Tree(repo, "main".into(), String::new()));
+        let tree = DataKey::Tree(repo, "main".into(), String::new());
         assert!(!worth_keeping(&tree));
     }
 

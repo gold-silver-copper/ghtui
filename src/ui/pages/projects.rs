@@ -47,14 +47,7 @@ pub fn projects(
 pub fn item_link(project: &ProjectRef, view: Option<u64>, it: &ProjectItem) -> Option<String> {
     match &it.content {
         ItemContent::Issue(l, _) | ItemContent::Pr(l, _) => Some(l.url.clone()),
-        ItemContent::Draft(_) => {
-            let route = crate::route::Route::ProjectItem {
-                project: project.clone(),
-                view,
-                item: it.number,
-            };
-            Some(route.url())
-        }
+        ItemContent::Draft(_) => Some(url::project_item(project, view, it.number)),
         ItemContent::Redacted => None,
     }
 }
@@ -584,7 +577,7 @@ fn roadmap(page: &mut Page, at: &Spot<'_>, view: &ProjectView, dates: Dates<'_>,
         // Without a sort of its own, by when each starts, the undated last.
         items.sort_by_key(|it| span(it).map_or(i64::MAX, |(start, _)| start));
     }
-    let today = i64::try_from(cx.now / 86_400).unwrap_or_default();
+    let today = crate::ui::time::today(cx.now);
     let spans: Vec<(i64, i64)> = items.iter().filter_map(|it| span(it)).collect();
     let first = spans
         .iter()
@@ -888,7 +881,7 @@ fn row(
 fn more(page: &mut Page, items: &Results<ProjectItem>) {
     let shown = items.items.len();
     let (target, text) = match items.rest() {
-        Rest::All => return,
+        Rest::All | Rest::Uncounted => return,
         Rest::OnGitHub(n) | Rest::At(n, _) => {
             page.blank();
             let text = left_out_text(n, "more item", "more items");
@@ -918,12 +911,9 @@ pub fn project_item(
     number: u64,
     cx: PageCtx<'_>,
 ) {
-    let back = crate::route::Route::Project {
-        project: project.clone(),
-        view,
-    };
+    let back = url::project_view(project, view);
     let Some(it) = p.item(number) else {
-        let link = link_seg(page, p.title.clone(), back.url(), Role::Link);
+        let link = link_seg(page, p.title.clone(), back, Role::Link);
         let why = "This item isn't among those loaded from ";
         page.wrapped(vec![Seg::new(why, Role::Meta), link], 0, Frame::None);
         page.wrapped(
@@ -951,7 +941,7 @@ pub fn project_item(
     }
     hanging(page, Seg::new(format!("{icon} "), role), title, Frame::None);
     let mut place = vec![Seg::new("In ", Role::Meta)];
-    place.push(link_seg(page, p.title.clone(), back.url(), Role::Link));
+    place.push(link_seg(page, p.title.clone(), back, Role::Link));
     if let ItemContent::Issue(l, _) | ItemContent::Pr(l, _) = &it.content {
         place.push(Seg::new(" · ", Role::Meta));
         let name = format!("{}#{}", l.repo, l.number);

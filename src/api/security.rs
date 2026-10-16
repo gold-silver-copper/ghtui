@@ -160,7 +160,7 @@ impl AlertKind {
 }
 
 /// One alert of a repository.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AlertRef {
     pub repo: RepoId,
     pub kind: AlertKind,
@@ -365,7 +365,7 @@ impl crate::api::browse::Page for AlertList {
 }
 
 /// Dismissing (for a secret, resolving) an alert, or reopening it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AlertChange {
     pub alert: AlertRef,
     /// GitHub's word for why, and a comment (may be empty); `None`
@@ -427,20 +427,6 @@ pub fn filter(kind: AlertKind, query: &str) -> Filter {
     f
 }
 
-/// Cache keys.
-pub mod keys {
-    use super::{AlertKind, AlertRef};
-    use crate::api::model::RepoId;
-
-    pub fn alerts(repo: &RepoId, kind: AlertKind, query: &str) -> String {
-        format!("alerts:{repo}:{}:{query}", kind.slug())
-    }
-
-    pub fn alert(a: &AlertRef) -> String {
-        format!("alert:{}:{}:{}", a.repo, a.kind.slug(), a.number)
-    }
-}
-
 /// How many alerts a page of a list has.
 const PAGE: usize = 30;
 
@@ -463,7 +449,6 @@ pub fn refusal(
     message: &str,
     scopes: Option<&str>,
     permissions: Option<&str>,
-    host: crate::host::Host,
 ) -> Option<Refusal> {
     if !matches!(status, 403 | 404 | 422) {
         return None;
@@ -485,17 +470,10 @@ pub fn refusal(
         return Some(Refusal::Off(message));
     }
     // A classic token (or gh's own) says its scopes.
-    let held = |s: &str| scopes.is_some_and(|all| all.split(',').any(|h| h.trim() == s));
+    let held = |s: &str| scopes.is_some_and(|all| crate::api::has_scope(all, s));
     if scopes.is_some() && !held("repo") && !held("security_events") {
-        let flag = if host.is_enterprise() {
-            format!("-h {host} ")
-        } else {
-            String::new()
-        };
-        return Some(Refusal::Denied(format!(
-            "{} take the security_events scope, which your token lacks: `gh auth refresh {flag}-s security_events` adds it",
-            kind.alerts()
-        )));
+        let why = crate::api::scope_missing(kind.alerts(), "security_events");
+        return Some(Refusal::Denied(why));
     }
     if lower.contains("not accessible by") {
         let named = permissions
@@ -531,31 +509,15 @@ impl GitHub {
         path: &str,
         what: &str,
     ) -> Result<Result<Answer, String>, ApiError> {
-        #[derive(Deserialize)]
-        struct Message {
-            message: Option<String>,
-        }
-        let answer = self.rest_answer(path).await?;
-        if (200..300).contains(&answer.status()) {
-            return Ok(Ok(answer));
-        }
-        let message = serde_json::from_str::<Message>(answer.body())
-            .ok()
-            .and_then(|m| m.message)
-            .unwrap_or_default();
-        let scopes = answer.header("x-oauth-scopes");
-        let permissions = answer.header("x-accepted-github-permissions");
-        let host = crate::host::current();
-        match refusal(kind, answer.status(), &message, scopes, permissions, host) {
-            Some(Refusal::Off(why)) => Ok(Err(why)),
-            Some(Refusal::Denied(why)) => Err(ApiError::Denied(why)),
-            None => {
-                answer.checked(what)?;
-                Err(ApiError::Decode(format!(
-                    "{what}: status {}",
-                    answer.status()
-                )))
-            }
+        let answer = self.rest_refusable(path, what, |status, message, answer| {
+            let scopes = answer.header("x-oauth-scopes");
+            let permissions = answer.header("x-accepted-github-permissions");
+            refusal(kind, status, message, scopes, permissions)
+        });
+        match answer.await? {
+            Ok(answer) => Ok(Ok(answer)),
+            Err(Refusal::Off(why)) => Ok(Err(why)),
+            Err(Refusal::Denied(why)) => Err(ApiError::Denied(why)),
         }
     }
 
@@ -568,7 +530,6 @@ impl GitHub {
         query: &str,
         after: Option<String>,
     ) -> Result<AlertList, ApiError> {
-        let first = after.is_none();
         let mut path = format!("/repos/{repo}/{}/alerts?per_page={PAGE}", kind.slug());
         for (name, value) in filter(kind, query).params {
             path.push_str(&format!(
@@ -600,8 +561,7 @@ impl GitHub {
                 }
             }
         };
-        let key = keys::alerts(repo, kind, query);
-        Ok(self.kept_page(first, &key, list).await)
+        Ok(self.checked(list, format!("{repo}'s alerts")))
     }
 
     /// One alert, with what only its page shows: a Dependabot alert's
@@ -634,7 +594,6 @@ impl GitHub {
             }
             Detail::Code(_) => {}
         }
-        self.remember(&keys::alert(a), alert.clone()).await;
         Ok(alert)
     }
 
@@ -726,17 +685,8 @@ mod wire {
     };
     use crate::api::ApiError;
     use crate::api::browse::Severity;
-
-    #[derive(Deserialize)]
-    struct Login {
-        login: String,
-    }
-
-    #[derive(Deserialize)]
-    struct Package {
-        ecosystem: Option<String>,
-        name: Option<String>,
-    }
+    use crate::api::browse::UserLogin as Login;
+    use crate::api::browse::rest_advisories::{Cwe, Package};
 
     #[derive(Deserialize)]
     struct Dependency {
@@ -756,12 +706,6 @@ mod wire {
         severity: Option<Severity>,
         vulnerable_version_range: Option<String>,
         first_patched_version: Option<Version>,
-    }
-
-    #[derive(Deserialize)]
-    struct Cwe {
-        cwe_id: String,
-        name: String,
     }
 
     #[derive(Deserialize)]
@@ -1082,46 +1026,22 @@ mod tests {
             ]
         );
         assert_eq!(f.ignored, ["nonsense"]);
-        let f = filter(AlertKind::CodeScanning, "is:open branch:main");
-        assert_eq!(
-            f.params,
-            [
-                ("state", "open".to_owned()),
-                ("ref", "refs/heads/main".to_owned())
-            ]
-        );
         let f = filter(AlertKind::SecretScanning, "is:closed severity:high");
         assert_eq!(f.params, [("state", "resolved".to_owned())]);
         assert_eq!(f.ignored, ["severity:high"]);
     }
 
-    /// A refusal says what's missing: the feature, a classic token's
-    /// scope (with the command that adds it), a fine-grained token's
-    /// permission, or the account's access.
+    /// A refusal says what's missing: a classic token's scope (with the
+    /// command that adds it), a fine-grained token's permission, or the
+    /// account's access.
     #[test]
     fn a_refusal_says_what_is_missing() {
-        let dotcom = crate::host::Host::default();
-        let off = refusal(
-            AlertKind::Dependabot,
-            403,
-            "Dependabot alerts are disabled for this repository.",
-            Some("repo"),
-            None,
-            dotcom,
-        );
-        assert_eq!(
-            off,
-            Some(Refusal::Off(
-                "Dependabot alerts are disabled for this repository".into()
-            ))
-        );
         let scope = refusal(
             AlertKind::CodeScanning,
             403,
             "Resource not accessible by integration",
             Some("gist, read:org"),
             None,
-            dotcom,
         );
         let Some(Refusal::Denied(why)) = scope else {
             panic!("{scope:?}")
@@ -1136,7 +1056,6 @@ mod tests {
             "Resource not accessible by personal access token",
             None,
             Some("secret_scanning_alerts=read"),
-            dotcom,
         );
         let Some(Refusal::Denied(why)) = fine else {
             panic!("{fine:?}")
@@ -1151,12 +1070,8 @@ mod tests {
             "You are not authorized to perform this operation.",
             Some("repo, workflow"),
             None,
-            dotcom,
         );
         assert!(matches!(access, Some(Refusal::Denied(w)) if w.contains("write access")));
-        assert_eq!(
-            refusal(AlertKind::Dependabot, 500, "x", None, None, dotcom),
-            None
-        );
+        assert_eq!(refusal(AlertKind::Dependabot, 500, "x", None, None), None);
     }
 }

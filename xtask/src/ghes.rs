@@ -24,7 +24,7 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
@@ -107,7 +107,6 @@ pub struct StandIn {
     /// `localhost:PORT`, as ghtui's `GHTUI_HOST`.
     pub host: String,
     ca: PathBuf,
-    log: Arc<Mutex<Vec<String>>>,
     stop: Option<oneshot::Sender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -129,13 +128,11 @@ impl StandIn {
             .redirect(reqwest::redirect::Policy::none())
             .user_agent("ghtui-live-ghes")
             .build()?;
-        let log = Arc::new(Mutex::new(Vec::new()));
         let shared = Arc::new(Shared {
             host: host.clone(),
             client,
             strip: strip.iter().cloned().collect(),
             version: version.map(str::to_owned),
-            log: Arc::clone(&log),
         });
         let (stop, stopped) = oneshot::channel();
         let (ready_tx, ready) = std::sync::mpsc::channel();
@@ -161,7 +158,6 @@ impl StandIn {
         Ok(StandIn {
             host,
             ca,
-            log,
             stop: Some(stop),
             thread: Some(thread),
         })
@@ -178,11 +174,6 @@ impl StandIn {
             ("GIT_SSL_CAINFO".into(), ca),
             ("GH_TOKEN".into(), String::new()),
         ]
-    }
-
-    /// Every request served so far: `METHOD /path STATUS`.
-    pub fn requests(&self) -> Vec<String> {
-        self.log.lock().map(|log| log.clone()).unwrap_or_default()
     }
 }
 
@@ -202,7 +193,6 @@ struct Shared {
     client: reqwest::Client,
     strip: HashSet<String>,
     version: Option<String>,
-    log: Arc<Mutex<Vec<String>>>,
 }
 
 /// The authority (`ca.pem`) and the server's certificate for localhost,
@@ -355,23 +345,14 @@ async fn serve(
 }
 
 async fn handle(req: Request<Incoming>, shared: &Shared) -> Response<Full<Bytes>> {
-    let line = format!(
-        "{} {}",
-        req.method(),
-        req.uri().path_and_query().map_or("/", |p| p.as_str())
-    );
-    let response = match forward(req, shared).await {
+    match forward(req, shared).await {
         Ok(response) => response,
         Err(err) => {
             let mut response = Response::new(Full::new(Bytes::from(format!("{err:#}"))));
             *response.status_mut() = StatusCode::BAD_GATEWAY;
             response
         }
-    };
-    if let Ok(mut log) = shared.log.lock() {
-        log.push(format!("{line} {}", response.status().as_u16()));
     }
-    response
 }
 
 /// Where a path is served from, and whether it's the API (whose answers
@@ -458,9 +439,6 @@ async fn forward(req: Request<Incoming>, shared: &Shared) -> Result<Response<Ful
         && let Ok(json) = serde_json::from_slice::<Value>(&body)
         && let Some(refused) = refusal(json["query"].as_str().unwrap_or_default(), &shared.strip)
     {
-        if let Ok(mut log) = shared.log.lock() {
-            log.push(format!("refused {path}: {refused}"));
-        }
         let mut response = Response::new(Full::new(Bytes::from(refused)));
         response.headers_mut().insert(
             header::CONTENT_TYPE,

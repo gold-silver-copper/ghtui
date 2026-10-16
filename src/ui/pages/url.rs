@@ -1,4 +1,7 @@
 use super::*;
+use crate::api::explore::Since;
+use crate::api::packages::{PackageRef, PackagesOf};
+use crate::api::project::ProjectRef;
 
 /// The website of the GitHub ghtui works with.
 pub fn base() -> String {
@@ -46,13 +49,26 @@ pub fn pull_tab(pr: &PrRef, tab: &str) -> String {
 /// A file in a pull request's Files changed, at a line (`R12` new,
 /// `L12` old) if given.
 pub fn diff_line(pr: &PrRef, path: &str, line: Option<(char, u32)>) -> String {
-    let hash = crate::diff_screen::path_hash(path);
     let line = line.map(|(side, n)| format!("{side}{n}"));
-    format!(
-        "{}#diff-{hash}{}",
-        pull_tab(pr, "files"),
-        line.unwrap_or_default()
-    )
+    diff_file(&pull_tab(pr, "files"), path, &line.unwrap_or_default())
+}
+/// A file in the diff on `page` (a pull request's files, a commit, a
+/// comparison), at `lines` (`R10-R12`), as GitHub anchors them.
+pub fn diff_file(page: &str, path: &str, lines: &str) -> String {
+    format!("{page}#diff-{}{lines}", path_hash(path))
+}
+/// How GitHub names a file in its diffs' anchors: the SHA-256 of its path,
+/// in hex.
+pub fn path_hash(path: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(path.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+/// A commit's or a comparison's files, from its page.
+pub fn files(page: &str) -> String {
+    format!("{page}#files")
 }
 pub fn search(kind: SearchKind, query: &str) -> String {
     let kind = match kind {
@@ -71,6 +87,10 @@ pub fn commit(repo: &RepoId, oid: &str) -> String {
 }
 pub fn compare(repo: &RepoId, from: &str, to: &str) -> String {
     format!("{}/compare/{from}..{to}", self::repo(repo))
+}
+/// A label's link: its open issues.
+pub fn label(repo: &RepoId, name: &str) -> String {
+    format!("{}/labels/{}", self::repo(repo), encode_path(name))
 }
 pub fn release(repo: &RepoId, tag: &str) -> String {
     format!("{}/{repo}/releases/tag/{}", base(), encode_path(tag))
@@ -117,4 +137,55 @@ fn escape(s: &str, safe: &[u8], plus: bool) -> String {
         }
     }
     out
+}
+
+/// A repository's Insights, at a tab.
+pub fn insights(repo: &RepoId, tab: InsightsTab) -> String {
+    format!("{}/{}", self::repo(repo), tab.path())
+}
+/// Trending: new repositories, in a language if given.
+pub fn explore(language: Option<&str>, since: Since) -> String {
+    let mut url = format!("{}/trending", base());
+    if let Some(language) = language {
+        // As GitHub's Trending URLs write it (`c++`, `visual-basic-.net`).
+        url.push('/');
+        url.push_str(&encode_path(
+            &language.trim().to_lowercase().replace(' ', "-"),
+        ));
+    }
+    if since != Since::Daily {
+        url.push_str(&format!("?since={}", since.slug()));
+    }
+    url
+}
+pub fn topic(name: &str) -> String {
+    format!("{}/topics/{}", base(), encode_path(name))
+}
+pub fn star_list(login: &str, slug: &str) -> String {
+    format!("{}/stars/{login}/lists/{}", base(), encode_path(slug))
+}
+pub fn packages(of: &PackagesOf) -> String {
+    match of {
+        PackagesOf::Owner(login) => format!("{}?tab=packages", user(login)),
+        PackagesOf::Repo(repo) => format!("{}/packages", self::repo(repo)),
+    }
+}
+/// A package, at one of its versions (else its newest).
+pub fn package(at: &PackageRef, version: Option<u64>) -> String {
+    let (owner, kind, name) = (&at.owner, at.kind.slug(), encode_path(&at.name));
+    match version {
+        None => format!("{}/users/{owner}/packages/{kind}/package/{name}", base()),
+        Some(id) => format!("{}/users/{owner}/packages/{kind}/{name}/{id}", base()),
+    }
+}
+/// A project at one of its views (the project, without one).
+pub fn project_view(project: &ProjectRef, view: Option<u64>) -> String {
+    match view {
+        Some(n) => format!("{}/views/{n}", project.url()),
+        None => project.url(),
+    }
+}
+/// An item in a project's view's side pane.
+pub fn project_item(project: &ProjectRef, view: Option<u64>, item: u64) -> String {
+    format!("{}?pane=issue&itemId={item}", project_view(project, view))
 }

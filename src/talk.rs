@@ -2,13 +2,13 @@
 //! unfolded, and a review's rows leading to the changes it reviewed (from
 //! git, as they were at its commit) and to what changed since.
 
+use crate::route::{Route, pulls};
 use std::collections::HashSet;
 
 use crate::api::model::PrRef;
-use crate::browse::{DataKey, Need};
+use crate::data::DataKey;
 use crate::diff_screen::{DiffOf, RangeView};
 use crate::keymap::Action;
-use crate::route::Route;
 use crate::state::{Cmd, Git, Screen, State};
 use crate::ui::page::{Link, ReviewLink};
 use crate::ui::pages::{LinesAt, Marks, PrTab};
@@ -40,10 +40,10 @@ pub fn marks<'a>(state: &'a State, pr: Option<&PrRef>, lines: &'a LinesAt<'a>) -
 /// The lines git has read for the threads of `pr`'s conversation.
 pub fn lines_at<'a>(state: &'a State, pr: &PrRef) -> LinesAt<'a> {
     let mut at = LinesAt::new();
-    for (key, remote) in &state.data {
+    for key in state.data.keys() {
         if let DataKey::Lines(repo, commit, path) = key
             && *repo == pr.repo
-            && let Some(crate::browse::Data::Lines(lines)) = &remote.data
+            && let Some(crate::data::Data::Lines(lines)) = state.get(key)
         {
             at.insert((commit.clone(), path.clone()), lines.as_slice());
         }
@@ -75,7 +75,7 @@ pub fn want_lines(state: &mut State, pr: &PrRef) -> Vec<Cmd> {
     }
     keys.truncate(MOST_LINES);
     keys.into_iter()
-        .flat_map(|key| state.ensure(Need::Data(key), false))
+        .flat_map(|key| state.ensure(key, false))
         .collect()
 }
 
@@ -126,6 +126,7 @@ pub fn describe(link: &ReviewLink) -> &'static str {
         ReviewLink::Open { .. } => "Open the review",
         ReviewLink::AsReviewed { .. } => "The changes as the review saw them",
         ReviewLink::Since { .. } => "What changed since the review",
+        ReviewLink::Draft { .. } => "Your draft, in Files changed",
     }
 }
 
@@ -136,12 +137,13 @@ pub fn follow(state: &mut State, link: &ReviewLink) -> Vec<Cmd> {
             toggle(state, anchor, None);
             Vec::new()
         }
-        ReviewLink::Open { pr, id } => state.push(Route::Pr {
+        ReviewLink::Open { pr, id } => state.push(Route::Pulls(pulls::Pr {
             pr: pr.clone(),
             tab: PrTab::Reviewed(*id),
-        }),
+        })),
         ReviewLink::AsReviewed { pr, commit } => as_reviewed(state, pr, commit),
         ReviewLink::Since { pr, commit } => since(state, pr, commit),
+        ReviewLink::Draft { url, .. } => state.go(crate::route::Dest::from_url(url)),
     }
 }
 
@@ -156,7 +158,7 @@ fn toggle(state: &mut State, anchor: &str, open: Option<bool>) {
         unfolded.remove(anchor)
     };
     if changed {
-        state.data_gen += 1;
+        state.shown_gen += 1;
     }
 }
 
@@ -261,9 +263,7 @@ mod tests {
     use super::*;
     use crate::api::model::RepoId;
 
-    async fn git(dir: &std::path::Path, args: &[&str]) -> String {
-        crate::git::run(Some(dir), args).await.unwrap()
-    }
+    use crate::git::set_up as git;
 
     /// A thread's lines are read from your clone at the commit its first
     /// comment was on, not at the branch's tip; without a clone (and no

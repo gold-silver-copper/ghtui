@@ -397,7 +397,9 @@ its review stands, so you don't have to piece it together:
 - what still stops the merge.
 
 Each row opens what it's about: a draft or a thread in Files changed at
-its line, a review its own page. A review's page has its summary and
+its line, a review its own page. On a draft, `,e` edits it (in Files
+changed) and `,D` or `del` deletes it, which `ctrl-z` brings back, as
+they do on a draft in Files changed, where `c` comments on its line. A review's page has its summary and
 every thread it started or replied in, then two ways into Files
 changed: the changes it reviewed, as the pull request was at its commit
 (from git), and what changed since, marked as "since your last review"
@@ -1107,23 +1109,97 @@ batches of a thousand, never one by one, within limits: 20,000 files,
 rust-lang/rust (39,000 Rust files), once cloned, that is about 5,000 files in 18
 seconds, using about 130 MB.
 
-**Fast from the cache.** The first paint comes from a local cache (redb),
-then everything is refreshed in the background. REST requests revalidate
-with ETags (and `Last-Modified`), so unchanged data costs nothing against
-the rate limit. Offline is that same path with GitHub missing: one place
-(`api::reach`) knows whether GitHub can be reached (a request that can't
-connect says it can't; any answer says it can), so a request fails at
-once while it can't, the page keeps the cache's copy, and the header
-says so. A failed connect never left, so only a write that failed that
-way is queued (`offline::queue`): each is written down as being sent
-before it goes, and its answer settles it, so none is sent twice.
+**Where a page's data comes from.** Every piece of GitHub's data a page
+shows has one key, a `DataKey`, and is one kind of `Data`; both are in
+`src/data.rs`, where each line of the `data!` list is a kind of data and
+how a page picks it out. One loader (`src/data/load.rs`) gets a key's
+data: from git where git can answer (`src/source.rs` decides, and the
+page says which), else from GitHub's API. It keeps what the API answered
+in the cache under the same key (a list's first page), where
+`DataKey::kept` allows, and reads it back by that key. In the state, each
+key's data is a `Remote`: loading, failed and why, or there, with when it
+was fetched. Pages read it through `State::get`, never on their own,
+and so do pickers, the composer's `@` mentions, the header's unread
+count and the search box's suggestions.
+
+**Fast from the cache.** The first paint comes from a local cache (redb,
+`src/store.rs`), then everything is refreshed in the background. What's
+written to the cache is kept in memory, where reads see it, and committed
+together in the background, so no reply waits on the disk. REST requests
+revalidate with ETags (and `Last-Modified`), so unchanged data costs
+nothing against the rate limit. Offline is that same path with GitHub
+missing: one place (`api::reach`) knows whether GitHub can be reached (a
+request that can't connect says it can't; any answer says it can), so a
+request fails at once while it can't, the page keeps the cache's copy, and
+the header says so. A failed connect never left, so only a write that
+failed that way is queued (`offline::queue`): each is written down as
+being sent before it goes, and its answer settles it, so none is sent
+twice.
+
+**A page says what it is in one place.** Pages come in families, one enum
+each in `src/route/` (code, issues, pull requests, Actions' runs, releases,
+people and so on; Insights and the like are `src/site.rs`'s, housekeeping's
+forms `src/housekeeping.rs`'s). A family says, for each of its pages, its
+URL and title, the page above it, what it needs fetched, what it loads
+more of, how wide it is, its crumbs and tabs, how it's built, which form
+it is if it's one, and how its URLs read (the `route::Family` trait).
+`Route` is one variant per family, and only asks it. What a page needs is
+the one list of what building it reads: a test builds every page the
+fixtures reach and checks it reads nothing else. That is also what keeps
+pages from being built for nothing: a page is built again only when the
+data it needs changes, its form changes, or a time it shows relative to
+now ("3m ago") reads differently. The pages are drawn by `src/ui/pages/`,
+which, like `src/api/`, names no app module.
+
+**A write is a job.** Everything ghtui writes, to GitHub, to git in
+your clone or to Home's sections in your config, is a job (`src/work.rs`): a struct that says how it runs and
+what its answer does (`impl Job`), listed once in `jobs!`, which makes the
+`Work` a command carries and the `Done` its answer comes back as. A job
+fails with one error type, `work::Failure`, which says GitHub's own words
+when GitHub refused. A change to an issue, a pull request, a discussion, a
+run, a notification, a project or a repository's settings is one job, a
+`Change` (`act::Changing`), and what the offline queue keeps is made of
+them. What an action does where you are is planned once by the feature
+that owns it, as a step (`act::Step`: send it, ask first, choose in a
+picker, write in the composer, start a job, or set a form's row), and
+the key, the menu and the palette all ask that plan, so they can't
+disagree; a picker's row is such a step too. Asking first is one
+question (`forms::Ask`), about a form or about what an action changes,
+whose answers carry what they're about.
+
+**After a write, the page follows GitHub until it shows it**
+(`src/follow.rs`). The feature that made the write says what the page
+should show once GitHub has it, as an `Expectation`; one place polls the
+page's data, says in the status bar that it's waiting, checks each answer
+and gives up after a while. One write is followed at a time.
+
+**Forms are kept in one map** (`src/forms.rs`), by their page, with what
+was sent from them (`Sent`: sending, and GitHub's refusal): a new issue or
+pull request, a release, a gist, a wiki page, housekeeping's, running a
+workflow. A form is its fields (`forms::Fields`) and what it does
+(`forms::Kind`: Enter on a row, writing its text, submitting it, filling
+itself in from data as it arrives, its menu rows), which its page's
+family names. Text is typed in one composer (`src/compose.rs`), for a
+form's text as for a comment or a review's; what it's for says its title,
+what ctrl-s does and where the text goes.
+
+**What each feature adds is one table** (`src/features.rs`): the actions
+it owns, the others it takes on its own pages, what it does with them,
+the menu's rows it offers, and what it follows as data arrives or a page
+opens. A key's action is done by the feature that takes it on the screen,
+else by the one that owns it; tests check that no two features own one
+action and that on no screen two take one, so the table's order is only
+the menu's.
 
 **Colors from one seed.** Light and dark schemes are generated with
 Material 3's tonal palettes. Every foreground and background pair the UI
 uses is tested for contrast in both schemes, in truecolor and 256 colors.
 
-It's one crate. The top of `src/` is the app (routes, state, keys, view,
-runtime) and the binary that runs it; the rest are its modules:
+It's one crate. The top of `src/` is the app and the binary that runs it:
+the state and `update` (`src/state/`), keys (`src/keymap.rs`), the view,
+the runtime that runs commands (`src/runtime.rs`), and the pieces above
+(`data`, `route`, `work`, `follow`, `forms`, `compose`, `features`), with
+a module for each feature beside them. The rest are its modules:
 
 | Module   | What it does                                                    |
 | -------- | --------------------------------------------------------------- |
@@ -1145,13 +1221,87 @@ scripts/check-tls-deps.sh
 ```
 
 The tests come at GitHub's data from several sides:
-- every query is checked against the schema;
-- recorded GitHub responses are replayed offline;
+- every query is checked against the schema (`src/api/query_check.rs`);
+- recorded GitHub responses are replayed offline (`tests/corpus.rs`);
+- the client is tested against a scripted GitHub (`tests/client.rs`):
+  `github(vec![Reply::new(200, body).on(path)])` answers each request in
+  turn, and the test checks what was asked and how the answer reads;
 - git is the oracle for diffs, on real repositories over `file://`;
-- full screens are snapshotted in light, dark and 256 colors
-  (`INSTA_UPDATE=always cargo test` to accept changes, then review
-  them);
-- property tests throw random keys, resizes and replies at the app.
+- behaviour is tested through `update` (`src/state/tests/`), with no
+  network, runtime or terminal;
+- every screen the fixtures reach is drawn in light and dark at a few
+  sizes, tiny ones among them, to check nothing panics and every color
+  pair drawn is declared (`src/state/tests/smoke.rs`);
+- property tests throw random keys, resizes and replies at the app, and
+  read every page's URL back as the page.
+
+Nothing compares a whole screen: how a page looks may change when it
+gets better. Where what a page says matters, a test looks for the text.
+
+### Writing a test
+
+A behaviour test starts from a builder in `src/state/tests/screens.rs`
+(`with_repo()`, `with_pr()`, …, or `open(state, route, data)` with
+`fixtures::sample(&key)`), presses keys (`press(&mut s, ",o")`), hands in
+data (`fetched`) and a job's answer (`done`), and checks what was sent
+(`sent::<Job>`, `asked`, `sent_change`) and what the page or status line
+says (`says`, `warns`, the page's text). From
+`src/state/tests/housekeeping.rs` (`with_labels` and `select` are that
+file's own):
+
+```rust
+let mut s = with_labels();
+select(&mut s, "good first issue");
+press(&mut s, ",e");
+let cmds = press(&mut s, ",s");
+let work = fixtures::sent::<labels::Save>(&cmds);
+assert_eq!(work.was.as_deref(), Some("good first issue"));
+fixtures::done(&mut s, work, Ok(()));
+says(&s, "Saved the label");
+```
+
+A write is tested once at each level: what it sends over HTTP in
+`tests/client.rs`, the job the keys start (as above), its query against
+the schema, and, for a new kind of write, one step of the live check
+below. A new page needs a fixture its builder opens, listed in
+`screens::pages()`, so the smoke test draws it and checks it reads only
+what it needs.
+
+### Adding a page
+
+1. In its family's file in `src/route/`, a variant of the family's
+   `Page`, and its arms in the family's `url`, `title`, `up`, `needs`
+   (the page's own key last) and `build`, and where the defaults don't
+   fit, `paged`, `width`, `chrome`. Its URLs are read in the family's
+   `parse`, and listed in `tests/github_urls.txt`.
+2. If it shows new data: a `DataKey`, its line in `data!`, whether it's
+   kept (`DataKey::kept`), its arm in `data/load.rs`, and the request in
+   `src/api/`.
+3. Its drawing in `src/ui/pages/`, from the data alone.
+4. A fixture for it (`fixtures::sample` for a new key), in
+   `screens::pages()`.
+
+A new family is one more file: its `Page` enum and `impl Family`, a
+`Route` variant and its arm in `Route::family`, its parser's place in
+`route.rs`'s `TOP` or `REPO` order, and its `arb()` for the property
+tests.
+
+### Adding a write or a form
+
+1. A job: a struct, its `impl Job` (`run` sends it, `done` says what
+   happened and what follows), and its line in `jobs!`. A change to an
+   issue, a pull request and the like is a `Change` variant instead, sent
+   with `act::send`.
+2. If the page should show it: an `Expectation`, started from `done` with
+   `follow::expect`.
+3. The key: an `Action` (`src/keymap.rs`) in its feature's `owns` in
+   `src/features.rs`, with an arm in the feature's `act` that plans a step
+   or starts the job.
+4. A form: its fields (`impl forms::Fields`), its `forms::Kind`, and its
+   page in a family whose `form` names it; the page draws it with
+   `ui::pages::write_form`.
+5. Tests: the request in `tests/client.rs`, the job the keys start in
+   `src/state/tests/`.
 
 A contract suite checks ghtui's assumptions against live GitHub, read-only
 (`cargo test --test contract -- --ignored contract`). Every
@@ -1160,71 +1310,72 @@ kind of github.com link is listed with what it must open in
 
 ### The live check
 
-`cargo xtask live` runs ghtui for real, against real GitHub, and checks
-every write and live update against GitHub's own answer (`gh api`), not
-only the screen. It's run by hand, not in CI, and takes about eight
-minutes. `cargo xtask live --list` names the checks; `cargo xtask live
-issue inbox` runs only those.
+`cargo xtask live` runs ghtui for real, against real GitHub: it opens
+each kind of page, and makes one write of each kind, checked against
+GitHub's own answer (`gh api`), not only the screen. What a write sends
+and what the app does with each key are tested above; this checks that
+the real app does it against real GitHub. It's run by hand, not in CI,
+and takes about five minutes. `cargo xtask live --list` names the
+checks; `cargo xtask live issue offline` runs only those.
 
+- **The checks:**
+  - `pages` opens each kind of page on its own and checks it shows what
+    GitHub says it has, finishes loading, and says "Couldn't load"
+    nowhere: the repository, a folder, a file, its blame, main's
+    commits, a commit, branches, tags, issues, issue #8, milestones,
+    pull requests, PR #5's conversation and PR #11's files, Actions, a
+    workflow and the latest run, releases, discussions and the first
+    one, the wiki, security, code scanning and its alert #1, settings,
+    projects, Insights, Explore, a topic, the owner's profile and
+    gists, home and the inbox. It only reads.
+  - `issue` creates an issue with `,i`, comments with `c`, sees a
+    comment made on GitHub show without a refresh, and closes it with
+    `,x`.
+  - `pull`, in a fresh clone, proposes a new branch (`,p`), pushes it
+    (`,P`), creates a draft pull request (`,s`) and marks it ready
+    (`,r`).
+  - `release` makes a release with a new tag with `,V`.
+  - `labels` makes a label on the labels page with `,o`, and deletes it
+    with `,D`.
+  - `settings` writes a protection rule for `ghtui-live-` branches in
+    its form (with `$EDITOR` set to a `sed` script) and saves it, then
+    deletes it with `,D`, and checks `main`'s rule ends as it began.
+  - `actions` runs `actions.yml` by hand with `,E`, with its `seconds`
+    input set, and follows the run until it fails, as it does on
+    purpose.
+  - `offline` runs ghtui against a stand-in Enterprise Server (below)
+    on port 8451, and stops it to make GitHub go away, without touching
+    the machine's network: the page stays, marked offline; a comment
+    written meanwhile is queued, still queued after ghtui restarts, and
+    sent exactly once when the stand-in starts again.
 - **What it needs:** `gh`, logged in as the owner of
   `gold-silver-copper/ghtui-test-writes`, with a classic token's `repo`
-  and `gist` scopes, and `workflow` to run workflows by hand. Checks
-  that need more are skipped without it, and say so: `project` for the
-  Projects checks (`gh auth refresh -s project`), `notifications` for
-  subscribing to a thread (without it, the check sees ghtui name the
-  scope), `delete_repo` for transferring an issue (`manage-transfer`
-  makes a `ghtui-live-` repository to move it to, and deletes it), for
-  the fork and new-repository checks, which delete what they make,
-  and for archiving (`settings-archive` archives and unarchives a scratch
-  `ghtui-live-` repository it deletes; without it, it only asks twice on
-  the test repository and cancels); `admin:repo_hook` for webhooks
-  where `repo` doesn't reach them. `settings-access` sends an invitation
-  only to the account `GHTUI_LIVE_INVITEE` names (one that agreed to be
-  invited); otherwise it asks and cancels. `read:user` for saved replies,
-  and `read:packages`,
-  `write:packages` and `delete:packages` for the packages check, which
-  pushes a tiny `ghtui-live-` image to ghcr.io (with curl) and deletes a
-  version of it with `,D`; without them, the check sees ghtui name the
-  scope it lacks. The starred lists check, with `user`, makes a
-  `ghtui-live-` list of the owner's and deletes it; without it, it sees
-  ghtui name the scope. It also needs git; openssl; and a fux that speaks fuxth (`fux help-agents`) (on `PATH`, or `~/code/fux`'s release build,
-  or `--fux PATH`). It builds `target/release/ghtui` unless given
+  and `workflow` scopes. Without `read:project` (or `project`),
+  `pages` leaves the Projects tab out, and says so. It also needs git,
+  openssl (for the stand-in's certificates), and a fux that speaks
+  fuxth (`fux help-agents`): on `PATH`, `~/code/fux`'s release build,
+  or `--fux PATH`. It builds `target/release/ghtui` unless given
   `--ghtui PATH`.
+- **What the test repository needs:** issue #8 open; PR #5 open; PR #11
+  with `bot-bot-1791523358.txt` in its files; `actions.yml`, a workflow
+  run by hand with a `seconds` input whose job fails; a protection rule
+  on `main`; and, for `pages`, code scanning alert #1 and a discussion
+  if those pages are to be opened (they're left out otherwise).
 - **Where it runs:** ghtui runs in a private fux server, one pane at a
-  time, at 216 or 90 columns, with its own socket and `XDG_RUNTIME_DIR`
-  and a scratch cache, config and clones, all under
-  `~/.cache/claude-tmp/ghtui-live` (`GHTUI_LIVE_DIR`), which a run empties
-  when it starts. A failing check leaves its last screen in `failures/`.
-- **What it touches:** it writes only to the test repository (and a
-  secret gist of the owner's, deleted at once; and, with `delete_repo`,
-  a fork of `octocat/Spoon-Knife` and a private repository under the
-  owner's account, named `ghtui-live-…`, deleted at once). The checks rely on the
-  repository's workflows, run by hand: `mention.yml` (the Actions bot
-  mentions the owner on an issue), `botreview.yml` (it leaves a review
-  comment on PR #11, or, given `review`, submits a review with a summary
-  and an inline comment on the pull request it's given) and
-  `actions.yml` (a job that fails with annotations and uploads an
-  artifact); on its code scanning alerts (from an uploaded SARIF), its
-  Discussions (turned on) and its protected `main`. Its wiki has no
-  page, so the wiki check is skipped until one is made on github.com.
-  The inbox is filtered to that repository before anything is marked. A
-  stand-in `xdg-open`, first on the server's `PATH`, writes down the
-  URLs ghtui opens instead of opening a browser.
-- **Cleaning up:** each check undoes what it made, pass or fail (issues,
-  comments, pull requests, branches, releases with their assets and
-  tags, workflow runs, gists, discussions, projects, repository and
-  watch settings, a dismissed alert, labels, milestones, forks and
-  repositories, protection rules, rulesets, invitations, webhooks and
-  deploy keys), and the fux server and the stand-in server are
-  stopped. A submitted review can't be deleted, so the reviews check's
-  stay on its pull request, closed. ctrl-c stops the run after cleaning
-  up. A run that was killed is swept up by the next one: issues, pull
-  requests, discussions, gists, projects and milestones titled
-  `[ghtui live]`, `ghtui-live-` branches, tags, releases, labels and (with
-  `delete_repo`) the owner's repositories, protection rules, webhooks
-  and deploy keys, `[ghtui live]` rulesets, and settings put back. The
-  settings checks never touch `main`'s protection, and check it ends as
-  it began.
+  time, at 216 columns, with its own socket and `XDG_RUNTIME_DIR` and a
+  scratch cache, config and clone, all under
+  `~/.cache/claude-tmp/ghtui-live` (`GHTUI_LIVE_DIR`), which a run
+  empties when it starts. A failing check leaves its last screen in
+  `failures/`. A stand-in `xdg-open`, first on the server's `PATH`,
+  writes down the URLs ghtui opens instead of opening a browser.
+- **What it touches and cleans up:** it writes only to the test
+  repository. Each check undoes what it made, pass or fail: the issues
+  (deleted), the pull request (closed) and its branch, the release and
+  its tag, the label, the protection rule and the workflow run; and the
+  fux server and the stand-in are stopped. ctrl-c stops the run after
+  cleaning up. A run that was killed is swept up by the next one:
+  issues and pull requests titled `[ghtui live]`, and `ghtui-live-`
+  branches, releases, tags, labels and protection rules.
 - **Enterprise Server:** `cargo xtask ghes` serves a stand-in on
   `https://localhost:8443` that relays an Enterprise Server's paths to
   github.com (`/api/v3`, `/api/graphql`, `/raw`, git) and rewrites
@@ -1238,30 +1389,20 @@ issue inbox` runs only those.
   cargo test what_an_enterprise_schema_lacks -- --ignored --nocapture`
   (with `GHTUI_GHES_VERSION=3.N`, after ghtui leaves out what it knows
   that version lacks: nothing should be left).
-- **Offline:** the `offline` check runs ghtui against the stand-in (on
-  port 8451), keeps the repository offline (`:keep offline`) and stops
-  keeping it, and stops the stand-in to make GitHub go away, without touching the
-  machine's network: it writes a comment and a reaction while it's
-  gone, restarts ghtui, starts the stand-in again, and asks GitHub that
-  each arrived exactly once; a comment on an issue it deletes meanwhile
-  must come back refused.
-- **GitHub's own delays:** a notification can take GitHub many minutes
-  to deliver, so the inbox check runs last, and is skipped (not failed)
-  when no unread thread has arrived; the mention it asked for serves the
-  next run.
 
 Adding a check: write a `Check` (a name, what it shows, and a function)
-in a file under `xtask/src/live/checks/`, and list it in `ALL` there.
-The function starts ghtui (`cx.ghtui(&[…])`, or `cx.launch` for a size,
-a directory or environment), presses keys (`ghtui.keys(", m")`,
-`ghtui.type_text(…)`), waits for the screen (`wait_for`, `wait_gone`,
-`wait_followed`, `select`), asks GitHub (`gh::get`, `gh::send`,
-`gh::graphql`, retried with `until`), and registers what to undo with
-`cx.defer` as soon as it has made something. Assert behaviour: "the
-comment shows", "GitHub shows it read", "this text ends in `…`"
-(`expect_whole_or_cut`), never whole screens. `.prepare(…)` starts
-something slow (a workflow) before any check runs; `.sweep(…)` puts
-back what a killed run may have left.
+in a file under `xtask/src/live/checks/`, and list it in `ALL` there. A
+new kind of page is a line in `pages` instead. The function starts
+ghtui (`cx.ghtui(&[…])`, or `cx.launch` for a directory or
+environment), presses keys (`ghtui.keys(", m")`, `ghtui.type_text(…)`),
+waits for the screen (`wait_for`, `wait_gone`, `wait_followed`,
+`select`), asks GitHub (`gh::get`, `gh::send`, `gh::graphql`, retried
+with `until`), and registers what to undo with `cx.defer` as soon as it
+has made something. Name what it makes `[ghtui live] …` (`cx.mark`) or
+`ghtui-live-…`, and give the check a `.sweep(…)` for what the run's own
+sweep doesn't already find. Assert behaviour ("the comment shows",
+"GitHub has it closed"), never whole screens. Add a check only for a
+new kind of page or write: a variation of one is a test above.
 
 `demo/record.sh` records a captioned tour of ghtui to a video, on a hidden
 Hyprland monitor (it needs foot, grim and ffmpeg, and an unlocked session). It

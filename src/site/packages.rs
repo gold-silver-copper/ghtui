@@ -4,30 +4,23 @@
 //! scope; ghtui can't know beforehand who's an admin, so a refusal says
 //! what GitHub said, and which scope is missing.
 
-use crate::api::GitHub;
 use crate::api::packages::{PackageDetail, PackageRef};
-use crate::browse::Need;
+use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
-use crate::nav::Doable;
+use crate::nav::{Doable, row};
 use crate::route::{Dest, Route, Target};
 use crate::state::{Cmd, Screen, State};
-use crate::writes::row;
+use crate::work::{self, Cx, Failure, Job};
 
-use super::{Key, Page, site};
+use super::Page;
+use crate::data::DataKey;
 
 /// Deleting one version.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Delete {
+pub struct DeleteVersion {
     pub at: PackageRef,
     pub id: u64,
     pub name: String,
-}
-
-impl Delete {
-    pub async fn run(self, gh: &GitHub) -> Result<(), String> {
-        let deleted = gh.delete_version(&self.at, self.id).await;
-        deleted.map_err(|e| crate::writes::reason(&e))
-    }
 }
 
 /// The version `,D` is about: the row selected, else the version whose
@@ -51,23 +44,20 @@ fn chosen(state: &State) -> Option<(PackageRef, u64)> {
 }
 
 fn detail<'a>(state: &'a State, at: &PackageRef) -> Option<&'a PackageDetail> {
-    state.picked::<PackageDetail>(&site(Key::Package(at.clone())))
+    state.picked::<PackageDetail>(&DataKey::Package(at.clone()))
 }
 
 /// `,D`: asks before deleting the version.
 #[must_use]
 pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
     let Some((at, id)) = chosen(state) else {
-        state.info("Select a version to delete");
-        return Vec::new();
+        return state.just_say("Select a version to delete");
     };
     let Some(d) = detail(state, &at) else {
-        state.info("The package hasn't loaded yet");
-        return Vec::new();
+        return state.just_say("The package hasn't loaded yet");
     };
     let Some(v) = d.versions.items.iter().find(|v| v.id == id) else {
-        state.info("That version isn't among those loaded");
-        return Vec::new();
+        return state.just_say("That version isn't among those loaded");
     };
     let mut facts = vec![(
         "It can't be brought back: pulling it by name or digest fails".to_owned(),
@@ -90,14 +80,14 @@ pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
         Some(hex) => format!("sha256:{}", hex.get(..12).unwrap_or(hex)),
         None => v.name.clone(),
     };
-    crate::writes::ask(
+    crate::forms::ask(
         state,
         route,
         format!("Delete version {name} of {}?", at.name),
         facts,
         vec![(
             "Delete version".into(),
-            crate::writes::Answer::Site(super::Answer::DeleteVersion(id)),
+            crate::forms::Answer::Site(super::Answer::DeleteVersion(id)),
         )],
     );
     Vec::new()
@@ -111,55 +101,68 @@ pub fn delete(state: &mut State, route: &Route, id: u64) -> Vec<Cmd> {
     };
     let name = (detail(state, at).and_then(|d| d.versions.items.iter().find(|v| v.id == id)))
         .map_or_else(|| id.to_string(), |v| v.name.clone());
-    crate::writes::sending(state);
-    let delete = Delete {
+    crate::forms::sending(state);
+    let delete = DeleteVersion {
         at: at.clone(),
         id,
         name,
     };
-    vec![Cmd::Write(crate::writes::Work::Site(
-        super::Work::DeleteVersion(delete),
-    ))]
+    work::start(delete)
 }
 
-/// GitHub's answer: the package's page follows until the version is
-/// gone (from a version's own page, the package's).
-#[must_use]
-pub fn on_deleted(state: &mut State, d: Delete, result: Result<(), String>) -> Vec<Cmd> {
-    let Some(route) = state.route().cloned() else {
-        return Vec::new();
-    };
-    match result {
-        Ok(()) => {
-            crate::writes::close_sender(state, &route);
-            state.info(format!("Deleted version {} of {}", d.name, d.at.name));
-            let page = Route::Site(Page::Package {
-                at: d.at.clone(),
-                version: None,
-            });
-            let gone = super::Expected::VersionGone(d.at, d.id);
-            crate::writes::expect(state, page.clone(), crate::writes::Expected::Site(gone));
-            if route == page {
-                state.ensure_route(&page, true)
-            } else {
-                state.replace(page, true, None)
+impl Job for DeleteVersion {
+    type Out = ();
+
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        Ok(cx.gh.delete_version(&self.at, self.id).await?)
+    }
+
+    /// GitHub's answer: the package's page follows until the version is
+    /// gone (from a version's own page, the package's).
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        let d = self;
+        let Some(route) = state.route().cloned() else {
+            return Vec::new();
+        };
+        match result {
+            Ok(()) => {
+                crate::forms::close_sender(state, &route);
+                state.info(format!("Deleted version {} of {}", d.name, d.at.name));
+                let page = Route::Site(Page::Package {
+                    at: d.at.clone(),
+                    version: None,
+                });
+                crate::follow::expect(state, page.clone(), VersionGone(d.at, d.id));
+                if route == page {
+                    state.ensure_route(&page, true)
+                } else {
+                    state.replace(page, true, None)
+                }
             }
-        }
-        Err(why) => {
-            crate::writes::say(state, format!("GitHub didn't delete the version: {why}"));
-            Vec::new()
+            Err(why) => {
+                crate::forms::say(state, format!("GitHub didn't delete the version: {why}"))
+            }
         }
     }
 }
 
-/// Whether the package as loaded no longer has version `id`.
-pub fn gone(state: &State, at: &PackageRef, id: u64) -> bool {
-    detail(state, at).is_some_and(|d| d.versions.items.iter().all(|v| v.id != id))
-}
+/// A package without this version.
+#[derive(Debug)]
+struct VersionGone(PackageRef, u64);
 
-/// What's fetched again to see it.
-pub fn needs(at: &PackageRef) -> Vec<Need> {
-    vec![Need::Data(site(Key::Package(at.clone())))]
+impl Expectation for VersionGone {
+    fn needs(&self, _: &State, _: &Route) -> Vec<DataKey> {
+        vec![DataKey::Package(self.0.clone())]
+    }
+
+    fn waiting(&self) -> &'static str {
+        "Waiting for GitHub to show the version gone"
+    }
+
+    fn shown(&self, state: &State, _: &Route) -> Shown {
+        let gone = |d: &PackageDetail| d.versions.items.iter().all(|v| v.id != self.1);
+        detail(state, &self.0).is_some_and(gone).into()
+    }
 }
 
 /// The menu's rows on a package's page.

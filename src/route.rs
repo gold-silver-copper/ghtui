@@ -1,313 +1,74 @@
 //! Routes: the pages ghtui shows, addressed by their GitHub URLs.
+//!
+//! Pages come in families, each one enum in its own file that says, in
+//! one place, what each of its pages is: its URL and title, the page above
+//! it, what it needs fetched, and how it's built ([`Family`]). [`Route`]
+//! is one of them, and asks the family.
 
-use crate::api::browse::{DiscussionsOf, RepoSort, SearchKind};
+pub mod app;
+pub mod code;
+pub mod discussions;
+pub mod gists;
+pub mod issues;
+pub mod people;
+pub mod projects;
+pub mod pulls;
+pub mod releases;
+pub mod runs;
+pub mod search;
+pub mod security;
+pub mod settings;
+pub mod wiki;
+
+use crate::api::browse::SearchKind;
 use crate::api::model::{PrRef, RepoId};
-use crate::api::project::{ProjectOwner, ProjectRef, ProjectsOf};
-use crate::api::security::AlertKind;
-use crate::git::Oid;
-use crate::ui::pages::url as links;
 use crate::ui::pages::{PrTab, ProfileTab};
-use crate::ui::text::short_sha;
 
+use crate::browse::{Build, Width};
+use crate::chrome::{Chrome, Section};
+use crate::data::DataKey;
 use crate::diff_screen::DiffOf;
+use crate::state::State;
 
 /// The default filter of a repository's issue and pull request lists.
 pub const OPEN: &str = "is:open";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Route {
-    Home,
-    /// The Code tab at the repository root.
-    Repo(RepoId),
-    Tree {
-        repo: RepoId,
-        rev: String,
-        path: String,
-    },
-    Blob {
-        repo: RepoId,
-        rev: String,
-        path: String,
-        /// Lines a link points at (`#L10-L20`), marked and scrolled to.
-        lines: Option<(u32, u32)>,
-    },
-    /// Which commit last changed each line of a file.
-    Blame {
-        repo: RepoId,
-        rev: String,
-        path: String,
-        lines: Option<(u32, u32)>,
-    },
-    Issues {
-        repo: RepoId,
-        query: String,
-    },
-    Pulls {
-        repo: RepoId,
-        query: String,
-    },
-    /// An issue (or, until GitHub says otherwise, a pull request: those
-    /// redirect).
-    Issue {
-        repo: RepoId,
-        number: u64,
-    },
-    Pr {
-        pr: PrRef,
-        tab: PrTab,
-    },
-    /// Workflow runs, filtered as GitHub's Actions tab filters them
-    /// (`branch:main is:failure`).
-    Actions {
-        repo: RepoId,
-        query: String,
-    },
-    /// Discussions, in a category (by its slug) if given.
-    Discussions {
-        of: DiscussionsOf,
-        category: Option<String>,
-    },
-    Discussion {
-        of: DiscussionsOf,
-        number: u64,
-    },
-    /// A workflow run, or one attempt of it.
-    WorkflowRun {
-        repo: RepoId,
-        run: u64,
-        attempt: Option<u64>,
-    },
-    /// A job: its steps and its log. `step` is the step and line a link
-    /// points at (expanded and scrolled to); `query` filters the log.
-    Job {
-        repo: RepoId,
-        run: Option<u64>,
-        job: u64,
-        step: Option<(u32, u32)>,
-        query: String,
-    },
-    /// A workflow, by its file name, and its runs.
-    Workflow {
-        repo: RepoId,
-        file: String,
-    },
-    /// The form that runs a workflow by hand (GitHub's "Run workflow"
-    /// menu, on the workflow's page).
-    Dispatch {
-        repo: RepoId,
-        file: String,
-    },
-    /// The checks on a commit.
-    CommitChecks {
-        repo: RepoId,
-        oid: String,
-    },
-    Stargazers(RepoId),
-    Watchers(RepoId),
-    Forks(RepoId),
-    Releases(RepoId),
-    Release {
-        repo: RepoId,
-        tag: String,
-    },
-    Tags(RepoId),
-    Branches(RepoId),
-    /// A wiki page (its Home without one; its pages for `_pages`).
-    Wiki {
-        repo: RepoId,
-        page: Option<String>,
-    },
-    /// A repository's security advisories, or GitHub's newest.
-    Advisories(Option<RepoId>),
-    /// A security advisory: a repository's, or from GitHub's database.
-    Advisory {
-        repo: Option<RepoId>,
-        ghsa: String,
-    },
-    /// A repository's Dependabot, code scanning or secret scanning
-    /// alerts, filtered as GitHub's lists are (`is:open severity:high`).
-    Alerts {
-        repo: RepoId,
-        kind: AlertKind,
-        query: String,
-    },
-    /// One security alert.
-    Alert {
-        repo: RepoId,
-        kind: AlertKind,
-        number: u64,
-    },
-    /// A page of a repository's Settings tab ([`crate::settings`]).
-    Settings {
-        repo: RepoId,
-        page: crate::api::settings::SettingsPage,
-    },
-    /// An organization's teams.
-    Teams(String),
-    Team {
-        org: String,
-        slug: String,
-    },
-    /// A gist, by its ID (its owner, when the URL names them).
-    Gist {
-        owner: Option<String>,
-        id: String,
-    },
-    /// Someone's gists.
-    Gists(String),
-    /// Two revisions compared, as the URL names them (`a...b`, `a..b`).
-    Compare {
-        repo: RepoId,
-        spec: String,
-    },
-    /// Deployments, to one environment if given.
-    Deployments {
-        repo: RepoId,
-        environment: Option<String>,
-    },
-    /// Open or closed milestones.
-    Milestones {
-        repo: RepoId,
-        closed: bool,
-    },
-    Milestone {
-        repo: RepoId,
-        number: u64,
-    },
-    /// A page at a revision from a plain GitHub URL, which doesn't say
-
-    /// where the ref ends and the path starts (`tree/feature/x/src`).
-    /// GitHub takes the longest leading part naming a branch or tag; ghtui
-    /// finds it, then shows the page (see [`Route::split`]).
-    Unsplit {
-        repo: RepoId,
-        view: RevView,
-        /// The ref and the path, as the URL has them.
-        spot: String,
-        lines: Option<(u32, u32)>,
-    },
-    /// A revision's commits, of `path` if it isn't empty.
-    Commits {
-        repo: RepoId,
-        rev: String,
-        path: String,
-    },
-    /// A commit, by SHA (short or full, as linked); opened from a pull
-    /// request's commits, that pull request's number.
-    Commit {
-        repo: RepoId,
-        oid: String,
-        pr: Option<u64>,
-    },
-    User {
-        login: String,
-        tab: ProfileTab,
-    },
-    Search {
-        kind: SearchKind,
-        query: String,
-    },
-    /// Your inbox, filtered as GitHub's is (`is:unread reason:mention`).
-    Notifications {
-        query: String,
-    },
-    /// A new issue: its templates, then its form.
-    NewIssue(RepoId),
-    /// A new pull request's form.
-    NewPr(RepoId),
-    /// An organization's or someone's projects, or a repository's.
-    Projects(ProjectsOf),
-    /// A project at one of its views (its first, if none is named).
-    Project {
-        project: ProjectRef,
-        view: Option<u64>,
-    },
-    /// One of a project's items, as the view's side pane shows it, by the
-    /// number its URL names it by (`?pane=issue&itemId=…`).
-    ProjectItem {
-        project: ProjectRef,
-        view: Option<u64>,
-        item: u64,
-    },
-    /// A new release's form.
-    NewRelease(RepoId),
-    /// The form editing a release, by its tag.
-    EditRelease {
-        repo: RepoId,
-        tag: String,
-    },
-    /// A new gist's form.
-    NewGist,
-    /// The form changing one of your gists.
-    EditGist {
-        owner: String,
-        id: String,
-    },
-    /// The form writing a wiki page (a new one without `page`).
-    WikiEdit {
-        repo: RepoId,
-        page: Option<String>,
-    },
+    /// Home, and the Offline page.
+    App(app::Page),
+    /// A repository's code, its history, branches and tags.
+    Code(code::Page),
+    /// Its issues, labels and milestones.
+    Issues(issues::Page),
+    /// Its pull requests.
+    Pulls(pulls::Page),
+    /// Searches, and your notifications.
+    Search(search::Page),
+    /// A repository's Settings tab.
+    Settings(settings::Page),
+    /// Projects.
+    Projects(projects::Page),
+    /// Security advisories and alerts.
+    Security(security::Page),
+    /// A repository's wiki.
+    Wiki(wiki::Page),
+    /// Discussions, a repository's or an organization's.
+    Discussions(discussions::Page),
+    /// Gists.
+    Gists(gists::Page),
+    /// Profiles, teams, and a repository's stargazers, watchers and forks.
+    People(people::Page),
+    /// Its releases.
+    Releases(releases::Page),
+    /// Its Actions: runs, jobs, workflows and deployments.
+    Runs(runs::Page),
     /// Insights, Explore and topics, starred lists, packages
     /// ([`crate::site`]).
     Site(crate::site::Page),
-    // ---- housekeeping ([`crate::housekeeping`]) ----
-    /// A repository's labels.
-    Labels(RepoId),
     /// One of housekeeping's forms: a label, a milestone, a fork, a new
     /// repository, a file.
     Housekeeping(crate::housekeeping::FormOf),
-    // ---- offline ([`crate::offline`]) ----
-    /// The writes queued for GitHub and the repositories kept offline:
-    /// ghtui's own page, with none on GitHub.
-    Offline,
-}
-
-/// The pages at a revision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum RevView {
-    Tree,
-    Blob,
-    Blame,
-    Commits,
-}
-
-impl RevView {
-    fn name(self) -> &'static str {
-        match self {
-            RevView::Tree => "tree",
-            RevView::Blob => "blob",
-            RevView::Blame => "blame",
-            RevView::Commits => "commits",
-        }
-    }
-
-    /// The page at `rev` (blame needs a file).
-    fn at(
-        self,
-        repo: RepoId,
-        rev: String,
-        path: String,
-        lines: Option<(u32, u32)>,
-    ) -> Option<Route> {
-        Some(match self {
-            RevView::Tree => Route::Tree { repo, rev, path },
-            RevView::Blob => Route::Blob {
-                repo,
-                rev,
-                path,
-                lines,
-            },
-            RevView::Blame if path.is_empty() => return None,
-            RevView::Blame => Route::Blame {
-                repo,
-                rev,
-                path,
-                lines,
-            },
-            RevView::Commits => Route::Commits { repo, rev, path },
-        })
-    }
 }
 
 /// Where a link leads.
@@ -337,562 +98,167 @@ impl From<Target> for Dest {
     }
 }
 
+/// What a family of pages says about each of its pages.
+pub trait Family {
+    fn url(&self) -> String;
+    /// The short name shown in the top bar.
+    fn title(&self) -> String;
+    /// The repository the page belongs to.
+    fn repo(&self) -> Option<&RepoId> {
+        None
+    }
+    /// The page above this one, like GitHub's breadcrumbs.
+    fn up(&self, state: &State) -> Option<Route>;
+    /// What the page needs fetched: everything [`Family::build`] reads.
+    fn needs(&self) -> Vec<DataKey>;
+    /// What the page reads besides its needs, already fetched for it by
+    /// something else.
+    fn also_reads(&self, _key: &DataKey) -> bool {
+        false
+    }
+    /// The list the page loads more of.
+    fn paged(&self) -> Option<DataKey> {
+        None
+    }
+    /// How wide the page gets.
+    fn width(&self) -> Width {
+        Width::Lists
+    }
+    /// Whether the page opens with its first row selected: lists do;
+    /// reading pages start with nothing selected.
+    fn starts_on_row(&self) -> bool {
+        true
+    }
+    /// The data the page shows that git can answer, whose source it says.
+    fn shown_source(&self) -> Option<DataKey> {
+        None
+    }
+    /// A list's filter.
+    fn query(&self) -> Option<&str> {
+        None
+    }
+    /// The same list with another filter.
+    fn with_query(&self, _query: String) -> Option<Route> {
+        None
+    }
+    /// Which of its repository's tabs the page is under.
+    fn section(&self) -> Section {
+        Section::Code
+    }
+    /// The chrome around the page: its crumbs, and its tabs. A
+    /// repository's page is under its repository's tabs.
+    fn chrome(&self, state: &State, c: &mut Chrome) {
+        if let Some(repo) = self.repo() {
+            state.repo_chrome(repo, self.section(), c);
+        }
+    }
+    /// Builds the page from what's loaded.
+    fn build(&self, b: Build<'_>, page: &mut crate::ui::page::Page);
+    /// The form the page is, if it's one.
+    fn form(&self) -> Option<&'static crate::forms::Kind> {
+        None
+    }
+}
+
 impl Route {
+    /// The family the page is one of, which says what the page is.
+    pub fn family(&self) -> &dyn Family {
+        match self {
+            Route::App(p) => p,
+            Route::Code(p) => p,
+            Route::Issues(p) => p,
+            Route::Pulls(p) => p,
+            Route::Search(p) => p,
+            Route::Settings(p) => p,
+            Route::Projects(p) => p,
+            Route::Security(p) => p,
+            Route::Wiki(p) => p,
+            Route::Discussions(p) => p,
+            Route::Gists(p) => p,
+            Route::People(p) => p,
+            Route::Releases(p) => p,
+            Route::Runs(p) => p,
+            Route::Site(p) => p,
+            Route::Housekeeping(p) => p,
+        }
+    }
+
+    pub fn url(&self) -> String {
+        self.family().url()
+    }
+
+    /// The short name shown in the top bar.
+    pub fn title(&self) -> String {
+        self.family().title()
+    }
+
+    /// The repository the page belongs to.
+    pub fn repo(&self) -> Option<&RepoId> {
+        self.family().repo()
+    }
+
     /// A pull request's conversation.
     pub fn pr(pr: PrRef) -> Route {
-        Route::Pr {
+        Route::Pulls(pulls::Pr {
             pr,
             tab: PrTab::Conversation,
-        }
+        })
     }
 
     /// A file, from the top.
     pub fn blob(repo: RepoId, rev: String, path: String) -> Route {
-        Route::Blob {
+        Route::Code(code::Blob {
             repo,
             rev,
             path,
             lines: None,
-        }
+        })
     }
 
-    /// An [`Route::Unsplit`] page once its ref is known: `rev` if the
-    /// spot starts with it, else the first segment.
-    pub fn split(&self, rev: Option<&str>) -> Option<Route> {
-        let Route::Unsplit {
+    /// A profile's overview.
+    pub fn user(login: &str) -> Route {
+        Route::People(people::User {
+            login: login.to_owned(),
+            tab: ProfileTab::Overview,
+        })
+    }
+
+    /// A repository's Actions tab: all its runs.
+    pub fn actions(repo: RepoId) -> Route {
+        Route::Runs(runs::Actions {
             repo,
-            view,
-            spot,
-            lines,
-        } = self
-        else {
-            return None;
-        };
-        let after = |rev: &str| {
-            let rest = spot.strip_prefix(rev)?;
-            match rest.strip_prefix('/') {
-                Some(path) => Some(path.to_owned()),
-                None => rest.is_empty().then(String::new),
-            }
-        };
-        let at = |rev: &str| view.at(repo.clone(), rev.to_owned(), after(rev)?, *lines);
-        let first = spot.split('/').next().unwrap_or_default();
-        rev.and_then(at).or_else(|| at(first))
+            query: String::new(),
+        })
+    }
+
+    /// An unsplit page once its ref is known ([`code::Page::split`]).
+    pub fn split(&self, rev: Option<&str>) -> Option<Route> {
+        match self {
+            Route::Code(p) => p.split(rev),
+            _ => None,
+        }
     }
 
     /// The revision a page is at.
     pub fn rev(&self) -> Option<&str> {
         match self {
-            Route::Tree { rev, .. }
-            | Route::Blob { rev, .. }
-            | Route::Blame { rev, .. }
-            | Route::Commits { rev, .. } => Some(rev),
+            Route::Code(p) => p.rev(),
             _ => None,
         }
-    }
-
-    /// A profile's overview.
-    pub fn user(login: &str) -> Route {
-        Route::User {
-            login: login.to_owned(),
-            tab: ProfileTab::Overview,
-        }
-    }
-
-    /// A repository's Actions tab: all its runs.
-    pub fn actions(repo: RepoId) -> Route {
-        Route::Actions {
-            repo,
-            query: String::new(),
-        }
-    }
-
-    pub fn url(&self) -> String {
-        match self {
-            // The Offline page has none on GitHub: its link is Home's.
-            Route::Home | Route::Offline => format!("{}/", links::base()),
-            Route::Repo(repo) => links::repo(repo),
-            Route::Tree { repo, rev, path } => links::tree(repo, rev, path),
-            Route::Blob {
-                repo,
-                rev,
-                path,
-                lines,
-            } => lined(links::blob(repo, rev, path), *lines),
-            Route::Blame {
-                repo,
-                rev,
-                path,
-                lines,
-            } => lined(links::blame(repo, rev, path), *lines),
-            Route::Unsplit {
-                repo,
-                view,
-                spot,
-                lines,
-            } => lined(
-                format!(
-                    "{}/{}/{}",
-                    links::repo(repo),
-                    view.name(),
-                    links::encode_path(spot)
-                ),
-                *lines,
-            ),
-            Route::Issues { repo, query } => list_url(&links::issues(repo), query),
-            Route::Pulls { repo, query } => list_url(&links::pulls(repo), query),
-            Route::Issue { repo, number } => links::issue(repo, *number),
-            Route::Pr { pr, tab } => match tab {
-                // GitHub shows a review in the conversation.
-                PrTab::Conversation | PrTab::Review => links::pull(pr),
-                PrTab::Reviewed(id) => format!("{}#pullrequestreview-{id}", links::pull(pr)),
-                PrTab::Commits => links::pull_tab(pr, "commits"),
-                PrTab::Checks => links::pull_tab(pr, "checks"),
-            },
-            Route::Actions { repo, query } if query.is_empty() => {
-                format!("{}/actions", links::repo(repo))
-            }
-            Route::Actions { repo, query } => {
-                format!(
-                    "{}/actions?query={}",
-                    links::repo(repo),
-                    links::encode(query)
-                )
-            }
-            Route::WorkflowRun { repo, run, attempt } => {
-                let url = format!("{}/actions/runs/{run}", links::repo(repo));
-                match attempt {
-                    Some(n) => format!("{url}/attempts/{n}"),
-                    None => url,
-                }
-            }
-            Route::Job {
-                repo,
-                run,
-                job,
-                step,
-                query,
-            } => {
-                let mut url = match run {
-                    Some(run) => format!("{}/actions/runs/{run}/job/{job}", links::repo(repo)),
-                    None => format!("{}/runs/{job}", links::repo(repo)),
-                };
-                if !query.is_empty() {
-                    url.push_str(&format!("?q={}", links::encode(query)));
-                }
-                if let Some((step, line)) = step {
-                    url.push_str(&format!("#step:{step}:{line}"));
-                }
-                url
-            }
-            Route::Workflow { repo, file } | Route::Dispatch { repo, file } => {
-                format!(
-                    "{}/actions/workflows/{}",
-                    links::repo(repo),
-                    links::encode_path(file)
-                )
-            }
-            Route::CommitChecks { repo, oid } => format!("{}/checks", links::commit(repo, oid)),
-            Route::Stargazers(repo) => format!("{}/stargazers", links::repo(repo)),
-            Route::Watchers(repo) => format!("{}/watchers", links::repo(repo)),
-            Route::Forks(repo) => format!("{}/forks", links::repo(repo)),
-            Route::Releases(repo) => format!("{}/releases", links::repo(repo)),
-            Route::Release { repo, tag } => links::release(repo, tag),
-            Route::Discussions { of, category } => match category {
-                Some(slug) => format!(
-                    "{}/categories/{}",
-                    discussions_url(of),
-                    links::encode_path(slug)
-                ),
-                None => discussions_url(of),
-            },
-            Route::Discussion { of, number } => format!("{}/{number}", discussions_url(of)),
-            Route::Tags(repo) => format!("{}/tags", links::repo(repo)),
-            Route::Branches(repo) => format!("{}/branches", links::repo(repo)),
-            Route::Wiki { repo, page } => match page {
-                Some(page) => format!("{}/wiki/{}", links::repo(repo), links::encode_path(page)),
-                None => format!("{}/wiki", links::repo(repo)),
-            },
-            Route::Advisories(repo) => match repo {
-                Some(repo) => format!("{}/security/advisories", links::repo(repo)),
-                None => format!("{}/advisories", links::base()),
-            },
-            Route::Advisory { repo, ghsa } => match repo {
-                Some(repo) => format!("{}/security/advisories/{ghsa}", links::repo(repo)),
-                None => format!("{}/advisories/{ghsa}", links::base()),
-            },
-            Route::Alerts { repo, kind, query } => {
-                let base = format!("{}/security/{}", links::repo(repo), kind.slug());
-                if query == OPEN {
-                    base
-                } else {
-                    format!("{base}?{}={}", kind.query_param(), links::encode(query))
-                }
-            }
-            Route::Alert { repo, kind, number } => {
-                format!("{}/security/{}/{number}", links::repo(repo), kind.slug())
-            }
-            Route::Settings { repo, page } => {
-                format!("{}/settings{}", links::repo(repo), page.slug())
-            }
-            Route::Teams(org) => format!("{}/orgs/{org}/teams", links::base()),
-            Route::Team { org, slug } => format!("{}/orgs/{org}/teams/{slug}", links::base()),
-            Route::Gist { owner, id } => match owner {
-                Some(owner) => format!("{}/{owner}/{id}", links::gists()),
-                None => format!("{}/{id}", links::gists()),
-            },
-            Route::Gists(login) => format!("{}/{login}", links::gists()),
-            Route::Compare { repo, spec } => {
-                format!("{}/compare/{}", links::repo(repo), links::encode_path(spec))
-            }
-            Route::Deployments { repo, environment } => match environment {
-                Some(env) => format!(
-                    "{}/deployments/activity_log?environments_filter={}",
-                    links::repo(repo),
-                    links::encode(env)
-                ),
-                None => format!("{}/deployments", links::repo(repo)),
-            },
-            Route::Milestones { repo, closed } => format!(
-                "{}/milestones{}",
-                links::repo(repo),
-                if *closed { "?state=closed" } else { "" }
-            ),
-            Route::Milestone { repo, number } => {
-                format!("{}/milestone/{number}", links::repo(repo))
-            }
-            Route::NewIssue(repo) => format!("{}/issues/new", links::repo(repo)),
-            Route::NewPr(repo) => format!("{}/compare", links::repo(repo)),
-            Route::NewRelease(repo) => format!("{}/releases/new", links::repo(repo)),
-            Route::EditRelease { repo, tag } => format!(
-                "{}/releases/edit/{}",
-                links::repo(repo),
-                links::encode_path(tag)
-            ),
-            Route::NewGist => format!("{}/", links::gists()),
-            Route::EditGist { owner, id } => format!("{}/{owner}/{id}/edit", links::gists()),
-            Route::WikiEdit { repo, page } => match page {
-                Some(page) => format!(
-                    "{}/wiki/{}/_edit",
-                    links::repo(repo),
-                    links::encode_path(page)
-                ),
-                None => format!("{}/wiki/_new", links::repo(repo)),
-            },
-            Route::Site(page) => page.url(),
-            Route::Commits { repo, rev, path } => links::commits(repo, rev, path),
-            Route::Commit {
-                repo,
-                oid,
-                pr: Some(number),
-            } => {
-                let pr = PrRef {
-                    repo: repo.clone(),
-                    number: *number,
-                };
-                links::pull_tab(&pr, &format!("commits/{oid}"))
-            }
-            Route::Commit { repo, oid, .. } => links::commit(repo, oid),
-            Route::User { login, tab } => match tab {
-                ProfileTab::Overview => links::user(login),
-                ProfileTab::Repositories(sort) => {
-                    let sort = match sort {
-                        RepoSort::Updated => "",
-                        RepoSort::Name => "&sort=name",
-                        RepoSort::Stars => "&sort=stargazers",
-                    };
-                    format!("{}?tab=repositories{sort}", links::user(login))
-                }
-                ProfileTab::Stars => format!("{}?tab=stars", links::user(login)),
-                ProfileTab::Followers => format!("{}?tab=followers", links::user(login)),
-                ProfileTab::Following => format!("{}?tab=following", links::user(login)),
-                ProfileTab::People => format!("{}/orgs/{login}/people", links::base()),
-            },
-            Route::Search { kind, query } => links::search(*kind, query),
-            Route::Notifications { query } if query.is_empty() => {
-                format!("{}/notifications", links::base())
-            }
-            Route::Notifications { query } => {
-                format!(
-                    "{}/notifications?query={}",
-                    links::base(),
-                    links::encode(query)
-                )
-            }
-            Route::Projects(ProjectsOf::Owner(owner)) => format!("{}/projects", owner.url()),
-            Route::Projects(ProjectsOf::Repo(repo)) => format!("{}/projects", links::repo(repo)),
-            Route::Project { project, view } => view_url(project, *view),
-            Route::ProjectItem {
-                project,
-                view,
-                item,
-            } => format!("{}?pane=issue&itemId={item}", view_url(project, *view)),
-            Route::Labels(repo) => format!("{}/labels", links::repo(repo)),
-            Route::Housekeeping(of) => of.url(),
-        }
-    }
-
-    /// The short name shown in the top bar.
-    pub fn title(&self) -> String {
-        match self {
-            Route::Home => "Home".to_owned(),
-            Route::Repo(repo) => repo.to_string(),
-            Route::Tree { repo, path, .. } if path.is_empty() => repo.to_string(),
-            Route::Tree { repo, path, .. } | Route::Blob { repo, path, .. } => {
-                format!("{}/{path}", repo.name)
-            }
-            Route::Blame { repo, path, .. } => format!("{}/{path} · Blame", repo.name),
-            // Most refs are one segment.
-            Route::Unsplit { repo, spot, .. } => match self.split(None) {
-                Some(page) => page.title(),
-                None => format!("{}/{spot}", repo.name),
-            },
-            Route::Issues { repo, .. } => format!("{repo} · Issues"),
-            Route::Pulls { repo, .. } => format!("{repo} · Pull requests"),
-            Route::Issue { repo, number } => format!("{repo}#{number}"),
-            Route::Pr { pr, .. } => pr.to_string(),
-            Route::Actions { repo, .. } => format!("{repo} · Actions"),
-            Route::WorkflowRun { repo, run, .. } => format!("{repo} · Run {run}"),
-            Route::Job { repo, job, .. } => format!("{repo} · Job {job}"),
-            Route::Workflow { repo, file } => format!("{repo} · {file}"),
-            Route::Dispatch { repo, file } => format!("{repo} · Run {file}"),
-            Route::CommitChecks { repo, oid } => format!("{repo}@{} · Checks", short_sha(oid)),
-            Route::Stargazers(repo) => format!("{repo} · Stargazers"),
-            Route::Watchers(repo) => format!("{repo} · Watchers"),
-            Route::Forks(repo) => format!("{repo} · Forks"),
-            Route::Releases(repo) => format!("{repo} · Releases"),
-            Route::Release { repo, tag } => format!("{repo} {tag}"),
-            Route::Discussions { of, .. } => format!("{} · Discussions", of_title(of)),
-            Route::Discussion { of, number } => format!("{} · Discussion {number}", of_title(of)),
-            Route::Tags(repo) => format!("{repo} · Tags"),
-            Route::Branches(repo) => format!("{repo} · Branches"),
-            Route::Wiki { repo, page } => match page {
-                Some(page) => format!("{repo} · {}", page.replace('-', " ")),
-                None => format!("{repo} · Wiki"),
-            },
-            Route::Advisories(Some(repo)) => format!("{repo} · Security"),
-            Route::Advisories(None) => "Advisories".to_owned(),
-            Route::Advisory { ghsa, .. } => ghsa.clone(),
-            Route::Alerts { repo, kind, .. } => format!("{repo} · {}", kind.name()),
-            Route::Alert { repo, kind, number } => {
-                format!("{repo} · {} alert {number}", kind.name())
-            }
-            Route::Settings {
-                repo,
-                page: crate::api::settings::SettingsPage::Hook(id),
-            } => format!("{repo} · Webhook {id}"),
-            Route::Settings { repo, page } => format!("{repo} · Settings · {}", page.name()),
-            Route::Teams(org) => format!("@{org} · Teams"),
-            Route::Team { org, slug } => format!("@{org}/{slug}"),
-            Route::Gist { id, .. } => format!("Gist {}", id.get(..7).unwrap_or(id)),
-            Route::Gists(login) => format!("@{login} · Gists"),
-            Route::Compare { repo, spec } => format!("{repo} · {spec}"),
-            Route::Deployments { repo, .. } => format!("{repo} · Deployments"),
-            Route::Milestones { repo, .. } => format!("{repo} · Milestones"),
-            Route::Milestone { repo, number } => format!("{repo} · Milestone {number}"),
-            Route::NewIssue(repo) => format!("{repo} · New issue"),
-            Route::NewPr(repo) => format!("{repo} · New pull request"),
-            Route::NewRelease(repo) => format!("{repo} · New release"),
-            Route::EditRelease { repo, tag } => format!("{repo} · Editing {tag}"),
-            Route::NewGist => "New gist".to_owned(),
-            Route::EditGist { id, .. } => format!("Editing gist {}", id.get(..7).unwrap_or(id)),
-            Route::WikiEdit { repo, page: None } => format!("{repo} · New wiki page"),
-            Route::WikiEdit {
-                repo,
-                page: Some(page),
-            } => format!("{repo} · Editing {page}"),
-            Route::Site(page) => page.title(),
-            Route::Commits { repo, path, .. } if path.is_empty() => format!("{repo} · Commits"),
-            Route::Commits { repo, path, .. } => format!("{}/{path} · Commits", repo.name),
-            Route::Commit { repo, oid, .. } => format!("{repo}@{}", short_sha(oid)),
-            Route::User { login, .. } => format!("@{login}"),
-            Route::Search { query, .. } => format!("Search “{query}”"),
-            Route::Notifications { .. } => "Notifications".to_owned(),
-            Route::Projects(ProjectsOf::Owner(owner)) => format!("@{} · Projects", owner.login()),
-            Route::Projects(ProjectsOf::Repo(repo)) => format!("{repo} · Projects"),
-            Route::Project { project, .. } => {
-                format!("@{} · Project {}", project.owner.login(), project.number)
-            }
-            Route::ProjectItem { project, item, .. } => format!(
-                "@{} · Project {} · Item {item}",
-                project.owner.login(),
-                project.number
-            ),
-            Route::Labels(repo) => format!("{repo} · Labels"),
-            Route::Housekeeping(of) => of.title(),
-            Route::Offline => "Offline".to_owned(),
-        }
-    }
-
-    /// The repository the page belongs to.
-    pub fn repo(&self) -> Option<&RepoId> {
-        match self {
-            Route::Repo(repo)
-            | Route::Tree { repo, .. }
-            | Route::Blob { repo, .. }
-            | Route::Issues { repo, .. }
-            | Route::Pulls { repo, .. }
-            | Route::Issue { repo, .. }
-            | Route::Commits { repo, .. }
-            | Route::Actions { repo, .. }
-            | Route::WorkflowRun { repo, .. }
-            | Route::Job { repo, .. }
-            | Route::Workflow { repo, .. }
-            | Route::CommitChecks { repo, .. }
-            | Route::Stargazers(repo)
-            | Route::Watchers(repo)
-            | Route::Forks(repo)
-            | Route::Releases(repo)
-            | Route::Release { repo, .. }
-            | Route::Discussions {
-                of: DiscussionsOf::Repo(repo),
-                ..
-            }
-            | Route::Discussion {
-                of: DiscussionsOf::Repo(repo),
-                ..
-            }
-            | Route::Tags(repo)
-            | Route::Branches(repo)
-            | Route::Wiki { repo, .. }
-            | Route::Advisories(Some(repo))
-            | Route::Advisory {
-                repo: Some(repo), ..
-            }
-            | Route::Alerts { repo, .. }
-            | Route::Alert { repo, .. }
-            | Route::Settings { repo, .. }
-            | Route::Blame { repo, .. }
-            | Route::Unsplit { repo, .. }
-            | Route::Compare { repo, .. }
-            | Route::Deployments { repo, .. }
-            | Route::Milestones { repo, .. }
-            | Route::Milestone { repo, .. }
-            | Route::NewIssue(repo)
-            | Route::NewPr(repo)
-            | Route::NewRelease(repo)
-            | Route::EditRelease { repo, .. }
-            | Route::WikiEdit { repo, .. }
-            | Route::Dispatch { repo, .. }
-            | Route::Projects(ProjectsOf::Repo(repo))
-            | Route::Labels(repo)
-            | Route::Commit { repo, .. } => Some(repo),
-            Route::Pr { pr, .. } => Some(&pr.repo),
-            Route::Site(page) => page.repo(),
-            Route::Housekeeping(of) => of.repo(),
-            Route::Projects(ProjectsOf::Owner(_))
-            | Route::Project { .. }
-            | Route::ProjectItem { .. }
-            | Route::Home
-            | Route::Offline
-            | Route::User { .. }
-            | Route::Search { .. }
-            | Route::Notifications { .. }
-            | Route::Gist { .. }
-            | Route::Gists(_)
-            | Route::NewGist
-            | Route::EditGist { .. }
-            | Route::Teams(_)
-            | Route::Team { .. }
-            | Route::Advisories(None)
-            | Route::Advisory { repo: None, .. }
-            | Route::Discussions {
-                of: DiscussionsOf::Org(_),
-                ..
-            }
-            | Route::Discussion {
-                of: DiscussionsOf::Org(_),
-                ..
-            } => None,
-        }
-    }
-
-    /// A list's filter: issues, pull requests, search results, runs,
-    /// notifications.
-    pub fn list_query(&self) -> Option<&str> {
-        match self {
-            Route::Issues { query, .. }
-            | Route::Pulls { query, .. }
-            | Route::Actions { query, .. }
-            | Route::Alerts { query, .. }
-            | Route::Search { query, .. }
-            | Route::Notifications { query } => Some(query),
-            _ => None,
-        }
-    }
-
-    /// The same list with another filter.
-    pub fn with_query(&self, query: String) -> Option<Route> {
-        Some(match self {
-            Route::Issues { repo, .. } => Route::Issues {
-                repo: repo.clone(),
-                query,
-            },
-            Route::Pulls { repo, .. } => Route::Pulls {
-                repo: repo.clone(),
-                query,
-            },
-            Route::Search { kind, .. } => Route::Search { kind: *kind, query },
-            Route::Actions { repo, .. } => Route::Actions {
-                repo: repo.clone(),
-                query,
-            },
-            Route::Notifications { .. } => Route::Notifications { query },
-            Route::Alerts { repo, kind, .. } => Route::Alerts {
-                repo: repo.clone(),
-                kind: *kind,
-                query,
-            },
-            _ => return None,
-        })
     }
 
     /// The search behind a list page.
     pub fn search(&self) -> Option<(SearchKind, String)> {
-        match self {
-            Route::Issues { repo, query } => {
-                Some((SearchKind::Issues, list_query(repo, "issue", query)))
-            }
-            Route::Pulls { repo, query } => {
-                Some((SearchKind::Issues, list_query(repo, "pr", query)))
-            }
-            Route::Search { kind, query } => Some((*kind, query.clone())),
+        let key = match self {
+            Route::Issues(p @ issues::Issues { .. }) => p.paged(),
+            Route::Pulls(p @ pulls::Pulls { .. }) => p.paged(),
+            Route::Search(p @ search::Search { .. }) => p.paged(),
+            _ => None,
+        };
+        match key? {
+            DataKey::Search(kind, query) => Some((kind, query)),
             _ => None,
         }
-    }
-
-    /// The search an issue or pull request list's open and closed counts
-    /// come from, when its filter is more than a state and a sort (else
-    /// they're the repository's own).
-    pub fn state_counts(&self) -> Option<String> {
-        let (repo, is, query) = match self {
-            Route::Issues { repo, query } => (repo, "issue", query),
-            Route::Pulls { repo, query } => (repo, "pr", query),
-            _ => return None,
-        };
-        let state = ["is:open", "is:closed", "state:open", "state:closed"];
-        let filter: Vec<&str> = (query.split_whitespace())
-            .filter(|w| !state.contains(w) && !w.starts_with("sort:"))
-            .collect();
-        (!filter.is_empty()).then(|| format!("repo:{repo} is:{is} {}", filter.join(" ")))
-    }
-}
-
-/// The search for a repository's issue or pull request list. Newest first,
-/// as on GitHub, unless the filter sorts.
-fn list_query(repo: &RepoId, is: &str, query: &str) -> String {
-    let mut q = format!("repo:{repo} is:{is} {}", query.trim());
-    if !query.contains("sort:") {
-        q.push_str(" sort:created-desc");
-    }
-    q
-}
-
-fn list_url(base: &str, query: &str) -> String {
-    if query == OPEN {
-        base.to_owned()
-    } else {
-        format!("{base}?q={}", links::encode(query))
     }
 }
 
@@ -925,6 +291,57 @@ fn has_host_prefix(s: &str) -> bool {
         .is_some_and(|(host, _)| crate::host::current().serves(host))
 }
 
+/// A URL being parsed: its path's segments, decoded, and its query and
+/// fragment.
+pub struct Url<'a> {
+    pub segments: &'a [&'a str],
+    url: &'a url::Url,
+}
+
+impl Url<'_> {
+    /// A query parameter's value.
+    pub fn param(&self, name: &str) -> Option<String> {
+        param(self.url, name)
+    }
+
+    pub fn fragment(&self) -> Option<&str> {
+        self.url.fragment()
+    }
+}
+
+/// What a family makes of the path after `/<owner>/<repo>`.
+type RepoParse = fn(&RepoId, &[&str], &Url<'_>) -> Option<Target>;
+
+/// What the families make of a URL's path, asked in this order (after
+/// [`crate::site::parse`]); the first to know the page says.
+const TOP: &[fn(&Url<'_>) -> Option<Target>] = &[
+    app::parse,
+    search::parse,
+    projects::parse,
+    security::parse,
+    discussions::parse,
+    crate::housekeeping::parse,
+    // A profile is any name GitHub hasn't taken.
+    people::parse,
+];
+
+/// What they make of the path after `/<owner>/<repo>`, asked in this
+/// order: housekeeping's forms (`milestones/new`) before the milestones.
+const REPO: &[RepoParse] = &[
+    crate::housekeeping::parse_repo,
+    code::parse_repo,
+    issues::parse_repo,
+    pulls::parse_repo,
+    runs::parse_repo,
+    releases::parse_repo,
+    discussions::parse_repo,
+    wiki::parse_repo,
+    people::parse_repo,
+    projects::parse_repo,
+    security::parse_repo,
+    settings::parse_repo,
+];
+
 /// What a URL opens in ghtui, or `None` for the browser.
 fn parse(parsed: &url::Url) -> Option<Target> {
     if !matches!(parsed.scheme(), "https" | "http") {
@@ -933,7 +350,7 @@ fn parse(parsed: &url::Url) -> Option<Target> {
     let host = crate::host::current();
     let name = crate::host::url_host(parsed)?;
     if host.serves_gists(&name) {
-        return gist(parsed.path_segments()?).map(Target::Page);
+        return gists::parse(parsed.path_segments()?);
     }
     if !host.serves(&name) {
         return None;
@@ -943,145 +360,38 @@ fn parse(parsed: &url::Url) -> Option<Target> {
         && let Some(mut segments) = parsed.path_segments()
         && segments.next() == Some("gist")
     {
-        return gist(segments).map(Target::Page);
+        return gists::parse(segments);
     }
-    let param = |name: &str| param(parsed, name);
-    let (query, kind, tab) = (param("q"), param("type"), param("tab"));
-    let repos = || {
-        ProfileTab::Repositories(match param("sort").as_deref() {
-            Some("name") => RepoSort::Name,
-            Some("stargazers") => RepoSort::Stars,
-            _ => RepoSort::Updated,
-        })
-    };
     let segments: Vec<String> = parsed
         .path_segments()
         .map(|s| s.filter(|p| !p.is_empty()).map(decode).collect())
         .unwrap_or_default();
     let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
-    if let Some(page) = crate::site::parse(&segments, param) {
+    let url = Url {
+        segments: &segments,
+        url: parsed,
+    };
+    if let Some(page) = crate::site::parse(&segments, |name| url.param(name)) {
         return Some(Target::Page(Route::Site(page)));
     }
-    let route = match segments.as_slice() {
-        [] | ["dashboard"] => Route::Home,
-        ["search"] => Route::Search {
-            kind: match kind.as_deref().map(str::to_ascii_lowercase).as_deref() {
-                None | Some("repositories") => SearchKind::Repos,
-                Some("issues") => SearchKind::Issues,
-                Some("pullrequests") => SearchKind::Pulls,
-                Some("users") => SearchKind::Users,
-                Some("discussions") => SearchKind::Discussions,
-                Some("commits") => SearchKind::Commits,
-                Some("code") => SearchKind::Code,
-                // Topics: the repositories tagged with one.
-                Some("topics") => {
-                    let topic = query.unwrap_or_default();
-                    let topic = topic.trim();
-                    let query = if topic.is_empty() {
-                        String::new()
-                    } else {
-                        format!("topic:{topic}")
-                    };
-                    return Some(Target::Page(Route::Search {
-                        kind: SearchKind::Repos,
-                        query,
-                    }));
-                }
-                // Wikis, packages, the marketplace…
-                Some(_) => return None,
-            },
-            query: query.unwrap_or_default(),
-        },
-        // The dashboards of your pull requests and issues: searches.
-        [list @ ("pulls" | "issues"), rest @ ..] => {
-            let (kind, is) = if *list == "pulls" {
-                (SearchKind::Pulls, "pr")
-            } else {
-                (SearchKind::Issues, "issue")
-            };
-            let whose = match rest {
-                [] => "author:@me",
-                ["assigned"] => "assignee:@me",
-                ["mentioned"] => "mentions:@me",
-                ["review-requested"] if *list == "pulls" => "review-requested:@me",
-                _ => return None,
-            };
-            Route::Search {
-                kind,
-                query: query.unwrap_or_else(|| format!("is:open is:{is} {whose} archived:false")),
-            }
-        }
-        // Names that can't be GitHub's are pages GitHub doesn't have.
-        ["stars" | "orgs" | "users", login, ..] if !valid_login(login) => return None,
-        [kind @ ("orgs" | "users"), login, "projects", rest @ ..] => {
-            let owner = if *kind == "orgs" {
-                ProjectOwner::Org((*login).to_owned())
-            } else {
-                ProjectOwner::User((*login).to_owned())
-            };
-            project(owner, rest, parsed)?
-        }
-        ["stars", login] => Route::User {
-            login: (*login).to_owned(),
-            tab: ProfileTab::Stars,
-        },
-        ["orgs", login] => Route::user(login),
-        ["notifications"] => Route::Notifications {
-            query: param("query")
-                .map(|q| q.trim().to_owned())
-                .unwrap_or_default(),
-        },
-        ["advisories"] => Route::Advisories(None),
-        ["advisories", ghsa] if valid_ghsa(ghsa) => Route::Advisory {
-            repo: None,
-            ghsa: (*ghsa).to_owned(),
-        },
-        ["orgs", org, "teams"] => Route::Teams((*org).to_owned()),
-        // GitHub's form for a new team.
-        ["orgs", _, "teams", "new"] => return None,
-        // Its members, repositories and child teams are on its page.
-        ["orgs", org, "teams", slug, ..] if valid_slug(slug) => Route::Team {
-            org: (*org).to_owned(),
-            slug: (*slug).to_owned(),
-        },
-        ["orgs", org, "discussions", rest @ ..] => {
-            discussions(DiscussionsOf::Org((*org).to_owned()), rest)?
-        }
-        ["orgs", login, page @ ("repositories" | "people")] => Route::User {
-            login: (*login).to_owned(),
-            tab: if *page == "people" {
-                ProfileTab::People
-            } else {
-                repos()
-            },
-        },
-        // A profile's projects are an organization's at `/orgs/…/projects`.
-        [login]
-            if tab.as_deref() == Some("projects")
-                && !RESERVED.contains(login)
-                && valid_login(login) =>
-        {
-            Route::Projects(ProjectsOf::Owner(ProjectOwner::User((*login).to_owned())))
-        }
-        [login] if !RESERVED.contains(login) && valid_login(login) => Route::User {
-            login: (*login).to_owned(),
-            tab: match tab.as_deref() {
-                None | Some("overview") => ProfileTab::Overview,
-                Some("repositories") => repos(),
-                Some("stars") => ProfileTab::Stars,
-                Some("followers") => ProfileTab::Followers,
-                Some("following") => ProfileTab::Following,
-                // Packages need a scope gh doesn't grant.
-                Some(_) => return None,
-            },
-        },
-        ["new"] => Route::Housekeeping(crate::housekeeping::FormOf::NewRepo),
-        // GitHub's own pages: settings, apps, the marketplace…
-        [first, ..] if RESERVED.contains(first) => return None,
-        [o, r, rest @ ..] => return repo_page(RepoId::parse(&format!("{o}/{r}"))?, rest, parsed),
-        _ => return None,
+    // Names that can't be GitHub's are pages GitHub doesn't have.
+    if let ["stars" | "orgs" | "users", login, ..] = segments.as_slice()
+        && !valid_login(login)
+    {
+        return None;
+    }
+    if let Some(target) = TOP.iter().find_map(|parse| parse(&url)) {
+        return Some(target);
+    }
+    // GitHub's own pages: settings, apps, the marketplace…
+    let [owner, name, rest @ ..] = segments.as_slice() else {
+        return None;
     };
-    Some(Target::Page(route))
+    if is_reserved(owner) {
+        return None;
+    }
+    let repo = RepoId::parse(&format!("{owner}/{name}"))?;
+    REPO.iter().find_map(|parse| parse(&repo, rest, &url))
 }
 
 /// A query parameter's value.
@@ -1089,468 +399,6 @@ fn param(url: &url::Url, name: &str) -> Option<String> {
     url.query_pairs()
         .find(|(k, _)| k == name)
         .map(|(_, v)| v.into_owned())
-}
-
-/// `url` at a file's `lines`, if any.
-fn lined(url: String, lines: Option<(u32, u32)>) -> String {
-    match lines {
-        None => url,
-        Some((a, b)) if a == b => format!("{url}#L{a}"),
-        Some((a, b)) => format!("{url}#L{a}-L{b}"),
-    }
-}
-
-/// A page at a revision, from what follows its view. Where the ref ends
-/// is plain when it's the only segment, when its '/' came escaped (as
-/// ghtui writes it), or when it's `HEAD` or a full SHA; otherwise it's for
-/// GitHub to say ([`Route::Unsplit`]).
-fn rev_page(repo: RepoId, view: &str, rest: &[&str], fragment: Option<&str>) -> Option<Route> {
-    let view = match view {
-        "tree" => RevView::Tree,
-        "blob" => RevView::Blob,
-        "blame" => RevView::Blame,
-        "commits" => RevView::Commits,
-        _ => return None,
-    };
-    let lines = fragment.and_then(line_range);
-    match rest {
-        [] if view == RevView::Commits => view.at(repo, "HEAD".into(), String::new(), lines),
-        [rev, ..] if !valid_rev(rev) => None,
-        [rev, path @ ..]
-            if path.is_empty()
-                || rev.contains('/')
-                || *rev == "HEAD"
-                || (rev.len() == 40 && rev.bytes().all(|b| b.is_ascii_hexdigit())) =>
-        {
-            view.at(repo, (*rev).to_owned(), path.join("/"), lines)
-        }
-        [_, ..] => Some(Route::Unsplit {
-            repo,
-            view,
-            spot: rest.join("/"),
-            lines,
-        }),
-        [] => None,
-    }
-}
-
-/// A repository's page, from what follows `/<owner>/<repo>` in its URL.
-fn repo_page(repo: RepoId, rest: &[&str], url: &url::Url) -> Option<Target> {
-    let param = |name: &str| param(url, name);
-    let fragment = url.fragment();
-    let route = match rest {
-        [] => Route::Repo(repo),
-        [view @ ("tree" | "blob" | "blame" | "commits"), rest @ ..] => {
-            rev_page(repo, view, rest, fragment)?
-        }
-        [list @ ("issues" | "pulls")] => {
-            let query = param("q").map_or_else(|| OPEN.to_owned(), |q| strip_is(&q));
-            if *list == "issues" {
-                Route::Issues { repo, query }
-            } else {
-                Route::Pulls { repo, query }
-            }
-        }
-        ["labels"] => Route::Labels(repo),
-        // A label's issues. Its name goes into a search, which control
-        // characters don't survive.
-        ["labels", label] if label.contains(char::is_control) => return None,
-        ["labels", label] => {
-            // As a search reads it: runs of spaces are one.
-            let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
-            let label = if label.contains(' ') {
-                format!("\"{label}\"")
-            } else {
-                label
-            };
-            Route::Issues {
-                repo,
-                query: format!("{OPEN} label:{label}"),
-            }
-        }
-        ["actions"] => Route::Actions {
-            repo,
-            query: param("query")
-                .map(|q| q.trim().to_owned())
-                .unwrap_or_default(),
-        },
-        // Its linked projects; a classic project (`projects/1`) is gone.
-        ["projects"] => Route::Projects(ProjectsOf::Repo(repo)),
-        ["stargazers"] => Route::Stargazers(repo),
-        ["watchers"] => Route::Watchers(repo),
-        ["forks"] | ["network", "members"] => Route::Forks(repo),
-        ["releases", "tag", tag @ ..] if !tag.is_empty() => Route::Release {
-            repo,
-            tag: tag.join("/"),
-        },
-        ["releases", "new"] => Route::NewRelease(repo),
-        ["releases", "edit", tag @ ..] if !tag.is_empty() => Route::EditRelease {
-            repo,
-            tag: tag.join("/"),
-        },
-        // Housekeeping's forms: a fork, a milestone, a file.
-        rest if crate::housekeeping::FormOf::parse(&repo, rest).is_some() => {
-            Route::Housekeeping(crate::housekeeping::FormOf::parse(&repo, rest)?)
-        }
-        ["wiki", "_new"] => Route::WikiEdit { repo, page: None },
-        ["wiki", page, "_edit"] if !page.contains(char::is_control) => Route::WikiEdit {
-            repo,
-            page: Some((*page).to_owned()),
-        },
-        // The network graph is a picture. Assets are downloads; a wiki's
-        // comparisons, and the form for a new advisory, are on GitHub.
-        ["network"]
-        | ["releases", "download", ..]
-        | ["wiki", .., "_compare"]
-        | ["security", "advisories", "new"] => return None,
-        // A wiki's own pages but its list (history, comparisons).
-        ["wiki", special, ..] if special.starts_with('_') && *special != "_pages" => return None,
-        ["releases", ..] => Route::Releases(repo),
-        ["tags"] => Route::Tags(repo),
-        // A milestone by its title is in the list.
-        ["milestones", ..] => Route::Milestones {
-            repo,
-            closed: param("state").as_deref() == Some("closed"),
-        },
-        ["milestone", n] => Route::Milestone {
-            repo,
-            number: n.parse().ok()?,
-        },
-        // A comparison's patch and diff are downloads.
-        ["compare", .., last] if last.ends_with(".patch") || last.ends_with(".diff") => {
-            return None;
-        }
-        ["compare", rest @ ..] => {
-            let spec = rest.join("/");
-            // Without revisions it's the form for opening a pull request.
-            if spec.is_empty() {
-                return Some(Target::Page(Route::NewPr(repo)));
-            }
-            // Its files, from one commit to the other (`a..b`; with three
-            // dots it's from their merge base, which the comparison page
-            // finds).
-            if fragment.is_some_and(|f| f == "files" || f.starts_with("diff-"))
-                && !spec.contains("...")
-                && let Some((from, to)) = spec.split_once("..")
-                && let Ok(from) = Oid::parse(from)
-                && let Ok(to) = Oid::parse(to)
-            {
-                return Some(Target::Files(DiffOf::Range(repo, from, to)));
-            }
-            Route::Compare { repo, spec }
-        }
-        // The security overview's part ghtui can show: advisories.
-        ["security"] | ["security", "advisories"] => Route::Advisories(Some(repo)),
-        ["security", "advisories", ghsa] if valid_ghsa(ghsa) => Route::Advisory {
-            repo: Some(repo),
-            ghsa: (*ghsa).to_owned(),
-        },
-        // Dependabot's, code scanning's and secret scanning's alerts.
-        ["security", slug] if AlertKind::from_slug(slug).is_some() => {
-            let kind = AlertKind::from_slug(slug)?;
-            let query = param(kind.query_param())
-                .or_else(|| param("q").or_else(|| param("query")))
-                .map(|q| q.trim().to_owned())
-                .filter(|q| !q.is_empty())
-                .unwrap_or_else(|| OPEN.to_owned());
-            Route::Alerts { repo, kind, query }
-        }
-        // The Settings tab's pages ghtui has; the rest are on GitHub.
-        ["settings", rest @ ..] => {
-            use crate::api::settings::SettingsPage as P;
-            let page = match rest {
-                [] => P::General,
-                ["branches" | "branch_protection_rules" | "rules", ..] => P::Branches,
-                ["access" | "collaboration"] => P::Access,
-                ["hooks"] | ["hooks", "new"] => P::Hooks,
-                ["hooks", id] => P::Hook(id.parse().ok().filter(|&n| n > 0)?),
-                ["keys", ..] => P::Keys,
-                _ => return None,
-            };
-            Route::Settings { repo, page }
-        }
-        ["security", slug, n] if AlertKind::from_slug(slug).is_some() => Route::Alert {
-            repo,
-            kind: AlertKind::from_slug(slug)?,
-            number: n.parse().ok().filter(|&n| n > 0)?,
-        },
-        // A page's revisions and history: the page.
-        ["wiki", rest @ ..] if !rest.iter().any(|p| p.contains(char::is_control)) => Route::Wiki {
-            repo,
-            page: rest.first().map(|p| (*p).to_owned()),
-        },
-        ["deployments", rest @ ..] => {
-            let environment = match rest {
-                [] => None,
-                ["activity_log"] => param("environments_filter"),
-                [env] if !env.contains(char::is_control) => Some((*env).to_owned()),
-                _ => return None,
-            };
-            Route::Deployments { repo, environment }
-        }
-        // All, active, stale, yours: one list.
-        ["branches", ..] => Route::Branches(repo),
-        ["discussions", rest @ ..] => discussions(DiscussionsOf::Repo(repo), rest)?,
-        ["actions", "runs", run, rest @ ..] => {
-            let run = run.parse().ok()?;
-            match rest {
-                // The run's workflow file shows on the run's page.
-                [] | ["workflow"] => Route::WorkflowRun {
-                    repo,
-                    run,
-                    attempt: None,
-                },
-                ["attempts", n] => Route::WorkflowRun {
-                    repo,
-                    run,
-                    attempt: Some(n.parse().ok()?),
-                },
-                ["job", job] => Route::Job {
-                    repo,
-                    run: Some(run),
-                    job: job.parse().ok()?,
-                    step: fragment.and_then(step_line),
-                    query: param("q").unwrap_or_default(),
-                },
-                _ => return None,
-            }
-        }
-        // A check run's URL, which is its job's for Actions.
-        ["runs", job] | ["runs", _, "jobs", job] => Route::Job {
-            repo,
-            run: None,
-            job: job.parse().ok()?,
-            step: fragment.and_then(step_line),
-            query: param("q").unwrap_or_default(),
-        },
-        ["actions", "workflows", file]
-            if !file.contains(|c: char| c.is_control() || c.is_whitespace()) =>
-        {
-            Route::Workflow {
-                repo,
-                file: (*file).to_owned(),
-            }
-        }
-        // A commit is named by its SHA or a ref, which git keeps to
-        // printable characters without spaces.
-        ["commit", rev, ..] | ["git", "commit", rev] if !valid_rev(rev) => {
-            return None;
-        }
-        // A check run's logs, from a pull request's checks.
-        ["commit", _, "checks", job, ..] => Route::Job {
-            repo,
-            run: None,
-            job: job.parse().ok()?,
-            step: None,
-            query: String::new(),
-        },
-        ["commit", sha, "checks"] => Route::CommitChecks {
-            repo,
-            oid: (*sha).to_owned(),
-        },
-        ["git", "commit", sha] => Route::Commit {
-            repo,
-            oid: (*sha).to_owned(),
-            pr: None,
-        },
-        // A commit's patch is a download; its diff is the diff viewer.
-        ["commit", sha] if sha.ends_with(".patch") => return None,
-        ["pull", n] if n.ends_with(".diff") => {
-            let number = n.trim_end_matches(".diff").parse().ok()?;
-            return Some(Target::Files(DiffOf::Pr(PrRef { repo, number })));
-        }
-        // GitHub anchors a commit's files as `#diff-…`. A short SHA or a
-        // ref names no commit until resolved: its page.
-        ["commit", rev] => {
-            let (rev, diff) = rev
-                .strip_suffix(".diff")
-                .map_or((*rev, false), |r| (r, true));
-            if (diff || fragment.is_some_and(|f| f == "files" || f.starts_with("diff-")))
-                && let Ok(oid) = Oid::parse(rev)
-            {
-                return Some(Target::Files(DiffOf::Commit(repo, oid)));
-            }
-            Route::Commit {
-                repo,
-                oid: rev.to_owned(),
-                pr: None,
-            }
-        }
-        // The form, after the template chooser or straight to it.
-        ["issues", "new"] | ["issues", "new", "choose"] => Route::NewIssue(repo),
-        ["issues", n] => Route::Issue {
-            repo,
-            number: n.parse().ok()?,
-        },
-        ["pull", n, rest @ ..] => {
-            let pr = PrRef {
-                repo,
-                number: n.parse().ok()?,
-            };
-            // Review comments are threads in the diff.
-            let review_comment = fragment.is_some_and(|f| {
-                f.strip_prefix("discussion_r")
-                    .or_else(|| f.strip_prefix('r'))
-                    .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
-            });
-            match rest {
-                [] if review_comment => return Some(Target::Files(DiffOf::Pr(pr))),
-                [] => Route::pr(pr),
-                ["commits" | "changes", sha] if valid_rev(sha) => Route::Commit {
-                    repo: pr.repo,
-                    oid: (*sha).to_owned(),
-                    pr: Some(pr.number),
-                },
-                ["files" | "changes", ..] => return Some(Target::Files(DiffOf::Pr(pr))),
-                ["commits", ..] => Route::Pr {
-                    pr,
-                    tab: PrTab::Commits,
-                },
-                ["checks", ..] => Route::Pr {
-                    pr,
-                    tab: PrTab::Checks,
-                },
-                _ => return None,
-            }
-        }
-        _ => return None,
-    };
-    Some(Target::Page(route))
-}
-
-/// The gist website's own pages, not people's gists.
-const GIST_PAGES: &[&str] = &[
-    "discover", "starred", "search", "auth", "login", "join", "mine",
-];
-
-/// Whether a gist path segment after an owner is a gist's ID
-/// (numbers for old gists, 20 or 32 hex digits for newer).
-fn is_gist_id(s: &str) -> bool {
-    s.bytes().all(|b| b.is_ascii_digit())
-        || (matches!(s.len(), 20 | 32) && s.bytes().all(|b| b.is_ascii_hexdigit()))
-}
-
-/// Whether a lone gist segment is a gist rather than someone's
-/// gists. GitHub tries a login first; ghtui can't ask, so it takes short
-/// numbers for logins (`/1`, `/2000`) and long ones for old gists
-/// (`/1162032`, which GitHub redirects to its owner's).
-fn is_lone_gist_id(s: &str) -> bool {
-    is_gist_id(s) && !(s.len() < 5 && s.bytes().all(|b| b.is_ascii_digit()))
-}
-
-/// A gist website's page, from its path: a gist (`/<id>`, `/<owner>/<id>`)
-/// or someone's gists (`/<owner>`). Raw files and embeds are downloads.
-fn gist<'a>(segments: impl Iterator<Item = &'a str>) -> Option<Route> {
-    let segments: Vec<&str> = segments.filter(|s| !s.is_empty()).collect();
-    Some(match segments.as_slice() {
-        // The gist website's front page is the form for a new gist.
-        [] => Route::NewGist,
-        [first, ..] if GIST_PAGES.contains(first) => return None,
-        [owner, id, "edit"] if is_gist_id(id) && valid_login(owner) => Route::EditGist {
-            owner: (*owner).to_owned(),
-            id: (*id).to_owned(),
-        },
-        [id] if is_lone_gist_id(id) => Route::Gist {
-            owner: None,
-            id: (*id).to_owned(),
-        },
-        [login] if valid_login(login) => Route::Gists((*login).to_owned()),
-        [owner, id] if is_gist_id(id) && valid_login(owner) => Route::Gist {
-            owner: Some((*owner).to_owned()),
-            id: (*id).to_owned(),
-        },
-        // Revisions, forks, stars: the gist.
-        [owner, id, "revisions" | "forks" | "stargazers"]
-            if is_gist_id(id) && valid_login(owner) =>
-        {
-            Route::Gist {
-                owner: Some((*owner).to_owned()),
-                id: (*id).to_owned(),
-            }
-        }
-        _ => return None,
-    })
-}
-/// A discussions page from what follows `/discussions` in its URL.
-fn discussions(of: DiscussionsOf, rest: &[&str]) -> Option<Route> {
-    Some(match rest {
-        [] => Route::Discussions { of, category: None },
-        ["categories", slug] if valid_slug(slug) => Route::Discussions {
-            of,
-            category: Some((*slug).to_owned()),
-        },
-        [n] => Route::Discussion {
-            of,
-            number: n.parse().ok()?,
-        },
-        _ => return None,
-    })
-}
-
-/// An owner's projects page, from what follows `/projects` in its URL: the
-/// list, a project, one of its views, or an item in a view's side pane.
-/// Its settings, insights and workflows are on GitHub.
-fn project(owner: ProjectOwner, rest: &[&str], url: &url::Url) -> Option<Route> {
-    let [number, rest @ ..] = rest else {
-        return Some(Route::Projects(ProjectsOf::Owner(owner)));
-    };
-    let project = ProjectRef {
-        owner,
-        number: number.parse().ok()?,
-    };
-    let view = match rest {
-        [] => None,
-        ["views", n] => Some(n.parse().ok()?),
-        _ => return None,
-    };
-    Some(match param(url, "itemId") {
-        Some(item) => Route::ProjectItem {
-            project,
-            view,
-            item: item.parse().ok()?,
-        },
-        None => Route::Project { project, view },
-    })
-}
-
-/// A project's view's URL (the project's, without one).
-fn view_url(project: &ProjectRef, view: Option<u64>) -> String {
-    match view {
-        Some(n) => format!("{}/views/{n}", project.url()),
-        None => project.url(),
-    }
-}
-
-fn discussions_url(of: &DiscussionsOf) -> String {
-    match of {
-        DiscussionsOf::Repo(repo) => format!("{}/discussions", links::repo(repo)),
-        DiscussionsOf::Org(org) => format!("{}/orgs/{org}/discussions", links::base()),
-    }
-}
-
-fn of_title(of: &DiscussionsOf) -> String {
-    match of {
-        DiscussionsOf::Repo(repo) => repo.to_string(),
-        DiscussionsOf::Org(org) => format!("@{org}"),
-    }
-}
-
-/// `step:3:12`, as GitHub links a line of a job's log.
-fn step_line(fragment: &str) -> Option<(u32, u32)> {
-    let mut parts = fragment.strip_prefix("step:")?.split(':');
-    let step = parts.next()?.parse().ok()?;
-    let line = parts.next().and_then(|l| l.parse().ok()).unwrap_or(1);
-    Some((step, line))
-}
-
-/// `L10` or `L10-L20` (as GitHub writes line links), in order.
-fn line_range(fragment: &str) -> Option<(u32, u32)> {
-    let line = |s: &str| s.strip_prefix('L')?.parse::<u32>().ok().filter(|&n| n > 0);
-    let (a, b) = match fragment.split_once('-') {
-        Some((a, b)) => (line(a)?, line(b)?),
-        None => (line(fragment)?, line(fragment)?),
-    };
-    Some((a.min(b), a.max(b)))
 }
 
 /// Top-level GitHub paths that aren't users.
@@ -1587,6 +435,7 @@ const RESERVED: &[&str] = &[
     "readme",
     "repos",
     "resources",
+    "search",
     "security",
     "sessions",
     "settings",
@@ -1628,19 +477,6 @@ fn decode(segment: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// GitHub's list URLs repeat `is:issue`/`is:pr`; the route adds them back.
-fn strip_is(query: &str) -> String {
-    let words: Vec<&str> = query
-        .split_whitespace()
-        .filter(|w| !matches!(*w, "is:issue" | "is:pr"))
-        .collect();
-    if words.is_empty() {
-        OPEN.to_owned()
-    } else {
-        words.join(" ")
-    }
-}
-
 /// What the command palette makes of its input. A web link ghtui
 /// doesn't show (another GitHub's, say) is the browser's.
 pub fn parse_input(input: &str, context: Option<&RepoId>) -> Option<Dest> {
@@ -1663,7 +499,7 @@ pub fn parse_input(input: &str, context: Option<&RepoId>) -> Option<Dest> {
     }
     let issue = |repo: RepoId, n: &str| {
         let number = n.trim_start_matches('#').parse().ok()?;
-        Some(Target::Page(Route::Issue { repo, number }).into())
+        Some(Target::Page(Route::Issues(issues::Issue { repo, number })).into())
     };
     if let Some((repo, n)) = input.split_once('#')
         && !repo.is_empty()
@@ -1678,7 +514,7 @@ pub fn parse_input(input: &str, context: Option<&RepoId>) -> Option<Dest> {
         return issue(context?.clone(), input);
     }
     if input.contains('/') {
-        return RepoId::parse(input).map(|r| Target::Page(Route::Repo(r)).into());
+        return RepoId::parse(input).map(|r| Target::Page(Route::Code(code::Repo(r))).into());
     }
     None
 }
@@ -1708,13 +544,6 @@ fn valid_rev(s: &str) -> bool {
             .any(|c| c.is_control() || c.is_whitespace() || "~^:?*[\\".contains(c))
 }
 
-/// A security advisory's ID: `GHSA-xxxx-xxxx-xxxx`.
-fn valid_ghsa(s: &str) -> bool {
-    s.strip_prefix("GHSA-").is_some_and(|rest| {
-        !rest.is_empty() && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-    })
-}
-
 /// A team's slug: its name, lowercased, its other characters dashes.
 fn valid_slug(s: &str) -> bool {
     !s.is_empty()
@@ -1722,9 +551,65 @@ fn valid_slug(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
+/// Strategies for the parts of routes, for the families' own.
+#[cfg(test)]
+pub(crate) mod arb {
+    use crate::api::model::RepoId;
+    use proptest::prelude::*;
+
+    pub(crate) fn segment() -> impl Strategy<Value = String> {
+        "[A-Za-z0-9][A-Za-z0-9_.-]{0,15}".prop_filter("not . or .. or .git", |s| {
+            s != "." && s != ".." && !s.ends_with(".git")
+        })
+    }
+
+    /// A user's or organization's name, as GitHub allows them.
+    pub(crate) fn login() -> impl Strategy<Value = String> {
+        "[A-Za-z0-9][A-Za-z0-9-]{0,15}"
+    }
+
+    pub(crate) fn repo() -> impl Strategy<Value = RepoId> {
+        (segment(), segment()).prop_map(|(o, r)| RepoId::new(o, r))
+    }
+
+    /// Any text a path segment can hold, spaces and non-ASCII included
+    /// (git has no `.` or `..` segments).
+    pub(crate) fn path() -> impl Strategy<Value = String> {
+        let part = "[^/\\x00-\\x1f]{1,12}".prop_filter("not . or ..", |p| p != "." && p != "..");
+        prop::collection::vec(part, 0..4).prop_map(|parts| parts.join("/"))
+    }
+
+    /// Filter words (an `is:` word would be dropped by design).
+    pub(crate) fn query() -> impl Strategy<Value = String> {
+        prop::collection::vec("[a-z0-9:#&+%\"]{1,8}", 1..4)
+            .prop_map(|words| words.join(" "))
+            .prop_filter("no is: words", |q| {
+                !q.split(' ').any(|w| w.starts_with("is:"))
+            })
+    }
+
+    /// A valid git ref name, of one to three segments (`feature/x`), with
+    /// characters a URL must escape (`fix#1`, `50%`, `é`).
+    pub(crate) fn rev() -> impl Strategy<Value = String> + Clone {
+        prop::collection::vec("[A-Za-z0-9_#%+@&;é-][A-Za-z0-9._#%+@&;é-]{0,7}", 1..=3)
+            .prop_map(|s| s.join("/"))
+            .prop_filter("valid ref name", |r| {
+                // git's rules, written apart from `valid_rev` so the round
+                // trip catches it rejecting a legal name.
+                !r.contains("..")
+                    && !r.ends_with('.')
+                    && !r.split('/').any(|c| c.ends_with(".lock"))
+            })
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::api::browse::RepoSort;
+    use crate::api::project::{ProjectOwner, ProjectRef, ProjectsOf};
+    use crate::git::Oid;
+    use crate::route::security::valid_ghsa;
 
     /// Names GitHub can't have aren't pages (found by fuzzing: a user
     /// named `https:` and NULs opened, and its URL led elsewhere).
@@ -1749,7 +634,7 @@ pub(crate) mod tests {
         assert_eq!(page("https://github.com/octo-cat"), Route::user("octo-cat"));
         assert!(matches!(
             page("https://github.com/o/r/commit/main"),
-            Route::Commit { .. }
+            Route::Code(code::Commit { .. })
         ));
     }
 
@@ -1831,10 +716,10 @@ pub(crate) mod tests {
         // Not a commit under a PR: the PR's commits.
         assert!(matches!(
             Dest::from_url("https://github.com/o/r/pull/1/commits/a%20b").target,
-            Target::Page(Route::Pr {
+            Target::Page(Route::Pulls(pulls::Pr {
                 tab: PrTab::Commits,
                 ..
-            })
+            }))
         ));
         // A full SHA's files open the diff; a short one, its page.
         assert!(matches!(
@@ -1843,7 +728,7 @@ pub(crate) mod tests {
         ));
         assert!(matches!(
             Dest::from_url("https://github.com/o/r/commit/0123456#diff-1").target,
-            Target::Page(Route::Commit { .. })
+            Target::Page(Route::Code(code::Commit { .. }))
         ));
         assert!(!valid_rev("a b") && !valid_rev("a~1") && !valid_rev("a.") && valid_rev("v1.2/x"));
         // A page at a revision git can't name opens the browser.
@@ -1877,16 +762,19 @@ pub(crate) mod tests {
     #[test]
     fn parses_github_urls() {
         let repo = RepoId::new("o", "r");
-        assert_eq!(page("https://github.com/"), Route::Home);
+        assert_eq!(page("https://github.com/"), Route::App(app::Home));
         assert_eq!(page("https://github.com/octocat"), Route::user("octocat"));
-        assert_eq!(page("https://github.com/o/r"), Route::Repo(repo.clone()));
+        assert_eq!(
+            page("https://github.com/o/r"),
+            Route::Code(code::Repo(repo.clone()))
+        );
         assert_eq!(
             page("https://github.com/o/r/tree/main/src/ui").split(Some("main")),
-            Some(Route::Tree {
+            Some(Route::Code(code::Tree {
                 repo: repo.clone(),
                 rev: "main".into(),
                 path: "src/ui".into()
-            })
+            }))
         );
         assert_eq!(
             page("https://github.com/o/r/blob/v1.0/a%20b.md#readme").split(None),
@@ -1896,57 +784,61 @@ pub(crate) mod tests {
             let url = format!("https://github.com/o/r/blob/main/a.rs#{fragment}");
             let expected = (lines.0 > 0).then_some(lines);
             assert!(
-                matches!(page(&url).split(None), Some(Route::Blob { lines, .. }) if lines == expected),
+                matches!(page(&url).split(None), Some(Route::Code(code::Blob { lines, .. })) if lines == expected),
                 "{fragment}"
             );
         }
         assert_eq!(
             page("https://github.com/o/r/issues?q=is%3Aissue+is%3Aclosed"),
-            Route::Issues {
+            Route::Issues(issues::Issues {
                 repo: repo.clone(),
                 query: "is:closed".into()
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/o/r/pulls"),
-            Route::Pulls {
+            Route::Pulls(pulls::Pulls {
                 repo: repo.clone(),
                 query: OPEN.into()
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/o/r/issues/5"),
-            Route::Issue {
+            Route::Issues(issues::Issue {
                 repo: repo.clone(),
                 number: 5
-            }
+            })
         );
         let pr = PrRef { repo, number: 7 };
         assert_eq!(
             page("https://github.com/o/r/pull/7/commits"),
-            Route::Pr {
+            Route::Pulls(pulls::Pr {
                 pr: pr.clone(),
                 tab: PrTab::Commits
-            }
+            })
         );
         assert_eq!(
             Dest::from_url("https://github.com/o/r/pull/7/files").target,
             Target::Files(DiffOf::Pr(pr.clone()))
         );
         let sha = "0123456789abcdef0123456789abcdef01234567";
-        let commit = |oid: &str| Route::Commit {
-            repo: pr.repo.clone(),
-            oid: oid.into(),
-            pr: None,
+        let commit = |oid: &str| {
+            Route::Code(code::Commit {
+                repo: pr.repo.clone(),
+                oid: oid.into(),
+                pr: None,
+            })
         };
         assert_eq!(
             page(&format!("https://github.com/o/r/commit/{sha}")),
             commit(sha)
         );
-        let commits = |rev: &str, path: &str| Route::Commits {
-            repo: pr.repo.clone(),
-            rev: rev.into(),
-            path: path.into(),
+        let commits = |rev: &str, path: &str| {
+            Route::Code(code::Commits {
+                repo: pr.repo.clone(),
+                rev: rev.into(),
+                path: path.into(),
+            })
         };
         assert_eq!(
             page("https://github.com/o/r/commits/main/src/ui").split(None),
@@ -1959,33 +851,33 @@ pub(crate) mod tests {
         );
         assert_eq!(
             page("https://github.com/o/r/actions?query=branch%3Amain+is%3Afailure"),
-            Route::Actions {
+            Route::Runs(runs::Actions {
                 repo: pr.repo.clone(),
                 query: "branch:main is:failure".into()
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/o/r/stargazers"),
-            Route::Stargazers(pr.repo.clone())
+            Route::People(people::Stargazers(pr.repo.clone()))
         );
         assert_eq!(
             page("https://github.com/o/r/network/members"),
-            Route::Forks(pr.repo.clone())
+            Route::People(people::Forks(pr.repo.clone()))
         );
         assert_eq!(
             page("https://github.com/o/r/releases/tag/v1.0/rc"),
-            Route::Release {
+            Route::Releases(releases::Release {
                 repo: pr.repo.clone(),
                 tag: "v1.0/rc".into()
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/o/r/releases/latest"),
-            Route::Releases(pr.repo.clone())
+            Route::Releases(releases::Releases(pr.repo.clone()))
         );
         assert_eq!(
             page("https://github.com/o/r/tags"),
-            Route::Tags(pr.repo.clone())
+            Route::Code(code::Tags(pr.repo.clone()))
         );
         assert!(matches!(
             Dest::from_url("https://github.com/o/r/releases/download/v1/x.tgz").target,
@@ -1993,10 +885,10 @@ pub(crate) mod tests {
         ));
         assert_eq!(
             page("https://github.com/o/r/pull/7/checks"),
-            Route::Pr {
+            Route::Pulls(pulls::Pr {
                 pr: pr.clone(),
                 tab: PrTab::Checks
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/o/r/commit/0123abc"),
@@ -2005,11 +897,11 @@ pub(crate) mod tests {
         // A pull request's commit knows it.
         assert_eq!(
             page(&format!("https://github.com/o/r/pull/7/commits/{sha}")),
-            Route::Commit {
+            Route::Code(code::Commit {
                 repo: pr.repo.clone(),
                 oid: sha.into(),
                 pr: Some(7),
-            }
+            })
         );
         assert_eq!(
             Dest::from_url(&format!("https://github.com/o/r/commit/{sha}#diff-abc")).target,
@@ -2017,74 +909,74 @@ pub(crate) mod tests {
         );
         assert_eq!(
             page("https://github.com/search?q=tui+lang%3Arust&type=repositories"),
-            Route::Search {
+            Route::Search(search::Search {
                 kind: SearchKind::Repos,
                 query: "tui lang:rust".into()
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/o/r/labels/good%20first%20issue"),
-            Route::Issues {
+            Route::Issues(issues::Issues {
                 repo: RepoId::new("o", "r"),
                 query: "is:open label:\"good first issue\"".into()
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/o/r/labels/bug"),
-            Route::Issues {
+            Route::Issues(issues::Issues {
                 repo: RepoId::new("o", "r"),
                 query: "is:open label:bug".into()
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/octocat?tab=repositories&sort=stargazers"),
-            Route::User {
+            Route::People(people::User {
                 login: "octocat".into(),
                 tab: ProfileTab::Repositories(RepoSort::Stars)
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/octocat?tab=followers"),
-            Route::User {
+            Route::People(people::User {
                 login: "octocat".into(),
                 tab: ProfileTab::Followers
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/orgs/rust-lang/people"),
-            Route::User {
+            Route::People(people::User {
                 login: "rust-lang".into(),
                 tab: ProfileTab::People
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/orgs/rust-lang/repositories"),
-            Route::User {
+            Route::People(people::User {
                 login: "rust-lang".into(),
                 tab: ProfileTab::Repositories(RepoSort::Updated)
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/o/r/actions/runs/9"),
-            Route::WorkflowRun {
+            Route::Runs(runs::WorkflowRun {
                 repo: pr.repo.clone(),
                 run: 9,
                 attempt: None
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/o/r/milestone/3"),
-            Route::Milestone {
+            Route::Issues(issues::Milestone {
                 repo: pr.repo.clone(),
                 number: 3
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/o/r/compare/v1...fork:feature/x"),
-            Route::Compare {
+            Route::Code(code::Compare {
                 repo: pr.repo.clone(),
                 spec: "v1...fork:feature/x".into()
-            }
+            })
         );
         let other = "f".repeat(40);
         assert_eq!(
@@ -2103,10 +995,10 @@ pub(crate) mod tests {
             page(&format!(
                 "https://github.com/o/r/compare/{sha}...{other}#files"
             )),
-            Route::Compare {
+            Route::Code(code::Compare {
                 repo: pr.repo.clone(),
                 spec: format!("{sha}...{other}")
-            }
+            })
         );
         // A diff's link leads back to it, and a link to its lines to them.
         let (from, to) = (Oid::parse(sha).unwrap(), Oid::parse(&other).unwrap());
@@ -2115,7 +1007,7 @@ pub(crate) mod tests {
             line(crate::diff::anchor::Side::Left, 3),
             line(crate::diff::anchor::Side::Right, 5),
         );
-        let anchor = format!("diff-{}L3-R5", crate::diff_screen::path_hash("a.rs"));
+        let anchor = format!("diff-{}L3-R5", crate::ui::pages::url::path_hash("a.rs"));
         for of in [
             DiffOf::Pr(pr.clone()),
             DiffOf::Commit(pr.repo.clone(), from.clone()),
@@ -2129,42 +1021,42 @@ pub(crate) mod tests {
         // A topic search without a topic is an empty search, not `topic:`.
         assert_eq!(
             page("https://github.com/search?type=topics"),
-            Route::Search {
+            Route::Search(search::Search {
                 kind: SearchKind::Repos,
                 query: String::new()
-            }
+            })
         );
         // A short number alone is someone's gists; a long one, an old gist.
         assert_eq!(
             page("https://gist.github.com/2000"),
-            Route::Gists("2000".into())
+            Route::Gists(gists::Gists("2000".into()))
         );
         assert_eq!(
             page("https://gist.github.com/1162032"),
-            Route::Gist {
+            Route::Gists(gists::Gist {
                 owner: None,
                 id: "1162032".into()
-            }
+            })
         );
         // A repository (or owner) named `blob` keeps its blame.
-        let blame = Route::Blame {
+        let blame = Route::Code(code::Blame {
             repo: RepoId::new("blob", "blob"),
             rev: "main".into(),
             path: "f".into(),
             lines: None,
-        };
+        });
         assert_eq!(reopened(&blame), Target::Page(blame));
         assert_eq!(
             page("https://github.com/notifications"),
-            Route::Notifications {
+            Route::Search(search::Notifications {
                 query: String::new()
-            }
+            })
         );
         assert_eq!(
             page("https://github.com/notifications?query=is%3Aunread+repo%3Ao%2Fr"),
-            Route::Notifications {
+            Route::Search(search::Notifications {
                 query: "is:unread repo:o/r".into()
-            }
+            })
         );
         assert!(matches!(
             Dest::from_url("https://github.com/settings/tokens").target,
@@ -2208,14 +1100,18 @@ pub(crate) mod tests {
     pub(crate) fn variant(route: &Route) -> String {
         // An unsplit page opens its view's page.
         let route = route.split(None).unwrap_or_else(|| route.clone());
-        // One of `crate::site`'s pages by its own name.
         let named = format!("{route:?}");
-        let named = named.strip_prefix("Site(").unwrap_or(&named);
-        named
-            .split(|c: char| !c.is_alphanumeric())
-            .next()
-            .unwrap_or_default()
-            .to_owned()
+        let word = |s: &str| {
+            let word = s.split(|c: char| !c.is_alphanumeric()).next();
+            word.unwrap_or_default().to_owned()
+        };
+        // A family's page by its own name; housekeeping's forms, and a
+        // settings page, by the family's.
+        let family = word(&named);
+        match named.strip_prefix(&format!("{family}(")).map(word) {
+            Some(page) if family != "Housekeeping" && page != "Page" => page,
+            _ => family,
+        }
     }
 
     /// Whether `target` is what the corpus says (`todo` pages aren't built
@@ -2265,55 +1161,6 @@ pub(crate) mod tests {
         );
     }
 
-    #[test]
-    fn routes_round_trip_through_urls() {
-        let repo = RepoId::new("o", "r");
-        for route in [
-            Route::Home,
-            Route::Repo(repo.clone()),
-            Route::Tree {
-                repo: repo.clone(),
-                rev: "main".into(),
-                path: "src".into(),
-            },
-            Route::Blob {
-                repo: repo.clone(),
-                rev: "main".into(),
-                path: "src/lib.rs".into(),
-                lines: Some((3, 9)),
-            },
-            Route::Issues {
-                repo: repo.clone(),
-                query: "is:closed label:bug".into(),
-            },
-            Route::Pulls {
-                repo: repo.clone(),
-                query: OPEN.into(),
-            },
-            Route::Commit {
-                repo: repo.clone(),
-                oid: "abc1234".into(),
-                pr: None,
-            },
-            Route::Issue { repo, number: 3 },
-            Route::user("octocat"),
-            Route::Search {
-                kind: SearchKind::Users,
-                query: "linus".into(),
-            },
-            Route::Search {
-                kind: SearchKind::Pulls,
-                query: "author:linus".into(),
-            },
-            Route::User {
-                login: "octocat".into(),
-                tab: ProfileTab::Stars,
-            },
-        ] {
-            assert_eq!(reopened(&route), Target::Page(route));
-        }
-    }
-
     /// On an Enterprise Server, its links do what github.com's do (gists
     /// are under `/gist`), its pages link to it, and github.com's links
     /// open in the browser.
@@ -2338,12 +1185,12 @@ pub(crate) mod tests {
         }
         assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 
-        let repo = Route::Repo(RepoId::new("o", "r"));
+        let repo = Route::Code(code::Repo(RepoId::new("o", "r")));
         assert_eq!(repo.url(), "https://ghe.example.com/o/r");
-        let gist = Route::Gist {
+        let gist = Route::Gists(gists::Gist {
             owner: Some("o".into()),
             id: "1162032".into(),
-        };
+        });
         assert_eq!(gist.url(), "https://ghe.example.com/gist/o/1162032");
         assert_eq!(reopened(&gist), Target::Page(gist));
         assert_eq!(
@@ -2356,7 +1203,7 @@ pub(crate) mod tests {
     #[test]
     fn a_host_with_a_port_owns_its_links() {
         let _host = crate::host::set_for_test("ghe.example.com:8443");
-        let repo = Target::Page(Route::Repo(RepoId::new("o", "r")));
+        let repo = Target::Page(Route::Code(code::Repo(RepoId::new("o", "r"))));
         assert_eq!(
             Dest::from_url("https://ghe.example.com:8443/o/r").target,
             repo
@@ -2387,41 +1234,41 @@ pub(crate) mod tests {
         let cases = [
             (
                 "https://github.com/orgs/octo-org/projects",
-                Route::Projects(ProjectsOf::Owner(org.owner.clone())),
+                Route::Projects(projects::Projects(ProjectsOf::Owner(org.owner.clone()))),
             ),
             (
                 "https://github.com/users/octocat/projects",
-                Route::Projects(ProjectsOf::Owner(user.owner.clone())),
+                Route::Projects(projects::Projects(ProjectsOf::Owner(user.owner.clone()))),
             ),
             (
                 "https://github.com/octocat?tab=projects",
-                Route::Projects(ProjectsOf::Owner(user.owner.clone())),
+                Route::Projects(projects::Projects(ProjectsOf::Owner(user.owner.clone()))),
             ),
             (
                 "https://github.com/o/r/projects",
-                Route::Projects(ProjectsOf::Repo(RepoId::new("o", "r"))),
+                Route::Projects(projects::Projects(ProjectsOf::Repo(RepoId::new("o", "r")))),
             ),
             (
                 "https://github.com/orgs/octo-org/projects/5",
-                Route::Project {
+                Route::Projects(projects::Project {
                     project: org.clone(),
                     view: None,
-                },
+                }),
             ),
             (
                 "https://github.com/users/octocat/projects/3/views/2",
-                Route::Project {
+                Route::Projects(projects::Project {
                     project: user,
                     view: Some(2),
-                },
+                }),
             ),
             (
                 "https://github.com/orgs/octo-org/projects/5/views/1?pane=issue&itemId=42&issue=o%7Cr%7C1",
-                Route::ProjectItem {
+                Route::Projects(projects::ProjectItem {
                     project: org,
                     view: Some(1),
                     item: 42,
-                },
+                }),
             ),
         ];
         for (url, route) in cases {
@@ -2449,33 +1296,33 @@ pub(crate) mod tests {
         let mut wrong = Vec::new();
         for rev in ["feature/x", "dependabot/cargo/serde-1.0", "release/1.0"] {
             for route in [
-                Route::Tree {
+                Route::Code(code::Tree {
                     repo: repo.clone(),
                     rev: rev.into(),
                     path: String::new(),
-                },
-                Route::Tree {
+                }),
+                Route::Code(code::Tree {
                     repo: repo.clone(),
                     rev: rev.into(),
                     path: "src".into(),
-                },
+                }),
                 Route::blob(repo.clone(), rev.into(), "src/lib.rs".into()),
-                Route::Blame {
+                Route::Code(code::Blame {
                     repo: repo.clone(),
                     rev: rev.into(),
                     path: "src/lib.rs".into(),
                     lines: None,
-                },
-                Route::Commits {
+                }),
+                Route::Code(code::Commits {
                     repo: repo.clone(),
                     rev: rev.into(),
                     path: String::new(),
-                },
-                Route::Commits {
+                }),
+                Route::Code(code::Commits {
                     repo: repo.clone(),
                     rev: rev.into(),
                     path: "src".into(),
-                },
+                }),
             ] {
                 let url = route.url();
                 let back = Dest::from_url(&url).target;
@@ -2500,12 +1347,12 @@ pub(crate) mod tests {
     fn commits_named_by_slashed_refs_round_trip() {
         let (repo, oid) = (RepoId::new("o", "r"), "feature/x".to_owned());
         for route in [
-            Route::Commit {
+            Route::Code(code::Commit {
                 repo: repo.clone(),
                 oid: oid.clone(),
                 pr: None,
-            },
-            Route::CommitChecks { repo, oid },
+            }),
+            Route::Code(code::CommitChecks { repo, oid }),
         ] {
             let url = route.url();
             assert_eq!(Dest::from_url(&url).target, Target::Page(route), "{url}");
@@ -2520,14 +1367,19 @@ pub(crate) mod tests {
     #[test]
     fn plain_urls_wait_for_where_the_ref_ends() {
         let repo = RepoId::new("o", "r");
-        let tree = |rev: &str, path: &str| Route::Tree {
-            repo: repo.clone(),
-            rev: rev.into(),
-            path: path.into(),
+        let tree = |rev: &str, path: &str| {
+            Route::Code(code::Tree {
+                repo: repo.clone(),
+                rev: rev.into(),
+                path: path.into(),
+            })
         };
         let split = |url: &str, rev: Option<&str>| {
             let route = page(&format!("https://github.com/o/r/{url}"));
-            assert!(matches!(route, Route::Unsplit { .. }), "{url}: {route:?}");
+            assert!(
+                matches!(route, Route::Code(code::Unsplit { .. })),
+                "{url}: {route:?}"
+            );
             route.split(rev)
         };
         assert_eq!(
@@ -2544,12 +1396,12 @@ pub(crate) mod tests {
         );
         assert_eq!(
             split("blob/deep/a/b/c/src/lib.rs#L3", Some("deep/a/b/c")),
-            Some(Route::Blob {
+            Some(Route::Code(code::Blob {
                 repo: repo.clone(),
                 rev: "deep/a/b/c".into(),
                 path: "src/lib.rs".into(),
                 lines: Some((3, 3)),
-            })
+            }))
         );
         // A name that isn't where a segment ends is no answer.
         assert_eq!(
@@ -2559,7 +1411,7 @@ pub(crate) mod tests {
         // Blame needs a file.
         assert!(matches!(
             split("blame/feature/x", Some("feature/x")),
-            Some(Route::Blame { rev, path, .. }) if rev == "feature" && path == "x"
+            Some(Route::Code(code::Blame { rev, path, .. })) if rev == "feature" && path == "x"
         ));
         let sha = "0123456789abcdef0123456789abcdef01234567";
         for (url, rev, path) in [
@@ -2584,11 +1436,11 @@ pub(crate) mod tests {
         let url = crate::ui::pages::url::tree(&repo, "dependabot/cargo/serde-1.0", "");
         assert_eq!(
             Dest::from_url(&url).target,
-            Target::Page(Route::Tree {
+            Target::Page(Route::Code(code::Tree {
                 repo,
                 rev: "dependabot/cargo/serde-1.0".into(),
                 path: String::new(),
-            }),
+            })),
             "{url}"
         );
     }
@@ -2599,7 +1451,7 @@ pub(crate) mod tests {
         let target = |input, context| parse_input(input, context).map(|d| d.target);
         assert_eq!(
             target("a/b", None),
-            Some(Target::Page(Route::Repo(RepoId::new("a", "b"))))
+            Some(Target::Page(Route::Code(code::Repo(RepoId::new("a", "b")))))
         );
         assert_eq!(
             target("@octocat", None),
@@ -2607,18 +1459,18 @@ pub(crate) mod tests {
         );
         assert_eq!(
             target("#12", Some(&repo)),
-            Some(Target::Page(Route::Issue {
+            Some(Target::Page(Route::Issues(issues::Issue {
                 repo: repo.clone(),
                 number: 12
-            }))
+            })))
         );
         assert_eq!(target("12", None), None);
         assert_eq!(
             target("a/b#3", None),
-            Some(Target::Page(Route::Issue {
+            Some(Target::Page(Route::Issues(issues::Issue {
                 repo: RepoId::new("a", "b"),
                 number: 3
-            }))
+            })))
         );
         assert_eq!(
             target("a/b/pull/5/files", None),
@@ -2637,10 +1489,10 @@ pub(crate) mod tests {
 
     #[test]
     fn list_queries_scope_to_the_repo() {
-        let route = Route::Pulls {
+        let route = Route::Pulls(pulls::Pulls {
             repo: RepoId::new("o", "r"),
             query: "is:open author:me".into(),
-        };
+        });
         assert_eq!(
             route.search(),
             Some((
@@ -2652,324 +1504,27 @@ pub(crate) mod tests {
 
     mod props {
         use super::*;
+        use crate::route::arb::*;
         use proptest::prelude::*;
 
-        fn segment() -> impl Strategy<Value = String> {
-            "[A-Za-z0-9][A-Za-z0-9_.-]{0,15}".prop_filter("not . or .. or .git", |s| {
-                s != "." && s != ".." && !s.ends_with(".git")
-            })
-        }
-
-        /// A user's or organization's name, as GitHub allows them.
-        fn login() -> impl Strategy<Value = String> {
-            "[A-Za-z0-9][A-Za-z0-9-]{0,15}"
-        }
-
-        fn repo() -> impl Strategy<Value = RepoId> {
-            (segment(), segment()).prop_map(|(o, r)| RepoId::new(o, r))
-        }
-
-        /// Any text a path segment can hold, spaces and non-ASCII included
-        /// (git has no `.` or `..` segments).
-        fn path() -> impl Strategy<Value = String> {
-            let part =
-                "[^/\\x00-\\x1f]{1,12}".prop_filter("not . or ..", |p| p != "." && p != "..");
-            prop::collection::vec(part, 0..4).prop_map(|parts| parts.join("/"))
-        }
-
-        /// Filter words (an `is:` word would be dropped by design).
-        fn query() -> impl Strategy<Value = String> {
-            prop::collection::vec("[a-z0-9:#&+%\"]{1,8}", 1..4)
-                .prop_map(|words| words.join(" "))
-                .prop_filter("no is: words", |q| {
-                    !q.split(' ').any(|w| w.starts_with("is:"))
-                })
-        }
-
-        fn site() -> impl Strategy<Value = crate::site::Page> {
-            use crate::api::explore::Since;
-            use crate::api::packages::{Kind, PackageRef, PackagesOf};
-            use crate::site::{InsightsTab, Page};
-            let package = (
-                login(),
-                prop::sample::select(Kind::ALL.to_vec()),
-                "[a-z0-9][a-z0-9._-]{0,11}",
-            )
-                .prop_map(|(owner, kind, name)| PackageRef { owner, kind, name });
-            prop_oneof![
-                (repo(), prop::sample::select(InsightsTab::ALL.to_vec()))
-                    .prop_map(|(repo, tab)| Page::Insights { repo, tab }),
-                (
-                    prop::option::of("[a-z0-9+#]{1,10}"),
-                    prop::sample::select(Since::ALL.to_vec())
-                )
-                    .prop_map(|(language, since)| Page::Explore { language, since }),
-                "[a-z0-9][a-z0-9-]{0,15}".prop_map(Page::Topic),
-                (login(), "[a-z0-9][a-z0-9-]{0,15}")
-                    .prop_map(|(login, slug)| Page::StarList { login, slug }),
-                login().prop_map(|l| Page::Packages(PackagesOf::Owner(l))),
-                repo().prop_map(|r| Page::Packages(PackagesOf::Repo(r))),
-                (package, prop::option::of(1..u64::MAX))
-                    .prop_map(|(at, version)| Page::Package { at, version }),
-            ]
-        }
-
-        fn discussions_of() -> impl Strategy<Value = DiscussionsOf> {
-            prop_oneof![
-                repo().prop_map(DiscussionsOf::Repo),
-                login().prop_map(DiscussionsOf::Org),
-            ]
-        }
-
+        /// Any page, each family as often as it has kinds of page.
         fn route() -> impl Strategy<Value = Route> {
-            // A valid git ref name, of one to three segments (`feature/x`),
-            // with characters a URL must escape (`fix#1`, `50%`, `é`).
-            let rev =
-                prop::collection::vec("[A-Za-z0-9_#%+@&;é-][A-Za-z0-9._#%+@&;é-]{0,7}", 1..=3)
-                    .prop_map(|s| s.join("/"))
-                    .prop_filter("valid ref name", |r| {
-                        // git's rules, written apart from `valid_rev` so
-                        // the round trip catches it rejecting a legal name.
-                        !r.contains("..")
-                            && !r.ends_with('.')
-                            && !r.split('/').any(|c| c.ends_with(".lock"))
-                    });
             prop_oneof![
-                Just(Route::Home),
-                prop_oneof![Just(String::new()), query()]
-                    .prop_map(|query| Route::Notifications { query }),
-                (repo(), query()).prop_map(|(repo, query)| Route::Actions { repo, query }),
-                repo().prop_map(Route::Stargazers),
-                repo().prop_map(Route::Watchers),
-                repo().prop_map(Route::Forks),
-                repo().prop_map(Route::Releases),
-                repo().prop_map(Route::Tags),
-                repo().prop_map(Route::Branches),
-                repo().prop_map(Route::NewIssue),
-                repo().prop_map(Route::NewPr),
-                repo().prop_map(Route::NewRelease),
-                Just(Route::NewGist),
-                (login(), "[0-9a-f]{20}")
-                    .prop_filter("an owner isn't a gist ID or a gist page", |(o, _)| {
-                        !is_gist_id(o) && !GIST_PAGES.contains(&o.as_str())
-                    })
-                    .prop_map(|(owner, id)| Route::EditGist { owner, id }),
-                (repo(), prop::option::of("[A-Za-z0-9][A-Za-z0-9 _-]{0,15}"))
-                    .prop_map(|(repo, page)| Route::WikiEdit { repo, page }),
-                (repo(), 1..u64::MAX, prop::option::of(1..100u64))
-                    .prop_map(|(repo, run, attempt)| Route::WorkflowRun { repo, run, attempt }),
-                (
-                    repo(),
-                    prop::option::of(1..u64::MAX),
-                    1..u64::MAX,
-                    prop::option::of((1..100u32, 1..10_000u32)),
-                    prop_oneof![Just(String::new()), query()],
-                )
-                    .prop_map(|(repo, run, job, step, query)| Route::Job {
-                        repo,
-                        run,
-                        job,
-                        step,
-                        query
-                    }),
-                (repo(), "[A-Za-z0-9_-][A-Za-z0-9_.-]{0,11}\\.ya?ml")
-                    .prop_map(|(repo, file)| Route::Workflow { repo, file }),
-                (repo(), "[0-9a-f]{40}").prop_map(|(repo, oid)| Route::CommitChecks { repo, oid }),
-                (
-                    discussions_of(),
-                    prop::option::of("[a-z0-9][a-z0-9-]{0,11}")
-                )
-                    .prop_map(|(of, category)| Route::Discussions { of, category }),
-                (discussions_of(), 1..u64::MAX)
-                    .prop_map(|(of, number)| Route::Discussion { of, number }),
-                (repo(), prop::option::of("[A-Za-z0-9][A-Za-z0-9 _-]{0,15}"))
-                    .prop_filter("not a writing page", |(_, p)| {
-                        !matches!(p.as_deref(), Some("_new" | "_edit" | "_compare"))
-                    })
-                    .prop_map(|(repo, page)| Route::Wiki { repo, page }),
-                prop::option::of(repo()).prop_map(Route::Advisories),
-                site().prop_map(Route::Site),
-                (
-                    repo(),
-                    prop::sample::select(AlertKind::ALL.to_vec()),
-                    prop_oneof![Just(OPEN.to_owned()), query()]
-                )
-                    .prop_map(|(repo, kind, query)| Route::Alerts {
-                        repo,
-                        kind,
-                        query
-                    }),
-                (
-                    repo(),
-                    prop::sample::select(AlertKind::ALL.to_vec()),
-                    1..u64::MAX
-                )
-                    .prop_map(|(repo, kind, number)| Route::Alert {
-                        repo,
-                        kind,
-                        number
-                    }),
-                (
-                    repo(),
-                    prop_oneof![
-                        Just(crate::api::settings::SettingsPage::General),
-                        Just(crate::api::settings::SettingsPage::Branches),
-                        Just(crate::api::settings::SettingsPage::Access),
-                        Just(crate::api::settings::SettingsPage::Hooks),
-                        Just(crate::api::settings::SettingsPage::Keys),
-                        (1..u64::MAX).prop_map(crate::api::settings::SettingsPage::Hook),
-                    ]
-                )
-                    .prop_map(|(repo, page)| Route::Settings { repo, page }),
-                (prop::option::of(repo()), "GHSA(-[2-9a-z]{4}){3}")
-                    .prop_map(|(repo, ghsa)| Route::Advisory { repo, ghsa }),
-                login().prop_map(Route::Teams),
-                (login(), segment())
-                    .prop_filter("not the new-team form", |(_, slug)| slug != "new")
-                    .prop_map(|(org, slug)| Route::Team { org, slug }),
-                (prop::option::of(login()), "[0-9a-f]{20}|[0-9]{1,8}")
-                    .prop_filter("an owner isn't a gist ID or a gist page", |(o, _)| {
-                        o.as_deref()
-                            .is_none_or(|o| !is_gist_id(o) && !GIST_PAGES.contains(&o))
-                    })
-                    .prop_filter("a lone ID is a gist's", |(o, id)| {
-                        o.is_some() || is_lone_gist_id(id)
-                    })
-                    .prop_map(|(owner, id)| Route::Gist { owner, id }),
-                login()
-                    .prop_filter("not a gist ID or a gist page", |l| {
-                        !is_lone_gist_id(l) && !GIST_PAGES.contains(&l.as_str())
-                    })
-                    .prop_map(Route::Gists),
-                (
-                    repo(),
-                    rev.clone(),
-                    path(),
-                    prop::option::of((1..1000u32, 1..1000u32))
-                )
-                    .prop_filter("a file has a path", |(_, _, p, _)| !p.is_empty())
-                    .prop_map(|(repo, rev, path, lines)| Route::Blame {
-                        repo,
-                        rev,
-                        path,
-                        lines: lines.map(|(a, b)| (a.min(b), a.max(b))),
-                    }),
-                (repo(), rev.clone(), rev.clone(), any::<bool>()).prop_map(|(repo, a, b, two)| {
-                    Route::Compare {
-                        repo,
-                        spec: format!("{a}{}{b}", if two { ".." } else { "..." }),
-                    }
-                }),
-                (repo(), prop::option::of("[A-Za-z0-9 _-]{1,12}"))
-                    .prop_filter("not the log", |(_, e)| e.as_deref() != Some("activity_log"))
-                    .prop_map(|(repo, environment)| Route::Deployments { repo, environment }),
-                (repo(), any::<bool>())
-                    .prop_map(|(repo, closed)| Route::Milestones { repo, closed }),
-                (repo(), 1..u64::MAX).prop_map(|(repo, number)| Route::Milestone { repo, number }),
-                (repo(), "[A-Za-z0-9._-]{1,12}")
-                    .prop_filter("not . or ..", |(_, t)| t != "." && t != "..")
-                    .prop_map(|(repo, tag)| Route::Release { repo, tag }),
-                (repo(), "[A-Za-z0-9._-]{1,12}")
-                    .prop_filter("not . or ..", |(_, t)| t != "." && t != "..")
-                    .prop_map(|(repo, tag)| Route::EditRelease { repo, tag }),
-                repo().prop_map(Route::Repo),
-                (repo(), rev.clone(), path()).prop_map(|(repo, rev, path)| Route::Tree {
-                    repo,
-                    rev,
-                    path
-                }),
-                (
-                    repo(),
-                    rev.clone(),
-                    path(),
-                    prop::option::of((1..1000u32, 1..1000u32))
-                )
-                    .prop_filter("a file has a path", |(_, _, p, _)| !p.is_empty())
-                    .prop_map(|(repo, rev, path, lines)| Route::Blob {
-                        repo,
-                        rev,
-                        path,
-                        lines: lines.map(|(a, b)| (a.min(b), a.max(b))),
-                    }),
-                (repo(), query()).prop_map(|(repo, query)| Route::Issues { repo, query }),
-                (repo(), query()).prop_map(|(repo, query)| Route::Pulls { repo, query }),
-                (repo(), 1..u64::MAX).prop_map(|(repo, number)| Route::Issue { repo, number }),
-                (repo(), "[0-9a-f]{7,40}").prop_map(|(repo, oid)| Route::Commit {
-                    repo,
-                    oid,
-                    pr: None
-                }),
-                (repo(), rev, path()).prop_map(|(repo, rev, path)| Route::Commits {
-                    repo,
-                    rev,
-                    path
-                }),
-                (repo(), 1..u64::MAX).prop_map(|(repo, number)| Route::Pr {
-                    pr: PrRef { repo, number },
-                    tab: PrTab::Commits,
-                }),
-                login()
-                    .prop_filter("not a reserved path", |l| !RESERVED.contains(&l.as_str()))
-                    .prop_flat_map(|login| {
-                        let tabs = prop::sample::select(vec![
-                            ProfileTab::Overview,
-                            ProfileTab::Repositories(RepoSort::Updated),
-                            ProfileTab::Repositories(RepoSort::Name),
-                            ProfileTab::Repositories(RepoSort::Stars),
-                            ProfileTab::Stars,
-                            ProfileTab::Followers,
-                            ProfileTab::Following,
-                            ProfileTab::People,
-                        ]);
-                        tabs.prop_map(move |tab| Route::User {
-                            login: login.clone(),
-                            tab,
-                        })
-                    }),
-                repo().prop_map(|repo| Route::Projects(ProjectsOf::Repo(repo))),
-                (
-                    login(),
-                    any::<bool>(),
-                    1..u64::MAX,
-                    prop::option::of(1..u64::MAX)
-                )
-                    .prop_map(|(login, org, number, view)| {
-                        let owner = if org {
-                            ProjectOwner::Org(login)
-                        } else {
-                            ProjectOwner::User(login)
-                        };
-                        Route::Project {
-                            project: ProjectRef { owner, number },
-                            view,
-                        }
-                    }),
-                (
-                    login(),
-                    1..u64::MAX,
-                    prop::option::of(1..u64::MAX),
-                    1..u64::MAX
-                )
-                    .prop_map(|(login, number, view, item)| Route::ProjectItem {
-                        project: ProjectRef {
-                            owner: ProjectOwner::Org(login),
-                            number,
-                        },
-                        view,
-                        item,
-                    }),
-                (any::<String>(), 0..7u8).prop_map(|(query, k)| Route::Search {
-                    kind: [
-                        SearchKind::Repos,
-                        SearchKind::Issues,
-                        SearchKind::Pulls,
-                        SearchKind::Users,
-                        SearchKind::Discussions,
-                        SearchKind::Commits,
-                        SearchKind::Code,
-                    ][usize::from(k)],
-                    query,
-                }),
+                1 => app::arb(),
+                7 => crate::site::arb(),
+                10 => code::arb(),
+                5 => issues::arb(),
+                3 => pulls::arb(),
+                5 => runs::arb(),
+                4 => releases::arb(),
+                6 => people::arb(),
+                4 => gists::arb(),
+                2 => discussions::arb(),
+                2 => wiki::arb(),
+                4 => security::arb(),
+                3 => projects::arb(),
+                1 => settings::arb(),
+                2 => search::arb(),
             ]
         }
 

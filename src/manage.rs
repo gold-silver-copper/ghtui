@@ -7,12 +7,12 @@
 //! menu both ask, from GitHub's word on what you may do. A change goes to
 //! GitHub as a [`Change::Manage`] and the page follows it as
 //! [`crate::act`] follows its own ([`shows`]); what makes something new
-//! (a revert, a transfer, a discussion) is [`Work`], whose answer opens
+//! (a revert, a transfer, a discussion) is a job ([`Revert`], [`Transfer`],
+//! [`Start`]), whose answer opens
 //! what it made.
 
-use std::collections::HashMap;
+use crate::route::{Route, discussions, issues, pulls};
 
-use crate::api::GitHub;
 use crate::api::browse::{DiscussionDetail, DiscussionsOf, IssueDetail, IssueState, PrState};
 use crate::api::change::Change;
 use crate::api::manage::{
@@ -22,14 +22,14 @@ use crate::api::model::{Capped, NodeId, PrDetail, PrRef, RepoId};
 use crate::ui::overlays::PaletteItem;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::act::{By, Confirm, Subject};
-use crate::browse::{DataKey, Need};
+use crate::act::{Step, Subject};
+use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::fuzzy_score;
-use crate::route::Route;
-use crate::state::{Api, Cmd, Overlay, Screen, State};
+use crate::state::{Cmd, Overlay, Screen, State};
 use crate::ui::page::Link;
+use crate::work::{self, Cx, Failure, Job};
 
 /// The actions this module takes as its own.
 pub const ACTIONS: [Action; 10] = [
@@ -45,16 +45,6 @@ pub const ACTIONS: [Action; 10] = [
     Action::NewDiscussion,
 ];
 
-/// What the pickers list, fetched when they open.
-#[derive(Debug, Default)]
-pub struct Managing {
-    /// A repository's open issues: number and title.
-    pub issues: HashMap<RepoId, Result<Capped<(u64, String)>, String>>,
-    /// An owner's repositories an issue can move to.
-    pub targets: HashMap<String, Result<Capped<Target>, String>>,
-    pub categories: HashMap<RepoId, Result<Categories, String>>,
-}
-
 // ---- where you are ------------------------------------------------------------------
 
 /// The issue, pull request or discussion on screen (a pull request's
@@ -63,9 +53,13 @@ fn here(state: &State) -> Option<Subject> {
     match state.screen() {
         Screen::Diff(d) => d.of.pr().cloned().map(Subject::Pr),
         Screen::Page(p) => match &p.route {
-            Route::Issue { repo, number } => Some(Subject::Issue(repo.clone(), *number)),
-            Route::Pr { pr, .. } => Some(Subject::Pr(pr.clone())),
-            Route::Discussion { of, number } => Some(Subject::Discussion(of.clone(), *number)),
+            Route::Issues(issues::Issue { repo, number }) => {
+                Some(Subject::Issue(repo.clone(), *number))
+            }
+            Route::Pulls(pulls::Pr { pr, .. }) => Some(Subject::Pr(pr.clone())),
+            Route::Discussions(discussions::Discussion { of, number }) => {
+                Some(Subject::Discussion(of.clone(), *number))
+            }
             _ => None,
         },
     }
@@ -80,7 +74,7 @@ fn issue<'a>(state: &'a State, repo: &RepoId, number: u64) -> Option<&'a IssueDe
 }
 
 fn pr<'a>(state: &'a State, pr: &PrRef) -> Option<&'a PrDetail> {
-    state.prs.get(pr).and_then(|r| r.data.as_ref())
+    state.pr(pr)
 }
 
 fn discussion<'a>(state: &'a State, of: &DiscussionsOf, n: u64) -> Option<&'a DiscussionDetail> {
@@ -93,14 +87,14 @@ const LOADING: &str = "It's still loading";
 /// discussions, or one of them.
 fn discussions_repo(state: &State) -> Option<RepoId> {
     match state.route()? {
-        Route::Discussions {
+        Route::Discussions(discussions::Discussions {
             of: DiscussionsOf::Repo(repo),
             ..
-        }
-        | Route::Discussion {
+        })
+        | Route::Discussions(discussions::Discussion {
             of: DiscussionsOf::Repo(repo),
             ..
-        } => Some(repo.clone()),
+        }) => Some(repo.clone()),
         _ => None,
     }
 }
@@ -177,25 +171,13 @@ fn selected_comment(state: &State, about: &Subject) -> Result<Said, String> {
 
 // ---- what a key does --------------------------------------------------------------
 
-/// What an action does here.
-enum Plan {
-    /// Send it now.
-    Do(Change, Subject),
-    Ask(Box<Confirm>),
-    Pick(Pick),
-}
-
-fn ask(action: Action, about: Subject, title: String, facts: Vec<(String, bool)>) -> Confirm {
-    Confirm {
-        action,
-        about,
-        title,
-        facts,
-        choices: Vec::new(),
-        selected: 0,
-        sending: false,
-        error: None,
-    }
+fn ask(
+    action: Action,
+    about: Subject,
+    title: String,
+    facts: Vec<(String, bool)>,
+) -> crate::forms::Ask {
+    crate::act::confirm(action, about, title, facts, Vec::new())
 }
 
 /// Where `action` works, for when it doesn't here.
@@ -213,31 +195,29 @@ fn elsewhere(action: Action) -> String {
     }
 }
 
-fn plan(state: &State, action: Action) -> Result<Plan, String> {
+fn plan(state: &State, action: Action) -> Result<Step, String> {
     if action == Action::NewDiscussion {
         let repo = discussions_repo(state).ok_or_else(|| elsewhere(action))?;
         if state.overview(&repo).is_some_and(|o| !o.has_discussions) {
             return Err(format!("{repo} has discussions turned off"));
         }
-        return Ok(Plan::Pick(Pick::Category { repo }));
+        return pick(Pick::Category { repo });
     }
     let about = here(state).ok_or_else(|| elsewhere(action))?;
-    if crate::act::awaiting_here(state).is_some() {
-        return Err("GitHub hasn't shown the last change yet: wait a moment".into());
-    }
+    crate::act::settled(state)?;
     if action == Action::HideComment {
         let said = selected_comment(state, &about)?;
         return match (said.hidden, said.can_hide, said.can_unhide) {
-            (true, _, true) => Ok(Plan::Do(
+            (true, _, true) => Ok(Step::Send(
                 Change::Manage(Manage::Unhide { comment: said.id }),
                 about,
             )),
             (true, _, false) => Err(format!("GitHub doesn't let you unhide {}", said.name)),
-            (false, true, _) => Ok(Plan::Pick(Pick::Hide {
+            (false, true, _) => pick(Pick::Hide {
                 about,
                 comment: said.id,
                 name: said.name,
-            })),
+            }),
             (false, false, _) => Err(format!(
                 "GitHub doesn't let you hide {}: that takes its repository's triage access",
                 said.name
@@ -268,7 +248,7 @@ fn lock_plan(
     id: &NodeId,
     about: Subject,
     what: &str,
-) -> Result<Plan, String> {
+) -> Result<Step, String> {
     if !may {
         let verb = if locked.is_some() { "unlock" } else { "lock" };
         return Err(format!(
@@ -276,10 +256,10 @@ fn lock_plan(
         ));
     }
     if locked.is_none() {
-        return Ok(Plan::Pick(Pick::Lock {
+        return pick(Pick::Lock {
             about,
             id: id.clone(),
-        }));
+        });
     }
     let mut confirm = ask(
         Action::Lock,
@@ -290,11 +270,14 @@ fn lock_plan(
     let unlock = Change::Manage(Manage::Unlock {
         subject: id.clone(),
     });
-    confirm.choices = vec![("Unlock conversation".into(), unlock)];
-    Ok(Plan::Ask(Box::new(confirm)))
+    confirm.choices = vec![(
+        "Unlock conversation".into(),
+        crate::forms::Answer::Change(unlock),
+    )];
+    Ok(Step::Ask(Box::new(confirm)))
 }
 
-fn pr_plan(state: &State, r: &PrRef, action: Action, about: Subject) -> Result<Plan, String> {
+fn pr_plan(state: &State, r: &PrRef, action: Action, about: Subject) -> Result<Step, String> {
     let d = pr(state, r).ok_or(LOADING)?;
     let same_repo =
         (d.head_repo.as_deref()).is_some_and(|h| h.eq_ignore_ascii_case(&r.repo.to_string()));
@@ -312,7 +295,7 @@ fn pr_plan(state: &State, r: &PrRef, action: Action, about: Subject) -> Result<P
             "Restoring {} takes write access to {}",
             d.head_ref, r.repo
         )),
-        Action::DeleteBranch if d.head_gone => Ok(Plan::Do(
+        Action::DeleteBranch if d.head_gone => Ok(Step::Send(
             Change::Manage(Manage::RestoreBranch {
                 repo: r.repo.clone(),
                 branch: d.head_ref.clone(),
@@ -324,7 +307,7 @@ fn pr_plan(state: &State, r: &PrRef, action: Action, about: Subject) -> Result<P
             "GitHub doesn't let you delete {}: it takes write access, and it may be protected or another pull request's",
             d.head_ref
         )),
-        Action::DeleteBranch => Ok(Plan::Do(
+        Action::DeleteBranch => Ok(Step::Send(
             Change::Manage(Manage::DeleteBranch {
                 repo: r.repo.clone(),
                 branch: d.head_ref.clone(),
@@ -337,12 +320,12 @@ fn pr_plan(state: &State, r: &PrRef, action: Action, about: Subject) -> Result<P
         Action::ChangeBase if !d.may.edit => {
             Err("Changing its base takes its author or write access".into())
         }
-        Action::ChangeBase => Ok(Plan::Pick(Pick::Base {
+        Action::ChangeBase => pick(Pick::Base {
             pr: r.clone(),
             id: d.id.clone(),
             from: d.base_ref.clone(),
             head: d.head_ref.clone(),
-        })),
+        }),
         Action::Revert if d.state != PrState::Merged => {
             Err("Only a merged pull request can be reverted".into())
         }
@@ -366,14 +349,14 @@ fn pr_plan(state: &State, r: &PrRef, action: Action, about: Subject) -> Result<P
                 ],
             );
             let revert = Change::Manage(Manage::Revert { pr: d.id.clone() });
-            confirm.choices = vec![("Revert".into(), revert)];
-            Ok(Plan::Ask(Box::new(confirm)))
+            confirm.choices = vec![("Revert".into(), crate::forms::Answer::Change(revert))];
+            Ok(Step::Ask(Box::new(confirm)))
         }
         _ => Err(elsewhere(action)),
     }
 }
 
-fn issue_plan(d: &IssueDetail, action: Action, about: Subject) -> Result<Plan, String> {
+fn issue_plan(d: &IssueDetail, action: Action, about: Subject) -> Result<Step, String> {
     let at = IssueAt {
         repo: d.repo.clone(),
         number: d.number,
@@ -384,7 +367,7 @@ fn issue_plan(d: &IssueDetail, action: Action, about: Subject) -> Result<Plan, S
         Action::Pin if !d.can_write => {
             Err(format!("Pinning an issue takes write access to {}", d.repo))
         }
-        Action::Pin => Ok(Plan::Do(
+        Action::Pin => Ok(Step::Send(
             Change::Manage(Manage::Pin {
                 issue: d.id.clone(),
                 on: !d.pinned,
@@ -394,73 +377,68 @@ fn issue_plan(d: &IssueDetail, action: Action, about: Subject) -> Result<Plan, S
         Action::Transfer if !d.can_write => {
             Err(format!("Transferring takes write access to {}", d.repo))
         }
-        Action::Transfer => Ok(Plan::Pick(Pick::Transfer {
+        Action::Transfer => pick(Pick::Transfer {
             issue: at,
             id: d.id.clone(),
-        })),
+        }),
         Action::SubIssues | Action::BlockedBy if !triage => {
             Err("GitHub doesn't let you change it: that takes triage access".into())
         }
-        Action::SubIssues => Ok(Plan::Pick(Pick::SubIssues {
+        Action::SubIssues => pick(Pick::SubIssues {
             issue: at,
             id: d.id.clone(),
-        })),
-        Action::BlockedBy => Ok(Plan::Pick(Pick::BlockedBy {
+        }),
+        Action::BlockedBy => pick(Pick::BlockedBy {
             issue: at,
             id: d.id.clone(),
-        })),
+        }),
         Action::Checkout if !d.can_write => {
             Err(format!("Making a branch takes write access to {}", d.repo))
         }
-        Action::Checkout => Ok(Plan::Pick(Pick::Branch {
+        Action::Checkout => pick(Pick::Branch {
             issue: at,
             id: d.id.clone(),
             title: d.title.clone(),
-        })),
+        }),
         _ => Err(elsewhere(action)),
     }
 }
 
 /// Whether this module takes `action` here: its own anywhere, and
 /// checking out on an issue (a branch for it).
-pub fn claims(state: &State, action: Action) -> bool {
-    ACTIONS.contains(&action)
-        || (action == Action::Checkout && matches!(here(state), Some(Subject::Issue(..))))
-}
+/// What managing issues and pull requests adds: its own actions, and
+/// checking out a branch for the issue on screen.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &ACTIONS,
+    takes: |state, action| {
+        action == Action::Checkout && matches!(here(state), Some(Subject::Issue(..)))
+    },
+    act,
+    offers: doables,
+    ..crate::features::Feature::NONE
+};
 
-/// Runs one of the actions [`claims`] says are this module's.
+/// Runs one of its actions, or a branch's checkout for the issue on screen.
 #[must_use]
 pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
-    match plan(state, action) {
-        Err(why) => {
-            state.info(why);
-            Vec::new()
-        }
-        Ok(Plan::Do(change, about)) => send(state, change, about),
-        Ok(Plan::Ask(confirm)) => {
-            state.overlay = Some(Overlay::Confirm(confirm));
-            Vec::new()
-        }
-        Ok(Plan::Pick(pick)) => open(state, pick),
-    }
+    crate::act::take(state, plan(state, action))
+}
+
+/// Choosing in one of this module's pickers.
+#[expect(clippy::unnecessary_wraps, reason = "a plan's step")]
+fn pick(pick: Pick) -> Result<Step, String> {
+    Ok(Step::Pick(crate::picker::Kind::Manage(pick)))
 }
 
 #[must_use]
 fn send(state: &mut State, change: Change, about: Subject) -> Vec<Cmd> {
-    if let Change::Manage(m) = &change {
-        state.info(format!("{}…", doing(m)));
-    }
-    vec![Cmd::Api(Api::Change(change, By::Act(about)))]
+    crate::act::take(state, Ok(Step::Send(change, about)))
 }
 
 /// The menu's rows where they apply.
 pub fn doables(state: &State, out: &mut Vec<Doable>) {
-    let row = |action: Action, label: &str| Doable {
-        section: "Change",
-        action,
-        label: label.to_owned(),
-        short: "",
-        unavailable: plan(state, action).err(),
+    let row = |action, label: &str| {
+        crate::nav::row("Change", action, label, "", plan(state, action).err())
     };
     if discussions_repo(state).is_some() {
         out.push(row(Action::NewDiscussion, "Start a new discussion"));
@@ -606,32 +584,20 @@ impl Pick {
     }
 
     /// What it lists, loaded when it opens.
-    fn need(&self) -> Option<DataKey> {
+    pub fn need(&self) -> Option<DataKey> {
         match self {
             Pick::Base { pr, .. } => Some(DataKey::Refs(pr.repo.clone())),
-            _ => None,
-        }
-    }
-
-    /// The work that fetches what it lists, if that isn't here.
-    fn load(&self, state: &State) -> Option<Work> {
-        match self {
             Pick::Duplicate { issue, .. }
             | Pick::SubIssues { issue, .. }
-            | Pick::BlockedBy { issue, .. } => (!state.managing.issues.contains_key(&issue.repo))
-                .then(|| Work::Issues(issue.repo.clone())),
-            Pick::Transfer { issue, .. } => {
-                (!state.managing.targets.contains_key(&issue.repo.owner))
-                    .then(|| Work::Targets(issue.repo.owner.clone()))
-            }
-            Pick::Category { repo } => (!state.managing.categories.contains_key(repo))
-                .then(|| Work::Categories(repo.clone())),
+            | Pick::BlockedBy { issue, .. } => Some(DataKey::OpenIssues(issue.repo.clone())),
+            Pick::Transfer { issue, .. } => Some(DataKey::MoveTargets(issue.repo.owner.clone())),
+            Pick::Category { repo } => Some(DataKey::Categories(repo.clone())),
             _ => None,
         }
     }
 
     /// The text the field starts with.
-    fn start(&self) -> Option<String> {
+    pub fn start(&self) -> Option<String> {
         match self {
             Pick::Branch { issue, title, .. } => Some(branch_name(issue.number, title)),
             _ => None,
@@ -663,64 +629,14 @@ pub fn branch_name(number: u64, title: &str) -> String {
     name
 }
 
-/// What choosing a row does.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Chosen {
-    /// Send this change, about this.
-    Send(Change, Subject),
-    /// Ask first.
-    Ask(Box<Confirm>),
-    Work(Work),
-    /// Write the new discussion in the composer, starting with this.
-    Write(Starting, String),
-}
-
-#[must_use]
-fn open(state: &mut State, pick: Pick) -> Vec<Cmd> {
-    let load = pick.load(state);
-    let start = pick.start();
-    let need = pick.need();
-    let mut cmds = state.open_picker(crate::picker::Kind::Manage(pick));
-    if let (Some(start), Some(Overlay::Picker(p))) = (start, &mut state.overlay) {
-        p.input.insert_str(start);
-    }
-    if let Some(key) = need {
-        cmds.extend(state.ensure(Need::Data(key), false));
-    }
-    cmds.extend(load.map(|w| Cmd::Write(crate::writes::Work::Manage(w))));
-    cmds
-}
-
-type Rows = Vec<(PaletteItem, Option<Chosen>)>;
-
-fn item(
-    label: impl Into<String>,
-    hint: impl Into<String>,
-    chosen: Option<Chosen>,
-) -> (PaletteItem, Option<Chosen>) {
-    let item = PaletteItem {
-        label: label.into(),
-        hint: hint.into(),
-    };
-    (item, chosen)
-}
-
-/// A list fetched for a picker: its rows, or a row saying why there are
-/// none yet.
-fn fetched<'a, T>(found: Option<&'a Result<T, String>>, what: &str) -> Result<&'a T, Rows> {
-    match found {
-        None => Err(vec![item(format!("Loading {what}…"), "", None)]),
-        Some(Err(why)) => Err(vec![item(format!("Couldn't load {what}: {why}"), "", None)]),
-        Some(Ok(found)) => Ok(found),
-    }
-}
+type Rows = Vec<(PaletteItem, Option<Step>)>;
 
 /// A picker's rows: what each says, and what choosing it does.
 pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
     match pick {
         Pick::Lock { about, id } => {
             let lock = |reason: Option<LockReason>| {
-                Chosen::Send(
+                Step::Send(
                     Change::Manage(Manage::Lock {
                         subject: id.clone(),
                         reason,
@@ -730,7 +646,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
             };
             let mut rows = Vec::new();
             if fuzzy_score(q, "Lock without a reason").is_some() {
-                rows.push(item(
+                rows.push(crate::picker::entry(
                     "Lock without a reason",
                     "only collaborators can comment",
                     Some(lock(None)),
@@ -745,7 +661,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
                 let said = crate::api::manage::lock_said(reason);
                 let label = format!("Lock as {said}");
                 if fuzzy_score(q, &label).is_some() {
-                    rows.push(item(label, "", Some(lock(Some(reason)))));
+                    rows.push(crate::picker::entry(label, "", Some(lock(Some(reason)))));
                 }
             }
             rows
@@ -761,10 +677,10 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
                     comment: comment.clone(),
                     reason,
                 });
-                item(
+                crate::picker::entry(
                     reason.label(),
                     format!("hides {name}"),
-                    Some(Chosen::Send(change, about.clone())),
+                    Some(Step::Send(change, about.clone())),
                 )
             })
             .collect(),
@@ -777,11 +693,11 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
                     issue: id.clone(),
                     of: Some(of),
                 });
-                Chosen::Send(change, about.clone())
+                Step::Send(change, about.clone())
             };
             issue_rows(state, issue, q, &[], |of, title| {
                 let label = format!("Duplicate of {} {title}", of.named(&issue.repo));
-                item(label, "closes it", Some(close(of)))
+                crate::picker::entry(label, "closes it", Some(close(of)))
             })
         }
         Pick::SubIssues { issue, id } => relation_rows(state, issue, id, q, true),
@@ -789,10 +705,14 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
         Pick::Branch { issue, id, .. } => {
             let name = q.trim();
             if name.is_empty() {
-                return vec![item("Type the branch's name", "", None)];
+                return vec![crate::picker::entry("Type the branch's name", "", None)];
             }
             if name.contains(char::is_whitespace) || name.contains("..") {
-                return vec![item("A branch's name has no spaces or ..", "", None)];
+                return vec![crate::picker::entry(
+                    "A branch's name has no spaces or ..",
+                    "",
+                    None,
+                )];
             }
             let default = state
                 .overview(&issue.repo)
@@ -804,22 +724,28 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
                 name: name.to_owned(),
             });
             let about = Subject::Issue(issue.repo.clone(), issue.number);
-            vec![item(
+            vec![crate::picker::entry(
                 format!("Create {name} from {default}"),
                 format!("linked to #{}", issue.number),
-                Some(Chosen::Send(change, about)),
+                Some(Step::Send(change, about)),
             )]
         }
         Pick::Checkout { repo, branch } => vec![
-            item(
+            crate::picker::entry(
                 format!("Check out {branch}"),
                 "in your clone",
-                Some(Chosen::Work(Work::Checkout {
-                    repo: repo.clone(),
-                    branch: branch.clone(),
-                })),
+                Some(Step::Start(
+                    format!("Checking out {branch}…"),
+                    crate::clone::Checkout {
+                        repo: repo.clone(),
+                        pr: None,
+                        name: branch.clone(),
+                        track: Some(branch.clone()),
+                    }
+                    .into(),
+                )),
             ),
-            item("Not now", "", None),
+            crate::picker::entry("Not now", "", None),
         ],
         Pick::Category { repo } => category_rows(state, repo, q),
     }
@@ -828,12 +754,12 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
 fn base_rows(state: &State, pr: &PrRef, id: &NodeId, from: &str, head: &str, q: &str) -> Rows {
     let key = DataKey::Refs(pr.repo.clone());
     let Some(refs) = state.picked::<crate::api::browse::Refs>(&key) else {
-        let loading = state.data.get(&key).is_none_or(|r| r.loading);
-        let why = match state.data.get(&key).and_then(|r| r.error.as_deref()) {
+        let loading = state.remote(&key).is_none_or(|r| r.loading);
+        let why = match state.remote(&key).and_then(|r| r.error.as_deref()) {
             Some(err) if !loading => format!("Couldn't load the branches: {err}"),
             _ => "Loading the branches…".into(),
         };
-        return vec![item(why, "", None)];
+        return vec![crate::picker::entry(why, "", None)];
     };
     let mut hits: Vec<(usize, &String)> = (refs.branches.iter())
         .filter(|b| *b != from && *b != head)
@@ -860,26 +786,28 @@ fn base_rows(state: &State, pr: &PrRef, id: &NodeId, from: &str, head: &str, q: 
                 pr: id.clone(),
                 base: base.clone(),
             });
-            confirm.choices = vec![("Change base".into(), change)];
-            item(base.clone(), "", Some(Chosen::Ask(Box::new(confirm))))
+            confirm.choices = vec![("Change base".into(), crate::forms::Answer::Change(change))];
+            crate::picker::entry(base.clone(), "", Some(Step::Ask(Box::new(confirm))))
         })
         .collect();
     if rows.is_empty() {
-        rows.push(item("No other branch matches", "", None));
+        rows.push(crate::picker::entry("No other branch matches", "", None));
     }
     if refs.branches.left_out() > 0 {
         let more = format!(
             "{} more branches GitHub didn't list",
             refs.branches.left_out()
         );
-        rows.push(item(more, "", None));
+        rows.push(crate::picker::entry(more, "", None));
     }
     rows
 }
 
 fn transfer_rows(state: &State, issue: &IssueAt, id: &NodeId, q: &str) -> Rows {
     let owner = &issue.repo.owner;
-    let targets = match fetched(state.managing.targets.get(owner), "the repositories") {
+    let key = DataKey::MoveTargets(owner.clone());
+    let targets = match crate::picker::listed::<Capped<Target>, _>(state, &key, "the repositories")
+    {
         Ok(t) => t,
         Err(rows) => return rows,
     };
@@ -905,12 +833,15 @@ fn transfer_rows(state: &State, issue: &IssueAt, id: &NodeId, q: &str) -> Rows {
                 to: t.id.clone(),
                 repo: t.repo.clone(),
             });
-            confirm.choices = vec![("Transfer issue".into(), change)];
-            item(t.repo.to_string(), "", Some(Chosen::Ask(Box::new(confirm))))
+            confirm.choices = vec![(
+                "Transfer issue".into(),
+                crate::forms::Answer::Change(change),
+            )];
+            crate::picker::entry(t.repo.to_string(), "", Some(Step::Ask(Box::new(confirm))))
         })
         .collect();
     if rows.is_empty() {
-        rows.push(item(
+        rows.push(crate::picker::entry(
             format!("No other repository of {owner}'s that you can write to has issues on"),
             "an issue moves only within its owner",
             None,
@@ -918,7 +849,7 @@ fn transfer_rows(state: &State, issue: &IssueAt, id: &NodeId, q: &str) -> Rows {
     }
     if targets.left_out() > 0 {
         let more = format!("{owner}'s first 100 repositories, most recently pushed, are listed");
-        rows.push(item(more, "", None));
+        rows.push(crate::picker::entry(more, "", None));
     }
     rows
 }
@@ -930,14 +861,15 @@ fn issue_rows(
     issue: &IssueAt,
     q: &str,
     skip: &[IssueAt],
-    row: impl Fn(IssueAt, &str) -> (PaletteItem, Option<Chosen>),
+    row: impl Fn(IssueAt, &str) -> (PaletteItem, Option<Step>),
 ) -> Rows {
     let mut rows = Vec::new();
     let typed = IssueAt::parse(q, &issue.repo).filter(|t| t != issue && !skip.contains(t));
     if let Some(t) = &typed {
         rows.push(row(t.clone(), ""));
     }
-    match fetched(state.managing.issues.get(&issue.repo), "its open issues") {
+    let key = DataKey::OpenIssues(issue.repo.clone());
+    match crate::picker::listed::<Capped<(u64, String)>, _>(state, &key, "its open issues") {
         Ok(open) => {
             let listed = (open.iter())
                 .map(|(n, title)| {
@@ -962,7 +894,7 @@ fn issue_rows(
 /// choosing removes, then what to add.
 fn relation_rows(state: &State, at: &IssueAt, id: &NodeId, q: &str, sub: bool) -> Rows {
     let Some(d) = issue(state, &at.repo, at.number) else {
-        return vec![item("Loading the issue…", "", None)];
+        return vec![crate::picker::entry("Loading the issue…", "", None)];
     };
     let about = Subject::Issue(at.repo.clone(), at.number);
     let now = if sub { &d.sub_issues } else { &d.blocked_by };
@@ -1003,14 +935,18 @@ fn relation_rows(state: &State, at: &IssueAt, id: &NodeId, q: &str, sub: bool) -
         } else {
             "no longer blocked by it"
         };
-        rows.push(item(
+        rows.push(crate::picker::entry(
             format!("✓ {label}"),
             format!("↵ {verb}"),
-            Some(Chosen::Send(change(other.clone(), false), about.clone())),
+            Some(Step::Send(change(other.clone(), false), about.clone())),
         ));
     }
     if now.left_out() > 0 {
-        rows.push(item(format!("and {} more", now.left_out()), "", None));
+        rows.push(crate::picker::entry(
+            format!("and {} more", now.left_out()),
+            "",
+            None,
+        ));
     }
     let adds = issue_rows(state, at, q, &there, |other, title| {
         let label = if sub {
@@ -1018,10 +954,10 @@ fn relation_rows(state: &State, at: &IssueAt, id: &NodeId, q: &str, sub: bool) -
         } else {
             format!("Blocked by {} {title}", other.named(&at.repo))
         };
-        item(
+        crate::picker::entry(
             label,
             "",
-            Some(Chosen::Send(change(other, true), about.clone())),
+            Some(Step::Send(change(other, true), about.clone())),
         )
     });
     // What's typed first: it's what ↵ takes.
@@ -1034,7 +970,8 @@ fn relation_rows(state: &State, at: &IssueAt, id: &NodeId, q: &str, sub: bool) -
 }
 
 fn category_rows(state: &State, repo: &RepoId, q: &str) -> Rows {
-    let found = match fetched(state.managing.categories.get(repo), "its categories") {
+    let key = DataKey::Categories(repo.clone());
+    let found = match crate::picker::listed::<Categories, _>(state, &key, "its categories") {
         Ok(c) => c,
         Err(rows) => return rows,
     };
@@ -1058,15 +995,22 @@ fn category_rows(state: &State, repo: &RepoId, q: &str) -> Rows {
                 name: c.name.clone(),
             };
             let text = form_text(c);
-            item(label, hint, Some(Chosen::Write(starting, text)))
+            crate::picker::entry(
+                label,
+                hint,
+                Some(Step::Compose(
+                    crate::compose::Target::NewDiscussion(starting),
+                    text,
+                )),
+            )
         })
         .collect();
     if found.categories.is_empty() {
-        rows.push(item("It has no categories", "", None));
+        rows.push(crate::picker::entry("It has no categories", "", None));
     }
     if found.categories.left_out() > 0 {
         let more = format!("and {} more categories", found.categories.left_out());
-        rows.push(item(more, "", None));
+        rows.push(crate::picker::entry(more, "", None));
     }
     rows
 }
@@ -1107,7 +1051,7 @@ pub fn picker_key(
             let child = match rows.get(p.selected) {
                 Some((
                     _,
-                    Some(crate::picker::Choice::Manage(Chosen::Send(
+                    Some(crate::picker::Choice::Step(Step::Send(
                         Change::Manage(Manage::SubIssue {
                             child, add: false, ..
                         }),
@@ -1122,7 +1066,7 @@ pub fn picker_key(
         (KeyCode::Enter, pick) if pick.stays() => {
             let chosen = rows.get_mut(p.selected).and_then(|(_, c)| c.take());
             match chosen {
-                Some(crate::picker::Choice::Manage(chosen)) => Some(choose(state, chosen)),
+                Some(crate::picker::Choice::Step(step)) => Some(crate::act::take(state, Ok(step))),
                 _ => Some(Vec::new()),
             }
         }
@@ -1151,8 +1095,7 @@ fn move_sub_issue(
         .collect();
     let Some((selected, child)) = child.and_then(|c| Some((subs.iter().position(|s| *s == c)?, c)))
     else {
-        state.info("Choose one of its sub-issues (✓) to move");
-        return Vec::new();
+        return state.just_say("Choose one of its sub-issues (✓) to move");
     };
     let sibling = if up {
         selected.checked_sub(1).and_then(|i| subs.get(i))
@@ -1160,12 +1103,11 @@ fn move_sub_issue(
         subs.get(selected + 1)
     };
     let Some(sibling) = sibling.cloned() else {
-        state.info(if up {
+        return state.just_say(if up {
             "It's the first already"
         } else {
             "It's the last already"
         });
-        return Vec::new();
     };
     if let Some(Overlay::Picker(p)) = &mut state.overlay {
         p.selected = if up {
@@ -1183,28 +1125,6 @@ fn move_sub_issue(
     send(state, change, Subject::Issue(at.repo.clone(), at.number))
 }
 
-/// A row chosen in one of this module's pickers.
-#[must_use]
-pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
-    match chosen {
-        Chosen::Send(change, about) => send(state, change, about),
-        Chosen::Ask(confirm) => {
-            state.overlay = Some(Overlay::Confirm(confirm));
-            Vec::new()
-        }
-        Chosen::Work(work) => {
-            if let Work::Checkout { branch, .. } = &work {
-                state.info(format!("Checking out {branch}…"));
-            }
-            vec![Cmd::Write(crate::writes::Work::Manage(work))]
-        }
-        Chosen::Write(starting, text) => {
-            let target = crate::review::ComposeTarget::NewDiscussion(starting);
-            state.compose(target, &text)
-        }
-    }
-}
-
 /// A change chosen in a confirmation that isn't simply sent: a revert or
 /// a transfer, which answer with what they made, and a duplicate, which
 /// is chosen first. `None` sends it.
@@ -1213,7 +1133,7 @@ pub fn confirmed(state: &mut State, change: &Change, about: &Subject) -> Option<
     let Change::Manage(m) = change else {
         return None;
     };
-    let work = match (m, about) {
+    let work: work::Work = match (m, about) {
         (Manage::CloseAsDuplicate { issue, of: None }, Subject::Issue(repo, number)) => {
             let pick = Pick::Duplicate {
                 issue: IssueAt {
@@ -1222,28 +1142,29 @@ pub fn confirmed(state: &mut State, change: &Change, about: &Subject) -> Option<
                 },
                 id: issue.clone(),
             };
-            return Some(open(state, pick));
+            return Some(state.open_picker(crate::picker::Kind::Manage(pick)));
         }
-        (Manage::Revert { pr: id }, Subject::Pr(pr)) => Work::Revert {
+        (Manage::Revert { pr: id }, Subject::Pr(pr)) => Revert {
             pr: pr.clone(),
             id: id.clone(),
-        },
-        (Manage::Transfer { issue, to, repo }, Subject::Issue(from, number)) => Work::Transfer {
+        }
+        .into(),
+        (Manage::Transfer { issue, to, .. }, Subject::Issue(from, number)) => Transfer {
             from: IssueAt {
                 repo: from.clone(),
                 number: *number,
             },
             issue: issue.clone(),
             to: to.clone(),
-            repo: repo.clone(),
-        },
+        }
+        .into(),
         _ => return None,
     };
-    if let Some(Overlay::Confirm(c)) = &mut state.overlay {
-        c.sending = true;
-        c.error = None;
+    if let Some(Overlay::Ask(c)) = &mut state.overlay {
+        c.sent.sending = true;
+        c.sent.error = None;
     }
-    Some(vec![Cmd::Write(crate::writes::Work::Manage(work))])
+    Some(work::start(work))
 }
 
 /// After GitHub took a change: a branch made for an issue is offered to
@@ -1253,19 +1174,16 @@ pub fn after(state: &mut State, change: &Change) -> Vec<Cmd> {
     let Change::Manage(Manage::LinkBranch { repo, name, .. }) = change else {
         return Vec::new();
     };
-    if let Some(crate::create::Look::Found(None)) = state.creating.clones.get(repo) {
-        state.info(format!(
+    if let Some(None) = state.clone_of(repo) {
+        return state.just_say(format!(
             "Made {name}; ghtui isn't running in a clone of {repo} to check it out"
         ));
-        return Vec::new();
     }
-    open(
-        state,
-        Pick::Checkout {
-            repo: repo.clone(),
-            branch: name.clone(),
-        },
-    )
+    let pick = Pick::Checkout {
+        repo: repo.clone(),
+        branch: name.clone(),
+    };
+    state.open_picker(crate::picker::Kind::Manage(pick))
 }
 
 // ---- a new discussion --------------------------------------------------------------
@@ -1298,240 +1216,145 @@ pub fn start(state: &mut State, s: &Starting, text: &str) -> Vec<Cmd> {
         return Vec::new();
     };
     if title.is_empty() {
-        c.error = Some("Write its title on the first line".into());
+        c.sent.error = Some("Write its title on the first line".into());
         return Vec::new();
     }
     if body.trim().is_empty() {
-        c.error = Some("Write its text below the title".into());
+        c.sent.error = Some("Write its text below the title".into());
         return Vec::new();
     }
-    c.sending = true;
-    c.error = None;
-    vec![Cmd::Write(crate::writes::Work::Manage(Work::Start {
+    c.sent.sending = true;
+    c.sent.error = None;
+    work::start(Start {
         repo: s.repo.clone(),
         repo_id: s.repo_id.clone(),
         category: s.category.clone(),
         title,
         body,
-    }))]
+    })
 }
 
 // ---- work in the background --------------------------------------------------------
 
+/// Reverting a merged pull request: GitHub opens a pull request that
+/// does.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Work {
-    /// A repository's open issues, for a picker.
-    Issues(RepoId),
-    /// An owner's repositories an issue can move to.
-    Targets(String),
-    Categories(RepoId),
-    Revert {
-        pr: PrRef,
-        id: NodeId,
-    },
-    Transfer {
-        from: IssueAt,
-        issue: NodeId,
-        to: NodeId,
-        repo: RepoId,
-    },
-    Start {
-        repo: RepoId,
-        repo_id: NodeId,
-        category: NodeId,
-        title: String,
-        body: String,
-    },
-    /// Check out a branch of `repo` in the clone ghtui runs in.
-    Checkout {
-        repo: RepoId,
-        branch: String,
-    },
+pub struct Revert {
+    pub pr: PrRef,
+    pub id: NodeId,
 }
 
-#[derive(Debug)]
-pub enum Done {
-    Issues(RepoId, Result<Capped<(u64, String)>, String>),
-    Targets(String, Result<Capped<Target>, String>),
-    Categories(RepoId, Result<Categories, String>),
-    Reverted(PrRef, Result<u64, String>),
-    Transferred(IssueAt, Result<IssueAt, String>),
-    Started(RepoId, Result<u64, String>),
-    CheckedOut(String, Result<crate::git::local::Checkout, String>),
+/// Moving an issue to another repository of its owner's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Transfer {
+    pub from: IssueAt,
+    pub issue: NodeId,
+    pub to: NodeId,
 }
 
-impl Done {
-    /// Whether GitHub changed.
-    pub fn wrote(&self) -> bool {
-        match self {
-            Done::Reverted(_, made) | Done::Started(_, made) => made.is_ok(),
-            Done::Transferred(_, moved) => moved.is_ok(),
-            _ => false,
+/// Starting a discussion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Start {
+    pub repo: RepoId,
+    pub repo_id: NodeId,
+    pub category: NodeId,
+    pub title: String,
+    pub body: String,
+}
+
+/// Its pull request opens.
+impl Job for Revert {
+    type Out = u64;
+
+    async fn run(&self, cx: &Cx) -> Result<u64, Failure> {
+        Ok(cx.gh.revert(&self.id).await?)
+    }
+
+    fn done(self, state: &mut State, result: Result<u64, Failure>) -> Vec<Cmd> {
+        let number = match result {
+            Ok(number) => number,
+            Err(why) => return refused(state, format!("GitHub refused the revert: {why}")),
+        };
+        close_confirm(state);
+        state.info(format!("Opened #{number}, which reverts {}", self.pr));
+        let made = PrRef {
+            repo: self.pr.repo,
+            number,
+        };
+        state.push(Route::pr(made))
+    }
+}
+
+/// Its page, if it's on screen, moves with it.
+impl Job for Transfer {
+    type Out = IssueAt;
+
+    async fn run(&self, cx: &Cx) -> Result<IssueAt, Failure> {
+        Ok(cx.gh.transfer(&self.issue, &self.to).await?)
+    }
+
+    fn done(self, state: &mut State, result: Result<IssueAt, Failure>) -> Vec<Cmd> {
+        let (from, to) = match result {
+            Ok(to) => (self.from, to),
+            Err(why) => return refused(state, format!("GitHub refused the transfer: {why}")),
+        };
+        close_confirm(state);
+        state.info(format!("Moved {from} to {to}"));
+        let here = Route::Issues(issues::Issue {
+            repo: from.repo,
+            number: from.number,
+        });
+        let there = Route::Issues(issues::Issue {
+            repo: to.repo,
+            number: to.number,
+        });
+        if state.route() == Some(&here) {
+            state.replace(there, true, None)
+        } else {
+            Vec::new()
         }
     }
 }
 
-impl Work {
-    pub fn failed(&self, why: String) -> Done {
-        match self.clone() {
-            Work::Issues(repo) => Done::Issues(repo, Err(why)),
-            Work::Targets(owner) => Done::Targets(owner, Err(why)),
-            Work::Categories(repo) => Done::Categories(repo, Err(why)),
-            Work::Revert { pr, .. } => Done::Reverted(pr, Err(why)),
-            Work::Transfer { from, .. } => Done::Transferred(from, Err(why)),
-            Work::Start { repo, .. } => Done::Started(repo, Err(why)),
-            Work::Checkout { branch, .. } => Done::CheckedOut(branch, Err(why)),
-        }
+/// The new discussion opens.
+impl Job for Start {
+    type Out = u64;
+
+    async fn run(&self, cx: &Cx) -> Result<u64, Failure> {
+        let made = (cx.gh).start_discussion(&self.repo_id, &self.category, &self.title, &self.body);
+        Ok(made.await?)
     }
 
-    pub async fn run(self, gh: &GitHub, cwd: &std::path::Path) -> Done {
-        let reason = |e: crate::api::ApiError| crate::writes::reason(&e);
-        match self {
-            Work::Issues(repo) => {
-                let found = gh.open_issues(&repo).await.map_err(reason);
-                Done::Issues(repo, found)
-            }
-            Work::Targets(owner) => {
-                let found = gh.transfer_targets(&owner).await.map_err(reason);
-                Done::Targets(owner, found)
-            }
-            Work::Categories(repo) => {
-                let found = gh.categories(&repo).await.map_err(reason);
-                Done::Categories(repo, found)
-            }
-            Work::Revert { pr, id } => Done::Reverted(pr, gh.revert(&id).await.map_err(reason)),
-            Work::Transfer {
-                from, issue, to, ..
-            } => Done::Transferred(from, gh.transfer(&issue, &to).await.map_err(reason)),
-            Work::Start {
-                repo,
-                repo_id,
-                category,
-                title,
-                body,
-            } => {
-                let made = gh
-                    .start_discussion(&repo_id, &category, &title, &body)
-                    .await;
-                Done::Started(repo, made.map_err(reason))
-            }
-            Work::Checkout { repo, branch } => {
-                let done = async {
-                    use crate::git::local;
-                    let c = local::clone_of(cwd, &repo.owner, &repo.name)
-                        .await
-                        .map_err(|e| e.to_string())?
-                        .ok_or_else(|| format!("ghtui isn't running in a clone of {repo}"))?;
-                    let source = format!("refs/heads/{branch}");
-                    local::checkout(&c.top, &c.remote, &source, &branch, Some(&branch))
-                        .await
-                        .map_err(|e| e.to_string())
-                }
-                .await;
-                Done::CheckedOut(branch, done)
-            }
-        }
-    }
-}
-
-/// Work's answers.
-#[must_use]
-pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
-    state.data_gen += 1;
-    match done {
-        Done::Issues(repo, found) => {
-            state.managing.issues.insert(repo, found);
-            Vec::new()
-        }
-        Done::Targets(owner, found) => {
-            state.managing.targets.insert(owner, found);
-            Vec::new()
-        }
-        Done::Categories(repo, found) => {
-            state.managing.categories.insert(repo, found);
-            Vec::new()
-        }
-        Done::Reverted(pr, made) => match made {
-            Ok(number) => {
-                close_confirm(state);
-                state.info(format!("Opened #{number}, which reverts {pr}"));
-                let made = PrRef {
-                    repo: pr.repo,
-                    number,
-                };
-                state.push(Route::pr(made))
-            }
-            Err(why) => refused(state, format!("GitHub refused the revert: {why}")),
-        },
-        Done::Transferred(from, moved) => match moved {
-            Ok(to) => {
-                close_confirm(state);
-                state.info(format!("Moved {from} to {to}"));
-                let here = Route::Issue {
-                    repo: from.repo,
-                    number: from.number,
-                };
-                let there = Route::Issue {
-                    repo: to.repo,
-                    number: to.number,
-                };
-                if state.route() == Some(&here) {
-                    state.replace(there, true, None)
-                } else {
-                    Vec::new()
-                }
-            }
-            Err(why) => refused(state, format!("GitHub refused the transfer: {why}")),
-        },
-        Done::Started(repo, made) => match made {
-            Ok(number) => {
-                if let Some(Overlay::Compose(c)) = &state.overlay
-                    && let crate::review::ComposeTarget::NewDiscussion(_) = c.target
-                {
-                    state.overlay = None;
-                }
-                state.info(format!("Started discussion #{number}"));
-                state.push(Route::Discussion {
-                    of: DiscussionsOf::Repo(repo),
-                    number,
-                })
-            }
+    fn done(self, state: &mut State, result: Result<u64, Failure>) -> Vec<Cmd> {
+        let number = match result {
+            Ok(number) => number,
             Err(why) => {
                 let text = format!("GitHub didn't start the discussion: {why}");
                 match &mut state.overlay {
                     Some(Overlay::Compose(c)) => {
-                        c.sending = false;
-                        c.error = Some(text);
+                        c.sent.sending = false;
+                        c.sent.error = Some(text);
                     }
                     _ => state.error(text),
                 }
-                Vec::new()
+                return Vec::new();
             }
-        },
-        Done::CheckedOut(branch, done) => {
-            use crate::git::local::Checkout;
-            match done {
-                Ok(Checkout::Created(b) | Checkout::Switched(b)) => {
-                    state.info(format!("You're on {b}"));
-                }
-                Ok(Checkout::Diverged(b)) => state.info(format!(
-                    "You're on {b}, which has commits GitHub's doesn't: it's left as it was"
-                )),
-                Ok(Checkout::Uncommitted(files)) => {
-                    let first = files.first().cloned().unwrap_or_default();
-                    state.info(format!(
-                        "Not checked out: {first} has changes that aren't committed. Commit or stash them first"
-                    ));
-                }
-                Err(err) => state.error(format!("Couldn't check out {branch}: {err}")),
-            }
-            Vec::new()
+        };
+        if let Some(Overlay::Compose(c)) = &state.overlay
+            && let crate::compose::Target::NewDiscussion(_) = c.target
+        {
+            state.overlay = None;
         }
+        state.info(format!("Started discussion #{number}"));
+        state.push(Route::Discussions(discussions::Discussion {
+            of: DiscussionsOf::Repo(self.repo),
+            number,
+        }))
     }
 }
 
 fn close_confirm(state: &mut State) {
-    if let Some(Overlay::Confirm(_)) = state.overlay {
+    if let Some(Overlay::Ask(_)) = state.overlay {
         state.overlay = None;
     }
 }
@@ -1540,9 +1363,9 @@ fn close_confirm(state: &mut State) {
 /// still open.
 fn refused(state: &mut State, text: String) -> Vec<Cmd> {
     match &mut state.overlay {
-        Some(Overlay::Confirm(c)) if c.sending => {
-            c.sending = false;
-            c.error = Some(text);
+        Some(Overlay::Ask(c)) if c.sent.sending => {
+            c.sent.sending = false;
+            c.sent.error = Some(text);
         }
         _ => state.error(text),
     }

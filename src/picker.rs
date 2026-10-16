@@ -2,8 +2,12 @@
 //! palette, go to file (in a repository and in a diff), branches and tags,
 //! the diff's commits, and places in code (symbols, definitions).
 
+use std::path::{Path, PathBuf};
+
 use crate::api::browse::SearchKind;
 use crate::api::model::RepoId;
+use crate::api::watch::Watched;
+use crate::route::{self, Dest, Route, Target, code, search};
 use crate::theme::Bg;
 use crate::ui::bars::Notice;
 use crate::ui::diff_doc::Pos;
@@ -12,18 +16,21 @@ use crate::ui::text::short_sha;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui_textarea::TextArea;
 
-use crate::browse::{Data, DataKey, Need};
+use crate::data::{Data, DataKey, Picked};
 use crate::keymap::Action;
 use crate::nav::new_input;
 use crate::review::apply_commit_choice;
-use crate::route::{self, Dest, Route, Target};
 use crate::state::{Cmd, Overlay, Remote, Screen, State, apply};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Kind {
     /// The command palette.
     Commands,
     /// The repository's files at `rev`.
-    Files { repo: RepoId, rev: String },
+    Files {
+        repo: RepoId,
+        rev: String,
+    },
     /// Branches and tags; you land on `path` (a file if `file`) there.
     Branches {
         repo: RepoId,
@@ -34,7 +41,9 @@ pub enum Kind {
     /// The diff's files.
     DiffFiles,
     /// The diff's commits; `mark` is where a range starts.
-    Commits { mark: Option<usize> },
+    Commits {
+        mark: Option<usize>,
+    },
     /// Recent notices and errors, newest first, as they were on opening.
     Messages(Vec<(u64, Notice)>),
     /// A Home section's title, for the config file at the path: the field is all of it.
@@ -52,10 +61,25 @@ pub enum Kind {
     Project(crate::projects::Pick),
     /// Why to dismiss a security alert; the field is the comment.
     Alert(crate::security::Dismissing),
-    /// A subscription, a release's tag, a gist's names ([`crate::writes`]).
-    Write(crate::writes::Pick),
+    /// How you're notified of it ([`crate::watch`]).
+    Watch(Watched),
+    /// A release's tag, on its form's page ([`crate::release`]).
+    Tag(Route),
+    /// What a new tag is made at.
+    Target(Route),
+    /// Where to save a release's asset.
+    SaveAsset(crate::release::assets::Of),
+    /// A file to upload to a release.
+    Upload(crate::release::assets::Of),
+    /// The gist's description ([`crate::gist`]).
+    Description(Route),
+    /// A file's name (`None`: a new file's).
+    FileName(Route, Option<usize>),
+    /// Your starred lists ([`crate::site`]).
+    Site(crate::site::Pick),
+    Housekeeping(crate::housekeeping::Pick),
     /// Where to save an artifact; a workflow's branch or input.
-    Actions(crate::actions::Pick),
+    Workflows(crate::workflows::Pick),
     /// Locking, hiding, a base, sub-issues and the like ([`crate::manage`]).
     Manage(crate::manage::Pick),
     /// Someone to invite, a role, a repository's name ([`crate::settings`]).
@@ -92,8 +116,18 @@ impl Picker {
             Kind::Code { ref title, .. } => title,
             Kind::Project(ref pick) => pick.title(),
             Kind::Alert(ref d) => d.title(),
-            Kind::Write(ref pick) => pick.title(),
-            Kind::Actions(ref pick) => pick.title(),
+            Kind::Watch(Watched::Repo(_)) => "Watch the repository",
+            Kind::Watch(_) => "Notifications",
+            Kind::Tag(_) => "Choose a tag",
+            Kind::Target(_) => "Target: a branch or commit",
+            Kind::SaveAsset(_) => "Save the asset",
+            Kind::Upload(_) => "Upload an asset",
+            Kind::Description(_) => "Gist description",
+            Kind::FileName(_, None) => "Add a file",
+            Kind::FileName(..) => "Rename the file",
+            Kind::Site(ref pick) => pick.title(),
+            Kind::Housekeeping(ref pick) => pick.title(),
+            Kind::Workflows(ref pick) => pick.title(),
             Kind::Manage(ref pick) => pick.title(),
             Kind::Settings(ref pick) => pick.title(),
         }
@@ -128,22 +162,80 @@ pub enum Choice {
     Form(crate::create::Picked),
     /// Go to this line of the file on screen.
     Line(u32),
-    Project(crate::projects::Chosen),
-    /// Dismiss a security alert so.
-    Alert(crate::api::change::Change),
-    Write(crate::writes::Chosen),
-    Actions(crate::actions::Chosen),
-    Manage(crate::manage::Chosen),
-    Settings(crate::settings::Chosen),
+    /// A step of an action's plan ([`crate::act::take`]).
+    Step(crate::act::Step),
 }
 
-type Rows = Vec<(PaletteItem, Option<Choice>)>;
+pub type Rows = Vec<(PaletteItem, Option<Choice>)>;
 
-fn item(label: impl Into<String>, hint: impl Into<String>) -> PaletteItem {
+pub(crate) fn item(label: impl Into<String>, hint: impl Into<String>) -> PaletteItem {
     PaletteItem {
         label: label.into(),
         hint: hint.into(),
     }
+}
+
+/// What `key` holds, or the row saying it's loading or why it failed
+/// (opening the picker again tries again).
+pub(crate) fn listed<'a, T: Picked + ?Sized, C>(
+    state: &'a State,
+    key: &DataKey,
+    what: &str,
+) -> Result<&'a T, Vec<(PaletteItem, Option<C>)>> {
+    #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
+    let listed = Remote::fetched(state.remote(key), "")
+        .pick(T::pick)
+        .text(what);
+    listed.map_err(|why| vec![(item(why, ""), None)])
+}
+
+/// A picker's row: what it says, and what choosing it does.
+pub(crate) fn entry<T>(
+    label: impl Into<String>,
+    hint: impl Into<String>,
+    chosen: Option<T>,
+) -> (PaletteItem, Option<T>) {
+    (item(label, hint), chosen)
+}
+
+/// Where file `name` is saved for what's typed: in the current folder by
+/// default, in a folder named, or as the file named.
+fn save_path(typed: &str, name: &str) -> PathBuf {
+    let typed = typed.trim();
+    if typed.is_empty() {
+        return Path::new(".").join(name);
+    }
+    let path = PathBuf::from(typed);
+    if typed.ends_with('/') || path.is_dir() {
+        path.join(name)
+    } else {
+        path
+    }
+}
+
+/// The row saving file `name` where it's typed, with `save`'s job (told
+/// the path and whether to replace what's there); where a file is,
+/// replacing it, which choosing is the asking.
+pub(crate) fn save_rows(
+    q: &str,
+    name: &str,
+    hint: &str,
+    save: impl FnOnce(PathBuf, bool) -> crate::work::Work,
+) -> Rows {
+    let path = save_path(q, name);
+    let shown = path.display().to_string();
+    if path.is_dir() {
+        return vec![(item(format!("{shown} is a folder"), ""), None)];
+    }
+    let replace = path.exists();
+    let row = if replace {
+        item(format!("Replace {shown}"), "it exists")
+    } else {
+        item(format!("Save to {shown}"), hint)
+    };
+    let doing = format!("Saving {name} to {shown}…");
+    let step = crate::act::Step::Start(doing, save(path, replace));
+    vec![(row, Some(Choice::Step(step)))]
 }
 
 /// Places in code that match `q`, best first; all of them in order
@@ -190,12 +282,19 @@ impl State {
             Kind::Form(pick) if pick.several() => {
                 "Type to filter · ↵ picks or unpicks · esc when done"
             }
-            Kind::Form(_) => "Type to filter",
+            Kind::Form(_) | Kind::Watch(_) => "Type to filter",
             Kind::Code { .. } => "Type a name",
             Kind::Project(ref pick) => pick.placeholder(),
             Kind::Alert(ref d) => d.placeholder(),
-            Kind::Write(ref pick) => pick.placeholder(),
-            Kind::Actions(ref pick) => pick.placeholder(),
+            Kind::Tag(_) => "Find a tag, or type a new one",
+            Kind::Target(_) => "Find a branch, or type a commit's SHA",
+            Kind::SaveAsset(_) => "A file or folder (↵ saves in the current folder)",
+            Kind::Upload(_) => "A file's path (a folder lists its files)",
+            Kind::Description(_) => "Type the description",
+            Kind::FileName(..) => "Type the file's name, with its extension",
+            Kind::Site(ref pick) => pick.placeholder(),
+            Kind::Housekeeping(ref pick) => pick.placeholder(),
+            Kind::Workflows(ref pick) => pick.placeholder(),
             Kind::Manage(ref pick) => pick.placeholder(),
             Kind::Settings(ref pick) => pick.placeholder(),
         };
@@ -203,42 +302,56 @@ impl State {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
             Kind::Branches { repo, .. } => Some(DataKey::Refs(repo.clone())),
             Kind::Edit(c) => c.need(),
-            Kind::Write(pick) => pick.need(),
+            Kind::Watch(w) => Some(DataKey::Subscription(w.clone())),
+            Kind::Tag(route) => route.repo().map(|r| DataKey::Tags(r.clone())),
+            Kind::Target(route) => route.repo().map(|r| DataKey::Branches(r.clone())),
+            Kind::Site(pick) => pick.need(),
+            Kind::Housekeeping(pick) => pick.need(),
+            Kind::Manage(pick) => pick.need(),
             Kind::Form(crate::create::Pick::Base | crate::create::Pick::Head) => self
                 .route()
                 .and_then(Route::repo)
                 .map(|r| DataKey::Refs(r.clone())),
             _ => None,
         };
+        // The field holds what's set now, to change.
+        let start = match &kind {
+            Kind::Edit(crate::edit::Choosing::Title { was, .. }) => Some(was.clone()),
+            Kind::Description(route) => crate::gist::description(self, route),
+            Kind::FileName(route, Some(i)) => crate::gist::file_name(self, route, *i),
+            Kind::Housekeeping(pick) => pick.start(self),
+            Kind::Manage(pick) => pick.start(),
+            _ => None,
+        };
         let mut input = new_input(&self.theme, Bg::ContainerHigh);
         input.set_placeholder_text(placeholder);
         input.set_placeholder_style(self.theme.meta(Bg::ContainerHigh));
+        input.insert_str(start.unwrap_or_default());
         self.overlay = Some(Overlay::Picker(Box::new(Picker {
             kind,
             input,
             selected: 0,
         })));
-        need.map_or_else(Vec::new, |key| self.ensure(Need::Data(key), false))
+        need.map_or_else(Vec::new, |key| self.ensure(key, false))
     }
 
     /// Go to file, or switch branches, for the code on screen.
     #[must_use]
     pub fn open_finder(&mut self, branches: bool) -> Vec<Cmd> {
         let (repo, rev, path, file) = match self.route() {
-            Some(Route::Tree { repo, rev, path }) => {
+            Some(Route::Code(code::Tree { repo, rev, path })) => {
                 (repo.clone(), rev.clone(), path.clone(), false)
             }
-            Some(Route::Blob {
+            Some(Route::Code(code::Blob {
                 repo, rev, path, ..
-            }) => (repo.clone(), rev.clone(), path.clone(), true),
+            })) => (repo.clone(), rev.clone(), path.clone(), true),
             Some(route) if let Some(repo) = route.repo() => {
                 let default = self.overview(repo).and_then(|o| o.default_branch.clone());
                 let rev = default.unwrap_or_else(|| "HEAD".into());
                 (repo.clone(), rev, String::new(), false)
             }
             _ => {
-                self.info("Open a repository first");
-                return Vec::new();
+                return self.just_say("Open a repository first");
             }
         };
         self.open_picker(if branches {
@@ -283,23 +396,23 @@ impl State {
                 let choice = Choice::Title(titling.clone(), path.clone(), q.to_owned());
                 vec![(item(label, "↵"), Some(choice))]
             }
-            Kind::Actions(pick) => (crate::actions::rows(self, pick, q).into_iter())
-                .map(|(row, chosen)| (row, chosen.map(Choice::Actions)))
-                .collect(),
-            Kind::Project(pick) => (crate::projects::rows(self, pick, q).into_iter())
-                .map(|(row, chosen)| (row, chosen.map(Choice::Project)))
-                .collect(),
-            Kind::Alert(d) => (crate::security::rows(d, q).into_iter())
-                .map(|(row, change)| (row, Some(Choice::Alert(change))))
-                .collect(),
-            Kind::Write(pick) => (crate::writes::rows(self, pick, q).into_iter())
-                .map(|(row, chosen)| (row, chosen.map(Choice::Write)))
-                .collect(),
+            Kind::Workflows(pick) => crate::workflows::rows(self, pick, q),
+            Kind::Project(pick) => crate::projects::rows(self, pick, q),
+            Kind::Alert(d) => crate::security::rows(d, q),
+            Kind::Watch(w) => crate::watch::rows(self, w, q),
+            Kind::Tag(route) => crate::release::tag_rows(self, route, q),
+            Kind::Target(route) => crate::release::target_rows(self, route, q),
+            Kind::SaveAsset(of) => crate::release::assets::save_rows(of, q),
+            Kind::Upload(of) => crate::release::assets::upload_rows(self, of, q),
+            Kind::Description(route) => crate::gist::description_rows(route, q),
+            Kind::FileName(route, file) => crate::gist::name_rows(self, route, *file, q),
+            Kind::Site(pick) => crate::site::rows(self, pick, q),
+            Kind::Housekeeping(pick) => crate::housekeeping::rows(self, pick, q),
             Kind::Manage(pick) => (crate::manage::rows(self, pick, q).into_iter())
-                .map(|(row, chosen)| (row, chosen.map(Choice::Manage)))
+                .map(|(row, chosen)| (row, chosen.map(Choice::Step)))
                 .collect(),
             Kind::Settings(pick) => (crate::settings::rows(pick, q).into_iter())
-                .map(|(row, chosen)| (row, chosen.map(Choice::Settings)))
+                .map(|(row, chosen)| (row, chosen.map(Choice::Step)))
                 .collect(),
         }
     }
@@ -394,17 +507,9 @@ impl State {
         out
     }
 
-    /// What `key` holds, or the row saying it's loading or why it failed
-    /// (opening the picker again tries again).
-    fn listed(&self, key: &DataKey, what: &str) -> Result<&Data, Rows> {
-        #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
-        let listed = Remote::fetched(self.data.get(key), "").text(what);
-        listed.map_err(|why| vec![(item(why, ""), None)])
-    }
-
     fn file_rows(&self, q: &str, repo: &RepoId, rev: &str) -> Rows {
         let (files, truncated) =
-            match self.listed(&DataKey::Files(repo.clone(), rev.into()), "files") {
+            match listed::<Data, _>(self, &DataKey::Files(repo.clone(), rev.into()), "files") {
                 Ok(Data::Files(files, truncated)) => (files, truncated),
                 other => return other.err().unwrap_or_default(),
             };
@@ -428,8 +533,12 @@ impl State {
     }
 
     fn branch_rows(&self, q: &str, repo: &RepoId, rev: &str, path: &str, file: bool) -> Rows {
-        let refs = match self.listed(&DataKey::Refs(repo.clone()), "branches") {
-            Ok(Data::Refs(refs)) => refs,
+        let refs = match listed::<crate::api::browse::Refs, _>(
+            self,
+            &DataKey::Refs(repo.clone()),
+            "branches",
+        ) {
+            Ok(refs) => refs,
             other => return other.err().unwrap_or_default(),
         };
         let default = self
@@ -453,9 +562,9 @@ impl State {
                 let route = if file {
                     Route::blob(repo, rev, path)
                 } else if path.is_empty() && is_default {
-                    Route::Repo(repo)
+                    Route::Code(code::Repo(repo))
                 } else {
-                    Route::Tree { repo, rev, path }
+                    Route::Code(code::Tree { repo, rev, path })
                 };
                 let go = Choice::Go(Target::Page(route).into());
                 rows.push((score, item(name, hint), go));
@@ -656,12 +765,7 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
             state.edit_home(path, crate::home::Edit::Rename { at, title }, what)
         }
         Choice::Edit(_) => Vec::new(),
-        Choice::Project(chosen) => crate::projects::choose(state, chosen),
-        Choice::Alert(change) => crate::security::choose(state, change),
-        Choice::Write(chosen) => crate::writes::choose(state, chosen),
-        Choice::Actions(chosen) => crate::actions::choose(state, chosen),
-        Choice::Manage(chosen) => crate::manage::choose(state, chosen),
-        Choice::Settings(chosen) => crate::settings::choose(state, chosen),
+        Choice::Step(step) => crate::act::take(state, Ok(step)),
     }
 }
 
@@ -680,19 +784,29 @@ fn search_route(query: &str) -> Route {
     let issues = query
         .split_whitespace()
         .any(|w| ISSUE_QUALIFIERS.iter().any(|p| w.starts_with(p)));
-    Route::Search {
+    Route::Search(search::Search {
         kind: if issues {
             SearchKind::Issues
         } else {
             SearchKind::Repos
         },
         query: query.to_owned(),
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file is saved by its own name in the current folder, in a
+    /// folder named, or as the file named.
+    #[test]
+    fn a_file_is_saved_where_its_typed() {
+        let name = "ghtui.tar.gz";
+        assert_eq!(save_path("", name), Path::new(".").join(name));
+        assert_eq!(save_path("out/", name), Path::new("out/").join(name));
+        assert_eq!(save_path("x.tgz", name), PathBuf::from("x.tgz"));
+    }
 
     #[test]
     fn file_matches_prefer_names() {

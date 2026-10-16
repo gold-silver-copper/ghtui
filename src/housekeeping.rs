@@ -10,40 +10,47 @@
 //! closes or reopens a milestone. What git can do in your clone (a branch
 //! or a tag, a file's commit), it does there, after asking, with your own
 //! git ([`git`]); elsewhere GitHub's API does it. Then the page follows
-//! GitHub until it shows the change, as [`crate::writes`] does.
+//! GitHub until it shows the change ([`crate::follow`]).
 
-use std::collections::{BTreeMap, HashMap};
+use crate::route::{Family, Route, Target, Url, code, issues};
+use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::api::GitHub;
 use crate::api::browse::Results;
-use crate::api::housekeeping::{
-    BranchRules, FileLook, LabelChange, LabelInfo, MadeRepo, MilestoneChange, NewFork, NewRepo,
-    Owners, RefKind, Templates,
-};
+use crate::api::housekeeping::{LabelChange, LabelInfo, MilestoneChange, RefKind};
 use crate::api::model::RepoId;
-use crate::create::Look;
 use crate::git::local::Clone;
-use crate::ui::overlays::PaletteItem;
-use crate::ui::page::{Link, Page, WriteLink};
+use crate::picker::entry as item;
+pub(crate) use crate::ui::form::Field;
+use crate::ui::form::Row;
+use crate::ui::page::{Link, Page};
 
-use crate::browse::{DataKey, Need};
+use crate::browse::{Build, Width};
+use crate::chrome::Section;
+use crate::data::DataKey;
+use crate::follow::{Expectation, Shown, expect};
 use crate::keymap::Action;
-use crate::nav::Doable;
-use crate::route::Route;
+use crate::nav::{Doable, row};
 use crate::state::{Cmd, Screen, State};
-use crate::writes::{Expected as Expects, Work as Writes, row};
 
-mod files;
+pub mod files;
 pub mod git;
-mod labels;
-pub(crate) use labels::label_url;
-mod milestones;
-mod refs;
-mod repos;
+pub mod labels;
+pub mod milestones;
+pub mod refs;
+pub mod repos;
 
-/// The actions housekeeping adds.
-pub const ACTIONS: [Action; 3] = [Action::NewHere, Action::Fork, Action::NewRepo];
+/// What housekeeping adds: a fork, a new repository and what's new on a
+/// page, and editing, deleting and closing on its pages; and a branch's
+/// deletion asked about once GitHub says whether it's protected.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &[Action::NewHere, Action::Fork, Action::NewRepo],
+    takes,
+    act,
+    offers: |state, out| out.extend(change_doables(state)),
+    follow: refs::follow,
+};
 
 // ---- forms ------------------------------------------------------------------------------------
 
@@ -80,8 +87,8 @@ pub enum FileChange {
     Delete,
 }
 
-impl FormOf {
-    pub fn url(&self) -> String {
+impl Family for FormOf {
+    fn url(&self) -> String {
         use crate::ui::pages::url as links;
         match self {
             FormOf::Label { repo, .. } => format!("{}/labels", links::repo(repo)),
@@ -112,7 +119,11 @@ impl FormOf {
         }
     }
 
-    pub fn title(&self) -> String {
+    fn form(&self) -> Option<&'static crate::forms::Kind> {
+        Some(&FORM)
+    }
+
+    fn title(&self) -> String {
         match self {
             FormOf::Label { repo, name: None } => format!("{repo} · New label"),
             FormOf::Label {
@@ -137,7 +148,7 @@ impl FormOf {
         }
     }
 
-    pub fn repo(&self) -> Option<&RepoId> {
+    fn repo(&self) -> Option<&RepoId> {
         match self {
             FormOf::Label { repo, .. }
             | FormOf::Milestone { repo, .. }
@@ -147,35 +158,84 @@ impl FormOf {
         }
     }
 
-    /// The page a level up: what the form is of.
-    pub fn up(&self) -> Option<Route> {
+    /// What the form is of.
+    fn up(&self, _: &State) -> Option<Route> {
         Some(match self {
-            FormOf::Label { repo, .. } => Route::Labels(repo.clone()),
-            FormOf::Milestone { repo, .. } => Route::Milestones {
+            FormOf::Label { repo, .. } => Route::Issues(issues::Labels(repo.clone())),
+            FormOf::Milestone { repo, .. } => Route::Issues(issues::Milestones {
                 repo: repo.clone(),
                 closed: false,
-            },
-            FormOf::Fork(repo) => Route::Repo(repo.clone()),
+            }),
+            FormOf::Fork(repo) => Route::Code(code::Repo(repo.clone())),
             FormOf::NewRepo => return None,
             FormOf::File {
                 repo,
                 rev,
                 path,
                 change: FileChange::New,
-            } => Route::Tree {
+            } => Route::Code(code::Tree {
                 repo: repo.clone(),
                 rev: rev.clone(),
                 path: path.clone(),
-            },
+            }),
             FormOf::File {
                 repo, rev, path, ..
             } => Route::blob(repo.clone(), rev.clone(), path.clone()),
         })
     }
 
+    fn needs(&self) -> Vec<DataKey> {
+        let header = self.repo().map(|repo| DataKey::Repo(repo.clone()));
+        let own = match self {
+            FormOf::Label { repo, .. } => vec![DataKey::Labels(repo.clone())],
+            FormOf::Milestone {
+                repo,
+                number: Some(n),
+            } => vec![DataKey::Milestone(repo.clone(), *n)],
+            FormOf::Fork(_) => vec![DataKey::Owners],
+            FormOf::NewRepo => vec![DataKey::Owners, DataKey::Templates],
+            // Whether ghtui runs in a clone says how it's committed.
+            FormOf::File {
+                repo, rev, path, ..
+            } => vec![
+                DataKey::Clone(repo.clone()),
+                DataKey::FileLook(repo.clone(), rev.clone(), path.clone()),
+            ],
+            FormOf::Milestone { number: None, .. } => Vec::new(),
+        };
+        header.into_iter().chain(own).collect()
+    }
+
+    fn width(&self) -> Width {
+        Width::Reading
+    }
+
+    fn section(&self) -> Section {
+        match self {
+            FormOf::Label { .. } | FormOf::Milestone { .. } => Section::Issues,
+            _ => Section::Code,
+        }
+    }
+
+    fn build(&self, b: Build<'_>, page: &mut Page) {
+        let route = Route::Housekeeping(self.clone());
+        // What the form is filled from loads first, or says why not.
+        if !loaded(b, page, self) {
+            return;
+        }
+        match self {
+            FormOf::Label { .. } => labels::build(b.state, page, &route),
+            FormOf::Milestone { .. } => milestones::build(b.state, page, &route),
+            FormOf::Fork(_) | FormOf::NewRepo => repos::build(b.state, page, &route, self),
+            FormOf::File { .. } => files::build(b.state, page, &route, self),
+        }
+    }
+}
+
+impl FormOf {
     /// The form at a URL's path after `/<owner>/<repo>` (`fork`,
     /// `milestones/new`, `edit/main/README.md`), if it's one.
-    pub fn parse(repo: &RepoId, rest: &[&str]) -> Option<FormOf> {
+    fn parse(repo: &RepoId, rest: &[&str]) -> Option<FormOf> {
         let repo = repo.clone();
         Some(match rest {
             ["fork"] => FormOf::Fork(repo),
@@ -208,59 +268,14 @@ impl FormOf {
     }
 }
 
-/// A row of a form, set in a picker (or, for yes-or-no, toggled).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Field {
-    Name,
-    Colour,
-    Description,
-    Title,
-    Due,
-    Owner,
-    Private,
-    Readme,
-    Gitignore,
-    License,
-    AllBranches,
-    Path,
-    /// A file's commit's branch: empty for the one it's on, else a new one.
-    Branch,
-    Message,
+/// A new repository's form, at the top of GitHub's paths.
+pub(crate) fn parse(url: &Url<'_>) -> Option<Target> {
+    (url.segments == ["new"]).then_some(Target::Page(Route::Housekeeping(FormOf::NewRepo)))
 }
 
-impl Field {
-    /// Its row's name.
-    pub fn name(self) -> &'static str {
-        match self {
-            Field::Name => "Name",
-            Field::Colour => "Colour",
-            Field::Description => "Description",
-            Field::Title => "Title",
-            Field::Due => "Due date",
-            Field::Owner => "Owner",
-            Field::Private => "Visibility",
-            Field::Readme => "README",
-            Field::Gitignore => ".gitignore",
-            Field::License => "Licence",
-            Field::AllBranches => "Branches",
-            Field::Path => "Path",
-            Field::Branch => "Commit to",
-            Field::Message => "Message",
-        }
-    }
-
-    /// Set by Enter alone: yes or no.
-    fn toggles(self) -> bool {
-        matches!(self, Field::Private | Field::Readme | Field::AllBranches)
-    }
-}
-
-/// What Enter on one of housekeeping's rows does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Row {
-    Field(Field),
-    /// The labels page's "New label".
-    New,
+/// A repository's form.
+pub(crate) fn parse_repo(repo: &RepoId, rest: &[&str], _: &Url<'_>) -> Option<Target> {
+    FormOf::parse(repo, rest).map(|of| Target::Page(Route::Housekeeping(of)))
 }
 
 /// A form as written so far.
@@ -272,10 +287,31 @@ pub struct Form {
     pub text: String,
     /// Filled in from what GitHub has, once.
     pub started: bool,
-    /// A file's form: where it starts on GitHub.
-    pub look: Option<Look<FileLook>>,
-    pub sending: bool,
-    pub error: Option<String>,
+}
+
+impl crate::forms::Fields for Form {
+    fn text(&mut self, _: usize) -> Option<&mut String> {
+        Some(&mut self.text)
+    }
+
+    fn title(&self, route: &Route, _: usize) -> String {
+        match route {
+            Route::Housekeeping(FormOf::Milestone { .. }) => "The milestone's description".into(),
+            Route::Housekeeping(FormOf::File { path, change, .. }) => match change {
+                FileChange::New => "The new file's text".into(),
+                _ => format!("Editing {path}"),
+            },
+            _ => String::new(),
+        }
+    }
+
+    fn save(&self, route: &Route) -> &'static str {
+        match route {
+            Route::Housekeeping(FormOf::File { .. }) => "commit…",
+            Route::Housekeeping(FormOf::Milestone { number: None, .. }) => "create",
+            _ => "save",
+        }
+    }
 }
 
 impl Form {
@@ -300,39 +336,18 @@ impl Form {
 /// What housekeeping keeps between keys.
 #[derive(Debug, Default)]
 pub struct Housekeeping {
-    /// The forms being written, by their page: leaving one keeps it.
-    pub forms: HashMap<Route, Form>,
-    /// What the question open is about.
-    pub asked: Option<Subject>,
-    /// What GitHub's rules say of deleting each branch asked about.
-    pub rules: HashMap<(RepoId, String), Look<BranchRules>>,
+    /// The branch to ask about deleting once GitHub says whether its
+    /// rules protect it.
+    pub deleting: Option<(RepoId, String)>,
 }
 
-/// What a question, or a change of a list's row, is about.
+/// What a deletion, or a new branch or tag, is about.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Subject {
     Label(RepoId, String),
     Milestone(RepoId, u64),
-    /// A branch or tag; for a new one, where it starts.
-    Ref {
-        repo: RepoId,
-        kind: RefKind,
-        name: String,
-        from: Option<String>,
-    },
-    /// A new repository, to clone into `dir`.
-    Clone {
-        url: String,
-        dir: PathBuf,
-    },
-    /// A new branch a file was committed on, to propose into the branch
-    /// it was made from (none: the default branch).
-    Propose(RepoId, String, Option<String>),
-}
-
-fn blank() -> &'static Form {
-    static BLANK: std::sync::LazyLock<Form> = std::sync::LazyLock::new(Form::default);
-    &BLANK
+    /// A branch or tag.
+    Ref(RepoId, RefKind, String),
 }
 
 /// The form on screen: its page and what it's of.
@@ -343,17 +358,12 @@ fn here(state: &State) -> Option<(Route, FormOf)> {
     }
 }
 
-pub(crate) fn form<'a>(state: &'a State, route: &Route) -> &'a Form {
-    (state.writing.housekeeping.forms.get(route)).unwrap_or_else(|| blank())
+pub(crate) fn form<'a>(state: &'a State, route: &Route) -> Cow<'a, Form> {
+    state.forms.shown(route)
 }
 
 pub(crate) fn form_mut<'a>(state: &'a mut State, route: &Route) -> &'a mut Form {
-    state
-        .writing
-        .housekeeping
-        .forms
-        .entry(route.clone())
-        .or_default()
+    state.forms.edit(route)
 }
 
 /// Why you can't change `repo`'s labels, milestones, branches, tags or
@@ -369,102 +379,111 @@ fn refused(state: &State, repo: &RepoId, what: &str) -> Option<String> {
 /// Opens a form's page, started again from what GitHub has.
 #[must_use]
 fn open(state: &mut State, of: FormOf) -> Vec<Cmd> {
+    let file = match &of {
+        FormOf::File {
+            repo, rev, path, ..
+        } => Some(DataKey::FileLook(repo.clone(), rev.clone(), path.clone())),
+        _ => None,
+    };
     let route = Route::Housekeeping(of);
     if state.route() == Some(&route) {
         return compose(state);
     }
-    state.writing.housekeeping.forms.remove(&route);
-    let mut cmds = state.push(route);
+    state.forms.take::<Form>(&route);
+    let mut cmds = file.map_or_else(Vec::new, |file| state.ensure(file, true));
+    cmds.extend(state.push(route));
     cmds.extend(follow(state));
     cmds
 }
 
-/// The clone ghtui runs in, of `repo`: asked for once.
-fn clone_of(state: &mut State, repo: &RepoId) -> (Option<Look<Option<Clone>>>, Vec<Cmd>) {
-    match state.creating.clones.get(repo) {
-        Some(look) => (Some(look.clone()), Vec::new()),
-        None => {
-            state.creating.clones.insert(repo.clone(), Look::Asking);
-            let ask = Cmd::Create(crate::create::Work::Clone(repo.clone()));
-            (None, vec![ask])
-        }
-    }
-}
-
 /// Your clone of `repo`, once known: `Err` while it's being looked for.
 fn clone_here(state: &mut State, repo: &RepoId) -> Result<Option<Clone>, Vec<Cmd>> {
-    match clone_of(state, repo) {
-        (Some(Look::Found(clone)), _) => Ok(clone),
-        (Some(Look::Failed(_)), _) => Ok(None),
-        (_, cmds) => {
-            state.info("Looking for your clone of the repository: a moment");
-            Err(cmds)
-        }
+    if let Some(clone) = state.clone_of(repo) {
+        return Ok(clone.cloned());
     }
+    state.info("Looking for your clone of the repository: a moment");
+    Err(state.ensure(DataKey::Clone(repo.clone()), false))
 }
 
 // ---- the actions ----------------------------------------------------------------------
 
 /// Whether `action` is housekeeping's here: its own actions anywhere, and
 /// editing, deleting, closing and saving on its pages.
-pub fn claims(state: &State, action: Action) -> bool {
-    if ACTIONS.contains(&action) {
-        return true;
-    }
+fn takes(state: &State, action: Action) -> bool {
     let Some(route) = state.route() else {
         return false;
     };
     let lists = matches!(
         route,
-        Route::Labels(_) | Route::Milestones { .. } | Route::Milestone { .. }
+        Route::Issues(issues::Labels(_))
+            | Route::Issues(issues::Milestones { .. })
+            | Route::Issues(issues::Milestone { .. })
     );
     match action {
-        Action::EditComment => lists || matches!(route, Route::Blob { .. }),
+        Action::EditComment => lists || matches!(route, Route::Code(code::Blob { .. })),
         Action::DeleteComment => {
             lists
                 || matches!(
                     route,
-                    Route::Blob { .. } | Route::Branches(_) | Route::Tags(_)
+                    Route::Code(code::Blob { .. })
+                        | Route::Code(code::Branches(_))
+                        | Route::Code(code::Tags(_))
                 )
         }
-        Action::Close => matches!(route, Route::Milestones { .. } | Route::Milestone { .. }),
-        Action::Create => matches!(route, Route::Housekeeping(_)),
+        Action::Close => matches!(
+            route,
+            Route::Issues(issues::Milestones { .. }) | Route::Issues(issues::Milestone { .. })
+        ),
         _ => false,
     }
 }
 
-/// Runs one of the actions [`claims`] says are housekeeping's.
+/// Runs one of housekeeping's actions.
 #[must_use]
-pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
+fn act(state: &mut State, action: Action) -> Vec<Cmd> {
     let route = state.route().cloned();
     match (action, route) {
         (Action::NewHere, Some(route)) => new_here(state, route),
         (Action::Fork, _) => repos::open_fork(state),
         (Action::NewRepo, _) => open(state, FormOf::NewRepo),
-        (Action::EditComment, Some(Route::Labels(repo))) => labels::edit(state, &repo),
-        (Action::DeleteComment, Some(Route::Labels(repo))) => labels::ask_delete(state, &repo),
+        (Action::EditComment, Some(Route::Issues(issues::Labels(repo)))) => {
+            labels::edit(state, &repo)
+        }
+        (Action::DeleteComment, Some(Route::Issues(issues::Labels(repo)))) => {
+            labels::ask_delete(state, &repo)
+        }
         (
             Action::EditComment,
-            Some(Route::Milestones { repo, .. } | Route::Milestone { repo, .. }),
+            Some(
+                Route::Issues(issues::Milestones { repo, .. })
+                | Route::Issues(issues::Milestone { repo, .. }),
+            ),
         ) => milestones::edit(state, &repo),
         (
             Action::DeleteComment,
-            Some(Route::Milestones { repo, .. } | Route::Milestone { repo, .. }),
+            Some(
+                Route::Issues(issues::Milestones { repo, .. })
+                | Route::Issues(issues::Milestone { repo, .. }),
+            ),
         ) => milestones::ask_delete(state, &repo),
-        (Action::Close, Some(Route::Milestones { repo, .. } | Route::Milestone { repo, .. })) => {
-            milestones::toggle(state, &repo)
-        }
-        (Action::DeleteComment, Some(Route::Branches(repo))) => {
+        (
+            Action::Close,
+            Some(
+                Route::Issues(issues::Milestones { repo, .. })
+                | Route::Issues(issues::Milestone { repo, .. }),
+            ),
+        ) => milestones::toggle(state, &repo),
+        (Action::DeleteComment, Some(Route::Code(code::Branches(repo)))) => {
             refs::ask_delete(state, &repo, RefKind::Branch)
         }
-        (Action::DeleteComment, Some(Route::Tags(repo))) => {
+        (Action::DeleteComment, Some(Route::Code(code::Tags(repo)))) => {
             refs::ask_delete(state, &repo, RefKind::Tag)
         }
         (
             Action::EditComment | Action::DeleteComment,
-            Some(Route::Blob {
+            Some(Route::Code(code::Blob {
                 repo, rev, path, ..
-            }),
+            })),
         ) => {
             let change = if action == Action::EditComment {
                 FileChange::Edit
@@ -473,11 +492,7 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
             };
             files::open(state, repo, rev, path, change)
         }
-        (Action::Create, Some(Route::Housekeeping(of))) => submit(state, &of),
-        _ => {
-            state.info(action.not_here());
-            Vec::new()
-        }
+        _ => state.just_say(action.not_here()),
     }
 }
 
@@ -485,44 +500,58 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
 #[must_use]
 fn new_here(state: &mut State, route: Route) -> Vec<Cmd> {
     match route {
-        Route::Labels(repo) => labels::open(state, &repo, None),
-        Route::Milestones { repo, .. } | Route::Milestone { repo, .. } => {
-            milestones::open(state, &repo, None)
+        Route::Issues(issues::Labels(repo)) => labels::open(state, &repo, None),
+        Route::Issues(issues::Milestones { repo, .. })
+        | Route::Issues(issues::Milestone { repo, .. }) => milestones::open(state, &repo, None),
+        Route::Code(code::Branches(repo)) => refs::start(state, &repo, RefKind::Branch),
+        Route::Code(code::Tags(repo)) => refs::start(state, &repo, RefKind::Tag),
+        Route::Code(code::Tree { repo, rev, path }) => {
+            files::open(state, repo, rev, path, FileChange::New)
         }
-        Route::Branches(repo) => refs::start(state, &repo, RefKind::Branch),
-        Route::Tags(repo) => refs::start(state, &repo, RefKind::Tag),
-        Route::Tree { repo, rev, path } => files::open(state, repo, rev, path, FileChange::New),
-        Route::Blob {
+        Route::Code(code::Blob {
             repo, rev, path, ..
-        } => {
+        }) => {
             let folder = path.rsplit_once('/').map_or("", |(dir, _)| dir).to_owned();
             files::open(state, repo, rev, folder, FileChange::New)
         }
-        Route::Repo(repo) => {
+        Route::Code(code::Repo(repo)) => {
             let Some(branch) = state.overview(&repo).and_then(|o| o.default_branch.clone()) else {
-                state.info("The repository hasn't loaded yet");
-                return Vec::new();
+                return state.just_say("The repository hasn't loaded yet");
             };
             files::open(state, repo, branch, String::new(), FileChange::New)
         }
         _ => {
-            state.info(
+            state.just_say(
                 "New works on a repository's labels, milestones, branches, tags and files (a folder for a new file)",
-            );
-            Vec::new()
+            )
         }
     }
 }
 
+/// What housekeeping's forms do.
+pub const FORM: crate::forms::Kind = crate::forms::Kind {
+    compose: |state, _| compose(state),
+    row: |state, row| match (row, state.route().cloned()) {
+        (Row::Field(field), Some(route)) => open_field(state, &route, *field),
+        _ => Vec::new(),
+    },
+    fill,
+    submit,
+    follow,
+    offers: |state, out| {
+        if let Some((route, of)) = here(state) {
+            form_doables(state, &route, &of, out);
+        }
+    },
+};
+
 /// `,s`, ctrl-s or a form's button.
 #[must_use]
-fn submit(state: &mut State, of: &FormOf) -> Vec<Cmd> {
-    let route = Route::Housekeeping(of.clone());
-    if form(state, &route).sending {
-        crate::writes::say(state, "It's being sent".into());
+fn submit(state: &mut State) -> Vec<Cmd> {
+    let Some((route, of)) = here(state) else {
         return Vec::new();
-    }
-    match of {
+    };
+    match &of {
         FormOf::Label { repo, name } => labels::submit(state, &route, repo, name.as_deref()),
         FormOf::Milestone { repo, number } => milestones::submit(state, &route, repo, *number),
         FormOf::Fork(repo) => repos::fork(state, &route, repo),
@@ -546,14 +575,6 @@ fn selected<'a, T>(state: &State, items: &'a [T], url: impl Fn(&T) -> String) ->
 }
 
 // ---- the menu --------------------------------------------------------------------------
-
-/// The menu's rows for the page on screen: what it edits, then what's
-/// new here, then a fork and a new repository, wherever you are.
-pub fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
-    if let Route::Housekeeping(of) = route {
-        form_doables(state, route, of, out);
-    }
-}
 
 /// The menu's rows for what changes GitHub here: the page's labels,
 /// milestones, branches, tags or files edited, then what's new here, then
@@ -581,7 +602,7 @@ fn page_doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
     let repo = route.repo();
     let can = |what: &str| repo.and_then(|r| refused(state, r, what));
     match route {
-        Route::Labels(_) => {
+        Route::Issues(issues::Labels(_)) => {
             let why = can("Changing labels");
             out.push(row("New", Action::NewHere, "New label", "new", why.clone()));
             let picked = labels::picked(state).map(|l| l.name.clone());
@@ -603,9 +624,15 @@ fn page_doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
                 row_why,
             ));
         }
-        Route::Milestones { .. } | Route::Milestone { .. } => milestones::doables(state, out),
-        Route::Branches(_) | Route::Tags(_) => refs::doables(state, route, out),
-        Route::Tree { .. } | Route::Blob { .. } | Route::Repo(_) => {
+        Route::Issues(issues::Milestones { .. }) | Route::Issues(issues::Milestone { .. }) => {
+            milestones::doables(state, out);
+        }
+        Route::Code(code::Branches(_)) | Route::Code(code::Tags(_)) => {
+            refs::doables(state, route, out);
+        }
+        Route::Code(code::Tree { .. })
+        | Route::Code(code::Blob { .. })
+        | Route::Code(code::Repo(_)) => {
             files::doables(state, route, out);
         }
         _ => {}
@@ -614,26 +641,23 @@ fn page_doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
 
 /// A form's rows in the menu: write its text, and make or save it.
 fn form_doables(state: &State, route: &Route, of: &FormOf, out: &mut Vec<Doable>) {
-    let f = form(state, route);
-    let busy = f.sending.then(|| "it's being sent".to_owned());
-    if matches!(
+    let written = matches!(
         of,
         FormOf::Milestone { .. }
             | FormOf::File {
                 change: FileChange::Edit | FileChange::New,
                 ..
             }
-    ) {
-        out.push(row(
-            "This page",
-            Action::Comment,
-            "Write the text",
-            "write",
-            busy.clone(),
-        ));
-    }
-    let why = busy.or_else(|| problem(state, route, of));
-    out.push(row("This page", Action::Create, button(of, f), "save", why));
+    );
+    let write = written.then_some("Write the text");
+    let button = button(of, &form(state, route));
+    crate::forms::offer(
+        state,
+        write,
+        (&button, "save"),
+        problem(state, route, of),
+        out,
+    );
 }
 
 /// What the form's button says.
@@ -667,47 +691,33 @@ fn problem(state: &State, route: &Route, of: &FormOf) -> Option<String> {
     let f = form(state, route);
     match of {
         FormOf::Label { repo, .. } => {
-            refused(state, repo, "Changing labels").or_else(|| labels::change(f).err())
+            refused(state, repo, "Changing labels").or_else(|| labels::change(&f).err())
         }
         FormOf::Milestone { repo, .. } => {
-            refused(state, repo, "Changing milestones").or_else(|| milestones::change(f).err())
+            refused(state, repo, "Changing milestones").or_else(|| milestones::change(&f).err())
         }
-        FormOf::Fork(repo) => repos::fork_problem(state, repo, f),
-        FormOf::NewRepo => repos::repo_problem(f),
+        FormOf::Fork(repo) => repos::fork_problem(state, repo, &f),
+        FormOf::NewRepo => repos::repo_problem(&f),
         FormOf::File { .. } => files::problem(state, route, of),
     }
 }
 
 // ---- following GitHub ----------------------------------------------------------------------
 
-/// Brings housekeeping's pages up to date with what's arrived: a form
-/// filled in from GitHub's data once, a file's looked up, your clone
-/// looked for where git may do the work.
+/// Brings housekeeping's form on screen up to date with what's arrived:
+/// filled in from GitHub's data once.
 #[must_use]
-pub fn follow(state: &mut State) -> Vec<Cmd> {
-    let mut cmds = Vec::new();
-    match state.route().cloned() {
-        Some(Route::Branches(repo) | Route::Tags(repo)) => cmds.extend(clone_of(state, &repo).1),
-        Some(route @ Route::Housekeeping(_)) => {
-            let Route::Housekeeping(of) = &route else {
-                return cmds;
-            };
-            if let Some(repo) = of.repo().filter(|_| matches!(of, FormOf::File { .. })) {
-                cmds.extend(clone_of(state, repo).1);
-            }
-            cmds.extend(match of {
-                FormOf::Label { repo, name } => labels::follow(state, &route, repo, name.as_ref()),
-                FormOf::Milestone { repo, number } => {
-                    milestones::follow(state, &route, repo, *number)
-                }
-                FormOf::Fork(repo) => repos::follow_fork(state, &route, repo),
-                FormOf::NewRepo => repos::follow_new(state, &route),
-                FormOf::File { .. } => files::follow(state, &route, of),
-            });
-        }
-        _ => {}
+fn follow(state: &mut State) -> Vec<Cmd> {
+    let Some((route, of)) = here(state) else {
+        return Vec::new();
+    };
+    match &of {
+        FormOf::Label { repo, name } => labels::follow(state, &route, repo, name.as_ref()),
+        FormOf::Milestone { repo, number } => milestones::follow(state, &route, repo, *number),
+        FormOf::Fork(repo) => repos::follow_fork(state, &route, repo),
+        FormOf::NewRepo => repos::follow_new(state, &route),
+        FormOf::File { .. } => files::follow(state, &route, &of),
     }
-    cmds
 }
 
 /// What a page shows once GitHub has a change.
@@ -742,8 +752,8 @@ pub enum Expected {
     },
 }
 
-impl Expected {
-    pub fn waiting(&self) -> &'static str {
+impl Expectation for Expected {
+    fn waiting(&self) -> &'static str {
         match self {
             Expected::Label { .. } => "Waiting for GitHub to show the label",
             Expected::Milestone { .. } => "Waiting for GitHub to show the milestone",
@@ -754,14 +764,14 @@ impl Expected {
         }
     }
 
-    pub fn shown(&self, state: &State) -> bool {
+    fn shown(&self, state: &State, _: &Route) -> Shown {
         use crate::api::browse::{
             Blob, BranchInfo, MilestoneDetail, MilestoneList, TagInfo, TreeEntry,
         };
-        match self {
+        let shown = match self {
             Expected::Label { repo, gone, shown } => {
                 let Some(list) = labels::list(state, repo) else {
-                    return false;
+                    return Shown::No;
                 };
                 let gone = gone
                     .as_ref()
@@ -809,7 +819,7 @@ impl Expected {
                         let Some(l) =
                             state.picked::<Results<BranchInfo>>(&DataKey::Branches(repo.clone()))
                         else {
-                            return false;
+                            return Shown::No;
                         };
                         let names: Vec<&str> = l.items.iter().map(|b| b.name.as_str()).collect();
                         (names, l.next.is_some())
@@ -818,7 +828,7 @@ impl Expected {
                         let Some(l) =
                             state.picked::<Results<TagInfo>>(&DataKey::Tags(repo.clone()))
                         else {
-                            return false;
+                            return Shown::No;
                         };
                         let names: Vec<&str> = l.items.iter().map(|t| t.name.as_str()).collect();
                         (names, false)
@@ -851,178 +861,36 @@ impl Expected {
                     .picked::<[TreeEntry]>(&key)
                     .is_some_and(|entries| entries.iter().all(|e| e.name != name))
             }
-        }
+        };
+        shown.into()
     }
-}
-
-/// Waits, on `route`, for GitHub to show `what`.
-fn expect(state: &mut State, route: Route, what: Expected) {
-    crate::writes::expect(state, route, Expects::Housekeeping(what));
 }
 
 // ---- data -----------------------------------------------------------------------------------
 
-/// The data housekeeping's pages and pickers read.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Key {
-    Labels(RepoId),
-    /// You, and the organizations you may make repositories for.
-    Owners,
-    /// GitHub's `.gitignore` and licence templates.
-    Templates,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Data {
-    Labels(Results<LabelInfo>),
-    Owners(Owners),
-    Templates(Templates),
-}
-
-impl Data {
-    pub fn next_cursor(&self) -> Option<&str> {
-        match self {
-            Data::Labels(l) => l.next.as_deref(),
-            Data::Owners(_) | Data::Templates(_) => None,
-        }
-    }
-
-    pub fn append(&mut self, more: Data) {
-        if let (Data::Labels(a), Data::Labels(b)) = (self, more) {
-            let mut seen: std::collections::HashSet<String> =
-                a.items.iter().map(|l| l.name.clone()).collect();
-            a.items
-                .extend(b.items.into_iter().filter(|l| seen.insert(l.name.clone())));
-            a.next = b.next;
-            a.total = b.total.max(a.items.len() as u64);
-        }
-    }
-}
-
-macro_rules! picked {
-    ($($variant:ident => $t:ty),*) => {$(
-        impl crate::browse::Picked for $t {
-            fn pick(data: &crate::browse::Data) -> Option<&Self> {
-                match data {
-                    crate::browse::Data::Housekeeping(d) => match &**d {
-                        Data::$variant(x) => Some(x),
-                        _ => None,
-                    },
-                    _ => None,
-                }
-            }
-        }
-    )*};
-}
-
-picked!(Labels => Results<LabelInfo>, Owners => Owners, Templates => Templates);
-
-/// Fetches `key` (for a list, its page after `after`).
-pub async fn fetch(
-    gh: &GitHub,
-    key: &Key,
-    after: Option<String>,
-) -> Result<Data, crate::api::ApiError> {
-    Ok(match key {
-        Key::Labels(repo) => Data::Labels(gh.labels(repo, after).await?),
-        Key::Owners => Data::Owners(gh.owners().await?),
-        Key::Templates => Data::Templates(gh.templates().await?),
-    })
-}
-
-/// What the cache has of `key`, and when it was fetched.
-pub fn cached(gh: &GitHub, key: &Key) -> Option<(Data, u64)> {
-    match key {
-        Key::Labels(repo) => {
-            let c = gh.cached(&crate::api::housekeeping::labels_key(repo))?;
-            Some((Data::Labels(c.value), c.fetched_at))
-        }
-        Key::Owners | Key::Templates => None,
-    }
-}
-
-/// The list a page of housekeeping's loads more of.
-pub fn paged(route: &Route) -> Option<DataKey> {
-    match route {
-        Route::Labels(repo) => Some(DataKey::Housekeeping(Key::Labels(repo.clone()))),
-        _ => None,
-    }
-}
-
-/// What housekeeping's pages need fetched.
-pub fn needs(route: &Route) -> Vec<Need> {
-    let header = |repo: &RepoId| Need::Data(DataKey::Repo(repo.clone()));
-    match route {
-        Route::Labels(repo) => vec![
-            header(repo),
-            Need::Data(DataKey::Housekeeping(Key::Labels(repo.clone()))),
-        ],
-        Route::Housekeeping(of) => {
-            let mut needs: Vec<Need> = of.repo().map(header).into_iter().collect();
-            match of {
-                FormOf::Label { repo, .. } => {
-                    needs.push(Need::Data(DataKey::Housekeeping(Key::Labels(repo.clone()))));
-                }
-                FormOf::Milestone {
-                    repo,
-                    number: Some(n),
-                } => needs.push(Need::Data(DataKey::Milestone(repo.clone(), *n))),
-                FormOf::Fork(_) => needs.push(Need::Data(DataKey::Housekeeping(Key::Owners))),
-                FormOf::NewRepo => {
-                    needs.push(Need::Data(DataKey::Housekeeping(Key::Owners)));
-                    needs.push(Need::Data(DataKey::Housekeeping(Key::Templates)));
-                }
-                FormOf::Milestone { number: None, .. } | FormOf::File { .. } => {}
-            }
-            needs
-        }
-        _ => Vec::new(),
-    }
-}
-
-/// Builds housekeeping's pages.
-pub fn build(state: &State, page: &mut Page, route: &Route, now: u64) {
-    match route {
-        Route::Labels(repo) => {
-            let retry = state.first_key(Action::Refresh);
-            let key = DataKey::Housekeeping(Key::Labels(repo.clone()));
-            let list = crate::state::Remote::fetched(state.data.get(&key), &retry)
-                .pick(<Results<LabelInfo> as crate::browse::Picked>::pick);
-            let keys = crate::ui::pages::LabelKeys {
-                new: state.first_key(Action::NewHere),
-                edit: state.first_key(Action::EditComment),
-                delete: state.first_key(Action::DeleteComment),
-            };
-            crate::ui::pages::labels_page(page, repo, list, &keys, now);
-        }
-        Route::Housekeeping(of) => match of {
-            // What the form is filled from loads first, or says why not.
-            _ if !loaded(state, page, route) => {}
-            FormOf::Label { .. } => labels::build(state, page, route),
-            FormOf::Milestone { .. } => milestones::build(state, page, route),
-            FormOf::Fork(_) | FormOf::NewRepo => repos::build(state, page, route, of),
-            FormOf::File { .. } => files::build(state, page, route, of),
-        },
-        _ => {}
-    }
+/// Builds the labels page.
+pub fn build(b: Build<'_>, page: &mut Page, repo: &RepoId) {
+    let list = b.get::<Results<LabelInfo>>(&DataKey::Labels(repo.clone()));
+    let keys = crate::ui::pages::LabelKeys {
+        new: b.state.first_key(Action::NewHere),
+        edit: b.state.first_key(Action::EditComment),
+        delete: b.state.first_key(Action::DeleteComment),
+    };
+    crate::ui::pages::labels_page(page, repo, list, &keys, b.cx.now);
 }
 
 /// Whether a form's data (but its repository's header) is in; else the
 /// page says it's loading, or why it couldn't.
-fn loaded(state: &State, page: &mut Page, route: &Route) -> bool {
-    let retry = state.first_key(Action::Refresh);
-    for need in needs(route) {
-        let Need::Data(key) = need else {
-            continue;
-        };
+fn loaded(b: Build<'_>, page: &mut Page, of: &FormOf) -> bool {
+    for key in of.needs() {
         let what = match &key {
-            DataKey::Housekeeping(Key::Labels(_)) => "the labels",
-            DataKey::Housekeeping(Key::Owners) => "your account",
-            DataKey::Housekeeping(Key::Templates) => "GitHub's templates",
+            DataKey::Labels(_) => "the labels",
+            DataKey::Owners => "your account",
+            DataKey::Templates => "GitHub's templates",
             DataKey::Milestone(..) => "the milestone",
             _ => continue,
         };
-        let fetched = crate::state::Remote::fetched(state.data.get(&key), &retry);
+        let fetched = crate::state::Remote::fetched(b.state.remote(&key), b.retry);
         if fetched.show(page, what).is_none() {
             return false;
         }
@@ -1034,21 +902,15 @@ fn loaded(state: &State, page: &mut Page, route: &Route) -> bool {
 
 /// `c`, or Enter on a form's text: the composer on it.
 #[must_use]
-pub fn compose(state: &mut State) -> Vec<Cmd> {
+fn compose(state: &mut State) -> Vec<Cmd> {
     let Some((route, of)) = here(state) else {
         return Vec::new();
     };
-    let f = form(state, &route);
-    if f.sending {
-        state.info("It's being sent");
-        return Vec::new();
-    }
     match of {
         FormOf::Milestone { .. } => {}
         FormOf::File { change, .. } if change != FileChange::Delete => {
-            if !f.started {
-                state.info("The file hasn't loaded yet");
-                return Vec::new();
+            if !form(state, &route).started {
+                return state.just_say("The file hasn't loaded yet");
             }
         }
         _ => {
@@ -1056,42 +918,8 @@ pub fn compose(state: &mut State) -> Vec<Cmd> {
             return Vec::new();
         }
     }
-    let text = f.text.clone();
-    state.data_gen += 1;
-    let target = crate::review::ComposeTarget::Write(crate::writes::Text::Housekeeping(route));
-    let cmds = state.compose(target, &text);
-    if let Some(crate::state::Overlay::Compose(c)) = &mut state.overlay {
-        c.input
-            .move_cursor(ratatui_textarea::CursorMove::Jump(0, 0));
-    }
-    cmds
-}
-
-pub fn keep_text(state: &mut State, route: &Route, text: String) {
-    let f = form_mut(state, route);
-    f.text = text;
-    f.error = None;
-}
-
-/// The composer's title.
-pub fn compose_title(route: &Route) -> String {
-    match route {
-        Route::Housekeeping(FormOf::Milestone { .. }) => "The milestone's description".into(),
-        Route::Housekeeping(FormOf::File { path, change, .. }) => match change {
-            FileChange::New => "The new file's text".into(),
-            _ => format!("Editing {path}"),
-        },
-        _ => String::new(),
-    }
-}
-
-/// What ctrl-s does, for the composer's hint.
-pub fn compose_save(route: &Route) -> &'static str {
-    match route {
-        Route::Housekeeping(FormOf::File { .. }) => "commit…",
-        Route::Housekeeping(FormOf::Milestone { number: None, .. }) => "create",
-        _ => "save",
-    }
+    let start = [ratatui_textarea::CursorMove::Jump(0, 0)];
+    crate::forms::compose::<Form>(state, &route, 0, &start)
 }
 
 // ---- pickers ------------------------------------------------------------------------
@@ -1105,15 +933,6 @@ pub enum Pick {
     RefName(RepoId, RefKind),
     /// Where a new branch or tag starts.
     RefFrom(RepoId, RefKind, String),
-}
-
-/// What choosing a row does.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Chosen {
-    Field(Route, Field, String),
-    RefName(RepoId, RefKind, String),
-    /// A new branch or tag, and the branch, tag or commit it starts at.
-    RefFrom(RepoId, RefKind, String, String),
 }
 
 impl Pick {
@@ -1140,12 +959,12 @@ impl Pick {
 
     pub fn need(&self) -> Option<DataKey> {
         match self {
-            Pick::Field(_, Field::Owner) => Some(DataKey::Housekeeping(Key::Owners)),
-            Pick::Field(_, Field::Gitignore | Field::License) => {
-                Some(DataKey::Housekeeping(Key::Templates))
-            }
+            Pick::Field(_, Field::Owner) => Some(DataKey::Owners),
+            Pick::Field(_, Field::Gitignore | Field::License) => Some(DataKey::Templates),
+            // Where it starts is asked about in your clone.
+            Pick::RefName(repo, _) => Some(DataKey::Clone(repo.clone())),
             Pick::RefFrom(repo, ..) => Some(DataKey::Branches(repo.clone())),
-            Pick::Field(..) | Pick::RefName(..) => None,
+            Pick::Field(..) => None,
         }
     }
 
@@ -1168,21 +987,13 @@ fn field_lists(field: Field) -> bool {
     )
 }
 
-/// A picker's row.
-fn item(
-    label: impl Into<String>,
-    hint: impl Into<String>,
-    chosen: Option<Chosen>,
-) -> (PaletteItem, Option<crate::writes::Chosen>) {
-    crate::writes::item(label, hint, chosen.map(crate::writes::Chosen::Housekeeping))
+/// The picker's row that sets the form at `route`'s `field` to `value`.
+fn setting(route: &Route, field: Field, value: &str) -> Option<crate::picker::Choice> {
+    Some(crate::forms::filling(route, Row::Field(field), value))
 }
 
 /// A picker's rows: what each says, and what choosing it does.
-pub fn rows(
-    state: &State,
-    pick: &Pick,
-    q: &str,
-) -> Vec<(PaletteItem, Option<crate::writes::Chosen>)> {
+pub fn rows(state: &State, pick: &Pick, q: &str) -> crate::picker::Rows {
     match pick {
         Pick::Field(route, field) => field_rows(state, route, *field, q),
         Pick::RefName(repo, kind) => refs::name_rows(repo, *kind, q),
@@ -1190,13 +1001,8 @@ pub fn rows(
     }
 }
 
-fn field_rows(
-    state: &State,
-    route: &Route,
-    field: Field,
-    q: &str,
-) -> Vec<(PaletteItem, Option<crate::writes::Chosen>)> {
-    let set = |value: &str| Some(Chosen::Field(route.clone(), field, value.to_owned()));
+fn field_rows(state: &State, route: &Route, field: Field, q: &str) -> crate::picker::Rows {
+    let set = |value: &str| setting(route, field, value);
     let q = q.trim();
     match field {
         Field::Colour => labels::colour_rows(route, q),
@@ -1247,156 +1053,115 @@ fn check(route: &Route, field: Field, value: &str) -> Option<String> {
 pub fn open_field(state: &mut State, route: &Route, field: Field) -> Vec<Cmd> {
     if field.toggles() {
         form_mut(state, route).toggle(field);
-        state.data_gen += 1;
         return Vec::new();
     }
-    crate::writes::open_picker(
-        state,
-        crate::writes::Pick::Housekeeping(Pick::Field(route.clone(), field)),
-    )
+    let pick = crate::picker::Kind::Housekeeping(Pick::Field(route.clone(), field));
+    state.open_picker(pick)
 }
 
-#[must_use]
-pub fn choose(state: &mut State, chosen: Chosen) -> Vec<Cmd> {
-    match chosen {
-        Chosen::Field(route, field, value) => {
-            let f = form_mut(state, &route);
-            f.set(field, value);
-            f.error = None;
-            let blank = f.text.is_empty();
-            state.data_gen += 1;
-            // A new file, once named, is written, as on GitHub.
-            let new_file = matches!(
-                &route,
-                Route::Housekeeping(FormOf::File {
-                    change: FileChange::New,
-                    ..
-                })
-            );
-            if field == Field::Path && new_file && blank && state.route() == Some(&route) {
-                return compose(state);
-            }
-            Vec::new()
-        }
-        Chosen::RefName(repo, kind, name) => refs::named(state, repo, kind, name),
-        Chosen::RefFrom(repo, kind, name, from) => refs::from_chosen(state, repo, kind, name, from),
+/// What was chosen for a form's row.
+fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Vec<Cmd> {
+    let Row::Field(field) = *row else {
+        return Vec::new();
+    };
+    let f = form_mut(state, route);
+    f.set(field, value);
+    let blank = f.text.is_empty();
+    // A new file, once named, is written, as on GitHub.
+    let new_file = matches!(
+        route,
+        Route::Housekeeping(FormOf::File {
+            change: FileChange::New,
+            ..
+        })
+    );
+    if field == Field::Path && new_file && blank && state.route() == Some(route) {
+        return compose(state);
     }
-}
-
-/// Enter on one of housekeeping's rows.
-#[must_use]
-pub fn follow_link(state: &mut State, row: Row) -> Vec<Cmd> {
-    match (row, state.route().cloned()) {
-        (Row::New, _) => act(state, Action::NewHere),
-        (Row::Field(field), Some(route @ Route::Housekeeping(_))) => {
-            open_field(state, &route, field)
-        }
-        _ => Vec::new(),
-    }
-}
-
-/// What Enter on one of housekeeping's rows does, for the menu.
-pub fn describe(row: Row) -> &'static str {
-    match row {
-        Row::New => "New label",
-        Row::Field(Field::Private) => "Make it public or private",
-        Row::Field(Field::Readme) => "Add a README, or not",
-        Row::Field(Field::AllBranches) => "Copy all branches, or the default one",
-        Row::Field(Field::Owner) => "Choose the owner",
-        Row::Field(Field::Colour) => "Choose the colour",
-        Row::Field(Field::Due) => "Set the due date",
-        Row::Field(Field::Gitignore) => "Choose a .gitignore template",
-        Row::Field(Field::License) => "Choose a licence",
-        Row::Field(Field::Path) => "Name the file, or move it",
-        Row::Field(Field::Branch) => "Choose the branch to commit to",
-        Row::Field(Field::Message) => "Write the commit message",
-        Row::Field(Field::Name | Field::Title) => "Name it",
-        Row::Field(Field::Description) => "Describe it",
-    }
+    Vec::new()
 }
 
 // ---- questions ----------------------------------------------------------------------
 
-/// The answers to housekeeping's questions; what they're about is
-/// [`Housekeeping::asked`] (or the form on screen).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The answers to housekeeping's questions, with what they're about (a
+/// file's commit: the form on screen).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
-    Delete,
-    /// Make a new branch or tag, with git in your clone.
-    Push,
+    Delete(Subject),
+    /// Make a new branch or tag where it starts, with git in your clone.
+    Push(RepoId, RefKind, String, String),
     /// Commit a file's form.
     Commit,
-    /// Clone a new repository.
-    Clone,
-    /// Propose a new branch's commit as a pull request.
-    Propose,
+    /// Clone a new repository into `dir`.
+    Clone {
+        url: String,
+        dir: PathBuf,
+    },
+    /// Propose a new branch a file was committed on as a pull request,
+    /// into the branch it was made from (none: the default branch).
+    Propose(RepoId, String, Option<String>),
 }
 
 impl Answer {
-    pub fn busy(self) -> &'static str {
+    pub fn busy(&self) -> &'static str {
         match self {
-            Answer::Delete => "Deleting…",
-            Answer::Push => "Pushing…",
+            Answer::Delete(_) => "Deleting…",
+            Answer::Push(..) => "Pushing…",
             Answer::Commit => "Committing…",
-            Answer::Clone => "Cloning…",
-            Answer::Propose => "Opening a pull request…",
+            Answer::Clone { .. } => "Cloning…",
+            Answer::Propose(..) => "Opening a pull request…",
         }
     }
 }
 
-/// Asks `title`, about `subject`.
+/// The question `title` about the form or list at `route`.
+fn question(
+    route: Route,
+    title: String,
+    facts: Vec<(String, bool)>,
+    choices: Vec<(String, Answer)>,
+) -> Box<crate::forms::Ask> {
+    let choices = (choices.into_iter())
+        .map(|(label, a)| (label, crate::forms::Answer::Housekeeping(a)))
+        .collect();
+    let about = crate::forms::About::Form(route);
+    Box::new(crate::forms::Ask::new(about, title, facts, choices))
+}
+
+/// Asks `title` about what's on screen.
 fn ask(
     state: &mut State,
-    subject: Option<Subject>,
     title: String,
     facts: Vec<(String, bool)>,
     choices: Vec<(String, Answer)>,
 ) {
-    let Some(route) = state.route().cloned() else {
-        return;
-    };
-    state.writing.housekeeping.asked = subject;
-    let choices = (choices.into_iter())
-        .map(|(label, a)| (label, crate::writes::Answer::Housekeeping(a)))
-        .collect();
-    crate::writes::ask(state, route, title, facts, choices);
+    if let Some(route) = state.route().cloned() {
+        let ask = question(route, title, facts, choices);
+        state.overlay = Some(crate::state::Overlay::Ask(ask));
+    }
 }
 
 /// The question about `route` was answered.
 #[must_use]
 pub fn answer(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
-    let subject = state.writing.housekeeping.asked.clone();
-    match (answer, subject) {
-        (Answer::Commit, _) => files::commit(state, route),
-        (Answer::Delete, Some(Subject::Label(repo, name))) => labels::delete(state, repo, name),
-        (Answer::Delete, Some(Subject::Milestone(repo, number))) => {
-            milestones::delete(state, repo, number)
+    match answer {
+        Answer::Commit => files::commit(state, route),
+        Answer::Delete(Subject::Label(repo, name)) => labels::delete(state, repo, name),
+        Answer::Delete(Subject::Milestone(repo, number)) => milestones::delete(state, repo, number),
+        Answer::Delete(Subject::Ref(repo, kind, name)) => refs::send(state, repo, kind, name, None),
+        Answer::Push(repo, kind, name, from) => refs::send(state, repo, kind, name, Some(from)),
+        Answer::Clone { url, dir } => {
+            crate::forms::sending(state);
+            crate::work::start(repos::CloneTo { url, dir })
         }
-        (
-            Answer::Delete | Answer::Push,
-            Some(Subject::Ref {
-                repo,
-                kind,
-                name,
-                from,
-            }),
-        ) => refs::send(state, repo, kind, name, from),
-        (Answer::Clone, Some(Subject::Clone { url, dir })) => {
-            crate::writes::sending(state);
-            vec![Cmd::Write(Writes::Housekeeping(Work::Clone { url, dir }))]
-        }
-        (Answer::Propose, Some(Subject::Propose(repo, branch, base))) => {
+        Answer::Propose(repo, branch, base) => {
             state.overlay = None;
             files::propose(state, repo, branch, base)
-        }
-        _ => {
-            state.overlay = None;
-            Vec::new()
         }
     }
 }
 
-// ---- work in the background ------------------------------------------------------------
+// ---- writes ------------------------------------------------------------
 
 /// A milestone's change.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1428,188 +1193,6 @@ pub struct FileWrite {
     pub clone: Option<Clone>,
 }
 
-/// Work in the background.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Work {
-    /// Make or change a label (`was`: its name before), or (no change)
-    /// delete it.
-    Label {
-        repo: RepoId,
-        was: Option<String>,
-        change: Option<LabelChange>,
-    },
-    Milestone {
-        repo: RepoId,
-        number: Option<u64>,
-        write: MilestoneWrite,
-    },
-    /// What GitHub's rules say of deleting a branch.
-    Rules(RepoId, String),
-    Ref {
-        repo: RepoId,
-        kind: RefKind,
-        name: String,
-        write: RefWrite,
-        clone: Option<Clone>,
-    },
-    Fork(Route, NewFork),
-    Repo(Route, NewRepo),
-    Clone {
-        url: String,
-        dir: PathBuf,
-    },
-    /// Where a file's form starts.
-    FileLook {
-        route: Route,
-        repo: RepoId,
-        rev: String,
-        path: String,
-    },
-    Commit(Route, Box<FileWrite>),
-}
-
-/// Work's answer.
-#[derive(Debug)]
-pub enum Done {
-    Label(Work, Result<(), String>),
-    /// A new milestone's number.
-    Milestone(Work, Result<Option<u64>, String>),
-    Rules(RepoId, String, Result<BranchRules, String>),
-    Ref(Work, Result<(), String>),
-    Forked(Route, Result<MadeRepo, String>),
-    Made(Route, Result<MadeRepo, String>),
-    Cloned(PathBuf, Result<(), String>),
-    Looked(Route, Result<FileLook, String>),
-    Committed(Route, Box<FileWrite>, Result<(), String>),
-}
-
-impl Done {
-    pub fn wrote(&self) -> bool {
-        match self {
-            Done::Label(_, r) | Done::Ref(_, r) | Done::Committed(_, _, r) => r.is_ok(),
-            Done::Milestone(_, r) => r.is_ok(),
-            Done::Forked(_, r) | Done::Made(_, r) => r.is_ok(),
-            Done::Rules(..) | Done::Cloned(..) | Done::Looked(..) => false,
-        }
-    }
-}
-
-impl Work {
-    pub fn failed(&self, why: String) -> Done {
-        match self.clone() {
-            w @ Work::Label { .. } => Done::Label(w, Err(why)),
-            w @ Work::Milestone { .. } => Done::Milestone(w, Err(why)),
-            Work::Rules(repo, name) => Done::Rules(repo, name, Err(why)),
-            w @ Work::Ref { .. } => Done::Ref(w, Err(why)),
-            Work::Fork(route, _) => Done::Forked(route, Err(why)),
-            Work::Repo(route, _) => Done::Made(route, Err(why)),
-            Work::Clone { dir, .. } => Done::Cloned(dir, Err(why)),
-            Work::FileLook { route, .. } => Done::Looked(route, Err(why)),
-            Work::Commit(route, write) => Done::Committed(route, write, Err(why)),
-        }
-    }
-
-    pub async fn run(self, gh: &GitHub) -> Done {
-        let why = |err: crate::api::ApiError| crate::writes::reason(&err);
-        match self {
-            Work::Label {
-                ref repo,
-                ref was,
-                ref change,
-            } => {
-                let result = match (was, change) {
-                    (None, Some(c)) => gh.create_label(repo, c).await,
-                    (Some(was), Some(c)) => gh.update_label(repo, was, c).await,
-                    (Some(was), None) => gh.delete_label(repo, was).await,
-                    (None, None) => Ok(()),
-                };
-                Done::Label(self, result.map_err(why))
-            }
-            Work::Milestone {
-                ref repo,
-                number,
-                ref write,
-            } => {
-                let result = match (number, write) {
-                    (None, MilestoneWrite::Save(m)) => {
-                        gh.create_milestone(repo, m).await.map(|m| Some(m.number))
-                    }
-                    (Some(n), MilestoneWrite::Save(m)) => {
-                        gh.update_milestone(repo, n, m).await.map(|()| Some(n))
-                    }
-                    (Some(n), MilestoneWrite::Close(closed)) => gh
-                        .set_milestone_closed(repo, n, *closed)
-                        .await
-                        .map(|()| Some(n)),
-                    (Some(n), MilestoneWrite::Delete) => {
-                        gh.delete_milestone(repo, n).await.map(|()| Some(n))
-                    }
-                    (None, _) => Ok(None),
-                };
-                Done::Milestone(self, result.map_err(why))
-            }
-            Work::Rules(repo, name) => {
-                let rules = gh.branch_rules(&repo, &name).await.map_err(why);
-                Done::Rules(repo, name, rules)
-            }
-            Work::Ref {
-                ref repo,
-                kind,
-                ref name,
-                ref write,
-                ref clone,
-            } => {
-                let result = refs::run(gh, repo, kind, name, write, clone.as_ref()).await;
-                Done::Ref(self, result)
-            }
-            Work::Fork(route, new) => Done::Forked(route, gh.fork(&new).await.map_err(why)),
-            Work::Repo(route, new) => Done::Made(route, gh.create_repo(&new).await.map_err(why)),
-            Work::Clone { url, dir } => {
-                let result = git::clone(&url, &dir).await;
-                Done::Cloned(dir, result)
-            }
-            Work::FileLook {
-                route,
-                repo,
-                rev,
-                path,
-            } => {
-                let look = gh.file_look(&repo, &rev, &path).await.map_err(why);
-                Done::Looked(route, look)
-            }
-            Work::Commit(route, write) => {
-                let result = files::run(gh, &write).await;
-                Done::Committed(route, write, result)
-            }
-        }
-    }
-}
-
-/// Work's answers.
-#[must_use]
-pub fn on_done(state: &mut State, done: Done) -> Vec<Cmd> {
-    match done {
-        Done::Label(work, result) => labels::on_done(state, work, result),
-        Done::Milestone(work, result) => milestones::on_done(state, work, result),
-        Done::Rules(repo, name, result) => refs::on_rules(state, &repo, &name, result),
-        Done::Ref(work, result) => refs::on_done(state, work, result),
-        Done::Forked(route, result) => repos::on_forked(state, &route, result),
-        Done::Made(route, result) => repos::on_made(state, &route, result),
-        Done::Cloned(dir, result) => repos::on_cloned(state, &dir, result),
-        Done::Looked(route, result) => files::on_looked(state, &route, result),
-        Done::Committed(route, write, result) => files::on_committed(state, &route, write, result),
-    }
-}
-
-/// Says `why` where it'll be seen, and marks the form unsent.
-fn failed(state: &mut State, route: &Route, why: String) {
-    if let Some(f) = state.writing.housekeeping.forms.get_mut(route) {
-        f.sending = false;
-        f.error = Some(why.clone());
-    }
-    crate::writes::say(state, why);
-}
-
 /// The form's rows for the page, each set in a picker.
 fn form_row(f: &Form, field: Field, unset: &str) -> crate::ui::pages::FormRow {
     let colour = (field == Field::Colour && !f.get(field).is_empty())
@@ -1626,7 +1209,8 @@ fn form_row(f: &Form, field: Field, unset: &str) -> crate::ui::pages::FormRow {
         name: field.name(),
         value,
         unset,
-        link: Some(WriteLink::Housekeeping(Row::Field(field))),
+        chips: Vec::new(),
+        link: Some(Row::Field(field)),
     }
 }
 
@@ -1646,6 +1230,7 @@ fn toggle_text(field: Field, on: bool) -> &'static str {
 #[cfg(test)]
 pub(crate) mod fixtures {
     use super::*;
+    use crate::api::housekeeping::{Owners, Templates};
 
     pub fn labels() -> Results<LabelInfo> {
         let label = |name: &str, color: &str, description: &str, open| LabelInfo {
@@ -1680,14 +1265,6 @@ pub(crate) mod fixtures {
                 ("mit".into(), "MIT License".into()),
                 ("apache-2.0".into(), "Apache License 2.0".into()),
             ],
-        }
-    }
-
-    pub fn sample(key: &Key) -> Data {
-        match key {
-            Key::Labels(_) => Data::Labels(labels()),
-            Key::Owners => Data::Owners(owners()),
-            Key::Templates => Data::Templates(templates()),
         }
     }
 }

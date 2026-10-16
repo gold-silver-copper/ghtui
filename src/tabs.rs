@@ -5,12 +5,12 @@
 //! requests and diffs are shared: two tabs on one pull request share its
 //! fetch, its diff and its review drafts.
 
+use crate::route::{Dest, Route, Target, code, issues, pulls, search};
 use crate::ui::page::Link;
 use crate::ui::text::short_sha;
 
 use crate::diff_screen::{DiffOf, DiffPrefs, DiffScreen};
 use crate::nav::PageScreen;
-use crate::route::{Dest, Route, Target};
 use crate::state::{Cmd, Screen, Screens, State};
 
 /// An open tab off screen: its history as it was left.
@@ -48,14 +48,16 @@ pub fn url(screen: &Screen) -> String {
 pub fn title(screen: &Screen) -> String {
     match screen {
         Screen::Page(p) => match &p.route {
-            Route::Issue { repo, number } => format!("{}#{number}", repo.name),
-            Route::Pr { pr, .. } => format!("{}#{}", pr.repo.name, pr.number),
-            Route::Blob { path, .. } | Route::Tree { path, .. } if !path.is_empty() => {
+            Route::Issues(issues::Issue { repo, number }) => format!("{}#{number}", repo.name),
+            Route::Pulls(pulls::Pr { pr, .. }) => format!("{}#{}", pr.repo.name, pr.number),
+            Route::Code(code::Blob { path, .. }) | Route::Code(code::Tree { path, .. })
+                if !path.is_empty() =>
+            {
                 path.rsplit('/').next().unwrap_or(path).to_owned()
             }
-            Route::Commit { oid, .. } => short_sha(oid).to_owned(),
-            Route::Search { query, .. } => format!("⌕ {query}"),
-            Route::Repo(repo) => repo.to_string(),
+            Route::Code(code::Commit { oid, .. }) => short_sha(oid).to_owned(),
+            Route::Search(search::Search { query, .. }) => format!("⌕ {query}"),
+            Route::Code(code::Repo(repo)) => repo.to_string(),
             // A repository's other pages, without the owner.
             route => match route.repo() {
                 Some(repo) => route.title().replacen(&format!("{}/", repo.owner), "", 1),
@@ -137,15 +139,15 @@ impl State {
             },
             Screen::Diff(d) => Target::Page(match &d.of {
                 DiffOf::Pr(pr) => Route::pr(pr.clone()),
-                DiffOf::Commit(repo, oid) => Route::Commit {
+                DiffOf::Commit(repo, oid) => Route::Code(code::Commit {
                     repo: repo.clone(),
                     oid: oid.to_string(),
                     pr: None,
-                },
-                DiffOf::Range(repo, from, to) => Route::Compare {
+                }),
+                DiffOf::Range(repo, from, to) => Route::Code(code::Compare {
                     repo: repo.clone(),
                     spec: format!("{from}..{to}"),
-                },
+                }),
             })
             .into(),
         };
@@ -175,12 +177,10 @@ impl State {
     #[must_use]
     pub fn switch_to_tab(&mut self, i: usize) -> Vec<Cmd> {
         if i >= self.tab_count() {
-            self.info(format!("No tab {} open", i + 1));
-            return Vec::new();
+            return self.just_say(format!("No tab {} open", i + 1));
         }
         if i == self.active_tab() {
-            self.info(format!("Already on tab {}", i + 1));
-            return Vec::new();
+            return self.just_say(format!("Already on tab {}", i + 1));
         }
         self.move_to_tab(i);
         self.load_visible(false)
@@ -221,8 +221,7 @@ impl State {
         let n = self.tab_count();
         if n == 1 {
             let open = self.first_key(crate::keymap::Action::OpenInTab);
-            self.info(format!("Only one tab open: {open} opens another"));
-            return Vec::new();
+            return self.just_say(format!("Only one tab open: {open} opens another"));
         }
         let i = self.active_tab();
         let next = if forward {
@@ -243,8 +242,7 @@ impl State {
         };
         let Some(next) = next else {
             let quit = self.first_key(crate::keymap::Action::Quit);
-            self.info(format!("This is the last tab ({quit} quits)"));
-            return Vec::new();
+            return self.just_say(format!("This is the last tab ({quit} quits)"));
         };
         drop(self.swap_in(next));
         self.overlay = None;

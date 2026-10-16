@@ -1,4 +1,4 @@
-//! Driving ghtui through a private fux server (`fux help agents`): its own
+//! Driving ghtui through a private fux server (`fux help-agents`): its own
 //! socket and `XDG_RUNTIME_DIR` under the run's directory, so it can't
 //! reach anyone's own fux session.
 
@@ -12,12 +12,14 @@ use serde_json::Value;
 
 use super::stopping;
 
-/// About as wide as a wide terminal, and as narrow as a split one.
-pub const WIDE: (u16, u16) = (216, 60);
-pub const NARROW: (u16, u16) = (90, 40);
+/// About as wide as a wide terminal: columns and rows.
+const SIZE: (u16, u16) = (216, 60);
 
 /// How long a screen waits for something by default.
 const WAIT: Duration = Duration::from_secs(30);
+
+/// How often a wait reads a settled screen again.
+const POLL: Duration = Duration::from_millis(250);
 
 /// The fux binary: `--fux`, else `fux` on PATH, else ~/code/fux's build;
 /// one that speaks fuxth (`fux help-agents`): its words drive the server.
@@ -120,14 +122,13 @@ impl Fux {
     pub fn run(
         &self,
         name: &str,
-        (cols, rows): (u16, u16),
         cwd: &Path,
         env: &[(String, String)],
         argv: &[String],
     ) -> Result<Pane> {
         let mut cmd = self.command();
         cmd.args(["opts", "str", name, "name"])
-            .args([cols.to_string(), rows.to_string(), "size".into()])
+            .args([SIZE.0.to_string(), SIZE.1.to_string(), "size".into()])
             .arg("str")
             .arg(cwd)
             .arg("cwd");
@@ -187,7 +188,7 @@ impl Pane {
             let kind = if is_key(word) { "key" } else { "text" };
             cmd.args(["str", word, kind]);
         }
-        cmd.args(["400", "wait-idle", "20", "timeout", "send-keys"]);
+        cmd.args(["10", "timeout", "send-keys"]);
         settled(&cmd.output()?, &format!("keys `{keys}`"))
     }
 
@@ -209,13 +210,27 @@ impl Pane {
     pub fn type_text(&self, text: &str) -> Result<()> {
         let mut cmd = self.fux.pane(&self.name);
         cmd.args(["keys", "str", text, "text"]);
-        cmd.args(["200", "wait-idle", "20", "timeout", "send-keys"]);
+        cmd.args(["10", "timeout", "send-keys"]);
         settled(&cmd.output()?, "typing")
     }
 
     /// The screen, as text.
     pub fn screen(&self) -> Result<String> {
-        Ok(self.capture()?.0)
+        let out = (self.fux.pane(&self.name))
+            .args(["opts", "json", "capture"])
+            .output()?;
+        check(&out, "fux capture-pane")?;
+        let json: Value = serde_json::from_slice(&out.stdout)?;
+        Ok(json["lines"]
+            .as_array()
+            .map(|lines| {
+                lines
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default())
     }
 
     /// The screen with highlights marked `⟦…⟧` (a selection, a menu's row).
@@ -225,26 +240,6 @@ impl Pane {
             .output()?;
         check(&out, "fux capture-pane")?;
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-    }
-
-    /// The screen and its revision.
-    fn capture(&self) -> Result<(String, u64)> {
-        let out = (self.fux.pane(&self.name))
-            .args(["opts", "json", "capture"])
-            .output()?;
-        check(&out, "fux capture-pane")?;
-        let json: Value = serde_json::from_slice(&out.stdout)?;
-        let lines = json["lines"]
-            .as_array()
-            .map(|lines| {
-                lines
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .unwrap_or_default();
-        Ok((lines, json["revision"].as_u64().unwrap_or_default()))
     }
 
     /// Waits until the screen shows `text`; returns the line it's on.
@@ -288,10 +283,9 @@ impl Pane {
         })
     }
 
-    /// Waits until `found` finds something on screen, waking at each
-    /// change of it (fux's `wait-change`, a couple of seconds at a time, so
-    /// a change between reading the screen and waiting is never missed by
-    /// more than that).
+    /// Waits until `found` finds something on screen, reading it again
+    /// each time ghtui has settled and a moment has passed: fux waits for
+    /// a burst of drawing to end, but has no wait for any change at all.
     pub fn wait_until<T>(
         &self,
         what: &str,
@@ -300,7 +294,7 @@ impl Pane {
     ) -> Result<T> {
         let began = Instant::now();
         loop {
-            let (screen, _revision) = self.capture()?;
+            let screen = self.screen()?;
             if let Some(it) = found(&screen) {
                 return Ok(it);
             }
@@ -320,50 +314,28 @@ impl Pane {
             }
             let secs = left.as_secs().clamp(1, 2).to_string();
             let out = (self.fux.pane(&self.name))
-                .args(["opts", "wait-change", &secs, "timeout", "wait"])
+                .args(["opts", &secs, "timeout", "wait"])
                 .output()?;
             match out.status.code() {
-                Some(0 | 6 | 124) => {}
+                Some(0 | 124) => {}
                 Some(3) => bail!("ghtui exited while waiting for {what}: {}", tail(&out)),
                 _ => check(&out, "fux wait")?,
             }
+            std::thread::sleep(POLL.min(left));
         }
-    }
-
-    /// Checks that `full` is shown whole or cut with `…`, never cut off
-    /// bare: "this text ends in …". It's found by its first twenty
-    /// characters, and runs to the next gap of two spaces, or its `…`.
-    pub fn expect_whole_or_cut(&self, full: &str) -> Result<()> {
-        let start: String = full.chars().take(20).collect();
-        let screen = self.screen()?;
-        let Some(line) = screen.lines().find(|l| l.contains(&start)) else {
-            bail!("`{start}` isn't on screen");
-        };
-        let from = line.find(&start).unwrap_or_default();
-        let rest = line.get(from..).unwrap_or_default();
-        let shown = rest.split("  ").next().unwrap_or_default().trim_end();
-        let shown = match shown.find('…') {
-            Some(at) => shown.get(..at + '…'.len_utf8()).unwrap_or(shown),
-            None => shown,
-        };
-        let cut = shown
-            .strip_suffix('…')
-            .is_some_and(|kept| full.starts_with(kept.trim_end()));
-        if shown != full && !cut {
-            bail!("`{shown}` is `{full}` cut without …");
-        }
-        Ok(())
     }
 
     pub fn kill(&self) {
         let _ = (self.fux.pane(&self.name)).arg("kill").output();
     }
 
-    /// Waits for the screen to be still for a second (ten at most).
+    /// Waits for ghtui to settle (ten seconds at most), then a second
+    /// more, for what a reply that was on its way draws.
     fn wait_idle(&self) {
         let _ = (self.fux.pane(&self.name))
-            .args(["opts", "1000", "wait-idle", "10", "timeout", "wait"])
+            .args(["opts", "10", "timeout", "wait"])
             .output();
+        std::thread::sleep(Duration::from_secs(1));
     }
 }
 
@@ -390,10 +362,11 @@ fn is_key(word: &str) -> bool {
     }
 }
 
-/// `send-keys --wait-idle`: settled (0), or the keys changed nothing (5).
+/// `send-keys`: settled (0), or still drawing at the time limit (124),
+/// which the waits after it see through.
 fn settled(out: &Output, what: &str) -> Result<()> {
     match out.status.code() {
-        Some(0 | 5) => Ok(()),
+        Some(0 | 124) => Ok(()),
         Some(3) => bail!("ghtui exited after {what}: {}", tail(out)),
         _ => check(out, &format!("fux send-keys ({what})")),
     }
@@ -412,10 +385,9 @@ fn tail(out: &Output) -> String {
         .join(" / ")
 }
 
-/// How ghtui is started: its arguments, size, directory and environment.
+/// How ghtui is started: its arguments, directory and environment.
 pub struct Launch {
     pub args: Vec<String>,
-    pub size: (u16, u16),
     pub cwd: Option<PathBuf>,
     pub env: Vec<(String, String)>,
 }
@@ -424,15 +396,9 @@ impl Launch {
     pub fn new(args: &[&str]) -> Launch {
         Launch {
             args: args.iter().map(|&a| a.to_owned()).collect(),
-            size: WIDE,
             cwd: None,
             env: Vec::new(),
         }
-    }
-
-    pub fn size(mut self, size: (u16, u16)) -> Launch {
-        self.size = size;
-        self
     }
 
     pub fn cwd(mut self, cwd: &Path) -> Launch {

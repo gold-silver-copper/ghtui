@@ -1,28 +1,19 @@
 //! The search box, with its suggestions.
 
 use super::*;
+use crate::route::{code, people, runs, search, security};
 
 pub struct SearchBox {
     pub input: TextArea<'static>,
     /// Filtering the list on screen rather than searching GitHub.
     pub filter: bool,
     pub selected: usize,
-    /// Live repository suggestions, and the input they're for.
-    pub(super) remote: Vec<RepoSummary>,
-    pub(super) remote_for: String,
 }
 
 impl SearchBox {
     /// What's typed, trimmed.
     pub(crate) fn query(&self) -> String {
         self.input.lines().join("").trim().to_owned()
-    }
-
-    /// Live suggestions for `q`, kept only if it's still what's typed.
-    pub(crate) fn suggested(&mut self, q: String, repos: Vec<RepoSummary>) {
-        if q == self.query() {
-            (self.remote, self.remote_for) = (repos, q);
-        }
     }
 }
 
@@ -59,8 +50,8 @@ impl State {
     pub fn open_search(&mut self, github: bool) -> Vec<Cmd> {
         let filter_query = match self.route() {
             _ if github => None,
-            Some(Route::Job { query, .. }) => Some(query.clone()),
-            route => route.and_then(Route::list_query).map(str::to_owned),
+            Some(Route::Runs(runs::Job { query, .. })) => Some(query.clone()),
+            route => route.and_then(|r| r.family().query()).map(str::to_owned),
         };
         let mut input = new_input(&self.theme, Bg::ContainerHighest);
         if let Some(q) = &filter_query {
@@ -69,10 +60,10 @@ impl State {
         }
         // A profile's repositories filter by searching that owner's.
         if !github
-            && let Some(Route::User {
+            && let Some(Route::People(people::User {
                 login,
                 tab: ProfileTab::Repositories(_),
-            }) = self.route()
+            })) = self.route()
         {
             input.insert_str(format!("user:{login} "));
         }
@@ -88,8 +79,6 @@ impl State {
             input,
             filter: filter_query.is_some(),
             selected: 0,
-            remote: Vec::new(),
-            remote_for: String::new(),
         })));
         Vec::new()
     }
@@ -143,7 +132,7 @@ impl State {
         let mut out = Vec::new();
         if sb.filter {
             // A job's log filters by its text alone.
-            if let Some(Route::Job { .. }) = self.route() {
+            if let Some(Route::Runs(runs::Job { .. })) = self.route() {
                 let pick = Pick::Filter(q.to_owned());
                 let what = if q.is_empty() {
                     "clear the search"
@@ -163,7 +152,7 @@ impl State {
             }
             out.push(heading("Quick filters"));
             // Alerts filter by their own words, and aren't searched.
-            if let Some(Route::Alerts { repo, kind, .. }) = self.route() {
+            if let Some(Route::Security(security::Alerts { repo, kind, .. })) = self.route() {
                 let branch = (self.overview(repo).and_then(|o| o.default_branch.as_ref()))
                     .filter(|_| *kind == crate::api::security::AlertKind::CodeScanning);
                 if let Some(b) = branch {
@@ -177,7 +166,7 @@ impl State {
                 return out;
             }
             // Runs filter by GitHub's Actions words, and aren't searched.
-            if let Some(Route::Actions { repo, .. }) = self.route() {
+            if let Some(Route::Runs(runs::Actions { repo, .. })) = self.route() {
                 if let Some(b) = self.overview(repo).and_then(|o| o.default_branch.as_ref()) {
                     let f = format!("branch:{b}");
                     let pick = Pick::Filter(f.clone());
@@ -195,7 +184,7 @@ impl State {
                 }
                 return out;
             }
-            if let Some(Route::Notifications { .. }) = self.route() {
+            if let Some(Route::Search(search::Notifications { .. })) = self.route() {
                 for (f, what) in [
                     ("is:unread", "unread"),
                     ("reason:review-requested", "review requested"),
@@ -296,9 +285,9 @@ impl State {
         }
         jump(&mut out, far);
         // Live matches come last, so they never move what's selected.
-        if sb.remote_for == q && !q.is_empty() {
-            let live: Vec<&RepoSummary> = sb
-                .remote
+        let suggested = self.picked::<[RepoSummary]>(&DataKey::Suggest(q.to_owned()));
+        if let Some(suggested) = suggested.filter(|_| !q.is_empty()) {
+            let live: Vec<&RepoSummary> = suggested
                 .iter()
                 .filter(|r| !seen.contains(&pages::url::repo(&r.repo)))
                 .collect();
@@ -307,7 +296,7 @@ impl State {
             }
             for r in live {
                 let detail = format!("☆ {}", pages::compact(r.stars));
-                let pick = Pick::Go(Target::Page(Route::Repo(r.repo.clone())).into());
+                let pick = Pick::Go(Target::Page(Route::Code(code::Repo(r.repo.clone()))).into());
                 out.push(suggestion("▤", r.repo.to_string(), &detail, "", pick));
             }
         }
@@ -400,17 +389,20 @@ pub fn search_box_changed(sb: &mut SearchBox) -> Vec<Cmd> {
 pub(super) fn choose(state: &mut State, pick: Pick) -> Vec<Cmd> {
     match pick {
         Pick::Go(dest) => state.go(dest),
-        Pick::Search(kind, query) => state.push(Route::Search { kind, query }),
-        Pick::Filter(query) if matches!(state.route(), Some(Route::Job { .. })) => {
+        Pick::Search(kind, query) => state.push(Route::Search(search::Search { kind, query })),
+        Pick::Filter(query) if matches!(state.route(), Some(Route::Runs(runs::Job { .. }))) => {
             search_log(state, &query);
             Vec::new()
         }
-        Pick::Filter(query) => match state.route().and_then(|r| r.with_query(query.clone())) {
+        Pick::Filter(query) => match state
+            .route()
+            .and_then(|r| r.family().with_query(query.clone()))
+        {
             Some(route) => state.replace(route, true, None),
-            None => state.push(Route::Search {
+            None => state.push(Route::Search(search::Search {
                 kind: SearchKind::Issues,
                 query,
-            }),
+            })),
         },
     }
 }
@@ -422,12 +414,12 @@ pub fn search_log(state: &mut State, query: &str) {
     let Screen::Page(p) = state.screen_mut() else {
         return;
     };
-    let Route::Job {
+    let Route::Runs(runs::Job {
         repo,
         job,
         query: q,
         ..
-    } = &mut p.route
+    }) = &mut p.route
     else {
         return;
     };

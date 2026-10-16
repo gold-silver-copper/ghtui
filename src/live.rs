@@ -11,6 +11,7 @@
 //! was there" when it shows nothing the page doesn't: one newer than what
 //! the page loaded is a change.
 
+use crate::route::{Route, pulls};
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,10 +19,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::api::browse::PrActivity;
 use crate::api::model::{NodeId, PrRef, ReviewThread};
 use crate::api::{ApiError, Polled};
-use crate::browse::{DataKey, Need};
+use crate::data::DataKey;
 use crate::diff_screen::{DiffOf, LastReview};
 use crate::keymap::Action;
-use crate::route::Route;
 use crate::state::{Api, Cmd, Screen, State, Timer};
 use crate::ui::pages::PrTab;
 use crate::ui::text::{noun, short_sha};
@@ -189,7 +189,7 @@ fn next_id() -> u64 {
 impl Watch {
     /// Watching `pr` from now: what's loaded of it is what was there.
     fn new(pr: PrRef, state: &State) -> Self {
-        let head = state.prs.get(&pr).and_then(|r| r.data.as_ref());
+        let head = state.pr(&pr);
         let threads = state.diffs.get(&DiffOf::Pr(pr.clone()));
         let threads = threads.and_then(|d| d.inputs().threads.data.as_deref());
         let activity = state.picked::<PrActivity>(&DataKey::PrActivity(pr.clone()));
@@ -240,10 +240,10 @@ pub fn watched(state: &State) -> Option<&PrRef> {
     match state.screen() {
         Screen::Diff(screen) => screen.of.pr(),
         Screen::Page(p) => match &p.route {
-            Route::Pr {
+            Route::Pulls(pulls::Pr {
                 pr,
                 tab: PrTab::Conversation | PrTab::Review | PrTab::Reviewed(_),
-            } => Some(pr),
+            }) => Some(pr),
             _ => None,
         },
     }
@@ -335,27 +335,27 @@ pub fn on_polled(
     };
     let lists_reviews = matches!(
         page,
-        Some(Route::Pr {
+        Some(Route::Pulls(pulls::Pr {
             tab: PrTab::Review | PrTab::Reviewed(_),
             ..
-        })
+        }))
     );
-    let talk: Vec<Need> = (page.is_some())
-        .then(|| Need::Data(DataKey::PrActivity(pr.clone())))
+    let talk: Vec<DataKey> = (page.is_some())
+        .then(|| DataKey::PrActivity(pr.clone()))
         .into_iter()
-        .chain(lists_reviews.then(|| Need::Data(DataKey::Reviews(pr.clone()))))
+        .chain(lists_reviews.then(|| DataKey::Reviews(pr.clone())))
         .collect();
     // The review comments the diff shows, to tell whether the first
     // answer is newer than they are.
     let shown = (state.diffs.get(&DiffOf::Pr(pr.clone())))
         .and_then(|d| d.inputs().threads.data.as_deref().map(thread_ids));
     // When the pull request shown was last updated, likewise (a review).
-    let updated = (state.prs.get(pr).and_then(|r| r.data.as_ref())).map(|d| d.updated_at.clone());
+    let updated = state.pr(pr).map(|d| d.updated_at.clone());
     let Some(w) = state.watch.as_mut().filter(|w| w.pr == *pr) else {
         return Vec::new();
     };
     let (mut changed, mut threads, mut pushed) = (false, false, None);
-    let mut needs: Vec<Need> = Vec::new();
+    let mut needs: Vec<DataKey> = Vec::new();
     for (probe, answer) in answers {
         let (etag, body) = match answer {
             Ok(Polled::Changed { etag, body }) => (etag, body),
@@ -390,17 +390,16 @@ pub fn on_polled(
         }
         changed = true;
         let fetch = match probe {
-            Probe::Pull => std::iter::once(Need::Pr(pr.clone()))
+            Probe::Pull => std::iter::once(DataKey::Pr(pr.clone()))
                 .chain(talk.iter().cloned())
                 .collect(),
             Probe::ReviewComments => {
                 threads = true;
                 talk.clone()
             }
-            Probe::CheckRuns(_) | Probe::Statuses(_) => vec![
-                Need::Pr(pr.clone()),
-                Need::Data(DataKey::PrChecks(pr.clone())),
-            ],
+            Probe::CheckRuns(_) | Probe::Statuses(_) => {
+                vec![DataKey::Pr(pr.clone()), DataKey::PrChecks(pr.clone())]
+            }
         };
         for need in fetch {
             if !needs.contains(&need) {
@@ -530,12 +529,12 @@ pub fn activity_loaded(state: &mut State, pr: &PrRef) {
         data,
         viewer,
         notices,
-        data_gen,
+        shown_gen,
         ..
     } = state;
     let activity = (data.get(&DataKey::PrActivity(pr.clone())))
         .and_then(|r| r.data.as_ref())
-        .and_then(<PrActivity as crate::browse::Picked>::pick);
+        .and_then(<PrActivity as crate::data::Picked>::pick);
     let Some(activity) = activity else {
         return;
     };
@@ -584,7 +583,7 @@ pub fn activity_loaded(state: &mut State, pr: &PrRef) {
     let (new_threads, replies) = note_threads(w, &activity.threads, viewer);
     what.extend(threads_said(new_threads, replies));
     if !what.is_empty() {
-        *data_gen += 1;
+        *shown_gen += 1;
         notices.info(format!("New on {pr}: {}", what.join(", ")));
     }
 }

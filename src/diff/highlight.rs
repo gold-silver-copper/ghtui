@@ -3,10 +3,10 @@
 //! Grammars are behind `lang-*` cargo features. Unknown languages, files over
 //! [`MAX_HIGHLIGHT_BYTES`] and grammar errors all fall back to plain text.
 
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::time::Duration;
+use std::sync::{Arc, OnceLock, Weak};
+use std::time::{Duration, Instant};
 
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
 
@@ -187,20 +187,53 @@ pub fn highlight(lang: Option<Language>, text: &Text) -> Vec<Vec<Span>> {
     }
     // tree-sitter's error recovery can take forever on garbage input (any
     // file can be in a diff): past the budget, the file shows plain.
-    let cancel = AtomicUsize::new(0);
-    let (done, finished) = mpsc::channel::<()>();
-    std::thread::scope(|scope| {
-        let cancel = &cancel;
-        scope.spawn(move || {
-            if finished.recv_timeout(HIGHLIGHT_BUDGET) == Err(RecvTimeoutError::Timeout) {
+    let cancel = Arc::new(AtomicUsize::new(0));
+    cancel_at(Instant::now() + HIGHLIGHT_BUDGET, &cancel);
+    spans(config, text, &cancel)
+}
+
+/// Sets `cancel` at `deadline`, unless it's dropped by then: one thread
+/// keeps every highlighting's deadline.
+fn cancel_at(deadline: Instant, cancel: &Arc<AtomicUsize>) {
+    type Deadline = (Instant, Weak<AtomicUsize>);
+    static WATCH: OnceLock<Option<mpsc::Sender<Deadline>>> = OnceLock::new();
+    let watch = WATCH.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<Deadline>();
+        let mut waiting: Vec<Deadline> = Vec::new();
+        let watch = move || loop {
+            let next = waiting.iter().map(|(at, _)| *at).min();
+            let wait = next.map_or(Duration::MAX, |at| {
+                at.saturating_duration_since(Instant::now())
+            });
+            match rx.recv_timeout(wait) {
+                Ok(deadline) => waiting.push(deadline),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return,
+            }
+            let now = Instant::now();
+            waiting.retain(|(at, cancel)| {
+                let Some(cancel) = cancel.upgrade() else {
+                    return false;
+                };
+                if *at > now {
+                    return true;
+                }
                 tracing::warn!("highlighting took too long; showing plain text");
                 cancel.store(1, Ordering::Relaxed);
-            }
-        });
-        let spans = spans(config, text, cancel);
-        drop(done);
-        spans
-    })
+                false
+            });
+        };
+        let spawned = std::thread::Builder::new()
+            .name("highlight-deadlines".into())
+            .spawn(watch);
+        spawned
+            .inspect_err(|err| tracing::warn!(%err, "highlighting has no time limit"))
+            .ok()
+            .map(|_| tx)
+    });
+    if let Some(tx) = watch {
+        let _ = tx.send((deadline, Arc::downgrade(cancel)));
+    }
 }
 
 fn spans(config: &HighlightConfiguration, text: &Text, cancel: &AtomicUsize) -> Vec<Vec<Span>> {

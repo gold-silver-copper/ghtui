@@ -8,25 +8,25 @@ use crate::act::{Subject, awaiting_here};
 use crate::api::change::Change;
 use crate::api::model::{Capped, NodeId};
 use crate::api::project::InProject;
-use crate::browse::{DataKey, Need};
+use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::{Kind, fuzzy_score};
-use crate::route::Route;
+use crate::route::{Route, issues, pulls};
 use crate::state::{Cmd, State};
 use crate::ui::overlays::PaletteItem;
 
-use super::{At, Chosen, On, Pick};
+use super::{At, On, Pick};
 
 /// The issue or pull request on screen, and where its projects are
 /// loaded.
 pub fn here(state: &State) -> Option<(Subject, DataKey)> {
     match state.route()? {
-        Route::Issue { repo, number } => Some((
+        Route::Issues(issues::Issue { repo, number }) => Some((
             Subject::Issue(repo.clone(), *number),
             DataKey::InProjects(repo.clone(), *number),
         )),
-        Route::Pr { pr, .. } => Some((
+        Route::Pulls(pulls::Pr { pr, .. }) => Some((
             Subject::Pr(pr.clone()),
             DataKey::InProjects(pr.repo.clone(), pr.number),
         )),
@@ -59,7 +59,7 @@ fn changeable(state: &State) -> Result<(Subject, Vec<&InProject>), String> {
         return Err(Action::SetField.not_here());
     };
     let Some(list) = state.picked::<Capped<InProject>>(&key) else {
-        let failed = state.data.get(&key).and_then(|r| r.error.clone());
+        let failed = state.remote(&key).and_then(|r| r.error.clone());
         return Err(failed.unwrap_or_else(|| "Its projects haven't loaded yet".into()));
     };
     if list.is_empty() {
@@ -86,13 +86,15 @@ fn changeable(state: &State) -> Result<(Subject, Vec<&InProject>), String> {
 /// The menu's row on an issue's or pull request's page.
 pub fn doable(state: &State) -> Option<Doable> {
     here(state)?;
-    Some(Doable {
-        section: "Change",
-        action: Action::SetField,
-        label: "Set a field in its project".into(),
-        short: "set field",
-        unavailable: changeable(state).err(),
-    })
+    let label = "Set a field in its project";
+    let why = changeable(state).err();
+    Some(crate::nav::row(
+        "Change",
+        Action::SetField,
+        label,
+        "set field",
+        why,
+    ))
 }
 
 /// `,f` on an issue or pull request: its field to set, in the one
@@ -102,8 +104,7 @@ pub fn act(state: &mut State) -> Vec<Cmd> {
     let (subject, projects) = match changeable(state) {
         Ok(found) => found,
         Err(why) => {
-            state.info(why);
-            return Vec::new();
+            return state.just_say(why);
         }
     };
     let pick = match projects.as_slice() {
@@ -117,17 +118,10 @@ pub fn act(state: &mut State) -> Vec<Cmd> {
 }
 
 /// The projects to choose from.
-pub fn project_rows(
-    state: &State,
-    subject: &Subject,
-    q: &str,
-) -> Vec<(PaletteItem, Option<Chosen>)> {
+pub fn project_rows(state: &State, subject: &Subject, q: &str) -> crate::picker::Rows {
     let list = key(subject).and_then(|k| state.picked::<Capped<InProject>>(&k));
     let Some(list) = list else {
-        let item = PaletteItem {
-            label: "Its projects haven't loaded yet".into(),
-            hint: String::new(),
-        };
+        let item = crate::picker::item("Its projects haven't loaded yet", "");
         return vec![(item, None)];
     };
     (list.iter())
@@ -146,16 +140,16 @@ pub fn project_rows(
                 on: On::Sidebar(subject.clone(), p.id.clone()),
                 item: p.item.clone(),
             };
-            (item, p.can_update.then_some(Chosen::Project(at)))
+            (item, p.can_update.then(|| super::listing(Pick::Field(at))))
         })
         .collect()
 }
 
 /// What following a change to `about`'s fields fetches again: its
 /// projects, which its sidebar shows.
-pub fn polls(change: &Change, about: &Subject) -> Option<Need> {
+pub fn polls(change: &Change, about: &Subject) -> Option<DataKey> {
     matches!(change, Change::SetProjectField { .. })
-        .then(|| key(about).map(Need::Data))
+        .then(|| key(about))
         .flatten()
 }
 

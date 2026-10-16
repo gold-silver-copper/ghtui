@@ -2,6 +2,7 @@
 //! the status bar.
 
 use super::*;
+use crate::route::{code, issues, pulls, runs, search};
 
 /// Something you can do here.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,18 +16,20 @@ pub struct Doable {
     pub unavailable: Option<String>,
 }
 
-pub(super) fn doable(
+/// A menu row.
+pub(crate) fn row(
     section: &'static str,
     action: Action,
-    label: &str,
+    label: impl Into<String>,
     short: &'static str,
+    unavailable: Option<String>,
 ) -> Doable {
     Doable {
         section,
         action,
-        label: label.to_owned(),
+        label: label.into(),
         short,
-        unavailable: None,
+        unavailable,
     }
 }
 
@@ -114,33 +117,14 @@ impl State {
             Screen::Diff(_) => {
                 for (section, actions) in DIFF_DOABLES {
                     for &(action, short) in *actions {
-                        out.push(doable(section, action, action.description(), short));
+                        out.push(row(section, action, action.description(), short, None));
                     }
                 }
                 None
             }
         };
-        for (action, label, why) in crate::act::doables(self) {
-            let short = match action {
-                Action::Merge => "merge",
-                Action::Approve => "approve",
-                Action::Rerun => "re-run",
-                Action::MarkRead => "read",
-                Action::MarkDone => "done",
-                _ => "",
-            };
-            let mut change = doable("Change", action, &label, short);
-            change.unavailable = why;
-            out.push(change);
-        }
-        out.extend(crate::edit::doables(self));
-        crate::manage::doables(self, &mut out);
-        crate::settings::doables(self, &mut out);
-        out.extend(crate::create::checkout_doable(self));
-        out.extend(crate::writes::change_doables(self));
-        crate::actions::doables(self, &mut out);
-        crate::offline::doables(self, &mut out);
-        let go = |action, label: &str, short| doable("Go", action, label, short);
+        crate::features::offers(self, &mut out);
+        let go = |action, label: &str, short| row("Go", action, label, short, None);
         out.push(go(
             Action::SearchGithub,
             "Search GitHub or go to a page",
@@ -217,7 +201,7 @@ impl State {
             messages.unavailable = Some("nothing yet".into());
         }
         out.push(messages);
-        let tab = |action, label: &str| doable("Tabs", action, label, "");
+        let tab = |action, label: &str| row("Tabs", action, label, "", None);
         out.push(tab(Action::OpenInTab, "Open in a new tab"));
         if self.tab_count() > 1 {
             out.push(tab(Action::NextOpenTab, "Next open tab"));
@@ -248,34 +232,24 @@ impl State {
             Action::Quit,
         ] {
             if contexts.contains(&action.context()) || self.key_here(action).is_some() {
-                out.push(doable("Keys", action, action.description(), ""));
+                out.push(row("Keys", action, action.description(), "", None));
             }
         }
         out
     }
 
     pub(super) fn page_doables(&self, p: &PageScreen, out: &mut Vec<Doable>) {
-        let here = |action, label: &str, short| doable("This page", action, label, short);
+        let here = |action, label: &str, short| row("This page", action, label, short, None);
         let route = &p.route;
         // A file's line is this page, as a log's is: nothing to open.
-        let line = matches!(route, Route::Job { .. }) && p.code_line().is_some();
-        if !matches!(route, Route::Blob { .. }) && !line {
+        let line = matches!(route, Route::Runs(runs::Job { .. })) && p.code_line().is_some();
+        if !matches!(route, Route::Code(code::Blob { .. })) && !line {
             let mut open = here(Action::Open, "Open the selected row", "open");
             match p.selected_link() {
-                // A new issue's or pull request's text box.
-                Some(Link::Comment) if matches!(route, Route::NewIssue(_) | Route::NewPr(_)) => {
-                    open.label = "Write the title and description".into();
-                }
-                Some(Link::Comment) if crate::writes::is_form(route) => {
-                    open.label = "Write it in the composer".into();
-                }
                 Some(link) => {
                     open.label = describe(link);
                     // An artifact or an asset is saved, not opened.
-                    if matches!(
-                        link,
-                        Link::Artifact { .. } | Link::Write(crate::ui::page::WriteLink::Asset(_))
-                    ) {
+                    if matches!(link, Link::Artifact { .. } | Link::Asset(_)) {
                         open.short = "save";
                     }
                 }
@@ -286,11 +260,11 @@ impl State {
         let list = route.search().map(|(_, q)| q);
         // `/` searches the page, or filters a list; then n/N.
         let searched = match route {
-            Route::Job { query, .. } => {
+            Route::Runs(runs::Job { query, .. }) => {
                 out.push(here(Action::Search, "Search the log", "search"));
                 Some(query.clone())
             }
-            _ if route.list_query().is_some() => {
+            _ if route.family().query().is_some() => {
                 out.push(here(Action::Search, "Filter this list", "filter"));
                 None
             }
@@ -316,13 +290,16 @@ impl State {
                 out.push(row);
             }
         }
-        if let Route::Commit { pr: Some(_), .. } = route {
+        if let Route::Code(code::Commit { pr: Some(_), .. }) = route {
             out.push(here(Action::NextCommit, "Next commit", "next commit"));
             out.push(here(Action::PrevCommit, "Previous commit", ""));
         }
-        if matches!(route, Route::Blob { .. } | Route::Blame { .. }) {
+        if matches!(
+            route,
+            Route::Code(code::Blob { .. }) | Route::Code(code::Blame { .. })
+        ) {
             let blame = match route {
-                Route::Blob { .. } => "Blame this line",
+                Route::Code(code::Blob { .. }) => "Blame this line",
                 _ => "Back to the file",
             };
             out.push(here(Action::Blame, blame, "blame"));
@@ -332,14 +309,16 @@ impl State {
                 "",
             ));
         }
-        if let Route::Notifications { query } = route {
+        if let Route::Search(search::Notifications { query }) = route {
             let show = format!("Show {}", next_list_state(route, query));
             out.push(here(Action::ToggleState, &show, "unread/read"));
         }
         // A word cursor moves along a line of code.
         if matches!(
             route,
-            Route::Blob { .. } | Route::Blame { .. } | Route::Job { .. }
+            Route::Code(code::Blob { .. })
+                | Route::Code(code::Blame { .. })
+                | Route::Runs(runs::Job { .. })
         ) {
             let why = (p.word_cursor().is_none()).then(|| "no line of code is selected".to_owned());
             for action in [
@@ -354,7 +333,10 @@ impl State {
             }
         }
         // Code navigation: a file's symbols, and a name's definition.
-        if matches!(route, Route::Blob { .. } | Route::Blame { .. }) {
+        if matches!(
+            route,
+            Route::Code(code::Blob { .. }) | Route::Code(code::Blame { .. })
+        ) {
             out.push(here(Action::Symbols, "Symbols in this file", ""));
             let mut definition = here(Action::Definition, Action::Definition.description(), "");
             if p.word_cursor().is_none() {
@@ -375,35 +357,14 @@ impl State {
                 out.push(here(Action::ToggleState, &show, "open/closed"));
                 out.push(here(Action::Sort, "Change the sort", "sort"));
             }
-            let mut save = here(Action::SaveSection, "Save this list to Home", "");
-            save.unavailable = crate::home::unavailable(self, Action::SaveSection);
-            out.push(save);
-        }
-        if *route == Route::Home {
-            let title = match self.section_here() {
-                Some((_, s)) => format!("“{}”", s.title),
-                None => "the section".to_owned(),
-            };
-            for (action, label) in [
-                (Action::RenameSection, format!("Rename {title}")),
-                (Action::MoveSectionUp, format!("Move {title} up")),
-                (Action::MoveSectionDown, format!("Move {title} down")),
-                (Action::Delete, format!("Remove {title} from Home")),
-                (
-                    Action::UndoDelete,
-                    "Bring back the section removed".to_owned(),
-                ),
-            ] {
-                let mut row = doable("Home", action, &label, "");
-                row.unavailable = crate::home::unavailable(self, action);
-                out.push(row);
-            }
         }
         if let Some(repo) = route.repo() {
             out.push(here(Action::FindFile, "Go to file", "go to file"));
             if matches!(
                 route,
-                Route::Repo(_) | Route::Tree { .. } | Route::Blob { .. }
+                Route::Code(code::Repo(_))
+                    | Route::Code(code::Tree { .. })
+                    | Route::Code(code::Blob { .. })
             ) {
                 out.push(here(Action::Branch, "Switch branches or tags", "branch"));
                 let starred = self.overview(repo).is_some_and(|o| o.starred);
@@ -413,7 +374,9 @@ impl State {
         }
         if matches!(
             route,
-            Route::Issue { .. } | Route::Pr { .. } | Route::Commit { .. }
+            Route::Issues(issues::Issue { .. })
+                | Route::Pulls(pulls::Pr { .. })
+                | Route::Code(code::Commit { .. })
         ) {
             out.push(here(Action::Comment, "Write a comment", "comment"));
             let mut quote = here(Action::QuoteReply, "Reply quoting the selected comment", "");
@@ -422,8 +385,6 @@ impl State {
             }
             out.push(quote);
         }
-        crate::projects::doables(self, out);
-        crate::discuss::doables(self, out);
         // Long reviews fold, in a conversation and on a review's page.
         let folds = p
             .page
@@ -437,14 +398,12 @@ impl State {
                 "fold",
             ));
         }
-        if let Route::Pr { tab, .. } = route {
+        if let Route::Pulls(pulls::Pr { tab, .. }) = route {
             if *tab == PrTab::Conversation {
                 out.push(here(Action::Tab2, "Commits", ""));
             }
             out.push(here(Action::Tab4, "Files changed (review)", ""));
         }
-        crate::create::doables(self, route, out);
-        crate::writes::page_doables(self, route, out);
     }
 
     /// After a count or the first keys of a sequence: what's typed, and
@@ -522,7 +481,7 @@ impl State {
             Some(Overlay::Search(sb)) => {
                 let enter = match self.route() {
                     _ if !sb.filter => "go",
-                    Some(Route::Job { .. }) => "search",
+                    Some(Route::Runs(runs::Job { .. })) => "search",
                     _ => "filter",
                 };
                 return vec![
@@ -562,8 +521,16 @@ impl State {
                     | Kind::Form(_)
                     | Kind::Project(_)
                     | Kind::Alert(_)
-                    | Kind::Write(_)
-                    | Kind::Actions(_)
+                    | Kind::Watch(_)
+                    | Kind::Tag(_)
+                    | Kind::Target(_)
+                    | Kind::SaveAsset(_)
+                    | Kind::Upload(_)
+                    | Kind::Description(_)
+                    | Kind::FileName(..)
+                    | Kind::Site(_)
+                    | Kind::Housekeeping(_)
+                    | Kind::Workflows(_)
                     | Kind::Manage(_)
                     | Kind::Settings(_) => "choose",
                     Kind::Code { .. } => "go there",
@@ -649,9 +616,15 @@ impl State {
                 out.push((Action::Open, "edit".to_owned()));
                 out.push((Action::Delete, "delete".to_owned()));
             }
-            Some(_) => {
-                out.push((Action::Comment, "reply".to_owned()));
-                out.push((Action::ResolveThread, "resolve".to_owned()));
+            Some(a) => {
+                if a.can_reply {
+                    out.push((Action::Comment, "reply".to_owned()));
+                }
+                if a.resolved && a.can_unresolve {
+                    out.push((Action::ResolveThread, "unresolve".to_owned()));
+                } else if !a.resolved && a.can_resolve {
+                    out.push((Action::ResolveThread, "resolve".to_owned()));
+                }
             }
             None => {}
         }
@@ -706,9 +679,9 @@ pub(super) fn describe(link: &Link) -> String {
         Link::FindFile => "Go to file".into(),
         Link::Quote { .. } => "Quote reply".into(),
         Link::Section(_) => "Open the section's list".into(),
-        Link::Form(link) => crate::create::describe(link).into(),
-        Link::Write(link) => crate::writes::describe(link).into(),
-        Link::Artifact { .. } | Link::Dispatch(_) => crate::actions::describe(link).into(),
+        Link::Form(row) => row.describe().into(),
+        Link::Artifact { .. } => "Save the artifact".into(),
+        Link::Asset(_) => "Save the asset".into(),
         Link::Review(link) => crate::talk::describe(link).into(),
         Link::Setting(link) => crate::settings::describe(link).into(),
         Link::Queued(_) => "Open the page it was written on".into(),

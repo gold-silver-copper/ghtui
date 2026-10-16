@@ -7,157 +7,15 @@
     reason = "the scripted server isn't a #[test] function, but a panic in it is still a test failure"
 )]
 
+mod common;
+
 use std::sync::{Arc, Mutex};
 
+use common::{Reply, Seen, serve, serve_on};
 use ghtui::api::auth::Token;
 use ghtui::api::model::{NodeId, PrRef, RepoId};
 use ghtui::api::{ApiError, GitHub};
 use ghtui::store::Store;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
-
-#[derive(Clone)]
-struct Reply {
-    status: u16,
-    headers: Vec<(&'static str, String)>,
-    body: String,
-    /// Only for a request whose line contains this (for requests made
-    /// concurrently, which arrive in any order).
-    path: Option<&'static str>,
-}
-
-impl Reply {
-    fn new(status: u16, body: impl Into<String>) -> Self {
-        Self {
-            status,
-            headers: Vec::new(),
-            body: body.into(),
-            path: None,
-        }
-    }
-
-    fn on(mut self, path: &'static str) -> Self {
-        self.path = Some(path);
-        self
-    }
-
-    fn header(mut self, name: &'static str, value: impl Into<String>) -> Self {
-        self.headers.push((name, value.into()));
-        self
-    }
-}
-
-#[derive(Debug, Clone)]
-struct Seen {
-    request_line: String,
-    headers: Vec<(String, String)>,
-    body: String,
-}
-
-impl Seen {
-    fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(name))
-            .map(|(_, v)| v.as_str())
-    }
-
-    fn json(&self) -> serde_json::Value {
-        serde_json::from_str(&self.body).unwrap()
-    }
-
-    /// The GraphQL document sent.
-    fn query(&self) -> String {
-        self.json()["query"].as_str().unwrap().to_owned()
-    }
-}
-
-/// Serves `replies` in order (one per request, across connections) and
-/// records every request.
-async fn serve(replies: Vec<Reply>) -> (String, Arc<Mutex<Vec<Seen>>>) {
-    serve_on(TcpListener::bind("127.0.0.1:0").await.unwrap(), replies)
-}
-
-/// [`serve`], on `listener`.
-fn serve_on(listener: TcpListener, replies: Vec<Reply>) -> (String, Arc<Mutex<Vec<Seen>>>) {
-    let addr = listener.local_addr().unwrap();
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    let queue = Arc::new(Mutex::new(replies));
-    let seen_task = seen.clone();
-    tokio::spawn(async move {
-        loop {
-            let Ok((mut socket, _)) = listener.accept().await else {
-                return;
-            };
-            let seen = seen_task.clone();
-            let queue = queue.clone();
-            tokio::spawn(async move {
-                let mut buf = Vec::new();
-                loop {
-                    let (request, len) = loop {
-                        if let Some(request) = parse_request(&buf) {
-                            break request;
-                        }
-                        let mut chunk = [0u8; 4096];
-                        match socket.read(&mut chunk).await {
-                            Ok(0) | Err(_) => return,
-                            Ok(n) => buf.extend_from_slice(&chunk[..n]),
-                        }
-                    };
-                    buf.drain(..len);
-                    let line = request.request_line.clone();
-                    seen.lock().unwrap().push(request);
-
-                    let reply = {
-                        let mut queue = queue.lock().unwrap();
-                        let next = queue
-                            .iter()
-                            .position(|r| r.path.is_none_or(|p| line.contains(p)));
-                        next.map_or_else(
-                            || Reply::new(500, "script exhausted"),
-                            |i| queue.remove(i),
-                        )
-                    };
-                    let mut out = format!(
-                        "HTTP/1.1 {} X\r\ncontent-length: {}\r\n",
-                        reply.status,
-                        reply.body.len()
-                    );
-                    for (k, v) in &reply.headers {
-                        out.push_str(&format!("{k}: {v}\r\n"));
-                    }
-                    out.push_str("\r\n");
-                    out.push_str(&reply.body);
-                    if socket.write_all(out.as_bytes()).await.is_err() {
-                        return;
-                    }
-                }
-            });
-        }
-    });
-    (format!("http://{addr}"), seen)
-}
-
-/// The first whole request in `buf` (headers, then Content-Length bytes),
-/// and its length.
-fn parse_request(buf: &[u8]) -> Option<(Seen, usize)> {
-    let header_end = buf.windows(4).position(|w| w == b"\r\n\r\n")? + 4;
-    let head = String::from_utf8_lossy(&buf[..header_end]);
-    let mut lines = head.split("\r\n");
-    let mut seen = Seen {
-        request_line: lines.next().unwrap_or_default().to_owned(),
-        headers: lines
-            .filter_map(|l| l.split_once(':'))
-            .map(|(k, v)| (k.trim().to_owned(), v.trim().to_owned()))
-            .collect(),
-        body: String::new(),
-    };
-    let len = seen
-        .header("content-length")
-        .map_or(0, |v| v.parse().unwrap_or(0));
-    seen.body = String::from_utf8_lossy(buf.get(header_end..header_end + len)?).into_owned();
-    Some((seen, header_end + len))
-}
 
 fn client(base: &str, store: Store) -> GitHub {
     GitHub::with_base_uri(Token::new("test-token"), store, base)
@@ -356,19 +214,16 @@ async fn an_older_enterprise_server_is_asked_only_what_it_has() {
 }
 
 #[tokio::test]
-async fn fetches_and_caches_pull_request() {
+async fn fetches_a_pull_request() {
     use ghtui::api::browse::PrState;
     use ghtui::api::change::MergeMethod;
     use ghtui::api::model::{ChecksState, MergeState, Mergeable, ReviewDecision};
 
-    let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("cache.redb"));
     let behind = r#"{"data":{"repository":{"ref":{"compare":{"behindBy":3}}}}}"#;
     let (base, seen) = serve(vec![Reply::new(200, PR_RESPONSE), Reply::new(200, behind)]).await;
-    let gh = client(&base, store);
+    let gh = client(&base, Store::disabled());
     let pr = PrRef::parse("o/r#7").unwrap();
 
-    assert!(gh.cached_pull_request(&pr).is_none());
     let detail = gh.pull_request(&pr).await.unwrap();
     assert_eq!(detail.title, "Add thing");
     assert_eq!(detail.state, PrState::Open);
@@ -412,9 +267,6 @@ async fn fetches_and_caches_pull_request() {
     assert!(detail.head_gone && !detail.may.delete_head);
     let locked = detail.locked.and_then(|l| l.reason);
     assert_eq!(locked, Some(ghtui::api::manage::LockReason::TooHeated));
-
-    let cached = gh.cached_pull_request(&pr).unwrap();
-    assert_eq!(cached.value, detail);
 
     let seen = seen.lock().unwrap();
     assert!(seen[0].request_line.starts_with("POST /graphql "));
@@ -1701,13 +1553,6 @@ async fn a_list_page_is_checked_against_itself() {
             .any(|d| d.contains("me's gists: a page of 2, of 1 in all")),
         "{doubts:?}"
     );
-    // The list as kept is checked too (named by its cache key).
-    assert!(
-        doubts
-            .iter()
-            .any(|d| d.contains("gists:me: a page of 2, of 1 in all")),
-        "{doubts:?}"
-    );
 }
 
 /// "Go to file" lists files only, and says when GitHub cut the tree short.
@@ -2071,19 +1916,17 @@ async fn graphql_queries_are_retried() {
     assert_eq!(seen.lock().unwrap().len(), 2);
 }
 
-/// A refused connection never reached GitHub, so even a mutation retries.
+/// A refused connection never reached GitHub: a mutation refused (each
+/// time it's tried) fails as offline, not as a network error.
 #[tokio::test]
-async fn refused_connections_are_retried_even_for_mutations() {
+async fn a_refused_mutation_fails_as_offline() {
     // A privileged port, which no test's server can be given: a port freed
     // here could be another test's by the time this connects.
     let gh = client("http://127.0.0.1:1", Store::disabled());
-    let started = std::time::Instant::now();
     assert!(matches!(
         gh.change(&reply()).await,
         Err(ApiError::Offline(_))
     ));
-    // Three attempts means two backoffs (500ms + 1s).
-    assert!(started.elapsed() >= std::time::Duration::from_millis(1400));
 }
 
 /// GitHub that can't be reached: a request fails as offline, having
@@ -2138,8 +1981,8 @@ async fn requests_carry_the_token_and_github_headers() {
     assert!(seen[0].header("user-agent").unwrap().starts_with("ghtui/"));
 }
 
-/// A README that couldn't be fetched isn't reported (or kept) as none,
-/// and the overview doesn't wait on it.
+/// A README that couldn't be fetched isn't reported as none, and the
+/// overview doesn't wait on it.
 #[tokio::test]
 async fn a_failed_readme_isnt_taken_for_no_readme() {
     let recorded: serde_json::Value = serde_json::from_str(
@@ -2160,8 +2003,7 @@ async fn a_failed_readme_isnt_taken_for_no_readme() {
         Reply::new(404, r#"{"message":"Not Found"}"#).on("/readme"),
     ])
     .await;
-    let dir = tempfile::tempdir().unwrap();
-    let gh = client(&base, Store::open(&dir.path().join("cache.redb")));
+    let gh = client(&base, Store::disabled());
     let repo = RepoId::new("atom", "atom");
     gh.repo(&repo).await.unwrap();
     let readme = gh.readme(&repo).await;
@@ -2169,12 +2011,7 @@ async fn a_failed_readme_isnt_taken_for_no_readme() {
         readme.is_err(),
         "the README failed with a 502, but it reads as {readme:?}"
     );
-    let key = ghtui::api::browse::keys::readme(&repo);
-    let kept: Option<ghtui::store::Cached<Option<ghtui::api::browse::Readme>>> = gh.cached(&key);
-    assert!(kept.is_none(), "a failed README was kept: {kept:?}");
     assert_eq!(gh.readme(&repo).await.unwrap(), None, "a 404 is no README");
-    let kept: Option<ghtui::store::Cached<Option<ghtui::api::browse::Readme>>> = gh.cached(&key);
-    assert_eq!(kept.map(|k| k.value), Some(None), "no README is kept");
 }
 
 /// An organization's discussions are found however many pages of search

@@ -279,9 +279,7 @@ pub async fn checkout(
 mod tests {
     use super::*;
 
-    async fn git(dir: &Path, args: &[&str]) -> String {
-        run(Some(dir), args).await.unwrap()
-    }
+    use crate::git::set_up as git;
 
     /// A repository with one commit, as a known person.
     async fn repo(dir: &Path) {

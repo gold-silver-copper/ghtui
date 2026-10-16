@@ -1,26 +1,28 @@
 //! Putting a repository in your starred lists or taking it out (`,B`,
 //! GitHub's star button's list menu), making a list on the way, and
 //! deleting one of your lists (`,D` on its page). Each goes to GitHub in
-//! the background ([`crate::writes`]), and the page follows GitHub until
+//! the background ([`crate::work`]), and the page follows GitHub until
 //! it shows the change.
 
-use crate::api::GitHub;
 use crate::api::lists::{ListPage, MyLists, StarList};
 use crate::api::model::{Capped, NodeId, RepoId};
-use crate::browse::{Need, Picked};
+use crate::data::Picked;
+use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
-use crate::nav::Doable;
+use crate::nav::{Doable, row};
 use crate::picker::fuzzy_score;
-use crate::route::Route;
+use crate::picker::{Choice, entry};
+use crate::route::{Route, people};
 use crate::state::{Cmd, Remote, State};
-use crate::writes::{Chosen, Pick, item, row};
+use crate::work::{self, Cx, Failure, Job};
 
-use super::{Key, Page, site};
+use super::Page;
+use crate::data::DataKey;
 
 /// What's sent: the lists a repository is to be in, after making a new
 /// one if asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Work {
+pub struct SetLists {
     pub repo: RepoId,
     pub item: NodeId,
     /// Every list of yours it's to be in.
@@ -34,27 +36,14 @@ pub struct Work {
 
 /// Deleting one of your lists.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Delete {
+pub struct DeleteList {
     pub login: String,
     pub slug: String,
     pub id: NodeId,
     pub name: String,
 }
 
-impl Work {
-    pub async fn run(self, gh: &GitHub) -> Result<(), String> {
-        let mut lists = self.lists.clone();
-        if let Some(name) = &self.create {
-            let id = gh
-                .create_list(name)
-                .await
-                .map_err(|e| crate::writes::reason(&e))?;
-            lists.push(id);
-        }
-        let set = gh.set_lists(&self.item, &lists).await;
-        set.map_err(|e| crate::writes::reason(&e))
-    }
-
+impl SetLists {
     /// What it does, as the status bar says it.
     fn said(&self) -> String {
         match (&self.create, self.add) {
@@ -63,13 +52,13 @@ impl Work {
             (None, false) => format!("Took {} out of “{}”", self.repo, self.list),
         }
     }
-}
 
-impl Delete {
-    pub async fn run(self, gh: &GitHub) -> Result<(), String> {
-        gh.delete_list(&self.id)
-            .await
-            .map_err(|e| crate::writes::reason(&e))
+    /// The picker's row that sends it.
+    fn chosen(self) -> Choice {
+        Choice::Step(crate::act::Step::Start(
+            format!("{}…", self.said()),
+            self.into(),
+        ))
     }
 }
 
@@ -86,29 +75,29 @@ pub enum Expected {
     Gone { login: String, slug: String },
 }
 
-impl Expected {
-    pub fn needs(&self) -> Vec<Need> {
+impl Expectation for Expected {
+    fn needs(&self, _: &State, _: &Route) -> Vec<DataKey> {
         match self {
             Expected::Membership { repo, .. } => {
-                vec![Need::Data(site(Key::MyLists(repo.clone())))]
+                vec![DataKey::MyLists(repo.clone())]
             }
             Expected::Gone { login, .. } => {
-                vec![Need::Data(site(Key::StarLists(login.to_lowercase())))]
+                vec![DataKey::StarLists(login.to_lowercase())]
             }
         }
     }
 
-    pub fn waiting(&self) -> &'static str {
+    fn waiting(&self) -> &'static str {
         match self {
             Expected::Membership { .. } => "Waiting for GitHub to show the list",
             Expected::Gone { .. } => "Waiting for GitHub to show the list gone",
         }
     }
 
-    pub fn shown(&self, state: &State) -> bool {
+    fn shown(&self, state: &State, _: &Route) -> Shown {
         match self {
             Expected::Membership { repo, list, add } => state
-                .picked::<MyLists>(&site(Key::MyLists(repo.clone())))
+                .picked::<MyLists>(&DataKey::MyLists(repo.clone()))
                 .is_some_and(|m| {
                     m.lists
                         .iter()
@@ -116,9 +105,10 @@ impl Expected {
                         || (!add && m.lists.iter().all(|l| l.name != *list))
                 }),
             Expected::Gone { login, slug } => state
-                .picked::<Capped<StarList>>(&site(Key::StarLists(login.to_lowercase())))
+                .picked::<Capped<StarList>>(&DataKey::StarLists(login.to_lowercase()))
                 .is_some_and(|lists| lists.iter().all(|l| l.slug != *slug)),
         }
+        .into()
     }
 }
 
@@ -132,32 +122,25 @@ fn subject(state: &State) -> Option<RepoId> {
 #[must_use]
 pub fn open(state: &mut State) -> Vec<Cmd> {
     let Some(repo) = subject(state) else {
-        state.info(Action::Lists.not_here());
-        return Vec::new();
+        return state.just_say(Action::Lists.not_here());
     };
-    let mut cmds = state.ensure(Need::Data(site(Key::MyLists(repo.clone()))), true);
-    cmds.extend(crate::writes::open_picker(
-        state,
-        Pick::Site(super::Pick::Lists(repo)),
-    ));
+    let mut cmds = state.ensure(DataKey::MyLists(repo.clone()), true);
+    let pick = crate::picker::Kind::Site(super::Pick::Lists(repo));
+    cmds.extend(state.open_picker(pick));
     cmds
 }
 
 /// The picker's rows: each of your lists that fits what's typed, checked
 /// if the repository's in it; and, for a name no list has, making it.
-pub fn rows(
-    state: &State,
-    repo: &RepoId,
-    q: &str,
-) -> Vec<(crate::ui::overlays::PaletteItem, Option<Chosen>)> {
-    let key = site(Key::MyLists(repo.clone()));
+pub fn rows(state: &State, repo: &RepoId, q: &str) -> crate::picker::Rows {
+    let key = DataKey::MyLists(repo.clone());
     #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
-    let fetched = Remote::fetched(state.data.get(&key), "")
+    let fetched = Remote::fetched(state.remote(&key), "")
         .pick(<MyLists as Picked>::pick)
         .text("your lists");
     let mine = match fetched {
         Ok(m) => m,
-        Err(why) => return vec![item(why, "", None)],
+        Err(why) => return vec![entry(why, "", None)],
     };
     let ids = |except: Option<&NodeId>| -> Vec<NodeId> {
         (mine.lists.iter())
@@ -177,13 +160,13 @@ pub fn rows(
             let label = format!("{mark} {}", l.name);
             let Some(has) = l.has else {
                 let hint = "too long for ghtui to say whether it's in it";
-                return item(label, hint, None);
+                return entry(label, hint, None);
             };
             let mut lists = ids(Some(&l.id));
             if !has {
                 lists.push(l.id.clone());
             }
-            let work = Work {
+            let work = SetLists {
                 repo: repo.clone(),
                 item: mine.repo.clone(),
                 lists,
@@ -191,7 +174,7 @@ pub fn rows(
                 list: l.name.clone(),
                 add: !has,
             };
-            item(label, hint, Some(Chosen::Site(super::Chosen::Lists(work))))
+            entry(label, hint, Some(work.chosen()))
         })
         .collect();
     let name = q.trim();
@@ -201,7 +184,7 @@ pub fn rows(
             .iter()
             .all(|l| !l.name.eq_ignore_ascii_case(name))
     {
-        let work = Work {
+        let work = SetLists {
             repo: repo.clone(),
             item: mine.repo.clone(),
             lists: ids(None),
@@ -210,75 +193,70 @@ pub fn rows(
             add: true,
         };
         let label = format!("+ Make the list “{name}” and add it");
-        rows.push(item(
-            label,
-            "↵",
-            Some(Chosen::Site(super::Chosen::Lists(work))),
-        ));
+        rows.push(entry(label, "↵", Some(work.chosen())));
     }
     if mine.lists.left_out() > 0 {
         let n = mine.lists.left_out();
-        rows.push(item(
+        rows.push(entry(
             format!("{n} more lists on GitHub, not listed"),
             "",
             None,
         ));
     }
     if rows.is_empty() {
-        rows.push(item("You have no lists: type a name to make one", "", None));
+        rows.push(entry(
+            "You have no lists: type a name to make one",
+            "",
+            None,
+        ));
     }
     rows
 }
 
-/// Sends a list chosen in the picker.
-#[must_use]
-pub fn choose(state: &mut State, work: Work) -> Vec<Cmd> {
-    state.info(format!("{}…", work.said()));
-    vec![Cmd::Write(crate::writes::Work::Site(super::Work::Lists(
-        work,
-    )))]
-}
+impl Job for SetLists {
+    type Out = ();
 
-/// GitHub's answer: your lists are read again until they show it.
-#[must_use]
-pub fn on_done(state: &mut State, work: Work, result: Result<(), String>) -> Vec<Cmd> {
-    match result {
-        Ok(()) => {
-            state.info(work.said());
-            if let Some(route) = state.route().cloned() {
-                let what = Expected::Membership {
-                    repo: work.repo.clone(),
-                    list: work.list.clone(),
-                    add: work.add,
-                };
-                crate::writes::expect(
-                    state,
-                    route,
-                    crate::writes::Expected::Site(super::Expected::Lists(what)),
-                );
-            }
-            let mut cmds = state.ensure(Need::Data(site(Key::MyLists(work.repo))), true);
-            cmds.extend(state.load_visible(false));
-            cmds
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        let gh = &cx.gh;
+        let mut lists = self.lists.clone();
+        if let Some(name) = &self.create {
+            lists.push(gh.create_list(name).await?);
         }
-        Err(why) => {
-            state.error(refused("change your lists", &why));
-            Vec::new()
+        Ok(gh.set_lists(&self.item, &lists).await?)
+    }
+
+    /// GitHub's answer: your lists are read again until they show it.
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        let work = self;
+        match result {
+            Ok(()) => {
+                state.info(work.said());
+                if let Some(route) = state.route().cloned() {
+                    let what = Expected::Membership {
+                        repo: work.repo.clone(),
+                        list: work.list.clone(),
+                        add: work.add,
+                    };
+                    crate::follow::expect(state, route, what);
+                }
+                let mut cmds = state.ensure(DataKey::MyLists(work.repo), true);
+                cmds.extend(state.load_visible(false));
+                cmds
+            }
+            Err(why) => {
+                state.error(refused("change your lists", &why));
+                Vec::new()
+            }
         }
     }
 }
 
 /// What GitHub's refusal to `what` means: changing lists takes a
 /// classic token's `user` scope, which gh doesn't ask for.
-fn refused(what: &str, why: &str) -> String {
+fn refused(what: &str, why: &Failure) -> String {
+    let why = why.to_string();
     if why.contains("['user']") {
-        let flag = match crate::host::current() {
-            h if h.is_enterprise() => format!("--hostname {} ", h.name()),
-            _ => String::new(),
-        };
-        format!(
-            "Changing your lists takes your token's user scope, which it lacks: `gh auth refresh {flag}-s user` adds it"
-        )
+        crate::api::scope_missing("Changing your lists", "user")
     } else {
         format!("GitHub didn't {what}: {why}")
     }
@@ -288,7 +266,7 @@ fn refused(what: &str, why: &str) -> String {
 fn yours<'a>(state: &'a State, login: &str) -> Result<&'a ListPage, String> {
     let route = state.route().cloned();
     let list = route
-        .and_then(|r| crate::browse::paged(&r))
+        .and_then(|r| r.family().paged())
         .and_then(|k| state.picked::<ListPage>(&k));
     let Some(list) = list else {
         return Err("it hasn't loaded yet".into());
@@ -311,8 +289,7 @@ pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
     let list = match yours(state, login) {
         Ok(l) => l.list.clone(),
         Err(why) => {
-            state.info(format!("Can't delete the list: {why}"));
-            return Vec::new();
+            return state.just_say(format!("Can't delete the list: {why}"));
         }
     };
     let n = list.count;
@@ -323,14 +300,14 @@ pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
         ),
         true,
     )];
-    crate::writes::ask(
+    crate::forms::ask(
         state,
         route,
         format!("Delete the list “{}”?", list.name),
         facts,
         vec![(
             "Delete list".into(),
-            crate::writes::Answer::Site(super::Answer::DeleteList),
+            crate::forms::Answer::Site(super::Answer::DeleteList),
         )],
     );
     Vec::new()
@@ -345,46 +322,49 @@ pub fn delete(state: &mut State, route: &Route) -> Vec<Cmd> {
     let Ok(list) = yours(state, login).map(|l| l.list.clone()) else {
         return Vec::new();
     };
-    crate::writes::sending(state);
-    let delete = Delete {
+    crate::forms::sending(state);
+    let delete = DeleteList {
         login: login.clone(),
         slug: slug.clone(),
         id: list.id,
         name: list.name,
     };
-    vec![Cmd::Write(crate::writes::Work::Site(
-        super::Work::DeleteList(delete),
-    ))]
+    work::start(delete)
 }
 
-/// GitHub's answer to deleting a list: your Stars follow until it's gone.
-#[must_use]
-pub fn on_deleted(state: &mut State, d: Delete, result: Result<(), String>) -> Vec<Cmd> {
-    let route = Route::Site(Page::StarList {
-        login: d.login.clone(),
-        slug: d.slug.clone(),
-    });
-    match result {
-        Ok(()) => {
-            crate::writes::close_sender(state, &route);
-            state.info(format!("Deleted the list “{}”", d.name));
-            if state.route() != Some(&route) {
-                return Vec::new();
+impl Job for DeleteList {
+    type Out = ();
+
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        Ok(cx.gh.delete_list(&self.id).await?)
+    }
+
+    /// GitHub's answer to deleting a list: your Stars follow until it's gone.
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        let d = self;
+        let route = Route::Site(Page::StarList {
+            login: d.login.clone(),
+            slug: d.slug.clone(),
+        });
+        match result {
+            Ok(()) => {
+                crate::forms::close_sender(state, &route);
+                state.info(format!("Deleted the list “{}”", d.name));
+                if state.route() != Some(&route) {
+                    return Vec::new();
+                }
+                let stars = Route::People(people::User {
+                    login: d.login.clone(),
+                    tab: crate::ui::pages::ProfileTab::Stars,
+                });
+                let gone = Expected::Gone {
+                    login: d.login,
+                    slug: d.slug,
+                };
+                crate::follow::expect(state, stars.clone(), gone);
+                state.replace(stars, true, None)
             }
-            let stars = Route::User {
-                login: d.login.clone(),
-                tab: crate::ui::pages::ProfileTab::Stars,
-            };
-            let gone = super::Expected::Lists(Expected::Gone {
-                login: d.login,
-                slug: d.slug,
-            });
-            crate::writes::expect(state, stars.clone(), crate::writes::Expected::Site(gone));
-            state.replace(stars, true, None)
-        }
-        Err(why) => {
-            crate::writes::say(state, refused("delete the list", &why));
-            Vec::new()
+            Err(why) => crate::forms::say(state, refused("delete the list", &why)),
         }
     }
 }

@@ -19,7 +19,7 @@ use crate::api::ApiError;
 use crate::api::change::Change;
 use crate::api::model::PrRef;
 use crate::keymap::Action;
-use crate::route::{Dest, Route};
+use crate::route::{Dest, Route, app};
 use crate::state::{Cmd as Do, Overlay, Screen, State, Timer};
 use crate::ui::page::Link;
 
@@ -88,6 +88,11 @@ impl Offline {
 
 #[must_use]
 pub fn on_msg(state: &mut State, msg: Msg) -> Vec<Do> {
+    // Pages show whether GitHub can be reached, the queue and what's
+    // kept; not how often it's asked.
+    if !matches!(msg, Msg::Probed(_)) {
+        state.shown_gen += 1;
+    }
     match msg {
         Msg::Reach(Some(since)) => {
             state.offline.since = Some(since);
@@ -156,10 +161,10 @@ pub fn queue_change(
     state: &mut State,
     change: &Change,
     by: &By,
-    err: &ApiError,
+    err: &crate::work::Failure,
     sender: bool,
 ) -> Option<Vec<Do>> {
-    let ApiError::Offline(_) = err else {
+    let Some(ApiError::Offline(_)) = err.api() else {
         return None;
     };
     let write = queue::Write::of(change)?;
@@ -168,12 +173,7 @@ pub fn queue_change(
         _ => here(state),
     };
     // What sent it is done with it: it's in the queue now.
-    if sender
-        && matches!(
-            state.overlay,
-            Some(Overlay::Compose(_) | Overlay::Confirm(_))
-        )
-    {
+    if sender && matches!(state.overlay, Some(Overlay::Compose(_) | Overlay::Ask(_))) {
         state.overlay = None;
     }
     state.info(format!(
@@ -260,15 +260,24 @@ fn selected(state: &State) -> Option<&queue::Entry> {
 }
 
 /// Whether `action` is offline's here.
-pub fn claims(state: &State, action: Action) -> bool {
+/// What working offline adds: its own actions, and on the Offline page
+/// and while GitHub can't be reached, others' (refreshing, copying).
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &[Action::Offline, Action::KeepOffline],
+    takes,
+    act,
+    offers: doables,
+    ..crate::features::Feature::NONE
+};
+
+fn takes(state: &State, action: Action) -> bool {
     match action {
-        Action::Offline | Action::KeepOffline => true,
         Action::Refresh => state.offline.since.is_some(),
         // Where the write was thrown away: elsewhere, it's a draft's or a
         // Home section's.
         Action::UndoDelete => state.offline.discarded.as_ref().is_some_and(|e| {
             let here = state.route();
-            here == Some(&Route::Offline) || here.is_some_and(|r| r.url() == e.page)
+            here == Some(&Route::App(app::Offline)) || here.is_some_and(|r| r.url() == e.page)
         }),
         Action::Rerun | Action::Delete | Action::Copy => selected(state).is_some(),
         _ => false,
@@ -278,11 +287,10 @@ pub fn claims(state: &State, action: Action) -> bool {
 #[must_use]
 pub fn act(state: &mut State, action: Action) -> Vec<Do> {
     match action {
-        Action::Offline if state.route() == Some(&Route::Offline) => {
-            state.info("This is the Offline page");
-            Vec::new()
+        Action::Offline if state.route() == Some(&Route::App(app::Offline)) => {
+            state.just_say("This is the Offline page")
         }
-        Action::Offline => state.push(Route::Offline),
+        Action::Offline => state.push(Route::App(app::Offline)),
         Action::KeepOffline => keep(state),
         // Asked now, besides fetching again.
         Action::Refresh => {
@@ -316,10 +324,7 @@ fn on_entry(state: &mut State, action: Action, entry: queue::Entry) -> Vec<Do> {
                 state.info(format!("Copied the text of {}", what.to_lowercase()));
                 vec![Do::Copy(text)]
             }
-            None => {
-                state.info(format!("{what} has no text to copy"));
-                Vec::new()
-            }
+            None => state.just_say(format!("{what} has no text to copy")),
         },
         Action::Rerun => match entry.status {
             queue::Status::Refused(_) | queue::Status::Unsure(_) => {
@@ -327,13 +332,11 @@ fn on_entry(state: &mut State, action: Action, entry: queue::Entry) -> Vec<Do> {
                 vec![Do::Offline(Cmd::Queue(queue::Op::Retry(entry.id)))]
             }
             queue::Status::Queued | queue::Status::Sending => {
-                state.info(format!("{what} is queued already"));
-                Vec::new()
+                state.just_say(format!("{what} is queued already"))
             }
         },
         Action::Delete if entry.status == queue::Status::Sending => {
-            state.info(format!("{what} is on its way to GitHub"));
-            Vec::new()
+            state.just_say(format!("{what} is on its way to GitHub"))
         }
         Action::Delete => {
             let undo = state.first_key(Action::UndoDelete);
@@ -349,8 +352,7 @@ fn on_entry(state: &mut State, action: Action, entry: queue::Entry) -> Vec<Do> {
 /// Keeps the repository on screen to read offline, or stops.
 fn keep(state: &mut State) -> Vec<Do> {
     let Some(repo) = state.route().and_then(Route::repo).cloned() else {
-        state.info("Keep offline works on a repository's pages");
-        return Vec::new();
+        return state.just_say("Keep offline works on a repository's pages");
     };
     if state.offline.keeps(&repo).is_some() {
         state.offline.kept.retain(|k| k.repo != repo);
@@ -375,11 +377,10 @@ pub fn follow(state: &mut State, id: u64) -> Vec<Do> {
             state.first_key(Action::Rerun),
             state.first_key(Action::Copy),
         );
-        state.info(format!(
+        return state.just_say(format!(
             "{} · {retry} sends a refused one again · {copy} copies its text",
             entry.write.what()
         ));
-        return Vec::new();
     }
     let page = entry.page.clone();
     state.go(Dest::from_url(&page))
@@ -387,14 +388,7 @@ pub fn follow(state: &mut State, id: u64) -> Vec<Do> {
 
 /// The Space menu's offline rows.
 pub fn doables(state: &State, out: &mut Vec<crate::nav::Doable>) {
-    use crate::nav::Doable;
-    let row = |action: Action, label: String| Doable {
-        section: "Offline",
-        action,
-        label,
-        short: "",
-        unavailable: None,
-    };
+    let row = |action, label| crate::nav::row("Offline", action, label, "", None);
     if let Some(entry) = selected(state) {
         let what = entry.write.what().to_lowercase();
         let mut again = row(Action::Rerun, format!("Send {what} again"));
@@ -417,13 +411,8 @@ pub fn doables(state: &State, out: &mut Vec<crate::nav::Doable>) {
         out.push(row(Action::KeepOffline, label));
     }
     // First of the menu's Go rows, which follow.
-    if state.route() != Some(&Route::Offline) {
-        out.push(Doable {
-            section: "Go",
-            ..row(
-                Action::Offline,
-                "Offline: what's queued for GitHub, and what's kept".into(),
-            )
-        });
+    if state.route() != Some(&Route::App(app::Offline)) {
+        let label = "Offline: what's queued for GitHub, and what's kept";
+        out.push(crate::nav::row("Go", Action::Offline, label, "", None));
     }
 }

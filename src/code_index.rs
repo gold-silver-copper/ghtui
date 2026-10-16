@@ -26,6 +26,7 @@ use crate::git::blobs::BlobReader;
 use crate::git::index::{TreeFile, resolve, tree_files};
 use crate::git::repo::Repo;
 use crate::git::{GitError, Oid};
+use crate::runtime::blocking;
 
 /// The limits of one build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -638,25 +639,12 @@ fn load(file: &Path) -> Option<Index> {
     })
 }
 
-/// Runs `f` on the blocking pool; a panic there is resumed here.
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
-    match tokio::task::spawn_blocking(f).await {
-        Ok(value) => value,
-        Err(err) => match err.try_into_panic() {
-            Ok(panic) => std::panic::resume_unwind(panic),
-            Err(err) => std::panic::resume_unwind(Box::new(err.to_string())),
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::git::credentials::Credentials;
 
-    async fn git(dir: &Path, args: &[&str]) -> String {
-        crate::git::run(Some(dir), args).await.unwrap()
-    }
+    use crate::git::set_up as git;
 
     async fn commit(dir: &Path, files: &[(&str, &str)]) -> String {
         for (path, text) in files {

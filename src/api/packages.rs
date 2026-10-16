@@ -208,17 +208,9 @@ pub fn install(p: &PackageRef, repo: Option<&RepoId>, version: &Version) -> Vec<
 /// What a refusal of packages means, given the token's scopes (when
 /// GitHub said them).
 fn refusal(status: u16, message: &str, scopes: Option<&str>, deleting: bool) -> Option<String> {
-    let has = |scope: &str| scopes.is_some_and(|s| s.split(',').any(|s| s.trim() == scope));
+    let has = |scope: &str| scopes.is_some_and(|s| crate::api::has_scope(s, scope));
     let reads = has("read:packages") || has("write:packages");
-    let flag = match crate::host::current() {
-        h if h.is_enterprise() => format!("--hostname {} ", h.name()),
-        _ => String::new(),
-    };
-    let lacks = |scope: &str| {
-        format!(
-            "Packages take your token's {scope} scope, which it lacks: `gh auth refresh {flag}-s {scope}` adds it"
-        )
-    };
+    let lacks = |scope: &str| crate::api::scope_missing("Packages", scope);
     match (status, scopes) {
         (401 | 403, Some(_)) if !reads => Some(lacks("read:packages")),
         (401 | 403, Some(_)) if deleting && !has("delete:packages") => {
@@ -231,53 +223,16 @@ fn refusal(status: u16, message: &str, scopes: Option<&str>, deleting: bool) -> 
     }
 }
 
-pub mod keys {
-    use super::{PackageRef, PackagesOf};
-
-    pub fn packages(of: &PackagesOf) -> String {
-        match of {
-            PackagesOf::Owner(login) => format!("packages:{}", login.to_lowercase()),
-            PackagesOf::Repo(repo) => format!("packages:{repo}"),
-        }
-    }
-
-    pub fn package(p: &PackageRef) -> String {
-        format!(
-            "package:{}:{}:{}",
-            p.owner.to_lowercase(),
-            p.kind.slug(),
-            p.name
-        )
-    }
-}
-
 /// Versions on a page.
 const VERSIONS: usize = 30;
 
 impl GitHub {
     /// GitHub's answer for a packages path, or what its refusal means.
     async fn packages_answer(&self, path: &str, what: &str) -> Result<Answer, ApiError> {
-        #[derive(Deserialize)]
-        struct Message {
-            message: Option<String>,
-        }
-        let answer = self.rest_answer(path).await?;
-        if (200..300).contains(&answer.status()) {
-            return Ok(answer);
-        }
-        let message = serde_json::from_str::<Message>(answer.body())
-            .ok()
-            .and_then(|m| m.message)
-            .unwrap_or_default();
-        let scopes = answer.header("x-oauth-scopes");
-        if let Some(why) = refusal(answer.status(), &message, scopes, false) {
-            return Err(ApiError::Denied(why));
-        }
-        answer.checked(what)?;
-        Err(ApiError::Decode(format!(
-            "{what}: status {}",
-            answer.status()
-        )))
+        let answer = self.rest_refusable(path, what, |status, message, answer| {
+            refusal(status, message, answer.header("x-oauth-scopes"), false)
+        });
+        answer.await?.map_err(ApiError::Denied)
     }
 
     /// Whether `login` is an organization.
@@ -324,7 +279,6 @@ impl GitHub {
         }
         items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         let list = PackageList { items, cut };
-        self.remember(&keys::packages(of), list.clone()).await;
         Ok(list)
     }
 
@@ -335,7 +289,6 @@ impl GitHub {
         p: &PackageRef,
         after: Option<String>,
     ) -> Result<PackageDetail, ApiError> {
-        let first = after.is_none();
         let what = format!("the package {}", p.name);
         let base = p.path(self.is_org(&p.owner).await?);
         let answer = self.packages_answer(&base, &what).await?;
@@ -358,7 +311,7 @@ impl GitHub {
             },
             package,
         };
-        Ok(self.kept_page(first, &keys::package(p), detail).await)
+        Ok(self.checked(detail, format!("package {}", p.name)))
     }
 
     /// Deletes a package's version.

@@ -58,11 +58,6 @@ pub(crate) fn queries() -> Vec<(&'static str, String)> {
     ]
 }
 
-/// Where the labels list is kept in the cache.
-pub fn labels_key(repo: &RepoId) -> String {
-    format!("labels:{repo}")
-}
-
 // ---- milestones --------------------------------------------------------------------
 
 /// A milestone as it's to be.
@@ -217,14 +212,18 @@ pub struct FileCommit {
 /// The token's `workflow` scope, which changing a workflow's file takes.
 pub fn workflow_scoped(err: ApiError) -> ApiError {
     let lacks = |m: &str| m.contains("workflow") && m.contains("scope");
+    let denied = || {
+        ApiError::Denied(crate::api::scope_missing(
+            "Changing a workflow's file",
+            "workflow",
+        ))
+    };
     match &err {
-        ApiError::GraphQl(m) if m.iter().any(|m| lacks(m)) => ApiError::Denied(WORKFLOW.into()),
-        ApiError::Http { message, .. } if lacks(message) => ApiError::Denied(WORKFLOW.into()),
+        ApiError::GraphQl(m) if m.iter().any(|m| lacks(m)) => denied(),
+        ApiError::Http { message, .. } if lacks(message) => denied(),
         _ => err,
     }
 }
-
-const WORKFLOW: &str = "Changing a workflow's file takes your token's workflow scope: `gh auth refresh -s workflow` adds it";
 
 /// A ref's path below `/git/refs/` or a label's name, each segment
 /// escaped.
@@ -251,7 +250,6 @@ impl GitHub {
             issues: wire::Count,
             pull_requests: wire::Count,
         }
-        let first = after.is_none();
         let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after });
         let page: wire::Connection<Wire> = self
             .graphql_json(LABELS, vars, repo, "/repository/labels")
@@ -263,7 +261,7 @@ impl GitHub {
             description: l.description.unwrap_or_default(),
             open: l.issues.total_count + l.pull_requests.total_count,
         });
-        Ok(self.kept_page(first, &labels_key(repo), labels).await)
+        Ok(labels)
     }
 
     pub async fn create_label(&self, repo: &RepoId, label: &LabelChange) -> Result<(), ApiError> {

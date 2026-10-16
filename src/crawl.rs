@@ -19,16 +19,18 @@
 )]
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::sync::Arc;
 
 use crate::api::GitHub;
 use crate::store::Store;
 use crate::theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
 use crate::ui::Icons;
 
-use crate::browse::{DataKey, Need, needs};
+use crate::data::DataKey;
 use crate::diff_job::GitContext;
 use crate::keymap::Keymap;
 use crate::route::{Dest, Route, Target};
+use crate::source::Local;
 use crate::state::{Remote, State};
 
 const PAGES: usize = 300;
@@ -96,45 +98,24 @@ fn is_github(url: &str) -> bool {
         || host.ends_with(".githubusercontent.com")
 }
 
-/// Fetches what `route` needs into `state` (a wiki through git, as the
-/// app does); false if the page couldn't load.
-async fn load(gh: &GitHub, git: &GitContext, state: &mut State, route: &Route) -> bool {
-    for need in needs(route) {
-        match need {
-            Need::Pr(pr) => match gh.pull_request(&pr).await {
-                Ok(detail) => {
-                    let remote = state.prs.entry(pr).or_default();
-                    remote.finish(Ok(detail));
-                }
-                Err(err) => {
-                    eprintln!("  {route:?}: {err}");
-                    return false;
-                }
-            },
-            Need::Data(key) => match fetch(gh, git, &key).await {
-                Ok(data) => {
-                    let remote: &mut Remote<_> = state.data.entry(key).or_default();
-                    remote.finish(Ok(data));
-                }
-                Err(err) => eprintln!("  {key:?}: {err}"),
-            },
+/// Fetches what `route` needs into `state`, from git where it can, as
+/// the app does; false if the page couldn't load.
+async fn load(gh: &GitHub, local: &Arc<Local>, state: &mut State, route: &Route) -> bool {
+    for key in state.needs(route) {
+        match crate::data::load::load(gh, local, &key, None, None).await.0 {
+            Ok(data) => {
+                let remote: &mut Remote<_> = state.data.entry(key).or_default();
+                remote.finish(Ok(data));
+            }
+            // Without its pull request, a pull request's page doesn't load.
+            Err(err) if matches!(key, DataKey::Pr(_)) => {
+                eprintln!("  {route:?}: {err}");
+                return false;
+            }
+            Err(err) => eprintln!("  {key:?}: {err}"),
         }
     }
-    state.data_gen += 1;
     true
-}
-
-async fn fetch(
-    gh: &GitHub,
-    git: &GitContext,
-    key: &DataKey,
-) -> Result<crate::browse::Data, crate::api::ApiError> {
-    match key {
-        DataKey::Wiki(repo, page) => crate::wiki::page(git, repo, page.as_deref())
-            .await
-            .map(|w| crate::browse::Data::Wiki(Box::new(w))),
-        key => crate::runtime::fetch(gh, key, None, None).await,
-    }
 }
 
 #[tokio::test]
@@ -145,11 +126,11 @@ async fn link_crawl() {
     let cache = tempfile::tempdir().unwrap();
     let store = Store::open(&cache.path().join("cache.redb"));
     let gh = GitHub::new(token, store, crate::host::Host::GITHUB_COM);
-    let git = GitContext {
+    let local = Local::new(GitContext {
         cache_root: cache.path().to_owned(),
         credentials: crate::git::credentials::Credentials::Ambient,
         cwd: cache.path().to_owned(),
-    };
+    });
     let theme = Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::TrueColor);
     let mut state = State::new(theme, Icons::default(), Keymap::default(), (140, 50));
 
@@ -181,7 +162,7 @@ async fn link_crawl() {
             eprintln!("stopping: {} REST requests left", b.remaining);
             break;
         }
-        if !load(&gh, &git, &mut state, &route).await {
+        if !load(&gh, &local, &mut state, &route).await {
             continue;
         }
         pages += 1;

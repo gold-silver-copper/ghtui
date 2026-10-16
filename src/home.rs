@@ -8,17 +8,19 @@
 //! its count, its order and the list its last row opens can't disagree:
 //! they're one fetch.
 
+use crate::route::{Route, app, issues, pulls, search};
 use std::path::{Path, PathBuf};
 
 use crate::api::browse::SearchKind;
 use serde::Deserialize;
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
 
-use crate::browse::{DataKey, Need};
+use crate::data::DataKey;
 use crate::keymap::Action;
+use crate::nav::Doable;
 use crate::picker::{self, Titling};
-use crate::route::Route;
 use crate::state::{Cmd, Overlay, Screen, State};
+use crate::work::{Cx, Failure, Job};
 
 /// Rows a section shows unless it says.
 pub const DEFAULT_ROWS: usize = 25;
@@ -74,10 +76,10 @@ impl Search {
 
     /// The page with all of it.
     pub fn route(&self) -> Route {
-        Route::Search {
+        Route::Search(search::Search {
             kind: self.kind,
             query: self.query.clone(),
-        }
+        })
     }
 }
 
@@ -379,7 +381,7 @@ pub fn edit_file(
 
 impl State {
     /// What Home fetches: each section's search, once.
-    pub fn home_needs(&self) -> Vec<Need> {
+    pub fn home_needs(&self) -> Vec<DataKey> {
         let mut keys: Vec<DataKey> = Vec::new();
         for s in self.home.iter().filter_map(|s| s.search.as_ref().ok()) {
             let key = s.key();
@@ -387,7 +389,7 @@ impl State {
                 keys.push(key);
             }
         }
-        keys.into_iter().map(Need::Data).collect()
+        keys.into_iter().collect()
     }
 
     /// The repositories Home's sections list, for the search box.
@@ -404,12 +406,9 @@ impl State {
 
     /// Whether a section's search was asked for long enough ago that Home
     /// on screen asks again.
-    pub(crate) fn aged(&self, need: &Need) -> bool {
-        let Need::Data(key) = need else {
-            return false;
-        };
+    pub(crate) fn aged(&self, key: &DataKey) -> bool {
         let now = (self.clock)();
-        (self.data.get(key))
+        (self.remote(key))
             .and_then(|r| r.asked_at)
             .is_some_and(|at| now.saturating_sub(at) >= FRESH_SECS)
     }
@@ -419,7 +418,7 @@ impl State {
         let Screen::Page(p) = self.screen() else {
             return None;
         };
-        if p.route != Route::Home {
+        if p.route != Route::App(app::Home) {
             return None;
         }
         let page = p.page();
@@ -443,6 +442,56 @@ pub const ACTIONS: [Action; 6] = [
     Action::Delete,
     Action::UndoDelete,
 ];
+
+/// What Home adds: saving a list to it, and changing its sections.
+/// Deleting one (and bringing it back) is what Delete does on a page
+/// when nothing else there takes it ([`crate::nav::page_action`]).
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &[
+        Action::SaveSection,
+        Action::RenameSection,
+        Action::MoveSectionUp,
+        Action::MoveSectionDown,
+    ],
+    act,
+    offers,
+    ..crate::features::Feature::NONE
+};
+
+/// The menu's rows: saving the list on screen to Home, and on Home, its
+/// sections'.
+fn offers(state: &State, out: &mut Vec<Doable>) {
+    let Some(route) = state.route() else {
+        return;
+    };
+    let mut add = |section, action, label: String| {
+        let why = unavailable(state, action);
+        out.push(crate::nav::row(section, action, label, "", why));
+    };
+    if route.search().is_some() {
+        add(
+            "This page",
+            Action::SaveSection,
+            "Save this list to Home".into(),
+        );
+    }
+    if *route == Route::App(app::Home) {
+        let title = match state.section_here() {
+            Some((_, s)) => format!("“{}”", s.title),
+            None => "the section".to_owned(),
+        };
+        add("Home", Action::RenameSection, format!("Rename {title}"));
+        add("Home", Action::MoveSectionUp, format!("Move {title} up"));
+        add(
+            "Home",
+            Action::MoveSectionDown,
+            format!("Move {title} down"),
+        );
+        add("Home", Action::Delete, format!("Remove {title} from Home"));
+        let undo = "Bring back the section removed";
+        add("Home", Action::UndoDelete, undo.into());
+    }
+}
 
 /// What one of Home's actions does here, everything it needs checked.
 enum Plan<'a> {
@@ -475,20 +524,20 @@ fn plan(state: &State, action: Action) -> Result<(&Path, Plan<'_>), String> {
                 return Err("Type a search first: an empty one would list all of GitHub".into());
             }
             let name = match state.route() {
-                Some(Route::Search { query, .. }) => query.clone(),
-                Some(Route::Issues { repo, .. }) => format!("Issues in {repo}"),
-                Some(Route::Pulls { repo, .. }) => format!("Pull requests in {repo}"),
+                Some(Route::Search(search::Search { query, .. })) => query.clone(),
+                Some(Route::Issues(issues::Issues { repo, .. })) => format!("Issues in {repo}"),
+                Some(Route::Pulls(pulls::Pulls { repo, .. })) => format!("Pull requests in {repo}"),
                 Some(route) => route.title(),
                 None => String::new(),
             };
             Plan::Title(Titling::New { kind, query }, name)
         }
-        Action::Delete | Action::UndoDelete if state.route() != Some(&Route::Home) => {
+        Action::Delete | Action::UndoDelete if state.route() != Some(&Route::App(app::Home)) => {
             return Err(
                 "Deleting works on a draft comment in Files changed, or on a Home section".into(),
             );
         }
-        _ if state.route() != Some(&Route::Home) => {
+        _ if state.route() != Some(&Route::App(app::Home)) => {
             return Err("That works on Home's sections".into());
         }
         Action::UndoDelete => {
@@ -530,8 +579,7 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
     let (path, plan) = match plan(state, action) {
         Ok((path, plan)) => (path.to_owned(), plan),
         Err(why) => {
-            state.info(why);
-            return Vec::new();
+            return state.just_say(why);
         }
     };
     let (edit, what) = match plan {
@@ -564,55 +612,72 @@ impl State {
     #[must_use]
     pub fn edit_home(&mut self, path: PathBuf, edit: Edit, what: String) -> Vec<Cmd> {
         self.home_editing = true;
-        vec![Cmd::EditHome {
+        crate::work::start(EditConfig {
             path,
             shown: self.home.clone(),
             edit,
             what,
-        }]
+        })
+    }
+}
+
+/// Changes Home's sections in the config file at `path`, if it still has
+/// `shown`; `what` says it's done.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditConfig {
+    pub path: PathBuf,
+    pub shown: Vec<Section>,
+    pub edit: Edit,
+    pub what: String,
+}
+
+impl Job for EditConfig {
+    /// What Home shows now, and the table a removal took out.
+    type Out = (Vec<Section>, Option<String>);
+    const WRITES: bool = false;
+
+    async fn run(&self, _: &Cx) -> Result<Self::Out, Failure> {
+        let (path, shown, edit) = (self.path.clone(), self.shown.clone(), self.edit.clone());
+        let edited = crate::runtime::blocking(move || edit_file(&path, &shown, &edit)).await;
+        edited.map_err(Failure::msg)
     }
 
     /// `config.toml` was changed (or not, and why): Home shows what it
     /// says now, the selection staying on the section moved.
-    #[must_use]
-    pub fn home_edited(
-        &mut self,
-        edit: &Edit,
-        result: Result<(Vec<Section>, Option<String>), String>,
-        what: String,
-    ) -> Vec<Cmd> {
-        self.home_editing = false;
+    fn done(self, state: &mut State, result: Result<Self::Out, Failure>) -> Vec<Cmd> {
+        state.home_editing = false;
         match result {
             Ok((sections, removed)) => {
-                self.home = sections;
-                match (edit, removed) {
-                    (Edit::Remove { at }, Some(table)) => self.removed = Some((*at, table)),
-                    (Edit::Restore { .. }, _) => self.removed = None,
+                state.home = sections;
+                match (self.edit, removed) {
+                    (Edit::Remove { at }, Some(table)) => state.removed = Some((at, table)),
+                    (Edit::Restore { .. }, _) => state.removed = None,
                     _ => {}
                 }
-                self.info(what);
+                state.info(self.what);
             }
             Err(why) => {
                 // What the file says now, if it reads.
-                if let Some(sections) = self
+                if let Some(sections) = state
                     .config_path
                     .as_deref()
                     .and_then(|p| crate::config::Config::load(p).ok())
                     .map(|c| sections(c.home.as_deref()))
                 {
-                    self.home = sections;
+                    state.home = sections;
                 }
-                self.error(why);
+                state.error(why.to_string());
             }
         }
-        self.data_gen += 1;
-        if self.route() == Some(&Route::Home) {
-            self.ensure_route(&Route::Home, false)
+        if state.route() == Some(&Route::App(app::Home)) {
+            state.ensure_route(&Route::App(app::Home), false)
         } else {
             Vec::new()
         }
     }
+}
 
+impl State {
     /// Follows a section's row that isn't a row of its list: its empty
     /// state, its error, or what's wrong with how it's written.
     #[must_use]
@@ -624,10 +689,9 @@ impl State {
                     .config_path
                     .as_deref()
                     .map_or_else(|| "config.toml".to_owned(), |p| p.display().to_string());
-                self.info(format!(
+                self.just_say(format!(
                     "This section can't be shown: {why}. Fix it in {path}"
-                ));
-                Vec::new()
+                ))
             }
             None => Vec::new(),
         }

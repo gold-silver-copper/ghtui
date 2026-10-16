@@ -3,16 +3,10 @@
 
 use super::*;
 use crate::api::lists::{ListPage, StarList};
-use crate::route::Route;
-use crate::site::Page as Site;
 
 /// A list's page, as a link.
 fn list_url(login: &str, list: &StarList) -> String {
-    Route::Site(Site::StarList {
-        login: login.to_owned(),
-        slug: list.slug.clone(),
-    })
-    .url()
+    url::star_list(login, &list.slug)
 }
 
 /// What a list is: its count, and whether it's private.

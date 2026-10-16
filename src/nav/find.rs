@@ -1,19 +1,20 @@
 //! Finding text on the page, and marks.
 
 use super::*;
+use crate::route::{people, runs};
 
 /// Whether `/` here is the page's own search box: a list's filter, a
 /// job's log search, a profile's repositories.
 pub fn searches_itself(state: &State) -> bool {
     match state.route() {
         Some(
-            Route::Job { .. }
-            | Route::User {
+            Route::Runs(runs::Job { .. })
+            | Route::People(people::User {
                 tab: ProfileTab::Repositories(_),
                 ..
-            },
+            }),
         ) => true,
-        Some(route) => route.list_query().is_some(),
+        Some(route) => route.family().query().is_some(),
         None => false,
     }
 }
@@ -71,16 +72,15 @@ pub fn search_word(state: &mut State, forward: bool) -> Vec<Cmd> {
     };
     let Some(word) = p.word_text().map(|w| text::whole_word(&w)) else {
         let down = state.first_key(Action::Down);
-        state.info(format!(
+        return state.just_say(format!(
             "No word under the cursor: {down} moves to a line of a file or a log"
         ));
-        return Vec::new();
     };
     // The selection stays on its line as the search rebuilds the page,
     // and the word cursor goes with the match.
     p.fresh = false;
     p.word = Some(p.word.unwrap_or(0));
-    if matches!(p.route, Route::Job { .. }) {
+    if matches!(p.route, Route::Runs(runs::Job { .. })) {
         search_log(state, &word);
     } else {
         p.find = Some(word);

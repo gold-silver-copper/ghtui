@@ -2,26 +2,27 @@
 //! results arrive as [`Msg`]s; [`update`] mutates [`State`] and returns
 //! [`Cmd`]s for the runtime to execute in the background.
 
+use crate::route::{Route, Target, app, code, projects, runs, settings};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::api::ApiError;
-use crate::api::change::Change;
-use crate::api::model::{NodeId, PrDetail, PrRef, ViewedFiles};
+use crate::api::model::{NodeId, PrRef, ViewedFiles};
 use crate::api::rate_limit::RateLimits;
 use crate::diff::FileDiff;
 use crate::git::Oid;
 use crate::store::ReviewState;
 use crate::theme::{Bg, Theme};
 use crate::ui::bars::Notice;
-use crate::ui::diff_doc::Viewed;
 use crate::ui::{Ctx, Fetched, Icons};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use ratatui_textarea::TextArea;
 
 use crate::act;
-use crate::api::model::{PatchFile, ReviewEvent, ReviewThread};
-use crate::browse::{self, Data, DataKey, Need};
+use crate::api::model::{PatchFile, ReviewThread};
+use crate::browse;
+use crate::compose::{self, Compose};
+use crate::data::{Data, DataKey};
 use crate::diff_job::{JobId, JobMsg};
 use crate::diff_screen::{self, DiffOf, DiffPrefs, DiffScreen, DiffState, Pane};
 use crate::join;
@@ -29,13 +30,9 @@ use crate::keymap::{Action, Context, Key, Keymap, Resolved};
 use crate::nav::{self, Hints, Menu, PageScreen, SearchBox, Visit};
 use crate::notice::Notices;
 use crate::picker::{self, Picker};
-use crate::review::{
-    Compose, ComposeTarget, EditPurpose, SubmitDialog, SubmitOutcome, on_compose_key, on_edited,
-    on_submit_key, review_action,
-};
-use crate::route::{Route, Target};
-use crate::store::DraftComment;
+use crate::review::{EditPurpose, SubmitDialog, on_edited, on_submit_key, review_action};
 use crate::tabs::Tab;
+use crate::work::Failure;
 
 mod diff;
 mod dispatch;
@@ -50,58 +47,40 @@ pub enum Msg {
     Key(KeyEvent),
     Resize(u16, u16),
     Viewer(Result<String, ApiError>),
-    /// How many notifications are unread.
-    Unread(Result<crate::api::notifications::Unread, ApiError>),
-    Pr(PrRef, Box<Result<PrDetail, ApiError>>),
-    /// The cache's copy of a pull request, shown while GitHub can't be
-    /// reached (sent before its failed fetch).
-    PrCached(PrRef, Box<crate::store::Cached<PrDetail>>),
     /// Page data; with `cached_at` (when it was fetched), the cached copy
-    /// shown while fetching.
+    /// shown while fetching. Where git could have answered, `source` says
+    /// where it came from.
     Fetched {
         key: DataKey,
         result: Result<Data, ApiError>,
         cached_at: Option<u64>,
+        source: Option<crate::source::From>,
     },
-    /// The next page of a list, asked for after the cursor.
-    FetchedMore(DataKey, String, Result<Data, ApiError>),
-    /// Where a page's data came from, git or the API; sent before it.
-    Source(DataKey, crate::source::From),
-    /// GitHub's answer to a change.
-    Changed(Change, act::By, Result<(), ApiError>),
+    /// The next page of a list, asked for after the cursor, and where it
+    /// came from.
+    FetchedMore(
+        DataKey,
+        String,
+        Result<Data, ApiError>,
+        Option<crate::source::From>,
+    ),
     Mouse(MouseEvent),
     Timer(Timer),
     /// The search box's input settled; fetch live suggestions if it's
     /// still this.
     SuggestDue(String),
-    Suggested(
-        String,
-        Result<Vec<crate::api::browse::RepoSummary>, ApiError>,
-    ),
     RateLimits(RateLimits),
     Notice(Notice),
     /// A lasting problem started (`Some`) or cleared up (`None`).
     Problem(Problem, Option<String>),
     /// `$EDITOR` finished (or failed to start).
     Edited(EditPurpose, Result<String, Failure>),
-    /// `config.toml` was changed (or wasn't, and why): what Home shows
-    /// now, and the table a removal took out.
-    HomeEdited {
-        edit: crate::home::Edit,
-        result: Result<(Vec<crate::home::Section>, Option<String>), String>,
-        what: String,
-    },
     /// For a PR's diff screen.
     Diff(DiffOf, DiffMsg),
     /// Text pasted into the terminal, whole.
     Paste(String),
     /// The terminal came into focus (`true`) or left it.
     Focus(bool),
-    /// Who and what a repository's comments can mention.
-    Mentionable(
-        crate::api::model::RepoId,
-        Result<crate::api::mention::Mentionable, ApiError>,
-    ),
     /// What the repository's clone (or code search) answered about code.
     Code(
         crate::code_nav::Ask,
@@ -122,38 +101,11 @@ pub enum Msg {
             Result<crate::api::Polled, ApiError>,
         )>,
     ),
-    /// New issues and pull requests, and checking one out.
-    Create(crate::create::Done),
-    /// Releases, gists, wiki pages and subscriptions.
-    Write(crate::writes::Done),
-    /// An artifact saved, a workflow run by hand.
-    Actions(crate::actions::Done),
+    /// What came of work in the background.
+    Done(crate::work::Done),
     /// Whether GitHub can be reached, the queued writes, the kept
     /// repositories ([`crate::offline`]).
     Offline(crate::offline::Msg),
-}
-
-/// Why background work failed. Shows as its message with its causes
-/// (`a: b`); `{:?}` has everything, for the log.
-#[derive(Debug)]
-pub struct Failure(anyhow::Error);
-
-impl Failure {
-    pub fn msg(text: impl std::fmt::Display + std::fmt::Debug + Send + Sync + 'static) -> Self {
-        Self(anyhow::Error::msg(text))
-    }
-}
-
-impl<E: std::error::Error + Send + Sync + 'static> From<E> for Failure {
-    fn from(err: E) -> Self {
-        Self(err.into())
-    }
-}
-
-impl std::fmt::Display for Failure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:#}", self.0)
-    }
 }
 
 /// What arrives for a PR's diff: from its job, GitHub, or the drafts.
@@ -162,21 +114,10 @@ pub enum DiffMsg {
     /// From the diff job; ignored unless it's the PR's current job.
     Job(JobId, JobMsg),
     ViewedLoaded(Box<Result<ViewedFiles, ApiError>>),
-    ViewedSaved {
-        path: String,
-        previous: Viewed,
-        result: Result<(), ApiError>,
-    },
     /// The saved review state, or why it couldn't be read.
     ReviewLoaded(Result<ReviewState, Failure>),
     ThreadsLoaded(Result<Vec<ReviewThread>, ApiError>),
     PatchesLoaded(Result<Vec<PatchFile>, ApiError>),
-    ResolvedSet {
-        thread_id: NodeId,
-        resolved: bool,
-        result: Result<(), ApiError>,
-    },
-    ReviewSubmitted(SubmitOutcome),
     /// How many comments your pending review on GitHub holds.
     PendingReview(Result<u64, ApiError>),
     LastReview(Result<Option<String>, ApiError>),
@@ -204,20 +145,9 @@ pub enum Cmd {
         purpose: EditPurpose,
         text: String,
     },
-    /// Change Home's sections in the config file, if it still has `shown`;
-    /// `what` says it's done.
-    EditHome {
-        path: std::path::PathBuf,
-        shown: Vec<crate::home::Section>,
-        edit: crate::home::Edit,
-        what: String,
-    },
-    /// Making an issue or pull request, or git work in your clone;
-    /// answered by [`Msg::Create`].
-    Create(crate::create::Work),
-    /// A release, a gist, a wiki page or a subscription; answered by
-    /// [`Msg::Write`].
-    Write(crate::writes::Work),
+    /// A write to GitHub, or git in your clone; answered by
+    /// [`Msg::Done`].
+    Work(crate::work::Work),
     /// Asking whether GitHub is back, the queue, the kept repositories;
     /// answered by [`Msg::Offline`].
     Offline(crate::offline::Cmd),
@@ -226,9 +156,6 @@ pub enum Cmd {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Api {
     FetchViewer,
-    /// How many notifications are unread, answered by [`Msg::Unread`].
-    FetchUnread,
-    FetchPr(PrRef),
     /// Fetch page data; with `cached`, first send what the cache has.
     Fetch {
         key: DataKey,
@@ -239,51 +166,21 @@ pub enum Api {
         key: DataKey,
         after: String,
     },
-    /// Change something on GitHub, answered by [`Msg::Changed`].
-    Change(Change, act::By),
-    /// Search repositories for the search box's suggestions.
-    Suggest(String),
     SaveVisits(Vec<Visit>),
     FetchViewed(PrRef),
-    SetViewed {
-        pr: PrRef,
-        pull_request_id: NodeId,
-        path: String,
-        viewed: bool,
-        previous: Viewed,
-    },
     FetchThreads(PrRef),
     FetchPatches(PrRef),
-    SetResolved {
-        pr: PrRef,
-        thread_id: NodeId,
-        resolved: bool,
-    },
-    SubmitReview {
-        pr: PrRef,
-        head: Oid,
-        drafts: Vec<DraftComment>,
-        event: ReviewEvent,
-        body: String,
-        /// The comments in your pending review on GitHub you were shown:
-        /// if it holds more, it isn't submitted.
-        seen: u64,
-    },
     /// How many comments your pending review on GitHub holds.
     FetchPendingReview(PrRef),
     FetchLastReview {
         pr: PrRef,
         login: String,
     },
-    /// Who and what the repository's comments can mention.
-    FetchMentionable(crate::api::model::RepoId),
     /// Whether a watched pull request changed, asked with ETags.
     Poll {
         pr: PrRef,
         asks: Vec<crate::live::Ask>,
     },
-    /// Saving an artifact, running a workflow by hand.
-    Actions(crate::actions::Work),
     /// Whether another watched page changed, asked with ETags.
     Watch {
         what: crate::live::page::Watched,
@@ -416,12 +313,6 @@ impl Screens {
     pub fn len(&self) -> usize {
         self.rest.len() + 1
     }
-
-    /// Keeps the first `n` screens (at least one).
-    #[cfg(test)]
-    pub fn truncate(&mut self, n: usize) {
-        self.rest.truncate(n.saturating_sub(1));
-    }
 }
 
 pub enum Overlay {
@@ -439,10 +330,8 @@ pub enum Overlay {
     Compose(Box<Compose>),
     /// Submitting the review.
     Submit(Box<SubmitDialog>),
-    /// Asking before a change to GitHub.
-    Confirm(Box<act::Confirm>),
-    /// Asking before pushing a branch or opening a pull request.
-    Ask(Box<crate::create::Ask>),
+    /// Asking before a write: a form's, or an action's change.
+    Ask(Box<crate::forms::Ask>),
 }
 
 pub struct State {
@@ -465,17 +354,15 @@ pub struct State {
     pub home_editing: bool,
     /// [`Timer::Home`] is scheduled.
     pub home_timer: bool,
-    pub prs: HashMap<PrRef, Remote<PrDetail>>,
     /// Everything else pages show.
     pub data: HashMap<DataKey, Remote<Data>>,
-    /// Bumped whenever data changes, so pages know to rebuild.
-    pub data_gen: u64,
-    /// Where the data git can answer came from, git or the API.
-    pub sources: HashMap<DataKey, crate::source::From>,
+    /// Bumped whenever what pages show besides GitHub's data and forms
+    /// changes (writes on their way, who's signed in, whether GitHub can
+    /// be reached), so pages know to rebuild; GitHub's data has its own
+    /// versions ([`Remote`]), and forms theirs ([`crate::forms::Forms`]).
+    pub shown_gen: u64,
     pub diffs: HashMap<DiffOf, DiffState>,
     pub viewer: Option<String>,
-    /// How many notifications are unread, for the header.
-    pub unread: Option<crate::api::notifications::Unread>,
     /// The latest poll of the unread count: an older poll's timer is
     /// let go.
     pub unread_poll: u64,
@@ -500,13 +387,17 @@ pub struct State {
     pub density: crate::config::Density,
     /// Unix seconds; pages show relative times.
     pub clock: fn() -> u64,
+    /// When [`Timer::Minute`] last fired (Unix seconds): a page is built
+    /// again for a time it shows only once it reads differently by then,
+    /// so all of a minute's times move on together.
+    pub minute: u64,
     /// The spinner's frame, and whether its next frame is scheduled.
     pub spinner: usize,
     pub spinning: bool,
     /// [`Timer::Live`] is scheduled.
     pub live: bool,
     /// A change GitHub accepted that its page doesn't show yet.
-    pub awaiting: Option<act::Awaiting>,
+    pub following: Option<crate::follow::Following>,
     /// An action waiting for what it's about to load.
     pub pending: Option<act::Pending>,
     /// The pull request under review on screen, watched for changes.
@@ -516,19 +407,10 @@ pub struct State {
     pub page_watch: Option<crate::live::page::PageWatch>,
     /// The terminal has the focus.
     pub focused: bool,
-    /// Who and what each repository's comments can mention, once asked.
-    pub mentionable: HashMap<crate::api::model::RepoId, crate::api::mention::Mentionable>,
-    /// New issues and pull requests being written, and your clones.
-    pub creating: crate::create::Creating,
-    /// Releases, gists and wiki pages being written, and the change one
-    /// waits to see.
-    pub writing: crate::writes::Writing,
-    /// What the pickers that manage an issue or pull request list.
-    pub managing: crate::manage::Managing,
-    /// A settings form sent and not yet taken.
-    pub settings: crate::settings::Kept,
-    /// Workflows being run by hand: their forms.
-    pub dispatching: crate::actions::Dispatching,
+    /// The forms being written, by their page: leaving one keeps it.
+    pub forms: crate::forms::Forms,
+    /// What housekeeping's question is about, and a branch to delete.
+    pub housekeeping: crate::housekeeping::Housekeeping,
     /// Conversations: long reviews unfolded, and the like.
     pub talk: crate::talk::Talk,
     /// Whether GitHub can be reached, the writes waiting for it, and the
@@ -540,7 +422,10 @@ pub struct State {
 impl State {
     pub fn new(theme: Theme, icons: Icons, keymap: Keymap, size: (u16, u16)) -> Self {
         let mut state = Self {
-            screens: Screens::new(Screen::Page(Box::new(PageScreen::new(Route::Home, None)))),
+            screens: Screens::new(Screen::Page(Box::new(PageScreen::new(
+                Route::App(app::Home),
+                None,
+            )))),
             forward: Vec::new(),
             before: Vec::new(),
             after: Vec::new(),
@@ -550,13 +435,10 @@ impl State {
             removed: None,
             home_editing: false,
             home_timer: false,
-            prs: HashMap::new(),
             data: HashMap::new(),
-            data_gen: 0,
-            sources: HashMap::new(),
+            shown_gen: 0,
             diffs: HashMap::new(),
             viewer: None,
-            unread: None,
             unread_poll: 0,
             rate_limits: RateLimits::default(),
             overlay: None,
@@ -572,20 +454,17 @@ impl State {
             icons,
             density: crate::config::Density::default(),
             clock: crate::store::now,
+            minute: 0,
             spinner: 0,
             spinning: false,
             live: false,
-            awaiting: None,
+            following: None,
             pending: None,
             watch: None,
             page_watch: None,
             focused: true,
-            mentionable: HashMap::new(),
-            creating: crate::create::Creating::default(),
-            writing: crate::writes::Writing::default(),
-            managing: crate::manage::Managing::default(),
-            settings: crate::settings::Kept::default(),
-            dispatching: crate::actions::Dispatching::default(),
+            forms: crate::forms::Forms::default(),
+            housekeeping: crate::housekeeping::Housekeeping::default(),
             talk: crate::talk::Talk::default(),
             offline: crate::offline::Offline::default(),
             quit: false,
@@ -597,6 +476,14 @@ impl State {
     /// Says `text` in the status bar for a few seconds.
     pub fn info(&mut self, text: impl Into<String>) {
         self.notices.info(text);
+    }
+
+    /// Says `text` in the status bar, and does nothing else: why an
+    /// action can't go ahead, mostly.
+    #[must_use]
+    pub fn just_say(&mut self, text: impl Into<String>) -> Vec<Cmd> {
+        self.info(text);
+        Vec::new()
     }
 
     /// Says what went wrong, in the status bar (and the messages list).
@@ -626,11 +513,12 @@ impl State {
             Screen::Diff(d) if d.focus == Pane::Tree && d.prefs.tree_visible => Context::Tree,
             Screen::Diff(_) => Context::Diff,
             Screen::Page(p) => match &p.route {
-                Route::Job { .. } => Context::Log,
-                Route::Blob { .. } | Route::Blame { .. } => Context::File,
-                Route::Project { .. } | Route::ProjectItem { .. } => Context::Project,
-                Route::Settings { .. } => Context::Settings,
-                route if route.list_query().is_some() => Context::List,
+                Route::Runs(runs::Job { .. }) => Context::Log,
+                Route::Code(code::Blob { .. }) | Route::Code(code::Blame { .. }) => Context::File,
+                Route::Projects(projects::Project { .. })
+                | Route::Projects(projects::ProjectItem { .. }) => Context::Project,
+                Route::Settings(settings::Page { .. }) => Context::Settings,
+                route if route.family().query().is_some() => Context::List,
                 _ => Context::Page,
             },
         };
@@ -657,7 +545,7 @@ impl State {
         cmds
     }
 
-    /// Opens the page an [`Route::Unsplit`] one is, once where its ref
+    /// Opens the page an unsplit one ([`code::Unsplit`]) is, once where its ref
     /// ends is known.
     #[must_use]
     fn settle_ref(&mut self) -> Vec<Cmd> {
@@ -681,14 +569,14 @@ impl State {
         self.split(&route, rev).unwrap_or(route)
     }
 
-    /// The page an [`Route::Unsplit`] one is, if where its ref ends is
+    /// The page an unsplit one ([`code::Unsplit`]) is, if where its ref ends is
     /// known here: GitHub said, or its ref-and-path starts with the
     /// repository's default branch or with `rev` (the revision of the page
     /// that links to it). Git keeps a branch from being the start of
     /// another, so a branch already known is the one (short of a tag that
     /// extends it).
     pub(crate) fn split(&self, route: &Route, rev: Option<&str>) -> Option<Route> {
-        let Route::Unsplit { repo, spot, .. } = route else {
+        let Route::Code(code::Unsplit { repo, spot, .. }) = route else {
             return None;
         };
         let key = DataKey::RefIn(repo.clone(), spot.clone());

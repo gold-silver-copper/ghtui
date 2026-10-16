@@ -23,13 +23,7 @@ pub fn settings_url() -> String {
 fn refusal(err: ApiError) -> ApiError {
     match err {
         ApiError::GraphQl(messages) if messages.iter().any(|m| m.contains("read:user")) => {
-            let flag = match crate::host::current() {
-                h if h.is_enterprise() => format!("--hostname {} ", h.name()),
-                _ => String::new(),
-            };
-            ApiError::Denied(format!(
-                "Saved replies take your token's read:user scope, which it lacks: `gh auth refresh {flag}-s read:user` adds it"
-            ))
+            ApiError::Denied(crate::api::scope_missing("Saved replies", "read:user"))
         }
         err => err,
     }
@@ -38,13 +32,7 @@ fn refusal(err: ApiError) -> ApiError {
 impl GitHub {
     /// Your saved replies, most recently changed first.
     pub async fn saved_replies(&self) -> Result<Capped<SavedReply>, ApiError> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Found {
-            total_count: u64,
-            nodes: Vec<Option<SavedReply>>,
-        }
-        let found: Found = self
+        let found: crate::api::browse::wire::Counted<SavedReply> = self
             .graphql_json(
                 crate::api::raw::SAVED_REPLIES,
                 serde_json::json!({}),
@@ -53,17 +41,8 @@ impl GitHub {
             )
             .await
             .map_err(refusal)?;
-        let replies = Capped::new(
-            found.nodes.into_iter().flatten().collect(),
-            found.total_count,
-        );
-        self.remember(keys::REPLIES, replies.clone()).await;
-        Ok(replies)
+        Ok(found.into_capped(Some))
     }
-}
-
-pub mod keys {
-    pub const REPLIES: &str = "saved-replies";
 }
 
 #[cfg(test)]

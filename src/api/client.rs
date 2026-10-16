@@ -8,8 +8,8 @@ use std::time::Duration;
 use crate::store::{Cached, HttpEntry, Store};
 use cynic::{MutationBuilder, QueryBuilder};
 use http::{HeaderMap, HeaderValue, StatusCode, header};
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::api::auth::Token;
@@ -115,6 +115,8 @@ pub struct GitHub {
     enterprise: Arc<Enterprise>,
     /// Whether GitHub can be reached ([`crate::api::reach`]).
     reach: crate::api::reach::Reach,
+    /// Doubled before each retry: the first waits twice this.
+    backoff: Duration,
 }
 
 /// An Enterprise Server's version, and what it's known to lack.
@@ -229,11 +231,14 @@ impl GitHub {
     }
 
     /// For tests: point the client at a local server, its GraphQL at
-    /// `/graphql`.
+    /// `/graphql`, retrying at once.
     pub fn with_base_uri(token: Token, store: Store, base_uri: &str) -> Self {
         let rest = base_uri.trim_end_matches('/');
         let graphql = format!("{rest}/graphql");
-        Self::with_bases(token, store, Host::GITHUB_COM, rest.to_owned(), graphql)
+        Self {
+            backoff: Duration::ZERO,
+            ..Self::with_bases(token, store, Host::GITHUB_COM, rest.to_owned(), graphql)
+        }
     }
 
     fn with_bases(token: Token, store: Store, host: Host, rest: String, graphql: String) -> Self {
@@ -253,6 +258,7 @@ impl GitHub {
             recorder: None,
             enterprise: Arc::default(),
             reach: crate::api::reach::Reach::default(),
+            backoff: Duration::from_millis(250),
         }
     }
 
@@ -467,12 +473,14 @@ impl GitHub {
         }
     }
 
-    /// Checks a page of a list adds up: no more items than GitHub counts.
-    fn check_page<T: browse::Page>(&self, list: &T, what: impl std::fmt::Display) {
+    /// A page of a list, checked it adds up: no more items than GitHub
+    /// counts.
+    pub(crate) fn checked<T: browse::Page>(&self, list: T, what: impl std::fmt::Display) -> T {
         let (items, total) = list.counts();
         if items as u64 > total {
             self.doubt(format!("{what}: a page of {items}, of {total} in all"));
         }
+        list
     }
 
     /// A list from its `first` page and those `fetch` gets after it, `max`
@@ -642,7 +650,7 @@ impl GitHub {
                 Ok(response) => response,
                 Err(err) if !last && (request.idempotent() || err.is_connect()) => {
                     tracing::debug!(%err, attempt, "request failed; retrying");
-                    backoff(attempt).await;
+                    tokio::time::sleep(self.backoff * (1 << attempt)).await;
                     continue;
                 }
                 // It never left: GitHub can't be reached.
@@ -676,7 +684,7 @@ impl GitHub {
             let timed_out = sent.elapsed() >= GITHUB_TIMEOUT;
             if status.is_server_error() && !last && request.idempotent() && !timed_out {
                 tracing::debug!(%status, attempt, "server error; retrying");
-                backoff(attempt).await;
+                tokio::time::sleep(self.backoff * (1 << attempt)).await;
                 continue;
             }
             let body = response
@@ -955,8 +963,7 @@ impl GitHub {
             poll_interval,
         };
         if !entry.etag.is_empty() || entry.last_modified.is_some() {
-            let (store, key, kept) = (self.store.clone(), path.to_owned(), entry.clone());
-            spawn_store(move || store.http_put(&key, &kept)).await;
+            self.store.http_put(path, &entry);
         }
         Ok(entry)
     }
@@ -1009,6 +1016,36 @@ impl GitHub {
         Ok(Answer(
             self.send(&Request::Get { path, cached: None }).await?,
         ))
+    }
+
+    /// GETs a REST path: GitHub's answer, or, when it refused, what
+    /// `refused` makes of the refusal from its status, GitHub's message
+    /// and the answer (its headers say a token's scopes). A refusal it
+    /// makes nothing of is the error its status means.
+    pub(crate) async fn rest_refusable<E>(
+        &self,
+        path: &str,
+        what: impl std::fmt::Display,
+        refused: impl FnOnce(u16, &str, &Answer) -> Option<E>,
+    ) -> Result<Result<Answer, E>, ApiError> {
+        #[derive(Deserialize)]
+        struct Message {
+            message: Option<String>,
+        }
+        let answer = self.rest_answer(path).await?;
+        let status = answer.status();
+        if (200..300).contains(&status) {
+            return Ok(Ok(answer));
+        }
+        let message = serde_json::from_str::<Message>(answer.body())
+            .ok()
+            .and_then(|m| m.message)
+            .unwrap_or_default();
+        if let Some(why) = refused(status, &message, &answer) {
+            return Ok(Err(why));
+        }
+        answer.checked(&what)?;
+        Err(ApiError::Decode(format!("{what}: status {status}")))
     }
 
     /// [`Self::rest_write`], for a change whose answer says what it made
@@ -1172,31 +1209,34 @@ impl GitHub {
     }
 
     pub async fn viewer_login(&self) -> Result<String, ApiError> {
-        #[derive(serde::Deserialize)]
-        struct User {
-            login: String,
-        }
-        let user: User = self.rest_json("/user", "your account").await?;
+        let user: browse::UserLogin = self.rest_json("/user", "your account").await?;
         // Now the cache (and drafts) can be this account's.
         self.store.signed_in(&user.login);
         Ok(user.login)
     }
 
-    pub fn cached_pull_request(&self, pr: &PrRef) -> Option<Cached<PrDetail>> {
-        self.cached(&pr_key(pr))
+    /// The pull request, how far behind its base it is included.
+    pub async fn pull_request(&self, pr: &PrRef) -> Result<PrDetail, ApiError> {
+        let detail = self.pull_request_alone(pr).await?;
+        Ok(self.with_behind(pr, detail).await)
     }
 
-    pub async fn pull_request(&self, pr: &PrRef) -> Result<PrDetail, ApiError> {
+    /// The pull request, without how far behind its base it is: that's
+    /// a second request ([`Self::with_behind`]).
+    pub async fn pull_request_alone(&self, pr: &PrRef) -> Result<PrDetail, ApiError> {
         let op = queries::PullRequestQuery::build(number_vars(pr)?);
-        let mut detail = self
-            .find(op, pr, |q| PrDetail::from_wire(q.repository?))
-            .await?;
+        self.find(op, pr, |q| PrDetail::from_wire(q.repository?))
+            .await
+    }
+
+    /// `detail` with how far behind its base it is, if it's open.
+    pub async fn with_behind(&self, pr: &PrRef, mut detail: PrDetail) -> PrDetail {
         // GitHub says a branch is behind only when the repository requires
         // it up to date; it may be behind anyway.
         if detail.state.is_open() {
             detail.behind_by = self.behind_by(pr, &detail).await;
         }
-        Ok(self.kept(&pr_key(pr), detail).await)
+        detail
     }
 
     /// How many commits on its base `detail`'s branch doesn't have, if
@@ -1422,7 +1462,7 @@ impl GitHub {
 
     // ---- browsing ----------------------------------------------------------
 
-    /// A cached page, by one of the keys in [`crate::api::browse::keys`].
+    /// A value [`Self::remember`]ed under `key`.
     pub fn cached<T: DeserializeOwned>(&self, key: &str) -> Option<Cached<T>> {
         self.store.query_get(key)
     }
@@ -1437,7 +1477,7 @@ impl GitHub {
         let overview = self
             .find(op, repo, |q| q.repository?.into_overview())
             .await?;
-        Ok(self.kept(&browse::keys::repo(repo), overview).await)
+        Ok(overview)
     }
 
     /// The README GitHub shows for the repository root, if it has one.
@@ -1457,7 +1497,7 @@ impl GitHub {
         {
             Ok(wire) => wire,
             Err(ApiError::NotFound(_)) => {
-                return Ok(self.kept(&browse::keys::readme(repo), None).await);
+                return Ok(None);
             }
             Err(err) => return Err(err),
         };
@@ -1469,7 +1509,7 @@ impl GitHub {
             path: wire.path,
             text: String::from_utf8_lossy(&bytes).into_owned(),
         };
-        Ok(self.kept(&browse::keys::readme(repo), Some(readme)).await)
+        Ok(Some(readme))
     }
 
     /// A directory at `rev:path`.
@@ -1480,10 +1520,7 @@ impl GitHub {
         path: &str,
     ) -> Result<Vec<browse::TreeEntry>, ApiError> {
         match self.object(repo, rev, path).await? {
-            browse::GitObject::Tree(t) => {
-                let key = browse::keys::tree(repo, rev, path);
-                Ok(self.kept(&key, browse::entries(t)).await)
-            }
+            browse::GitObject::Tree(t) => Ok(browse::entries(t)),
             _ => Err(ApiError::NotFound(format!("{repo}/{path}"))),
         }
     }
@@ -1544,7 +1581,7 @@ impl GitHub {
             open: count(found.open.issue_count),
             closed: count(found.closed.issue_count),
         };
-        Ok(self.kept(&browse::keys::state_counts(query), counts).await)
+        Ok(counts)
     }
 
     /// One page of search results (30 per page). GitHub gives a request
@@ -1574,9 +1611,7 @@ impl GitHub {
             Kind::Users => (SearchType::User, ""),
             Kind::Discussions | Kind::Commits | Kind::Code => {
                 let results = self.search_other(kind, query, after).await?;
-                return Ok(self
-                    .kept_if(first_page, &browse::keys::search(kind, query), results)
-                    .await);
+                return Ok(results);
             }
         };
         let api_query = if query.contains("is:issue") || query.contains("is:pr") {
@@ -1612,9 +1647,7 @@ impl GitHub {
                 }
             }
         }
-        Ok(self
-            .kept_if(first_page, &browse::keys::search(kind, query), results)
-            .await)
+        Ok(results)
     }
 
     /// The checks of these pull requests, by ID. Checks are a decoration:
@@ -1794,9 +1827,7 @@ impl GitHub {
         let Some(issue) = self.find(op, format!("{repo}#{number}"), pick).await? else {
             return Ok(None);
         };
-        Ok(Some(
-            self.kept(&browse::keys::issue(repo, number), issue).await,
-        ))
+        Ok(Some(issue))
     }
 
     /// A pull request's timeline (comments, reviews, events), commits and
@@ -1811,7 +1842,7 @@ impl GitHub {
             threads,
             ..activity
         };
-        Ok(self.kept(&browse::keys::pr_activity(pr), activity).await)
+        Ok(activity)
     }
 
     /// All of a pull request's reviews, oldest first.
@@ -1827,7 +1858,7 @@ impl GitHub {
         };
         let what = format!("{pr}'s reviews");
         let reviews = self.more_pages(what, page(None).await?, FILE_PAGES, page);
-        Ok(self.kept(&browse::keys::reviews(pr), reviews.await?).await)
+        reviews.await
     }
 
     /// A user's or organization's profile.
@@ -1838,7 +1869,7 @@ impl GitHub {
         let profile = self
             .find(op, login, browse::ProfileQuery::into_profile)
             .await?;
-        Ok(self.kept(&browse::keys::profile(login), profile).await)
+        Ok(profile)
     }
 
     /// Every file path at `rev` (GitHub's "Go to file"), and whether GitHub
@@ -1896,9 +1927,7 @@ impl GitHub {
             self.last_commits_of(repo, rev, dir, names, &mut out)
                 .await?;
         }
-        Ok(self
-            .kept(&browse::keys::last_commits(repo, rev, dir), out)
-            .await)
+        Ok(out)
     }
 
     async fn last_commits_of(
@@ -1951,7 +1980,7 @@ impl GitHub {
             browse::CommitObject::Other => None,
         };
         let commit = self.find(op, format!("{repo}@{rev}"), pick).await?;
-        Ok(self.kept(&browse::keys::commit(repo, rev), commit).await)
+        Ok(commit)
     }
 
     /// A revision's commits, newest first, touching `path` if it isn't
@@ -1963,7 +1992,6 @@ impl GitHub {
         path: &str,
         after: Option<String>,
     ) -> Result<browse::Results<browse::CommitInfo>, ApiError> {
-        let first = after.is_none();
         let op = browse::HistoryQuery::build(browse::HistoryVariables {
             owner: repo.owner.clone(),
             name: repo.name.clone(),
@@ -1976,9 +2004,7 @@ impl GitHub {
             browse::HistoryObject::Other => None,
         };
         let history = self.find(op, format!("{repo}@{rev}"), pick).await?;
-        Ok(self
-            .kept_page(first, &browse::keys::history(repo, rev, path), history)
-            .await)
+        Ok(self.checked(history, format!("{repo}@{rev}'s history")))
     }
 
     /// The checks on a pull request's head commit.
@@ -1997,7 +2023,7 @@ impl GitHub {
                 text_short(&want)
             ));
         }
-        Ok(self.kept(&browse::keys::pr_checks(pr), checks).await)
+        Ok(checks)
     }
 
     /// A commit's checks with every page of them (up to [`PAGES`]): a
@@ -2009,10 +2035,7 @@ impl GitHub {
     ) -> Result<browse::Checks, ApiError> {
         use cynic::QueryBuilder as _;
         let oid = commit.oid.0;
-        let first = commit
-            .status_check_rollup
-            .map(|r| r.contexts.into_results())
-            .unwrap_or_default();
+        let first = browse::rollup_contexts(commit.status_check_rollup);
         let what = format!("{}'s checks", text_short(&oid));
         let expression = &oid;
         let page = move |after| async move {
@@ -2042,7 +2065,6 @@ impl GitHub {
         after: Option<String>,
     ) -> Result<browse::Results<browse::UserSummary>, ApiError> {
         use browse::UserList as L;
-        let first = after.is_none();
         let (root, field, vars, who) = match list {
             L::Stargazers(repo) | L::Watchers(repo) => (
                 "repository(owner: $owner, name: $name)",
@@ -2077,9 +2099,7 @@ impl GitHub {
         let people = field.trim_end_matches("WithRole");
         self.check_connection(&wire, 30, format!("{who}'s {people}"));
         let results = wire.into_results(browse::wire::Person::into_summary);
-        Ok(self
-            .kept_page(first, &browse::keys::users(list), results)
-            .await)
+        Ok(results)
     }
 
     /// A user's or organization's own repositories in `sort` order, 30 at a
@@ -2090,7 +2110,6 @@ impl GitHub {
         sort: browse::RepoSort,
         after: Option<String>,
     ) -> Result<browse::Results<browse::RepoSummary>, ApiError> {
-        let first = after.is_none();
         let op = browse::OwnerReposQuery::build(browse::OwnerReposVariables {
             login: login.to_owned(),
             after,
@@ -2101,9 +2120,7 @@ impl GitHub {
             .await?
             .repositories
             .into_results();
-        Ok(self
-            .kept_page(first, &browse::keys::owner_repos(login, sort), repos)
-            .await)
+        Ok(self.checked(repos, format!("{login}'s repositories")))
     }
 
     /// What a user starred, most recently first, 30 at a time from
@@ -2113,7 +2130,6 @@ impl GitHub {
         login: &str,
         after: Option<String>,
     ) -> Result<browse::Results<browse::RepoSummary>, ApiError> {
-        let first = after.is_none();
         let op = browse::StarredQuery::build(browse::LoginPageVariables {
             login: login.to_owned(),
             after,
@@ -2123,9 +2139,7 @@ impl GitHub {
             .await?
             .starred_repositories
             .into_results();
-        Ok(self
-            .kept_page(first, &browse::keys::starred(login), stars)
-            .await)
+        Ok(self.checked(stars, format!("{login}'s stars")))
     }
 
     /// A repository's forks, most starred first, 30 at a time from
@@ -2135,16 +2149,13 @@ impl GitHub {
         repo: &RepoId,
         after: Option<String>,
     ) -> Result<browse::Results<browse::RepoSummary>, ApiError> {
-        let first = after.is_none();
         let op = browse::ForksQuery::build(list_vars(repo, after));
         let forks = self
             .find(op, repo, |q| q.repository)
             .await?
             .forks
             .into_results();
-        Ok(self
-            .kept_page(first, &browse::keys::forks(repo), forks)
-            .await)
+        Ok(self.checked(forks, format!("{repo}'s forks")))
     }
 
     /// A repository's releases, newest first, 20 at a time from `after`;
@@ -2154,16 +2165,13 @@ impl GitHub {
         repo: &RepoId,
         after: Option<String>,
     ) -> Result<browse::Results<browse::Release>, ApiError> {
-        let first = after.is_none();
         let op = browse::ReleasesQuery::build(list_vars(repo, after));
         let releases = self
             .find(op, repo, |q| q.repository)
             .await?
             .releases
             .into_results();
-        Ok(self
-            .kept_page(first, &browse::keys::releases(repo), releases)
-            .await)
+        Ok(self.checked(releases, format!("{repo}'s releases")))
     }
 
     /// A release by its tag, with its notes and assets.
@@ -2179,7 +2187,7 @@ impl GitHub {
             })
             .await?
             .into_release();
-        Ok(self.kept(&browse::keys::release(repo, tag), release).await)
+        Ok(release)
     }
 
     /// A repository's tags, 30 at a time from `after`; the first page is
@@ -2189,13 +2197,12 @@ impl GitHub {
         repo: &RepoId,
         after: Option<String>,
     ) -> Result<browse::Results<browse::TagInfo>, ApiError> {
-        let first = after.is_none();
         let op = browse::TagsQuery::build(list_vars(repo, after));
         let tags = self
             .find(op, repo, |q| q.repository?.refs)
             .await?
             .into_results();
-        Ok(self.kept_page(first, &browse::keys::tags(repo), tags).await)
+        Ok(self.checked(tags, format!("{repo}'s tags")))
     }
 
     /// Branches by name, 30 at a time from `after`, each with its latest
@@ -2212,7 +2219,6 @@ impl GitHub {
             default_branch_ref: Option<browse::wire::Name>,
             refs: browse::wire::Connection<browse::wire_branches::Branch>,
         }
-        let first = after.is_none();
         let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after });
         let wire: Wire = self
             .graphql_json(raw::BRANCHES, vars, repo, "/repository")
@@ -2220,9 +2226,7 @@ impl GitHub {
         self.check_connection(&wire.refs, 30, format!("{repo}'s branches"));
         let default = wire.default_branch_ref.map(|r| r.name);
         let branches = (wire.refs).into_results(|b| b.into_info(repo, default.as_deref()));
-        Ok(self
-            .kept_page(first, &browse::keys::branches(repo), branches)
-            .await)
+        Ok(branches)
     }
 
     /// Open or closed milestones, soonest due first, 25 at a time from
@@ -2240,7 +2244,6 @@ impl GitHub {
             closed: Count,
             milestones: Connection<browse::wire_milestones::Milestone>,
         }
-        let first = after.is_none();
         let query = raw::milestones(closed);
         let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after });
         let wire: Wire = self.graphql_json(&query, vars, repo, "/repository").await?;
@@ -2250,9 +2253,7 @@ impl GitHub {
             closed: wire.closed.total_count,
             results: (wire.milestones).into_results(browse::wire_milestones::Milestone::into_info),
         };
-        Ok(self
-            .kept_page(first, &browse::keys::milestones(repo, closed), list)
-            .await)
+        Ok(self.checked(list, format!("{repo}'s milestones")))
     }
 
     /// A milestone, and 30 of its issues and pull requests from `after`,
@@ -2263,7 +2264,6 @@ impl GitHub {
         number: u64,
         after: Option<String>,
     ) -> Result<browse::MilestoneDetail, ApiError> {
-        let first = after.is_none();
         let query = raw::milestone();
         let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number });
         let subject = format!("{repo} milestone {number}");
@@ -2294,9 +2294,7 @@ impl GitHub {
             items,
             unsearchable,
         };
-        Ok(self
-            .kept_page(first, &browse::keys::milestone(repo, number), detail)
-            .await)
+        Ok(self.checked(detail, format!("{repo}'s milestone {number}")))
     }
     /// Deployments, newest first, 25 at a time from `after`, to one
     /// environment if given; with the environments.
@@ -2312,7 +2310,6 @@ impl GitHub {
             deployments: Connection<browse::wire_deployments::Deployment>,
             environments: Counted<Name>,
         }
-        let first = after.is_none();
         let environments = environment.map(|e| vec![e]);
         let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "envs": environments });
         let wire: Wire = self
@@ -2324,9 +2321,7 @@ impl GitHub {
             results: (wire.deployments)
                 .into_results(browse::wire_deployments::Deployment::into_info),
         };
-        Ok(self
-            .kept_page(first, &browse::keys::deployments(repo, environment), list)
-            .await)
+        Ok(self.checked(list, format!("{repo}'s deployments")))
     }
     /// Compares two revisions, as a compare URL names them (`a...b`,
     /// `a..b`, `owner:branch`, `owner:repo:branch`): the newest 250 commits
@@ -2374,9 +2369,7 @@ impl GitHub {
                 "comparing {spec}, {listed} commits are listed of {total}, not {expected}"
             ));
         }
-        Ok(self
-            .kept(&browse::keys::compare(repo, spec), comparison)
-            .await)
+        Ok(comparison)
     }
     /// Which commit last changed each line of a file at a revision.
     pub async fn blame(
@@ -2391,9 +2384,7 @@ impl GitHub {
         let wire: browse::wire_blame::Blame =
             (self.graphql_json(raw::BLAME, vars, subject, "/repository/object/blame")).await?;
         let blame = wire.into_blame();
-        Ok(self
-            .kept(&browse::keys::blame(repo, rev, path), blame)
-            .await)
+        Ok(blame)
     }
     /// A gist and its files. REST, since GraphQL finds gists only through
     /// their owners, and a gist's URL may not name its owner.
@@ -2402,7 +2393,7 @@ impl GitHub {
             .rest_json(&format!("/gists/{}", encode_path(id)), format!("gist {id}"))
             .await?;
         let gist = wire.into_gist();
-        Ok(self.kept(&browse::keys::gist(id), gist).await)
+        Ok(gist)
     }
 
     /// Someone's public gists, most recently updated first, 30 at a time
@@ -2412,16 +2403,13 @@ impl GitHub {
         login: &str,
         after: Option<String>,
     ) -> Result<browse::Results<browse::GistSummary>, ApiError> {
-        let first = after.is_none();
         let vars = serde_json::json!({ "login": login, "after": after });
         let wire: browse::wire::Connection<browse::wire_gists::Gist> =
             (self.graphql_json(raw::GISTS, vars, format!("{login}'s gists"), "/user/gists"))
                 .await?;
         self.check_connection(&wire, 30, format!("{login}'s gists"));
         let gists = wire.into_results(browse::wire_gists::Gist::into_summary);
-        Ok(self
-            .kept_page(first, &browse::keys::gists(login), gists)
-            .await)
+        Ok(gists)
     }
     /// The teams in an organization you can see (its members see them),
     /// by name, 30 at a time from `after`.
@@ -2430,15 +2418,12 @@ impl GitHub {
         org: &str,
         after: Option<String>,
     ) -> Result<browse::Results<browse::TeamSummary>, ApiError> {
-        let first = after.is_none();
         let vars = serde_json::json!({ "org": org, "after": after });
         let wire: browse::wire::Connection<browse::wire_teams::Team> =
             (self.graphql_json(&raw::teams(), vars, org, "/organization/teams")).await?;
         self.check_connection(&wire, 30, format!("{org}'s teams"));
         let teams = wire.into_results(browse::wire_teams::Team::into_summary);
-        Ok(self
-            .kept_page(first, &browse::keys::teams(org), teams)
-            .await)
+        Ok(teams)
     }
 
     /// A team: its members, repositories and child teams.
@@ -2452,7 +2437,7 @@ impl GitHub {
         ))
         .await?;
         let team = wire.into_detail();
-        Ok(self.kept(&browse::keys::team(org, slug), team).await)
+        Ok(team)
     }
     /// A repository's published security advisories, or GitHub's newest
     /// reviewed ones, up to 100. REST: repositories' advisories aren't in
@@ -2462,7 +2447,6 @@ impl GitHub {
         repo: Option<&RepoId>,
         after: Option<String>,
     ) -> Result<browse::Results<browse::Advisory>, ApiError> {
-        let first = after.is_none();
         let mut path = match repo {
             Some(r) => format!(
                 "/repos/{}/{}/security-advisories?state=published&per_page={REST_PAGE}",
@@ -2485,9 +2469,7 @@ impl GitHub {
             items,
             next,
         };
-        Ok(self
-            .kept_page(first, &browse::keys::advisories(repo), list)
-            .await)
+        Ok(self.checked(list, "the advisories"))
     }
 
     /// A security advisory: a repository's, or from GitHub's database.
@@ -2503,9 +2485,7 @@ impl GitHub {
         };
         let wire: browse::rest_advisories::Advisory = self.rest_json(&path, ghsa).await?;
         let advisory = wire.into_advisory();
-        Ok(self
-            .kept(&browse::keys::advisory(repo, ghsa), advisory)
-            .await)
+        Ok(advisory)
     }
     /// A workflow run (one attempt of it, or the latest) and its jobs.
     pub async fn workflow_run(
@@ -2561,9 +2541,7 @@ impl GitHub {
             Err(ApiError::NotFound(_)) if starting => Capped::default(),
             artifacts => artifacts?,
         };
-        Ok(self
-            .kept(&browse::keys::run(repo, run.id, attempt), run)
-            .await)
+        Ok(run)
     }
 
     /// A job, its steps, and its run as it is now.
@@ -2595,7 +2573,7 @@ impl GitHub {
         if job.outcome != browse::CheckOutcome::Pending {
             job.annotations = self.job_annotations(repo, job.id).await?;
         }
-        Ok(self.kept(&browse::keys::job(repo, job.id), job).await)
+        Ok(job)
     }
 
     async fn job_wire(
@@ -2658,9 +2636,7 @@ impl GitHub {
                 .filter(|s| s != "active")
                 .map(|s| s.replace('_', " ")),
         };
-        Ok(self
-            .kept(&browse::keys::workflow(repo, file), workflow)
-            .await)
+        Ok(workflow)
     }
 
     /// A repository's workflow runs that match `query` (see
@@ -2685,9 +2661,7 @@ impl GitHub {
                 .collect(),
             next: next_page(page, REST_PAGE, wire.total_count),
         };
-        Ok(self
-            .kept_page(page == 1, &browse::keys::runs(repo, query), runs)
-            .await)
+        Ok(self.checked(runs, format!("{repo}'s runs")))
     }
 
     /// Where page `page` of the runs `query` filters is (see
@@ -2790,7 +2764,7 @@ impl GitHub {
             }
         }
         if forgot {
-            self.remember(notifications::Done::KEY, done).await;
+            self.remember(notifications::Done::KEY, &done);
         }
         let cut = more && filter.after_fetching() && (items.len() as u64) < REST_PAGE;
         let inbox = notifications::Inbox {
@@ -2802,9 +2776,7 @@ impl GitHub {
             searched,
             cut,
         };
-        Ok(self
-            .kept_page(first == 1, &browse::keys::notifications(query), inbox)
-            .await)
+        Ok(self.checked(inbox, "your notifications"))
     }
 
     /// The threads this account marked done (see
@@ -2824,7 +2796,7 @@ impl GitHub {
         }
         let mut done = self.done_threads().await;
         done.mark(threads);
-        self.remember(notifications::Done::KEY, done).await;
+        self.remember(notifications::Done::KEY, &done);
     }
 
     /// How many of your notifications are unread, up to a page of them.
@@ -2893,9 +2865,7 @@ impl GitHub {
                 text_short(&checks.oid)
             ));
         }
-        Ok(self
-            .kept(&browse::keys::commit_checks(repo, rev), checks)
-            .await)
+        Ok(checks)
     }
 
     /// The repository a discussion list or discussion is in: an
@@ -2941,7 +2911,6 @@ impl GitHub {
         after: Option<String>,
     ) -> Result<browse::DiscussionList, ApiError> {
         use browse::wire_discussions as w;
-        let first = after.is_none();
         let repo = self.discussions_repo(of).await?;
         let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name });
         let at = "/repository/discussionCategories";
@@ -2973,9 +2942,7 @@ impl GitHub {
             }),
             results: page.into_results(w::Summary::into_summary),
         };
-        Ok(self
-            .kept_page(first, &browse::keys::discussions(of, category), list)
-            .await)
+        Ok(self.checked(list, "the discussions"))
     }
 
     /// A discussion, its comments and their replies.
@@ -2991,9 +2958,7 @@ impl GitHub {
             (self.graphql_json(&raw::discussion(), vars, subject, "/repository/discussion"))
                 .await?;
         let detail = wire.into_detail(repo);
-        Ok(self
-            .kept(&browse::keys::discussion(of, number), detail)
-            .await)
+        Ok(detail)
     }
 
     /// Branches by name, up to [`PAGES`] pages of 100, and the newest 100
@@ -3027,7 +2992,7 @@ impl GitHub {
             .more_pages(what, heads(first.heads), PAGES, more)
             .await?;
         let refs = browse::Refs { branches, tags };
-        Ok(self.kept(&browse::keys::refs(repo), refs).await)
+        Ok(refs)
     }
 
     /// The ref a plain GitHub URL's `spot` (`feature/x/src/lib.rs`)
@@ -3072,41 +3037,8 @@ impl GitHub {
     }
 
     /// Saves a small value in the cache (e.g. recently visited pages).
-    pub async fn remember<T: Serialize + Send + 'static>(&self, key: &str, value: T) {
-        let store = self.store.clone();
-        let key = key.to_owned();
-        spawn_store(move || store.query_put(&key, &value)).await;
-    }
-
-    /// [`Self::kept`] for a list's first page; later pages aren't cached.
-    /// A list's page, checked it adds up, then kept if it's the first.
-    pub(crate) async fn kept_page<T: Serialize + Clone + Send + browse::Page + 'static>(
-        &self,
-        first: bool,
-        key: &str,
-        value: T,
-    ) -> T {
-        self.check_page(&value, key);
-        self.kept_if(first, key, value).await
-    }
-
-    async fn kept_if<T: Serialize + Clone + Send + 'static>(
-        &self,
-        first: bool,
-        key: &str,
-        value: T,
-    ) -> T {
-        if first {
-            self.kept(key, value).await
-        } else {
-            value
-        }
-    }
-
-    /// [`Self::remember`]s `value` and hands it back.
-    async fn kept<T: Serialize + Clone + Send + 'static>(&self, key: &str, value: T) -> T {
-        self.remember(key, value.clone()).await;
-        value
+    pub fn remember<T: Serialize>(&self, key: &str, value: &T) {
+        self.store.query_put(key, value);
     }
 }
 
@@ -3393,21 +3325,6 @@ fn page_vars(pr: &PrRef, after: Option<String>) -> Result<queries::PageVariables
         number: pr_number(pr)?,
         after,
     })
-}
-
-fn pr_key(pr: &PrRef) -> String {
-    format!("pr:{pr}")
-}
-
-/// redb writes fsync; keep them off the async worker threads.
-async fn spawn_store(f: impl FnOnce() + Send + 'static) {
-    if let Err(err) = tokio::task::spawn_blocking(f).await {
-        tracing::warn!(%err, "cache write task failed");
-    }
-}
-
-async fn backoff(attempt: u32) {
-    tokio::time::sleep(Duration::from_millis(250 << attempt)).await;
 }
 
 /// A failed response's error. A 404 names `what` was asked for: GitHub's

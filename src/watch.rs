@@ -4,59 +4,103 @@
 //! choices, with the one set now; the one chosen goes to GitHub, and the
 //! subscription is read again until GitHub shows it.
 
-use crate::api::GitHub;
 use crate::api::model::NodeId;
 use crate::api::watch::{Subscription, SubscriptionState, Watched};
-use crate::ui::overlays::PaletteItem;
+use crate::route::{Dest, Route, Target, discussions, issues, pulls};
 
-use crate::browse::DataKey;
+use crate::act::Step;
+use crate::data::DataKey;
+use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
-use crate::nav::Doable;
+use crate::nav::{Doable, row};
 use crate::picker::fuzzy_score;
-use crate::route::{Dest, Route, Target};
+use crate::picker::{Choice, entry};
 use crate::state::{Cmd, Remote, Screen, State};
-use crate::writes::{Chosen, Expected, Pick, Work as Writes, item, row};
+use crate::work::{Cx, Failure, Job};
 
 /// Setting a subscription.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Work {
+pub struct Subscribe {
     pub of: Watched,
     pub id: NodeId,
     pub state: SubscriptionState,
 }
 
-#[derive(Debug)]
-pub struct Done(pub Work, pub Result<(), String>);
+impl Job for Subscribe {
+    type Out = ();
 
-impl Done {
-    pub fn wrote(&self) -> bool {
-        self.1.is_ok()
+    async fn run(&self, cx: &Cx) -> Result<(), Failure> {
+        Ok(cx.gh.subscribe(&self.of, &self.id, self.state).await?)
+    }
+
+    /// GitHub's answer: the subscription is read again until it shows it.
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+        match result {
+            Ok(()) => {
+                state.info(said(&self.of, self.state));
+                if let Some(route) = state.route().cloned() {
+                    let what = Subscribed(self.of.clone(), self.state);
+                    crate::follow::expect(state, route, what);
+                }
+                let key = DataKey::Subscription(self.of);
+                let mut cmds = state.ensure(key, true);
+                // What the page shows of it (a repository's watchers) follows.
+                cmds.extend(state.load_visible(false));
+                cmds
+            }
+            Err(why) => {
+                let why = why.to_string();
+                // GitHub sets a thread's subscription only for a token with
+                // the notifications scope, which gh doesn't ask for.
+                let text = if why.contains("'notifications'") {
+                    crate::api::scope_missing("Subscribing to a thread", "notifications")
+                } else if why.to_lowercase().contains("not accessible") {
+                    format!(
+                        "GitHub didn't change your subscription: {why}. A fine-grained token can't: a classic one can"
+                    )
+                } else {
+                    format!("GitHub didn't change your subscription: {why}")
+                };
+                state.error(text);
+                Vec::new()
+            }
+        }
     }
 }
 
-impl Work {
-    pub fn failed(&self, why: String) -> Done {
-        Done(self.clone(), Err(why))
+/// A subscription, once GitHub shows it set.
+#[derive(Debug)]
+struct Subscribed(Watched, SubscriptionState);
+
+impl Expectation for Subscribed {
+    fn needs(&self, _: &State, _: &Route) -> Vec<DataKey> {
+        vec![DataKey::Subscription(self.0.clone())]
     }
 
-    pub async fn run(self, gh: &GitHub) -> Done {
-        let result = gh.subscribe(&self.of, &self.id, self.state).await;
-        Done(self, result.map_err(|e| crate::writes::reason(&e)))
+    fn waiting(&self) -> &'static str {
+        "Waiting for GitHub to show the subscription"
+    }
+
+    fn shown(&self, state: &State, _: &Route) -> Shown {
+        let key = DataKey::Subscription(self.0.clone());
+        let s = state.picked::<Subscription>(&key);
+        s.is_some_and(|s| s.state == Some(self.1)).into()
     }
 }
 
 /// What a page (or the row selected on a list) is about, to subscribe to.
 fn of_route(route: &Route) -> Option<Watched> {
     Some(match route {
-        Route::Issue { repo, number } => Watched::Thread(repo.clone(), *number),
-        Route::Pr { pr, .. } => Watched::Thread(pr.repo.clone(), pr.number),
-        Route::Discussion {
+        Route::Issues(issues::Issue { repo, number }) => Watched::Thread(repo.clone(), *number),
+        Route::Pulls(pulls::Pr { pr, .. }) => Watched::Thread(pr.repo.clone(), pr.number),
+        Route::Discussions(discussions::Discussion {
             of: crate::api::browse::DiscussionsOf::Repo(repo),
             number,
-        } => Watched::Discussion(repo.clone(), *number),
+        }) => Watched::Discussion(repo.clone(), *number),
         // An organization's discussion is in a repository its page
         // doesn't name.
-        Route::Discussion { .. } | Route::Discussions { .. } => return None,
+        Route::Discussions(discussions::Discussion { .. })
+        | Route::Discussions(discussions::Discussions { .. }) => return None,
         route => Watched::Repo(route.repo()?.clone()),
     })
 }
@@ -73,7 +117,9 @@ pub fn subject(state: &State) -> Option<Watched> {
             let row = p.selected_link().and_then(crate::ui::page::Link::url);
             let row = row.and_then(|url| match Dest::from_url(url).target {
                 Target::Page(
-                    route @ (Route::Issue { .. } | Route::Pr { .. } | Route::Discussion { .. }),
+                    route @ (Route::Issues(issues::Issue { .. })
+                    | Route::Pulls(pulls::Pr { .. })
+                    | Route::Discussions(discussions::Discussion { .. })),
                 ) => of_route(&route),
                 // A row that opens a pull request's files is about it too.
                 Target::Files(crate::diff_screen::DiffOf::Pr(pr)) => {
@@ -94,15 +140,13 @@ pub fn subject(state: &State) -> Option<Watched> {
 #[must_use]
 pub fn open(state: &mut State) -> Vec<Cmd> {
     let Some(of) = subject(state) else {
-        state.info("That works on an issue, a pull request, a discussion, or a repository's pages");
-        return Vec::new();
+        return state.just_say(
+            "That works on an issue, a pull request, a discussion, or a repository's pages",
+        );
     };
     // What GitHub has now, not what was read before.
-    let mut cmds = state.ensure(
-        crate::browse::Need::Data(DataKey::Subscription(of.clone())),
-        true,
-    );
-    cmds.extend(crate::writes::open_picker(state, Pick::Watch(of)));
+    let mut cmds = state.ensure(DataKey::Subscription(of.clone()), true);
+    cmds.extend(state.open_picker(crate::picker::Kind::Watch(of)));
     cmds
 }
 
@@ -137,18 +181,18 @@ fn choices(of: &Watched) -> [(SubscriptionState, &'static str, &'static str); 3]
 
 /// The picker's rows: each choice, the current one marked, or why
 /// there are none.
-pub fn rows(state: &State, of: &Watched, q: &str) -> Vec<(PaletteItem, Option<Chosen>)> {
+pub fn rows(state: &State, of: &Watched, q: &str) -> crate::picker::Rows {
     let key = DataKey::Subscription(of.clone());
     #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
-    let fetched = Remote::fetched(state.data.get(&key), "")
-        .pick(<Subscription as crate::browse::Picked>::pick)
+    let fetched = Remote::fetched(state.remote(&key), "")
+        .pick(<Subscription as crate::data::Picked>::pick)
         .text("your subscription");
     let s = match fetched {
         Ok(s) => s,
-        Err(why) => return vec![item(why, "", None)],
+        Err(why) => return vec![entry(why, "", None)],
     };
     if !s.can {
-        return vec![item("GitHub doesn't let you subscribe to it", "", None)];
+        return vec![entry("GitHub doesn't let you subscribe to it", "", None)];
     }
     let mut rows: Vec<_> = (choices(of).into_iter())
         .filter(|(_, label, _)| fuzzy_score(q, label).is_some())
@@ -158,16 +202,21 @@ pub fn rows(state: &State, of: &Watched, q: &str) -> Vec<(PaletteItem, Option<Ch
             } else {
                 means.to_owned()
             };
-            let work = Work {
+            let work = Subscribe {
                 of: of.clone(),
                 id: s.id.clone(),
                 state: set,
             };
-            item(label, hint, Some(Chosen::Subscribe(work)))
+            let doing = format!("{}…", said(&work.of, work.state));
+            entry(
+                label,
+                hint,
+                Some(Choice::Step(Step::Start(doing, work.into()))),
+            )
         })
         .collect();
     if let Watched::Repo(_) = of {
-        rows.push(item(
+        rows.push(entry(
             "Custom (releases, issues…): on github.com",
             "GitHub's API can't set it",
             None,
@@ -191,48 +240,15 @@ fn said(of: &Watched, state: SubscriptionState) -> String {
     }
 }
 
-#[must_use]
-pub fn choose(state: &mut State, work: Work) -> Vec<Cmd> {
-    state.info(format!("{}…", said(&work.of, work.state)));
-    vec![Cmd::Write(Writes::Watch(work))]
-}
+/// What watching adds: how you're notified of what's on screen.
+pub const FEATURE: crate::features::Feature = crate::features::Feature {
+    owns: &[Action::Watch],
+    act: |state, _| open(state),
+    offers: |state, out| out.extend(doable(state)),
+    ..crate::features::Feature::NONE
+};
 
-/// GitHub's answer: the subscription is read again until it shows it.
-#[must_use]
-pub fn on_done(state: &mut State, Done(work, result): Done) -> Vec<Cmd> {
-    match result {
-        Ok(()) => {
-            state.info(said(&work.of, work.state));
-            if let Some(route) = state.route().cloned() {
-                let what = Expected::Subscription(work.of.clone(), work.state);
-                crate::writes::expect(state, route, what);
-            }
-            let key = DataKey::Subscription(work.of);
-            let mut cmds = state.ensure(crate::browse::Need::Data(key), true);
-            // What the page shows of it (a repository's watchers) follows.
-            cmds.extend(state.load_visible(false));
-            cmds
-        }
-        Err(why) => {
-            // GitHub sets a thread's subscription only for a token with
-            // the notifications scope, which gh doesn't ask for.
-            let text = if why.contains("'notifications'") {
-                "Subscribing to a thread takes your token's notifications scope: gh auth refresh -s notifications adds it".to_owned()
-            } else if why.to_lowercase().contains("not accessible") {
-                format!(
-                    "GitHub didn't change your subscription: {why}. A fine-grained token can't: a classic one can"
-                )
-            } else {
-                format!("GitHub didn't change your subscription: {why}")
-            };
-            state.error(text);
-            Vec::new()
-        }
-    }
-}
-
-/// The menu's row, wherever there's something to subscribe to.
-pub fn doable(state: &State) -> Option<Doable> {
+fn doable(state: &State) -> Option<Doable> {
     let of = subject(state)?;
     let label = match &of {
         Watched::Repo(_) => "Watch the repository, or ignore it",

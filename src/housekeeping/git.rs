@@ -2,14 +2,14 @@
 //! credentials: a branch or tag made or deleted on GitHub with `git push`,
 //! and files committed on GitHub's tip of a branch and pushed. Nothing
 //! here touches the clone's branches, index or working tree: commits are
-//! made from objects alone (as a wiki's are, [`crate::wiki`]) and pushed
-//! by their IDs, so whatever you're in the middle of stays as it is.
+//! made from objects alone ([`crate::git::commit`]) and pushed by their
+//! IDs, so whatever you're in the middle of stays as it is.
 
 use std::path::Path;
 
 use crate::api::housekeeping::RefKind;
-use crate::git::GitError;
 use crate::git::repo::Repo;
+use crate::git::{GitError, commit};
 
 /// Where GitHub's tip of a branch is fetched to, to commit on.
 const TIP: &str = "refs/ghtui/edit/tip";
@@ -157,28 +157,26 @@ pub async fn commit(top: &Path, remote: &str, c: &Commit) -> Result<String, Stri
             None => tip(&repo, &c.branch).await?,
         };
         for (path, seen) in &c.seen {
-            if blob(&repo, &parent, path).await != *seen {
-                return Err(match seen {
-                    Some(_) => format!(
-                        "{path} changed on GitHub since you opened it: committing would overwrite that, so it isn't committed. Your text is kept here; open the file again to see GitHub's"
-                    ),
-                    None => format!("{} has {path} already", c.branch),
-                });
+            if commit::blob(&repo, &parent, path).await != *seen {
+                return Err(super::files::not_as_seen(&c.branch, path, seen.as_ref()));
             }
         }
-        let commit = make(&repo, &parent, c)
+        let change = commit::Change {
+            additions: &c.additions,
+            deletions: &c.deletions,
+            message: &c.message,
+            login: c.login.as_deref(),
+        };
+        let made = commit::make(&repo, &parent, &change)
             .await
             .map_err(|e| format!("Couldn't make the commit: {e}"))?;
-        let spec = format!("{commit}:{}", RefKind::Branch.full(&c.branch));
+        let spec = format!("{made}:{}", RefKind::Branch.full(&c.branch));
         match repo
             .git(&["push", "--quiet", &repo.remote, &spec], &[], None)
             .await
         {
-            Ok(_) => return Ok(commit),
-            Err(GitError::Failed { stderr, .. })
-                if attempt == 0
-                    && c.from.is_none()
-                    && (stderr.contains("[rejected]") || stderr.contains("fetch first")) => {}
+            Ok(_) => return Ok(made),
+            Err(err) if attempt == 0 && c.from.is_none() && commit::moved_on(&err) => {}
             Err(err) => return Err(format!("GitHub refused the push: {}", refused(&err))),
         }
     }
@@ -206,75 +204,6 @@ async fn tip(repo: &Repo, branch: &str) -> Result<String, String> {
         .map_err(|e| format!("Couldn't read {branch}: {e}"))
 }
 
-/// The blob at `rev:path`, if there's one.
-async fn blob(repo: &Repo, rev: &str, path: &str) -> Option<String> {
-    let spec = format!("{rev}:{path}");
-    let out = repo
-        .git(&["rev-parse", "--verify", "--quiet", &spec], &[], None)
-        .await;
-    out.ok().map(|o| o.trim().to_owned())
-}
-
-/// The mode of `path` at `rev` (an executable stays one), else a plain
-/// file's.
-async fn mode(repo: &Repo, rev: &str, path: &str) -> String {
-    let out = repo.git(&["ls-tree", rev, "--", path], &[], None).await;
-    out.ok()
-        .and_then(|o| o.split_whitespace().next().map(str::to_owned))
-        .filter(|m| m == "100755")
-        .unwrap_or_else(|| "100644".to_owned())
-}
-
-/// The commit, on `parent`, made through an index of its own.
-async fn make(repo: &Repo, parent: &str, c: &Commit) -> Result<String, GitError> {
-    let index = repo
-        .git(&["rev-parse", "--git-path", "ghtui-edit-index"], &[], None)
-        .await?;
-    let index = repo.path.join(index.trim());
-    let index = index.with_file_name(format!("ghtui-edit-index-{}", std::process::id()));
-    let index_path = index.to_string_lossy().into_owned();
-    let env = [("GIT_INDEX_FILE", index_path.as_str())];
-    let tree = async {
-        repo.git(&["read-tree", parent], &env, None).await?;
-        for path in &c.deletions {
-            let args = ["update-index", "--force-remove", "--", path];
-            repo.git(&args, &env, None).await?;
-        }
-        for (path, text) in &c.additions {
-            // A renamed file keeps its mode.
-            let was = c.deletions.first().map_or(path.as_str(), String::as_str);
-            let mode = mode(repo, parent, was).await;
-            let blob = repo
-                .git(&["hash-object", "-w", "--stdin"], &[], Some(text.clone()))
-                .await?;
-            let info = format!("{mode},{},{path}", blob.trim());
-            repo.git(&["update-index", "--add", "--cacheinfo", &info], &env, None)
-                .await?;
-        }
-        repo.git(&["write-tree"], &env, None).await
-    }
-    .await;
-    let _ = std::fs::remove_file(&index);
-    let tree = tree?;
-    let config = |key: &'static str| async move {
-        let value = repo.git(&["config", key], &[], None).await.ok()?;
-        Some(value.trim().to_owned()).filter(|v| !v.is_empty())
-    };
-    let login = c.login.as_deref().unwrap_or("ghtui");
-    let name = (config("user.name").await).unwrap_or_else(|| login.to_owned());
-    let email =
-        (config("user.email").await).unwrap_or_else(|| format!("{login}@users.noreply.github.com"));
-    let who = [
-        ("GIT_AUTHOR_NAME", name.as_str()),
-        ("GIT_AUTHOR_EMAIL", email.as_str()),
-        ("GIT_COMMITTER_NAME", name.as_str()),
-        ("GIT_COMMITTER_EMAIL", email.as_str()),
-    ];
-    let args = ["commit-tree", tree.trim(), "-p", parent, "-F", "-"];
-    let made = repo.git(&args, &who, Some(c.message.clone())).await?;
-    Ok(made.trim().to_owned())
-}
-
 /// Clones `url` into `dir` with your own git.
 pub async fn clone(url: &str, dir: &Path) -> Result<(), String> {
     if dir.exists() {
@@ -291,9 +220,7 @@ pub async fn clone(url: &str, dir: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    async fn git(dir: &Path, args: &[&str]) -> String {
-        crate::git::run(Some(dir), args).await.unwrap()
-    }
+    use crate::git::set_up as git;
 
     /// "GitHub" (a bare repository with `a.txt` and `run.sh` on main),
     /// your clone of it, and someone else's.

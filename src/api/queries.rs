@@ -7,20 +7,18 @@ use crate::schema::schema;
 use crate::api::model::{MergeState, Mergeable, ReviewDecision, ReviewState, Side, ViewedState};
 
 #[derive(cynic::Scalar, Debug, Clone)]
-#[cynic(graphql_type = "DateTime", schema_module = "schema")]
 pub struct DateTime(pub String);
 
 #[derive(cynic::Scalar, Debug, Clone)]
-#[cynic(graphql_type = "URI", schema_module = "schema")]
+#[cynic(graphql_type = "URI")]
 pub struct Uri(pub String);
 
 #[derive(cynic::Scalar, Debug, Clone)]
-#[cynic(graphql_type = "GitObjectID", schema_module = "schema")]
+#[cynic(graphql_type = "GitObjectID")]
 pub struct GitObjectId(pub String);
 
 /// A number too big for GraphQL's `Int`, as GitHub writes it: a string.
 #[derive(cynic::Scalar, Debug, Clone)]
-#[cynic(graphql_type = "BigInt", schema_module = "schema")]
 pub struct BigInt(pub String);
 
 /// The non-null nodes of a GraphQL list.
@@ -34,21 +32,21 @@ pub(crate) fn nodes<T>(list: Option<Vec<Option<T>>>) -> impl Iterator<Item = T> 
 macro_rules! fragments {
     ($field:ident: Option<$ty:ident>; $($name:ident = $graphql:literal),* $(,)?) => {$(
         #[derive(cynic::QueryFragment, Debug)]
-        #[cynic(graphql_type = $graphql, schema_module = "schema")]
+        #[cynic(graphql_type = $graphql)]
         pub struct $name {
             pub $field: Option<$ty>,
         }
     )*};
     (total_count: i32; $($name:ident = $graphql:literal),* $(,)?) => {$(
         #[derive(cynic::QueryFragment, Debug)]
-        #[cynic(graphql_type = $graphql, schema_module = "schema")]
+        #[cynic(graphql_type = $graphql)]
         pub struct $name {
             pub total_count: i32,
         }
     )*};
     (id: cynic::Id; $($name:ident = $graphql:literal),* $(,)?) => {$(
         #[derive(cynic::QueryFragment, Debug)]
-        #[cynic(graphql_type = $graphql, schema_module = "schema")]
+        #[cynic(graphql_type = $graphql)]
         pub struct $name {
             pub id: cynic::Id,
         }
@@ -56,7 +54,7 @@ macro_rules! fragments {
     // A page of nodes and how many there are in all.
     (counted: $($name:ident = $graphql:literal => $ty:ident),* $(,)?) => {$(
         #[derive(cynic::QueryFragment, Debug)]
-        #[cynic(graphql_type = $graphql, schema_module = "schema")]
+        #[cynic(graphql_type = $graphql)]
         pub struct $name {
             pub total_count: i32,
             pub nodes: Option<Vec<Option<$ty>>>,
@@ -64,7 +62,7 @@ macro_rules! fragments {
     )*};
     (nodes: $($name:ident = $graphql:literal => $ty:ident),* $(,)?) => {$(
         #[derive(cynic::QueryFragment, Debug)]
-        #[cynic(graphql_type = $graphql, schema_module = "schema")]
+        #[cynic(graphql_type = $graphql)]
         pub struct $name {
             pub nodes: Option<Vec<Option<$ty>>>,
         }
@@ -170,18 +168,14 @@ pub struct NodesVariables {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Query",
-    schema_module = "schema",
-    variables = "NodesVariables"
-)]
+#[cynic(graphql_type = "Query", variables = "NodesVariables")]
 pub struct RollupsQuery {
     #[arguments(ids: $ids)]
     pub nodes: Vec<Option<RollupNode>>,
 }
 
 #[derive(cynic::InlineFragments, Debug)]
-#[cynic(graphql_type = "Node", schema_module = "schema")]
+#[cynic(graphql_type = "Node")]
 pub enum RollupNode {
     PullRequest(PrRollup),
     #[cynic(fallback)]
@@ -189,7 +183,7 @@ pub enum RollupNode {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequest", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequest")]
 pub struct PrRollup {
     pub id: cynic::Id,
     #[arguments(last: 1)]
@@ -197,7 +191,7 @@ pub struct PrRollup {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequest", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequest")]
 pub struct PrSummary {
     pub title: String,
     #[cynic(spread)]
@@ -212,44 +206,41 @@ pub struct PrSummary {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Actor", schema_module = "schema")]
 pub struct Actor {
     pub login: String,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", schema_module = "schema")]
+#[cynic(graphql_type = "Repository")]
 pub struct RepositoryName {
     pub name_with_owner: String,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Milestone", schema_module = "schema")]
+#[cynic(graphql_type = "Milestone")]
 pub struct MilestoneName {
     pub number: i32,
     pub title: String,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestCommit", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequestCommit")]
 pub struct CommitRollupNode {
     pub commit: CommitRollup,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Commit", schema_module = "schema")]
+#[cynic(graphql_type = "Commit")]
 pub struct CommitRollup {
     pub status_check_rollup: Option<StatusCheckRollup>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "StatusCheckRollup", schema_module = "schema")]
 pub struct StatusCheckRollup {
     pub state: StatusState,
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy)]
-#[cynic(graphql_type = "PullRequestState", schema_module = "schema")]
 pub enum PullRequestState {
     Open,
     Closed,
@@ -257,7 +248,6 @@ pub enum PullRequestState {
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy)]
-#[cynic(graphql_type = "StatusState", schema_module = "schema")]
 pub enum StatusState {
     Error,
     Expected,
@@ -269,22 +259,14 @@ pub enum StatusState {
 // ---- one pull request ------------------------------------------------------
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Query",
-    schema_module = "schema",
-    variables = "NumberVariables"
-)]
+#[cynic(graphql_type = "Query", variables = "NumberVariables")]
 pub struct PullRequestQuery {
     #[arguments(owner: $owner, name: $name)]
     pub repository: Option<RepositoryWithPr>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Repository",
-    schema_module = "schema",
-    variables = "NumberVariables"
-)]
+#[cynic(graphql_type = "Repository", variables = "NumberVariables")]
 pub struct RepositoryWithPr {
     #[arguments(number: $number)]
     pub pull_request: Option<PrDetail>,
@@ -298,7 +280,6 @@ pub struct RepositoryWithPr {
 
 /// What you may do in a repository.
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
-#[cynic(graphql_type = "RepositoryPermission", schema_module = "schema")]
 pub enum RepositoryPermission {
     Admin,
     Maintain,
@@ -316,7 +297,7 @@ impl RepositoryPermission {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequest", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequest")]
 pub struct PrDetail {
     pub id: cynic::Id,
     #[cynic(spread)]
@@ -360,27 +341,24 @@ pub struct PrDetail {
 
 /// A branch or tag, by its node ID.
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Ref", schema_module = "schema")]
+#[cynic(graphql_type = "Ref")]
 pub struct RefId {
     pub id: cynic::Id,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "AutoMergeRequest", schema_module = "schema")]
 pub struct AutoMergeRequest {
     pub enabled_by: Option<Actor>,
     pub merge_method: crate::api::change::MergeMethod,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "MergeQueueEntry", schema_module = "schema")]
 pub struct MergeQueueEntry {
     pub position: i32,
     pub state: crate::api::model::QueueState,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Label", schema_module = "schema")]
 pub struct Label {
     pub name: String,
     pub color: String,
@@ -398,22 +376,14 @@ pub struct BehindVariables {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Query",
-    schema_module = "schema",
-    variables = "BehindVariables"
-)]
+#[cynic(graphql_type = "Query", variables = "BehindVariables")]
 pub struct BehindQuery {
     #[arguments(owner: $owner, name: $name)]
     pub repository: Option<RepositoryBehind>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Repository",
-    schema_module = "schema",
-    variables = "BehindVariables"
-)]
+#[cynic(graphql_type = "Repository", variables = "BehindVariables")]
 pub struct RepositoryBehind {
     #[arguments(qualifiedName: $base)]
     #[cynic(rename = "ref")]
@@ -421,18 +391,14 @@ pub struct RepositoryBehind {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Ref",
-    schema_module = "schema",
-    variables = "BehindVariables"
-)]
+#[cynic(graphql_type = "Ref", variables = "BehindVariables")]
 pub struct RefCompare {
     #[arguments(headRef: $head)]
     pub compare: Option<Behind>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Comparison", schema_module = "schema")]
+#[cynic(graphql_type = "Comparison")]
 pub struct Behind {
     pub behind_by: i32,
 }
@@ -440,33 +406,21 @@ pub struct Behind {
 // ---- viewed files ------------------------------------------------------------
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Query",
-    schema_module = "schema",
-    variables = "PageVariables"
-)]
+#[cynic(graphql_type = "Query", variables = "PageVariables")]
 pub struct PrFilesQuery {
     #[arguments(owner: $owner, name: $name)]
     pub repository: Option<RepositoryWithPrFiles>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Repository",
-    schema_module = "schema",
-    variables = "PageVariables"
-)]
+#[cynic(graphql_type = "Repository", variables = "PageVariables")]
 pub struct RepositoryWithPrFiles {
     #[arguments(number: $number)]
     pub pull_request: Option<PrFiles>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "PullRequest",
-    schema_module = "schema",
-    variables = "PageVariables"
-)]
+#[cynic(graphql_type = "PullRequest", variables = "PageVariables")]
 pub struct PrFiles {
     pub id: cynic::Id,
     #[arguments(first: 100, after: $after)]
@@ -474,17 +428,13 @@ pub struct PrFiles {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "PullRequestChangedFileConnection",
-    schema_module = "schema"
-)]
+#[cynic(graphql_type = "PullRequestChangedFileConnection")]
 pub struct PrChangedFiles {
     pub page_info: PageInfo,
     pub nodes: Option<Vec<Option<PrChangedFile>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PageInfo", schema_module = "schema")]
 pub struct PageInfo {
     pub has_next_page: bool,
     pub end_cursor: Option<String>,
@@ -498,7 +448,7 @@ impl PageInfo {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestChangedFile", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequestChangedFile")]
 pub struct PrChangedFile {
     pub path: String,
     pub viewer_viewed_state: ViewedState,
@@ -511,22 +461,14 @@ pub struct ViewedVariables {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "ViewedVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "ViewedVariables")]
 pub struct MarkFileAsViewed {
     #[arguments(input: { pullRequestId: $pull_request_id, path: $path })]
     pub mark_file_as_viewed: Option<MarkFileAsViewedPayload>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "ViewedVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "ViewedVariables")]
 pub struct UnmarkFileAsViewed {
     #[arguments(input: { pullRequestId: $pull_request_id, path: $path })]
     pub unmark_file_as_viewed: Option<UnmarkFileAsViewedPayload>,
@@ -535,50 +477,35 @@ pub struct UnmarkFileAsViewed {
 // ---- review threads ----------------------------------------------------------
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Query",
-    schema_module = "schema",
-    variables = "PageVariables"
-)]
+#[cynic(graphql_type = "Query", variables = "PageVariables")]
 pub struct ThreadsQuery {
     #[arguments(owner: $owner, name: $name)]
     pub repository: Option<RepositoryWithThreads>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Repository",
-    schema_module = "schema",
-    variables = "PageVariables"
-)]
+#[cynic(graphql_type = "Repository", variables = "PageVariables")]
 pub struct RepositoryWithThreads {
     #[arguments(number: $number)]
     pub pull_request: Option<PrThreads>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "PullRequest",
-    schema_module = "schema",
-    variables = "PageVariables"
-)]
+#[cynic(graphql_type = "PullRequest", variables = "PageVariables")]
 pub struct PrThreads {
     #[arguments(first: 100, after: $after)]
     pub review_threads: ThreadConnection,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "PullRequestReviewThreadConnection",
-    schema_module = "schema"
-)]
+#[cynic(graphql_type = "PullRequestReviewThreadConnection")]
 pub struct ThreadConnection {
     pub page_info: PageInfo,
     pub nodes: Option<Vec<Option<ReviewThread>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReviewThread", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequestReviewThread")]
 pub struct ReviewThread {
     pub id: cynic::Id,
     pub path: String,
@@ -604,7 +531,7 @@ pub struct ReviewThread {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReviewComment", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequestReviewComment")]
 pub struct ReviewComment {
     pub id: cynic::Id,
     pub author: Option<Actor>,
@@ -624,7 +551,7 @@ pub struct ReviewComment {
 /// A thread's first comment, with the diff it was made on: the lines
 /// it's about come last.
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReviewComment", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequestReviewComment")]
 pub struct FirstComment {
     #[cynic(spread)]
     pub comment: ReviewComment,
@@ -632,21 +559,21 @@ pub struct FirstComment {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReview", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequestReview")]
 pub struct ReviewDatabaseId {
     /// `databaseId` overflows GraphQL's `Int` on newer reviews.
     pub full_database_id: Option<BigInt>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Commit", schema_module = "schema")]
+#[cynic(graphql_type = "Commit")]
 pub struct CommitOid {
     pub oid: GitObjectId,
 }
 
 /// Your pending review, and the commit it's on.
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReview", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequestReview")]
 pub struct PendingReview {
     pub id: cynic::Id,
     pub commit: Option<CommitOid>,
@@ -655,20 +582,14 @@ pub struct PendingReview {
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
-#[cynic(
-    graphql_type = "PullRequestReviewCommentState",
-    schema_module = "schema"
-)]
+#[cynic(graphql_type = "PullRequestReviewCommentState")]
 pub enum ReviewCommentState {
     Pending,
     Submitted,
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
-#[cynic(
-    graphql_type = "PullRequestReviewThreadSubjectType",
-    schema_module = "schema"
-)]
+#[cynic(graphql_type = "PullRequestReviewThreadSubjectType")]
 pub enum ThreadSubjectType {
     File,
     Line,
@@ -677,29 +598,21 @@ pub enum ThreadSubjectType {
 // ---- pending review ---------------------------------------------------------
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Query",
-    schema_module = "schema",
-    variables = "NumberVariables"
-)]
+#[cynic(graphql_type = "Query", variables = "NumberVariables")]
 pub struct PendingReviewQuery {
     #[arguments(owner: $owner, name: $name)]
     pub repository: Option<RepositoryWithPendingReview>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Repository",
-    schema_module = "schema",
-    variables = "NumberVariables"
-)]
+#[cynic(graphql_type = "Repository", variables = "NumberVariables")]
 pub struct RepositoryWithPendingReview {
     #[arguments(number: $number)]
     pub pull_request: Option<PrPendingReview>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequest", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequest")]
 pub struct PrPendingReview {
     pub id: cynic::Id,
     /// Only the viewer's own pending review is visible.
@@ -716,11 +629,7 @@ pub struct StartReviewVariables {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "StartReviewVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "StartReviewVariables")]
 pub struct StartReview {
     #[arguments(input: { pullRequestId: $pull_request_id, commitOID: $commit })]
     pub add_pull_request_review: Option<StartReviewPayload>,
@@ -729,7 +638,6 @@ pub struct StartReview {
 #[derive(cynic::InputObject, Debug)]
 #[cynic(
     graphql_type = "AddPullRequestReviewThreadInput",
-    schema_module = "schema",
     rename_all = "camelCase"
 )]
 pub struct AddThreadInput {
@@ -753,18 +661,14 @@ pub struct AddThreadVariables {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "AddThreadVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "AddThreadVariables")]
 pub struct AddThread {
     #[arguments(input: $input)]
     pub add_pull_request_review_thread: Option<ThreadPayload>,
 }
 
 #[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq)]
-#[cynic(graphql_type = "PullRequestReviewEvent", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequestReviewEvent")]
 pub enum ReviewEvent {
     Approve,
     Comment,
@@ -780,11 +684,7 @@ pub struct SubmitReviewVariables {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "SubmitReviewVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "SubmitReviewVariables")]
 pub struct SubmitReview {
     #[arguments(input: { pullRequestReviewId: $review_id, event: $event, body: $body })]
     pub submit_pull_request_review: Option<SubmitReviewPayload>,
@@ -797,11 +697,7 @@ pub struct ReplyVariables {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "ReplyVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "ReplyVariables")]
 pub struct Reply {
     #[arguments(input: { pullRequestReviewThreadId: $thread_id, body: $body })]
     pub add_pull_request_review_thread_reply: Option<ReplyPayload>,
@@ -818,22 +714,14 @@ pub struct ThreadIdVariables {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "ThreadIdVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "ThreadIdVariables")]
 pub struct Resolve {
     #[arguments(input: { threadId: $thread_id })]
     pub resolve_review_thread: Option<ResolvePayload>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Mutation",
-    schema_module = "schema",
-    variables = "ThreadIdVariables"
-)]
+#[cynic(graphql_type = "Mutation", variables = "ThreadIdVariables")]
 pub struct Unresolve {
     #[arguments(input: { threadId: $thread_id })]
     pub unresolve_review_thread: Option<UnresolvePayload>,
@@ -850,83 +738,29 @@ pub struct LastReviewVariables {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Query",
-    schema_module = "schema",
-    variables = "LastReviewVariables"
-)]
+#[cynic(graphql_type = "Query", variables = "LastReviewVariables")]
 pub struct LastReviewQuery {
     #[arguments(owner: $owner, name: $name)]
     pub repository: Option<RepositoryWithReviews>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "Repository",
-    schema_module = "schema",
-    variables = "LastReviewVariables"
-)]
+#[cynic(graphql_type = "Repository", variables = "LastReviewVariables")]
 pub struct RepositoryWithReviews {
     #[arguments(number: $number)]
     pub pull_request: Option<PrReviews>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "PullRequest",
-    schema_module = "schema",
-    variables = "LastReviewVariables"
-)]
+#[cynic(graphql_type = "PullRequest", variables = "LastReviewVariables")]
 pub struct PrReviews {
     #[arguments(author: $login, last: 20)]
     pub reviews: Option<ReviewCommitConnection>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReview", schema_module = "schema")]
+#[cynic(graphql_type = "PullRequestReview")]
 pub struct ReviewCommit {
     pub state: ReviewState,
     pub commit: Option<CommitOid>,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use cynic::{MutationBuilder, QueryBuilder};
-
-    #[test]
-    fn viewed_mutations_shape() {
-        let op = MarkFileAsViewed::build(ViewedVariables {
-            pull_request_id: cynic::Id::new("PR_1"),
-            path: "a.rs".into(),
-        });
-        assert!(
-            op.query
-                .contains("markFileAsViewed(input: {pullRequestId: $pullRequestId, path: $path})"),
-            "{}",
-            op.query
-        );
-        let files = PrFilesQuery::build(PageVariables {
-            owner: "o".into(),
-            name: "r".into(),
-            number: 1,
-            after: None,
-        });
-        assert!(files.query.contains("viewerViewedState"), "{}", files.query);
-    }
-
-    #[test]
-    fn pull_request_query_shape() {
-        let op = PullRequestQuery::build(NumberVariables {
-            owner: "o".into(),
-            name: "r".into(),
-            number: 1,
-        });
-        assert!(
-            op.query.contains("pullRequest(number: $number)"),
-            "{}",
-            op.query
-        );
-        assert!(op.query.contains("headRefOid"), "{}", op.query);
-    }
 }

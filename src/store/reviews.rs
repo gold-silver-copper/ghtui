@@ -98,7 +98,7 @@ impl Reviews {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::{DraftComment, DraftSide};
+    use crate::store::DraftComment;
 
     fn draft(body: &str) -> ReviewState {
         ReviewState {
@@ -106,12 +106,9 @@ mod tests {
                 id: 1,
                 path: "a.rs".into(),
                 body: body.into(),
-                side: DraftSide::Right,
                 line: Some(3),
-                start_line: None,
-                start_side: None,
                 commit: "abc".into(),
-                error: None,
+                ..Default::default()
             }],
             ..ReviewState::default()
         }

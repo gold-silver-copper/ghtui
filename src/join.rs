@@ -3,6 +3,7 @@
 
 use crate::api::model::{NodeId, PrDetail};
 
+use crate::data::{DataKey, Picked};
 use crate::diff_job::JobId;
 use crate::diff_screen::{DiffOf, LastReview};
 use crate::keymap::Action;
@@ -54,9 +55,9 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
     for (of, diff) in &mut state.diffs {
         // A commit's comments on its lines show as threads of its diff.
         if let DiffOf::Commit(repo, oid) = of {
-            let key = crate::browse::DataKey::CommitComments(repo.clone(), oid.to_string());
+            let key = crate::data::DataKey::CommitComments(repo.clone(), oid.to_string());
             let comments = state.data.get(&key).and_then(|r| r.data.as_ref());
-            if let Some(crate::browse::Data::CommitComments(c)) = comments {
+            if let Some(crate::data::Data::CommitComments(c)) = comments {
                 let threads: Vec<_> = c
                     .iter()
                     .filter_map(super::api::commit_comments::CommitComment::as_thread)
@@ -98,8 +99,8 @@ pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
     let Some(head) = diff.head() else { return cmds };
     // The whole PR's diff, checked against what GitHub says of it (once
     // that's fresh: a cached copy may be from before a push).
-    if let Some(remote) = state.prs.get(pr)
-        && let Some(detail) = remote.data.as_ref()
+    if let Some(remote) = state.data.get(&DataKey::Pr(pr.clone()))
+        && let Some(detail) = remote.data.as_ref().and_then(PrDetail::pick)
         && !remote.loading
         && remote.cached_at.is_none()
         && claim(&mut diff.joins.checked, (diff.job, detail.head_oid.clone()))
@@ -202,7 +203,7 @@ mod tests {
 
     #[test]
     fn a_prs_diff_is_checked_against_github() {
-        let mut pr = crate::snapshot_tests::pr_detail();
+        let mut pr = crate::fixtures::pr_detail();
         pr.head_oid = "a".repeat(40);
         pr.changed_files = 12;
         let check = |head: &str, files| check_pr_diff(&pr, head, files, "r");
