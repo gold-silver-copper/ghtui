@@ -7,17 +7,16 @@
 //! GitHub as a [`Change::Edit`], and the page follows GitHub until it
 //! shows it (see [`crate::act`]).
 
-use crate::route::{Route, issues, pulls};
 use std::collections::BTreeSet;
 
 use crate::api::change::Change;
 use crate::api::edit::{Edit, Editable, Named, ReactionContent, Sidebar, Written};
-use crate::api::model::{Capped, NodeId, PrRef, RepoId};
+use crate::api::model::{Capped, NodeId, RepoId};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::act::{By, Step, Subject};
+use crate::act::{By, Step, Subject, issue};
 use crate::compose;
-use crate::data::{Data, DataKey};
+use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::{self, Choice};
@@ -152,17 +151,16 @@ fn numbered(about: &Subject) -> Option<(RepoId, u64)> {
     }
 }
 
-/// A comment or description on screen.
-struct Spot {
+/// A comment or description on screen, as loaded.
+struct Spot<'a> {
     of: Written,
-    editable: Editable,
-    body: String,
-    author: String,
-    at: String,
-    about: Subject,
+    editable: &'a Editable,
+    body: &'a str,
+    author: &'a str,
+    at: &'a str,
 }
 
-impl Spot {
+impl Spot<'_> {
     fn name(&self) -> String {
         match self.of {
             Written::Issue | Written::Pr => "the description".to_owned(),
@@ -175,67 +173,35 @@ impl Spot {
 /// The issue or pull request on screen: a page about one (any of a pull
 /// request's tabs) or a pull request's files.
 fn subject_here(state: &State) -> Option<Subject> {
-    match state.screen() {
-        Screen::Page(p) => match &p.route {
-            Route::Issues(issues::Issue { repo, number }) => {
-                Some(Subject::Issue(repo.clone(), *number))
-            }
-            Route::Pulls(pulls::Pr { pr, .. }) => Some(Subject::Pr(pr.clone())),
-            _ => None,
-        },
-        Screen::Diff(d) => d.of.pr().cloned().map(Subject::Pr),
-    }
-}
-
-/// The issue on screen, loaded.
-fn issue<'a>(
-    state: &'a State,
-    repo: &RepoId,
-    number: u64,
-) -> Option<&'a crate::api::browse::IssueDetail> {
-    match state.get(&DataKey::Issue(repo.clone(), number)) {
-        Some(Data::Issue(Some(issue))) => Some(issue),
-        _ => None,
-    }
-}
-
-fn pr_detail<'a>(state: &'a State, pr: &PrRef) -> Option<&'a crate::api::model::PrDetail> {
-    state.pr(pr)
+    Subject::on_screen(state).filter(|s| matches!(s, Subject::Pr(_) | Subject::Issue(..)))
 }
 
 /// The description of the issue or pull request on screen, as a spot.
-fn description(state: &State, about: &Subject) -> Result<Spot, String> {
-    let loading = || "It's still loading".to_owned();
-    match about {
-        Subject::Issue(repo, number) => {
-            let d = issue(state, repo, *number).ok_or_else(loading)?;
-            Ok(Spot {
-                of: Written::Issue,
-                editable: d.editable.clone(),
-                body: d.body.clone(),
-                author: d.author.clone(),
-                at: d.created_at.clone(),
-                about: about.clone(),
-            })
-        }
-        Subject::Pr(pr) => {
-            let d = pr_detail(state, pr).ok_or_else(loading)?;
-            Ok(Spot {
-                of: Written::Pr,
-                editable: d.editable.clone(),
-                body: d.body.clone(),
-                author: d.author.clone(),
-                at: d.created_at.clone(),
-                about: about.clone(),
-            })
-        }
-        _ => Err(loading()),
+fn description<'a>(state: &'a State, about: &Subject) -> Result<Spot<'a>, String> {
+    let (of, editable, body, author, at) = match about {
+        Subject::Issue(repo, number) => issue(state, repo, *number).map(|d| {
+            let at = &d.created_at;
+            (Written::Issue, &d.editable, &d.body, &d.author, at)
+        }),
+        Subject::Pr(pr) => (state.pr(pr)).map(|d| {
+            let at = &d.created_at;
+            (Written::Pr, &d.editable, &d.body, &d.author, at)
+        }),
+        _ => None,
     }
+    .ok_or("It's still loading")?;
+    Ok(Spot {
+        of,
+        editable,
+        body,
+        author,
+        at,
+    })
 }
 
 /// The comment selected on a page (its description is one), or, with
 /// `fallback`, the description when no comment is.
-fn page_spot(state: &State, about: &Subject, fallback: bool) -> Result<Spot, String> {
+fn page_spot<'a>(state: &'a State, about: &Subject, fallback: bool) -> Result<Spot<'a>, String> {
     let Screen::Page(p) = state.screen() else {
         return Err(String::new());
     };
@@ -249,7 +215,7 @@ fn page_spot(state: &State, about: &Subject, fallback: bool) -> Result<Spot, Str
         ));
     };
     let said = description(state, about)?;
-    if said.at == *at && said.author == *author {
+    if said.at == at && said.author == author {
         return Ok(said);
     }
     let timeline = match about {
@@ -266,11 +232,10 @@ fn page_spot(state: &State, about: &Subject, fallback: bool) -> Result<Spot, Str
     if let Some(r) = review {
         return Ok(Spot {
             of: Written::Review,
-            editable: r.editable.clone(),
-            body: r.body.clone(),
-            author: r.author.clone(),
-            at: r.at.clone(),
-            about: about.clone(),
+            editable: &r.editable,
+            body: &r.body,
+            author: &r.author,
+            at: &r.at,
         });
     }
     let found = (timeline.iter())
@@ -282,22 +247,21 @@ fn page_spot(state: &State, about: &Subject, fallback: bool) -> Result<Spot, Str
             }
             _ => None,
         })
-        .and_then(|c| Some((c, c.editable.clone()?)));
+        .and_then(|c| Some((c, c.editable.as_ref()?)));
     match found {
         Some((c, editable)) => Ok(Spot {
             of: Written::IssueComment,
             editable,
-            body: c.body.clone(),
-            author: c.author.clone(),
-            at: c.created_at.clone(),
-            about: about.clone(),
+            body: &c.body,
+            author: &c.author,
+            at: &c.created_at,
         }),
         None => Err("That's a review's summary: ghtui edits comments and descriptions".into()),
     }
 }
 
 /// The review comment under the diff's cursor.
-fn diff_spot(state: &State, pr: &PrRef) -> Result<Spot, String> {
+fn diff_spot(state: &State) -> Result<Spot<'_>, String> {
     let (Screen::Diff(screen), Some(diff)) = (state.screen(), state.diff()) else {
         return Err("The diff hasn't loaded yet".into());
     };
@@ -337,21 +301,19 @@ fn diff_spot(state: &State, pr: &PrRef) -> Result<Spot, String> {
     let c = comment
         .and_then(|c| annotation.comments.get(c))
         .ok_or(move_to)?;
-    let editable = c.editable.clone().ok_or(move_to)?;
     Ok(Spot {
         of: Written::ReviewComment,
-        editable,
-        body: c.body.clone(),
-        author: c.author.clone(),
-        at: String::new(),
-        about: Subject::Pr(pr.clone()),
+        editable: c.editable.as_ref().ok_or(move_to)?,
+        body: &c.body,
+        author: &c.author,
+        at: "",
     })
 }
 
 /// The comment or description an action is about here.
-fn spot(state: &State, about: &Subject, fallback: bool) -> Result<Spot, String> {
+fn spot<'a>(state: &'a State, about: &Subject, fallback: bool) -> Result<Spot<'a>, String> {
     match (state.screen(), about) {
-        (Screen::Diff(_), Subject::Pr(pr)) => diff_spot(state, pr),
+        (Screen::Diff(_), Subject::Pr(_)) => diff_spot(state),
         _ => page_spot(state, about, fallback),
     }
 }
@@ -381,11 +343,14 @@ fn plan(state: &State, action: Action) -> Result<Step, String> {
             let editing = Editing {
                 of: spot.of,
                 id: spot.editable.id.clone(),
-                about: spot.about.clone(),
-                at: spot.at.clone(),
+                about,
+                at: spot.at.to_owned(),
                 name: spot.name(),
             };
-            Ok(Step::Compose(compose::Target::Edit(editing), spot.body))
+            Ok(Step::Compose(
+                compose::Target::Edit(editing),
+                spot.body.to_owned(),
+            ))
         }
         Action::DeleteComment => {
             let spot = spot(state, &about, false)?;
@@ -411,13 +376,9 @@ fn plan(state: &State, action: Action) -> Result<Step, String> {
                 of: spot.of,
                 id: spot.editable.id.clone(),
             });
-            Ok(Step::Ask(Box::new(crate::act::confirm(
-                action,
-                spot.about,
-                title,
-                facts,
-                vec![("Delete".into(), delete)],
-            ))))
+            Ok(crate::act::ask_one(
+                action, about, title, facts, "Delete", delete,
+            ))
         }
         Action::React => {
             let spot = spot(state, &about, true)?;
@@ -425,8 +386,8 @@ fn plan(state: &State, action: Action) -> Result<Step, String> {
                 return Err(format!("GitHub doesn't let you react to {}", spot.name()));
             }
             choose(Choosing::React {
-                about: spot.about,
-                target: spot.editable,
+                target: spot.editable.clone(),
+                about,
             })
         }
         _ if diff => Err(format!("{}: on the conversation", action.description())),
@@ -439,16 +400,14 @@ fn plan(state: &State, action: Action) -> Result<Step, String> {
                 );
             }
             let was = match &about {
-                Subject::Issue(repo, number) => {
-                    issue(state, repo, *number).map(|d| d.title.clone())
-                }
-                Subject::Pr(pr) => pr_detail(state, pr).map(|d| d.title.clone()),
+                Subject::Issue(repo, number) => issue(state, repo, *number).map(|d| &d.title),
+                Subject::Pr(pr) => state.pr(pr).map(|d| &d.title),
                 _ => None,
             };
             choose(Choosing::Title {
+                id: spot.editable.id.clone(),
+                was: was.cloned().unwrap_or_default(),
                 about,
-                id: spot.editable.id,
-                was: was.unwrap_or_default(),
             })
         }
         Action::EditLabels
@@ -461,7 +420,7 @@ fn plan(state: &State, action: Action) -> Result<Step, String> {
                     (d.sidebar, true)
                 }
                 Subject::Pr(pr) => {
-                    let d = pr_detail(state, pr).ok_or("It's still loading")?;
+                    let d = state.pr(pr).ok_or("It's still loading")?;
                     (d.sidebar, d.state.is_open())
                 }
                 _ => return Err(elsewhere(action)),
@@ -813,7 +772,7 @@ fn names(list: &[&Named]) -> BTreeSet<String> {
 fn node(state: &State, about: &Subject) -> Option<NodeId> {
     match about {
         Subject::Issue(repo, number) => issue(state, repo, *number).map(|d| d.id.clone()),
-        Subject::Pr(pr) => pr_detail(state, pr).map(|d| d.id.clone()),
+        Subject::Pr(pr) => state.pr(pr).map(|d| d.id.clone()),
         _ => None,
     }
 }
@@ -875,7 +834,7 @@ fn send_pick(state: &mut State, pick: Pick) -> Vec<Cmd> {
 #[must_use]
 fn send(state: &mut State, about: Subject, edit: Edit) -> Vec<Cmd> {
     state.overlay = None;
-    state.info(format!("{}…", doing(&edit)));
+    state.info(format!("{}…", said(&edit).0));
     vec![crate::act::send(Change::Edit(edit), By::Edit(about))]
 }
 
@@ -954,14 +913,14 @@ fn apply(state: &mut State) -> Vec<Cmd> {
 
 /// The description, comments and reviews' summaries on the issue or pull
 /// request, each with its text; `None` until they're loaded.
-fn said<'a>(state: &'a State, about: &Subject) -> Option<Vec<(&'a Editable, &'a str)>> {
+fn written<'a>(state: &'a State, about: &Subject) -> Option<Vec<(&'a Editable, &'a str)>> {
     let (description, body, timeline) = match about {
         Subject::Issue(repo, number) => {
             let d = issue(state, repo, *number)?;
             (&d.editable, &d.body, &d.timeline)
         }
         Subject::Pr(pr) => {
-            let d = pr_detail(state, pr)?;
+            let d = state.pr(pr)?;
             (&d.editable, &d.body, &state.activity(pr)?.timeline)
         }
         _ => return None,
@@ -994,13 +953,13 @@ fn has(list: &[String], want: &[Named], gone: &[Named]) -> bool {
 pub fn shown(state: &State, edit: &Edit, about: &Subject) -> bool {
     // `Some(None)`: everything's loaded, and it isn't there.
     let find =
-        |id: &NodeId| said(state, about).map(|all| all.into_iter().find(|(e, _)| e.id == *id));
+        |id: &NodeId| written(state, about).map(|all| all.into_iter().find(|(e, _)| e.id == *id));
     let (title, labels, assignees, milestone) = match about {
         Subject::Issue(repo, number) => match issue(state, repo, *number) {
             Some(d) => (&d.title, &d.labels, &d.assignees, d.milestone.as_ref()),
             None => return false,
         },
-        Subject::Pr(pr) => match pr_detail(state, pr) {
+        Subject::Pr(pr) => match state.pr(pr) {
             Some(d) => (&d.title, &d.labels, &d.assignees, d.milestone.as_ref()),
             None => return false,
         },
@@ -1080,18 +1039,18 @@ pub fn after(state: &State) -> Option<Cmd> {
     }
 }
 
-/// What an edit is doing while it's sent.
-pub fn doing(edit: &Edit) -> &'static str {
+/// What an edit is doing while it's sent, and what was refused, for "… refused it".
+pub fn said(edit: &Edit) -> (&'static str, &'static str) {
     match edit {
-        Edit::Body { .. } => "Saving",
-        Edit::Delete { .. } => "Deleting it",
-        Edit::Title { .. } => "Renaming it",
-        Edit::React { on: true, .. } => "Reacting",
-        Edit::React { .. } => "Taking back your reaction",
-        Edit::Labels { .. } => "Changing the labels",
-        Edit::Assignees { .. } => "Changing the assignees",
-        Edit::Reviewers { .. } => "Asking for reviews",
-        Edit::Milestone { .. } => "Setting the milestone",
+        Edit::Body { .. } => ("Saving", "the edit"),
+        Edit::Delete { .. } => ("Deleting it", "deleting it"),
+        Edit::Title { .. } => ("Renaming it", "the new title"),
+        Edit::React { on: true, .. } => ("Reacting", "the reaction"),
+        Edit::React { .. } => ("Taking back your reaction", "the reaction"),
+        Edit::Labels { .. } => ("Changing the labels", "the labels"),
+        Edit::Assignees { .. } => ("Changing the assignees", "the assignees"),
+        Edit::Reviewers { .. } => ("Asking for reviews", "the review request"),
+        Edit::Milestone { .. } => ("Setting the milestone", "the milestone"),
     }
 }
 
@@ -1110,19 +1069,5 @@ pub fn done(edit: &Edit) -> &'static str {
             milestone: None, ..
         } => "Milestone cleared",
         Edit::Milestone { .. } => "Milestone set",
-    }
-}
-
-/// What was refused, for "… refused it".
-pub fn what(edit: &Edit) -> &'static str {
-    match edit {
-        Edit::Body { .. } => "the edit",
-        Edit::Delete { .. } => "deleting it",
-        Edit::Title { .. } => "the new title",
-        Edit::React { .. } => "the reaction",
-        Edit::Labels { .. } => "the labels",
-        Edit::Assignees { .. } => "the assignees",
-        Edit::Reviewers { .. } => "the review request",
-        Edit::Milestone { .. } => "the milestone",
     }
 }
