@@ -704,6 +704,11 @@ says where it works.
   opens a fold or a gap, folds a file at its header, and jumps between
   the ends of moved code. In the file tree, `←` and `→` fold and unfold
   folders, and the diff shows the file selected there.
+- The diff's view: `w` wraps long lines, `W` ignores whitespace, `y`
+  compares by syntax or by lines, `|` switches split and unified, `\`
+  shows or hides the file tree, `z` folds or unfolds what's under the
+  cursor and `Z` folds every file, `E` shows more context and `F` the
+  whole file.
 - On pages, `]` and `[` jump by section: a Home section, a box, a
   heading, a folder in the file tree.
 - On lists, `t` shows open, closed or all and `S` changes the sort; in
@@ -841,6 +846,15 @@ says where it works.
 | `⇧→`     | New side of a split row (for comments) |
 | `U`      | Next unviewed file |
 | `⇥`      | Switch between the file tree and the diff |
+| `z`      | Fold or unfold the file, thread or review |
+| `Z`      | Fold every file |
+| `\`      | Show or hide the file tree |
+| `\|`     | Split or unified view |
+| `w`      | Wrap long lines |
+| `W`      | Ignore whitespace changes |
+| `y`      | Compare by syntax or by lines |
+| `F`      | Show the whole file |
+| `E`      | Show more context |
 | `v`      | Mark the file viewed (syncs with GitHub) |
 | `m`      | Mark the change reviewed |
 | `s`      | Select lines |
