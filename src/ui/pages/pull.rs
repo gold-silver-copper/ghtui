@@ -264,20 +264,17 @@ pub fn pr_conversation(
         timeline::pr_inline(page, icons, pr, d, a);
         timeline::projects_inline(page, projects);
     }
-    let op = &d.author;
     let talk = Conversation {
         base: LinkBase::new(&pr.repo, &d.head_oid, ""),
-        op,
+        op: &d.author,
         now,
         unfolded: marks.unfolded,
     };
-    talk.said(
+    talk.opened(
         page,
-        op,
         "opened",
         &d.created_at,
         &d.body,
-        true,
         &d.editable.reactions,
     );
     let Some(a) = activity.show_or(page, "the conversation", |page| {

@@ -8,6 +8,7 @@ use crate::api::settings::{
     Access, Branches, DeployKey, Enforcement, General, Hook, HookPage, Listed, Role as Given, Rule,
     Settings, SettingsPage,
 };
+use std::fmt::Write as _;
 
 /// What a row of the Settings tab is.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -103,6 +104,23 @@ impl<T> Rows<T> for Listed<T> {
     }
 }
 
+/// A row that opens `to`: its strong `name`, `right` on its right, and
+/// `about` under it.
+fn setting_row(
+    page: &mut Page,
+    to: SettingLink,
+    name: impl Into<String>,
+    right: Vec<Seg>,
+    about: Option<String>,
+) {
+    item(page, Link::Setting(to), |page, link| {
+        page.box_line(vec![Seg::linked(name, Role::Strong, link)], right, 0);
+        if let Some(about) = about {
+            body(page, vec![meta(about)]);
+        }
+    });
+}
+
 /// A list's first page in a box titled `name` and how many it shows.
 fn listed<T>(
     page: &mut Page,
@@ -159,28 +177,23 @@ fn general(page: &mut Page, repo: &RepoId, g: &General, keys: SettingKeys<'_>) {
             "It becomes read-only: no pushes, issues, pull requests or comments",
         )
     };
-    item(page, Link::Setting(SettingLink::Archive), |page, link| {
-        page.box_line(
-            vec![Seg::linked(label, Role::Strong, link)],
-            vec![meta(keys.toggle.to_owned())],
-            0,
-        );
-        body(page, vec![meta(about)]);
-    });
-    page.box_rule();
-    item(
+    let toggle = vec![meta(keys.toggle.to_owned())];
+    setting_row(
         page,
-        Link::Setting(SettingLink::DeleteRepo),
-        |page, link| {
-            body(
-                page,
-                vec![Seg::linked("Delete this repository", Role::Strong, link)],
-            );
-            body(
-                page,
-                vec![meta("On github.com only: ghtui never deletes a repository")],
-            );
-        },
+        SettingLink::Archive,
+        label,
+        toggle,
+        Some(about.into()),
+    );
+    page.box_rule();
+    let about = "On github.com only: ghtui never deletes a repository".to_owned();
+    let delete = "Delete this repository";
+    setting_row(
+        page,
+        SettingLink::DeleteRepo,
+        delete,
+        Vec::new(),
+        Some(about),
     );
     page.box_bottom();
 }
@@ -235,24 +248,14 @@ fn branches(page: &mut Page, b: &Branches, keys: SettingKeys<'_>) {
         &b.rules,
         "No branch protection rules: any branch can be pushed to, force-pushed and deleted.",
         |page, r| {
-            item(
-                page,
-                Link::Setting(SettingLink::Rule(r.id.clone())),
-                |page, link| {
-                    let n = r.matching.total();
-                    let applies = match n {
-                        0 => "applies to no branch yet".to_owned(),
-                        1 => "applies to 1 branch".to_owned(),
-                        n => format!("applies to {n} branches"),
-                    };
-                    page.box_line(
-                        vec![Seg::linked(r.form.pattern.clone(), Role::Strong, link)],
-                        vec![meta(applies)],
-                        0,
-                    );
-                    body(page, vec![meta(rule_meta(r))]);
-                },
-            );
+            let applies = match r.matching.total() {
+                0 => "applies to no branch yet".to_owned(),
+                1 => "applies to 1 branch".to_owned(),
+                n => format!("applies to {n} branches"),
+            };
+            let to = SettingLink::Rule(r.id.clone());
+            let right = vec![meta(applies)];
+            setting_row(page, to, r.form.pattern.clone(), right, Some(rule_meta(r)));
         },
     );
     page.blank();
@@ -272,28 +275,22 @@ fn branches(page: &mut Page, b: &Branches, keys: SettingKeys<'_>) {
         &Whole(rulesets),
         empty,
         |page, r| {
-            item(
+            let bg = match r.enforcement {
+                Enforcement::Active => Bg::SuccessContainer,
+                Enforcement::Evaluate => Bg::TertiaryContainer,
+                Enforcement::Disabled => Bg::SecondaryContainer,
+            };
+            let about = match &r.org {
+                Some(org) => format!("{} ruleset · from {org}", r.target),
+                None => format!("{} ruleset · {} turns it on or off", r.target, keys.toggle),
+            };
+            let right = vec![chip(r.enforcement.label(), bg)];
+            setting_row(
                 page,
-                Link::Setting(SettingLink::Ruleset(r.id)),
-                |page, link| {
-                    let bg = match r.enforcement {
-                        Enforcement::Active => Bg::SuccessContainer,
-                        Enforcement::Evaluate => Bg::TertiaryContainer,
-                        Enforcement::Disabled => Bg::SecondaryContainer,
-                    };
-                    page.box_line(
-                        vec![Seg::linked(r.name.clone(), Role::Strong, link)],
-                        vec![chip(r.enforcement.label(), bg)],
-                        0,
-                    );
-                    let mut subline = format!("{} ruleset", r.target);
-                    if let Some(org) = &r.org {
-                        subline.push_str(&format!(" · from {org}"));
-                    } else {
-                        subline.push_str(&format!(" · {} turns it on or off", keys.toggle));
-                    }
-                    body(page, vec![meta(subline)]);
-                },
+                SettingLink::Ruleset(r.id),
+                r.name.clone(),
+                right,
+                Some(about),
             );
         },
     );
@@ -308,18 +305,13 @@ fn access(page: &mut Page, a: &Access, keys: SettingKeys<'_>, now: u64) {
         &a.people,
         "Nobody has direct access.",
         |page, p| {
-            let target = Link::Setting(SettingLink::Person(p.login.clone()));
-            item(page, target, |page, link| {
-                let bg = match &p.role {
-                    Given::Is(crate::api::settings::Permission::Admin) => Bg::PrimaryContainer,
-                    _ => Bg::SecondaryContainer,
-                };
-                page.box_line(
-                    vec![Seg::linked(format!("@{}", p.login), Role::Strong, link)],
-                    vec![chip(p.role.name(), bg)],
-                    0,
-                );
-            });
+            let bg = match &p.role {
+                Given::Is(crate::api::settings::Permission::Admin) => Bg::PrimaryContainer,
+                _ => Bg::SecondaryContainer,
+            };
+            let to = SettingLink::Person(p.login.clone());
+            let right = vec![chip(p.role.name(), bg)];
+            setting_row(page, to, format!("@{}", p.login), right, None);
         },
     );
     page.blank();
@@ -331,22 +323,17 @@ fn access(page: &mut Page, a: &Access, keys: SettingKeys<'_>, now: u64) {
         invitations,
         none,
         |page, i| {
-            let target = Link::Setting(SettingLink::Invitation(i.id, i.login.clone()));
-            item(page, target, |page, link| {
-                let when = if i.expired {
-                    "expired".to_owned()
-                } else {
-                    format!("invited {}", time::ago_iso(&i.created_at, now))
-                };
-                page.box_line(
-                    vec![Seg::linked(format!("@{}", i.login), Role::Strong, link)],
-                    vec![
-                        meta(format!("{when}  ")),
-                        chip(i.permission.name(), Bg::SecondaryContainer),
-                    ],
-                    0,
-                );
-            });
+            let when = if i.expired {
+                "expired".to_owned()
+            } else {
+                format!("invited {}", time::ago_iso(&i.created_at, now))
+            };
+            let right = vec![
+                meta(format!("{when}  ")),
+                chip(i.permission.name(), Bg::SecondaryContainer),
+            ];
+            let to = SettingLink::Invitation(i.id, i.login.clone());
+            setting_row(page, to, format!("@{}", i.login), right, None);
         },
     );
     page.blank();
@@ -390,24 +377,20 @@ fn active_chip(active: bool) -> Seg {
 fn hooks(page: &mut Page, list: &Listed<Hook>, keys: SettingKeys<'_>, now: u64) {
     let right = add_button(page, "Add webhook", keys);
     listed(page, "Webhooks", right, list, "No webhooks.", |page, h| {
-        item(
+        let about = format!(
+            "{} · {} · {} · changed {}",
+            events(h),
+            h.form.content_type,
+            last_said(h),
+            time::ago_iso(&h.updated_at, now)
+        );
+        let right = vec![active_chip(h.form.active)];
+        setting_row(
             page,
-            Link::Setting(SettingLink::Hook(h.id)),
-            |page, link| {
-                page.box_line(
-                    vec![Seg::linked(h.form.url.clone(), Role::Strong, link)],
-                    vec![active_chip(h.form.active)],
-                    0,
-                );
-                let subline = format!(
-                    "{} · {} · {} · changed {}",
-                    events(h),
-                    h.form.content_type,
-                    last_said(h),
-                    time::ago_iso(&h.updated_at, now)
-                );
-                body(page, vec![meta(subline)]);
-            },
+            SettingLink::Hook(h.id),
+            h.form.url.clone(),
+            right,
+            Some(about),
         );
     });
 }
@@ -504,14 +487,8 @@ fn key_text(k: &DeployKey) -> String {
     let mut parts = k.key.split_whitespace();
     let kind = parts.next().unwrap_or_default();
     let body = parts.next().unwrap_or_default();
-    let tail: String = (body
-        .chars()
-        .rev()
-        .take(8)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev())
-    .collect();
+    let tail =
+        (body.char_indices().rev().nth(7)).map_or(body, |(i, _)| body.get(i..).unwrap_or(body));
     format!("{kind} …{tail}")
 }
 
@@ -524,33 +501,27 @@ fn deploy_keys(page: &mut Page, list: &Listed<DeployKey>, keys: SettingKeys<'_>,
         list,
         "No deploy keys.",
         |page, k| {
-            item(page, Link::Setting(SettingLink::Key(k.id)), |page, link| {
-                let access = if k.read_only {
-                    chip("Read-only", Bg::SecondaryContainer)
-                } else {
-                    chip("Read/write", Bg::TertiaryContainer)
-                };
-                page.box_line(
-                    vec![Seg::linked(k.title.clone(), Role::Strong, link)],
-                    vec![access],
-                    0,
-                );
-                let mut subline = format!(
-                    "{} · added {}",
-                    key_text(k),
-                    time::ago_iso(&k.created_at, now)
-                );
-                if let Some(by) = &k.added_by {
-                    subline.push_str(&format!(" by {by}"));
-                }
-                match &k.last_used {
-                    Some(at) => {
-                        subline.push_str(&format!(" · last used {}", time::ago_iso(at, now)));
-                    }
-                    None => subline.push_str(" · never used"),
-                }
-                body(page, vec![meta(subline)]);
-            });
+            let access = if k.read_only {
+                chip("Read-only", Bg::SecondaryContainer)
+            } else {
+                chip("Read/write", Bg::TertiaryContainer)
+            };
+            let added = time::ago_iso(&k.created_at, now);
+            let mut about = format!("{} · added {added}", key_text(k));
+            if let Some(by) = &k.added_by {
+                let _ = write!(about, " by {by}");
+            }
+            match &k.last_used {
+                Some(at) => _ = write!(about, " · last used {}", time::ago_iso(at, now)),
+                None => about.push_str(" · never used"),
+            }
+            setting_row(
+                page,
+                SettingLink::Key(k.id),
+                k.title.clone(),
+                vec![access],
+                Some(about),
+            );
         },
     );
 }

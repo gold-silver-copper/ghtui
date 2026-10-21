@@ -16,6 +16,7 @@ use crate::ui::diff_view::{DiffView, Keys};
 use crate::ui::file_tree::{FileTree, TREE_BG};
 use crate::ui::review_sheets::{ComposeSheet, ConfirmSheet, SubmitSheet};
 
+use crate::chrome::Chrome;
 use crate::compose::{Compose, Target};
 use crate::diff_screen::{self, DiffScreen, Pane};
 use crate::keymap::Action;
@@ -35,15 +36,25 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
     let chrome = state.chrome();
     let lay = state.layout_of(&chrome);
     let status = lay.status;
+    let Chrome {
+        crumbs,
+        right,
+        tabs,
+        active,
+        title,
+        ..
+    } = chrome;
 
     // Header: where you are, the search field, you.
-    let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
-    let right: Vec<_> = chrome.right.iter().map(|(t, _)| t.clone()).collect();
-    // A filter is typed into the list's own field, not the header's.
-    let search_input = match &state.overlay {
-        Some(Overlay::Search(sb)) if !state.search_field(sb).1 => Some(&sb.input),
+    let crumbs: Vec<_> = crumbs.into_iter().map(|(c, _)| c).collect();
+    let right: Vec<_> = right.into_iter().map(|(t, _)| t).collect();
+    // Where the search is typed, found once: it builds the chrome again.
+    let search = match &state.overlay {
+        Some(Overlay::Search(sb)) => Some((sb, state.search_field(sb))),
         _ => None,
     };
+    // A filter is typed into the list's own field, not the header's.
+    let search_input = search.and_then(|(sb, (_, in_place))| (!in_place).then_some(&sb.input));
     let placeholder = format!("Type {} to search", state.first_key(Action::CommandPalette));
     Header {
         ctx,
@@ -53,7 +64,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
         placeholder: &placeholder,
     }
     .render(lay.header, buf);
-    if let (Some(rect), Some(pr)) = (lay.title, &chrome.title) {
+    if let (Some(rect), Some(pr)) = (lay.title, &title) {
         TitleBar {
             ctx,
             line: pr_title(state, pr),
@@ -61,11 +72,11 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
         .render(rect, buf);
     }
     if let Some(rect) = lay.tabs {
-        let tabs: Vec<_> = chrome.tabs.iter().map(|(t, _)| t.clone()).collect();
+        let tabs: Vec<_> = tabs.into_iter().map(|(t, _)| t).collect();
         TabBar {
             ctx,
             tabs: &tabs,
-            active: chrome.active,
+            active,
         }
         .render(rect, buf);
     }
@@ -205,13 +216,14 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
             let title = compose.target.title(state);
             // Saved replies, while they're listed; else what an `@` or
             // `#` can be.
-            let saved = crate::site::replies::shown(state);
-            let completions: Option<Vec<String>> = match &saved {
-                Some((rows, _)) => Some(rows.clone()),
-                None => crate::typing::completions(state)
-                    .map(|choices| choices.into_iter().map(|c| c.label).collect()),
+            let (completions, selected) = match crate::site::replies::shown(state) {
+                Some((rows, at)) => (Some(rows), at),
+                None => (
+                    crate::typing::completions(state)
+                        .map(|choices| choices.into_iter().map(|c| c.label).collect::<Vec<_>>()),
+                    compose.completing.selected,
+                ),
             };
-            let selected = saved.map_or(compose.completing.selected, |(_, at)| at);
             let rows = compose.rows();
             // Where the comment will go, or (without room there) a strip
             // above the status bar.
@@ -289,7 +301,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
         }
         Some(Overlay::Search(sb)) => {
             let rows: Vec<_> = state.suggestions(sb).into_iter().map(|(r, _)| r).collect();
-            let (field, in_place) = state.search_field(sb);
+            let (field, in_place) = search.map_or_else(|| state.search_field(sb), |(_, at)| at);
             if in_place {
                 SearchField {
                     ctx,
@@ -539,7 +551,7 @@ fn pr_title<'a>(state: &'a State, pr: &crate::api::model::PrRef) -> Line<'a> {
             theme.fill(bg),
         ),
         Span::styled("  ", theme.body(bar)),
-        Span::styled(d.title.clone(), theme.title(bar)),
+        Span::styled(d.title.as_str(), theme.title(bar)),
         Span::styled(format!("  #{}", pr.number), theme.meta(bar)),
     ])
 }

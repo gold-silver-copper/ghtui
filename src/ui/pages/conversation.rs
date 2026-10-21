@@ -17,30 +17,28 @@ pub(super) struct Conversation<'a> {
 }
 
 impl Conversation<'_> {
-    /// A comment box: `╭─ author commented 3d ago ─── Author ─╮`, the
-    /// Markdown body, its reactions, `╰──╯`. `verb` is "commented",
-    /// "opened"...
-    #[expect(clippy::too_many_arguments, reason = "the parts of a comment box")]
-    pub(super) fn said(
+    /// The post that opened it: `╭─ author opened 3d ago ─── Author ─╮`,
+    /// the Markdown body, its reactions, `╰──╯`.
+    pub(super) fn opened(
         &self,
         page: &mut Page,
-        author: &str,
         verb: &str,
         when: &str,
         body: &str,
-        badge: bool,
         reactions: &[Reaction],
     ) {
-        self.said_at(
-            page,
-            None,
-            author,
-            verb,
-            when,
-            body,
-            badge.then(|| chip("Author", Bg::SecondaryContainer)),
-            reactions,
-        );
+        let badge = self.badge(false, self.op);
+        self.said_at(page, None, self.op, verb, when, body, badge, reactions);
+    }
+
+    /// A comment's badge: New when it came in since you started looking,
+    /// else Author when it's by whoever opened the conversation.
+    fn badge(&self, new: bool, author: &str) -> Option<Seg> {
+        if new {
+            Some(chip("New", Bg::TertiaryContainer))
+        } else {
+            (author == self.op).then(|| chip("Author", Bg::SecondaryContainer))
+        }
     }
 
     /// A comment box, named `anchor` for links to it, with `chip` on its
@@ -85,11 +83,7 @@ impl Conversation<'_> {
     /// looking), or else when it's by whoever opened the conversation.
     pub(super) fn comment(&self, page: &mut Page, c: &Comment, new: bool) {
         let anchor = c.id.map(|id| format!("issuecomment-{id}"));
-        let badge = if new {
-            Some(chip("New", Bg::TertiaryContainer))
-        } else {
-            (c.author == self.op).then(|| chip("Author", Bg::SecondaryContainer))
-        };
+        let badge = self.badge(new, &c.author);
         self.said_comment(page, anchor, c, "commented", badge);
     }
 
@@ -355,15 +349,12 @@ pub fn issue(
         now,
         unfolded: marks.unfolded,
     };
-    let reactions = &d.editable.reactions;
-    talk.said(
+    talk.opened(
         page,
-        &d.author,
         "opened",
         &d.created_at,
         &d.body,
-        true,
-        reactions,
+        &d.editable.reactions,
     );
     earlier_here(page, &d.timeline, "comment or event", "comments and events");
     let place = timeline::Place {
@@ -462,24 +453,21 @@ pub fn discussion(
         now: cx.now,
         unfolded,
     };
-    talk.said(
+    talk.opened(
         page,
-        &d.author,
         "started",
         &d.created_at,
         &d.body,
-        true,
         &d.editable.reactions,
     );
     let anchor = |c: &Comment| c.id.map(|id| format!("discussioncomment-{id}"));
     let new = |c: &Comment| c.id.is_some_and(|id| fresh.contains(&id));
     let comment = |page: &mut Page, c: &DiscussionComment, anchored: bool| {
-        let badge = if new(&c.comment) && anchored {
-            Some(chip("New", Bg::TertiaryContainer))
-        } else if c.answer {
+        let new = anchored && new(&c.comment);
+        let badge = if c.answer && !new {
             Some(chip("✓ Answer", Bg::SuccessContainer))
         } else {
-            (c.comment.author == d.author).then(|| chip("Author", Bg::SecondaryContainer))
+            talk.badge(new, &c.comment.author)
         };
         let verb = if d.answerable {
             "answered"
@@ -509,11 +497,7 @@ pub fn discussion(
         connector(page);
         comment(page, c, true);
         for r in &c.replies {
-            let badge = if new(r) {
-                Some(chip("New", Bg::TertiaryContainer))
-            } else {
-                (r.author == d.author).then(|| chip("Author", Bg::SecondaryContainer))
-            };
+            let badge = talk.badge(new(r), &r.author);
             talk.said_comment(page, anchor(r), r, "replied", badge);
         }
         more_here(page, &c.replies, "reply", "replies");
