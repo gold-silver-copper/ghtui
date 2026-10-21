@@ -11,20 +11,14 @@
 
 mod common;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
-use common::git;
+use common::{git, write};
 use ghtui::git::Oid;
 use ghtui::git::credentials::Credentials;
 use ghtui::git::files::{ChangedFile, FileStatus, MODE_EXECUTABLE, MODE_SUBMODULE, MODE_SYMLINK};
 use ghtui::git::repo::{PrRefs, Repo};
-
-fn write(dir: &Path, path: &str, contents: &[u8]) {
-    let path = dir.join(path);
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, contents).unwrap();
-}
 
 struct Fixture {
     _tmp: tempfile::TempDir,

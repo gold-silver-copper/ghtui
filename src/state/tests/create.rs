@@ -17,7 +17,7 @@ use crate::ui::form::Row;
 fn form(action: Action) -> (State, Cmds) {
     let mut s = with_repo();
     let cmds = act(&mut s, action);
-    let form = Data::from(crate::fixtures::new_form());
+    let form = Data::from(fixtures::new_form());
     let mut more = fetched(&mut s, DataKey::NewForm(ghtui()), form);
     more.extend(cmds);
     (s, more)
@@ -39,7 +39,7 @@ fn a_new_issue_starts_from_its_template_and_opens_once_made() {
     let (mut s, cmds) = form(Action::NewIssue);
     assert_eq!(s.route(), Some(&Route::Issues(issues::NewIssue(ghtui()))));
     let form = DataKey::NewForm(ghtui());
-    assert!(crate::fixtures::asks(&cmds, &form), "{cmds:?}");
+    assert!(fixtures::asks(&cmds, &form), "{cmds:?}");
     let text = page_text(&s);
     for starter in ["Bug report", "Feature request", "Blank issue"] {
         assert!(text.contains(starter), "{text}");
@@ -76,7 +76,7 @@ fn a_new_issue_starts_from_its_template_and_opens_once_made() {
     assert!(s.overlay.is_none());
     says(&s, "Opened issue #42");
     let issue = DataKey::Issue(ghtui(), 42);
-    assert!(crate::fixtures::asks(&cmds, &issue), "{cmds:?}");
+    assert!(fixtures::asks(&cmds, &issue), "{cmds:?}");
     assert!(
         s.forms.get::<crate::create::Form>(&route).is_none(),
         "the form is done"
@@ -247,7 +247,7 @@ fn a_pull_request_from_the_clones_branch_is_pushed_then_made() {
     };
     assert_eq!(s.route(), Some(&Route::pr(pr.clone())));
     assert!(s.overlay.is_none());
-    assert!(crate::fixtures::asks_pr(&cmds, &pr), "{cmds:?}");
+    assert!(fixtures::asks_pr(&cmds, &pr), "{cmds:?}");
 }
 
 /// `,c` checks the pull request out on a branch of its own: a fork's is
@@ -255,7 +255,7 @@ fn a_pull_request_from_the_clones_branch_is_pushed_then_made() {
 #[test]
 fn checkout_says_what_branch_or_why_not() {
     let mut s = with_pr();
-    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let pr = pr();
     let cmds = act(&mut s, Action::Checkout);
     let work = crate::clone::Checkout {
         repo: pr.repo,
@@ -283,7 +283,7 @@ fn checkout_on_a_row_waits_for_its_pull_request() {
     let mut s = with_home();
     s.data.retain(|key, _| !matches!(key, DataKey::Pr(_)));
     press(&mut s, "<Down><Down>");
-    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let pr = pr();
     assert_eq!(act(&mut s, Action::Checkout), [fixtures::fetch_pr(&pr)]);
     says(&s, "Loading gold-silver-copper/ghtui#12");
     let cmds = fixtures::pr_fetched(&mut s, &pr, Ok(fixtures::pr_detail()));

@@ -96,13 +96,10 @@ fn alert_lists_are_reached_from_the_security_tab_and_filter() {
 fn an_alert_is_dismissed_with_a_reason_and_followed() {
     let mut s = with_alert(AlertKind::CodeScanning, false);
     assert!(press(&mut s, "x").is_empty());
-    let Some(Overlay::Picker(picker)) = &s.overlay else {
-        panic!("no picker");
-    };
-    let labels: Vec<String> = (s.picker_rows(picker).into_iter())
-        .map(|(r, _)| r.label)
-        .collect();
-    assert_eq!(labels, ["False positive", "Won't fix", "Used in tests"]);
+    assert_eq!(
+        picked_labels(&s),
+        ["False positive", "Won't fix", "Used in tests"]
+    );
     let sent = press(&mut s, "only in fixtures<Down><Down><Enter>");
     let a = alert_ref(AlertKind::CodeScanning, 2);
     let change = Change::Alert(AlertChange {
@@ -128,9 +125,7 @@ fn an_alert_is_dismissed_with_a_reason_and_followed() {
 fn a_closed_alert_reopens_after_asking() {
     let mut s = with_alert(AlertKind::SecretScanning, true);
     press(&mut s, "x");
-    let Some(Overlay::Ask(confirm)) = &s.overlay else {
-        panic!("no confirmation");
-    };
+    let confirm = overlay!(s, Ask);
     assert_eq!(confirm.title, "Reopen secret scanning alert #2?");
     let sent = press(&mut s, "<Enter>");
     let change = Change::Alert(AlertChange {
@@ -140,15 +135,10 @@ fn a_closed_alert_reopens_after_asking() {
     assert_eq!(*crate::fixtures::sent_change(&sent).0, change);
     let mut s = with_alert(AlertKind::SecretScanning, false);
     press(&mut s, "x");
-    let Some(Overlay::Picker(picker)) = &s.overlay else {
-        panic!("no picker");
-    };
-    let first = s
-        .picker_rows(picker)
-        .into_iter()
-        .next()
-        .map(|(r, _)| r.label);
-    assert_eq!(first.as_deref(), Some("Revoked"));
+    assert_eq!(
+        picked_labels(&s).first().map(String::as_str),
+        Some("Revoked")
+    );
 }
 
 /// On a list, `,x` is about the selected row's alert, loaded first.

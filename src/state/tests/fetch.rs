@@ -24,7 +24,7 @@ fn cached_data_shows_while_fetching() {
         &mut state,
         Msg::fetched_at(
             DataKey::Profile("octocat".into()),
-            Ok(Data::from(crate::fixtures::profile())),
+            Ok(Data::from(fixtures::profile())),
             Some(0),
         ),
     );
@@ -68,11 +68,11 @@ fn only_a_review_that_went_through_counts_as_a_write() {
     let mut state = with_repo();
     let key = DataKey::Issue(ghtui(), 14);
     let _ = state.push(issue(14));
-    let issue = Data::Issue(Some(Box::new(crate::fixtures::issue())));
+    let issue = Data::Issue(Some(Box::new(fixtures::issue())));
     fetched(&mut state, key.clone(), issue);
     let submit = crate::review::Submit {
         pr: PrRef::parse("o/r#1").unwrap(),
-        head: crate::git::Oid::parse(&crate::fixtures::pr_detail().head_oid).unwrap(),
+        head: crate::git::Oid::parse(&fixtures::pr_detail().head_oid).unwrap(),
         drafts: Vec::new(),
         event: crate::api::model::ReviewEvent::Approve,
         body: String::new(),
@@ -82,10 +82,10 @@ fn only_a_review_that_went_through_counts_as_a_write() {
         error: Some("Couldn't reach the PR".into()),
         ..Default::default()
     };
-    crate::fixtures::done(&mut state, submit.clone(), Ok(outcome.clone()));
+    fixtures::done(&mut state, submit.clone(), Ok(outcome.clone()));
     assert_eq!(state.load_visible(false), Vec::new());
     outcome.accepted.push(1);
-    crate::fixtures::done(&mut state, submit, Ok(outcome));
+    fixtures::done(&mut state, submit, Ok(outcome));
     let refetch = Cmd::Api(Api::Fetch { key, cached: false });
     assert!(state.load_visible(false).contains(&refetch));
 }
@@ -100,7 +100,7 @@ fn issue_comments_post_and_refresh() {
     fetched(
         &mut state,
         key.clone(),
-        Data::Issue(Some(Box::new(crate::fixtures::issue()))),
+        Data::Issue(Some(Box::new(fixtures::issue()))),
     );
     press(&mut state, "c");
     let compose = overlay!(state, Compose);
@@ -131,7 +131,7 @@ fn issue_comments_post_and_refresh() {
     let cmds = answer(&mut state, &sent, Ok(()));
     assert!(!cmds.contains(&refetch));
     let refetch = vec![refetch];
-    let issue = || Data::Issue(Some(Box::new(crate::fixtures::issue())));
+    let issue = || Data::Issue(Some(Box::new(fixtures::issue())));
     assert_eq!(fetched(&mut state, key.clone(), issue()), refetch);
     assert_eq!(fetched(&mut state, key, issue()), Vec::new(), "only once");
 }
@@ -145,11 +145,11 @@ fn a_fresh_copy_keeps_the_selected_issue() {
     let (kind, query) = route(&state).search().unwrap();
     let key = DataKey::Search(kind, query);
     let list = |numbers: &[u64]| {
-        Data::from(SearchResults::Issues(crate::fixtures::page(
+        Data::from(SearchResults::Issues(fixtures::page(
             numbers.len() as u64,
             numbers
                 .iter()
-                .map(|&n| crate::fixtures::issue_summary(n, Status::Issue(IssueState::Open)))
+                .map(|&n| fixtures::issue_summary(n, Status::Issue(IssueState::Open)))
                 .collect(),
             None,
         )))
@@ -177,7 +177,7 @@ fn an_edited_comment_stays_selected() {
         number: 14,
     }));
     let key = DataKey::Issue(ghtui(), 14);
-    let mut issue = crate::fixtures::issue();
+    let mut issue = fixtures::issue();
     update(
         &mut s,
         Msg::fetched_at(

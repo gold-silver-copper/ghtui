@@ -44,6 +44,13 @@ pub fn git_bytes(dir: &Path, args: &[&str]) -> Vec<u8> {
     out.stdout
 }
 
+/// Writes `bytes` to `path` under `dir`, making its folders.
+pub fn write(dir: &Path, path: &str, bytes: &[u8]) {
+    let path = dir.join(path);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, bytes).unwrap();
+}
+
 /// [`git_bytes`], as trimmed text.
 pub fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&git_bytes(dir, args))

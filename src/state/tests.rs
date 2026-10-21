@@ -69,6 +69,31 @@ fn page(state: &State) -> &PageScreen {
     }
 }
 
+/// The selected line of a file, and the word under the cursor.
+fn word_here(s: &State) -> (Option<u32>, Option<String>) {
+    let p = page(s);
+    let word = (p.word_cursor()).map(|(_, code, w)| code.get(w.bytes).unwrap().to_owned());
+    (p.selected.and_then(|i| p.line_of(i)), word)
+}
+
+fn on_diff(state: &State) -> &DiffScreen {
+    match state.screen() {
+        Screen::Diff(d) => d,
+        Screen::Page(_) => panic!("not on the diff"),
+    }
+}
+
+/// The open picker's rows: each one's label and hint.
+fn picked(state: &State) -> Vec<(String, String)> {
+    let rows = state.picker_rows(overlay!(state, Picker));
+    (rows.into_iter()).map(|(r, _)| (r.label, r.hint)).collect()
+}
+
+/// The open picker's rows' labels.
+fn picked_labels(state: &State) -> Vec<String> {
+    picked(state).into_iter().map(|(label, _)| label).collect()
+}
+
 fn route(state: &State) -> Route {
     page(state).route.clone()
 }
@@ -101,6 +126,12 @@ fn changed(etag: &str, body: &str) -> Result<crate::api::Polled, ApiError> {
 /// Fetching `key`, the cached copy first.
 fn fetch(key: DataKey) -> Cmd {
     Cmd::Api(Api::Fetch { key, cached: true })
+}
+
+/// Asking for `key`'s next page, after `after`.
+fn more(key: &DataKey, after: &str) -> Cmd {
+    let (key, after) = (key.clone(), after.to_owned());
+    Cmd::Api(Api::FetchMore { key, after })
 }
 
 /// Commands other than saving visits.

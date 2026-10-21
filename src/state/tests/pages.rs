@@ -23,7 +23,7 @@ fn long_conversations_say_what_is_left_out() {
     assert!(page_text(&state).contains("… 116 earlier comments and events on GitHub"));
     assert!(page_text(&state).contains("120 comments"));
 
-    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let pr = pr();
     let mut activity = fixtures::activity();
     let shown = activity.timeline.len() as u64;
     activity.timeline = Capped::new(activity.timeline.items, shown + 1);
@@ -55,7 +55,7 @@ fn long_conversations_say_what_is_left_out() {
 /// the conversation, not as a plain review.
 #[test]
 fn a_dismissed_review_reads_as_dismissed() {
-    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let pr = pr();
     let mut activity = fixtures::activity();
     let dismissed = fixtures::review(
         9,
@@ -97,8 +97,8 @@ fn a_failed_home_section_says_why_and_the_others_show() {
 #[test]
 fn a_failed_refresh_keeps_what_was_loaded() {
     let mut state = with_pr();
-    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
-    crate::fixtures::pr_fetched(&mut state, &pr, Err(ApiError::RateLimited(42)));
+    let pr = pr();
+    fixtures::pr_fetched(&mut state, &pr, Err(ApiError::RateLimited(42)));
     let page = page_text(&state);
     let why = "Couldn't refresh: rate limited by GitHub; retry in 42s.";
     assert!(page.contains(why), "{page}");
@@ -126,7 +126,7 @@ fn tabs_that_dont_fit_say_how_many_are_hidden() {
 fn a_link_to_lines_opens_on_them() {
     let mut state = with_repo();
     let text: String = (1..=80).map(|n| format!("let x{n} = {n};\n")).collect();
-    let blob = crate::fixtures::file("src/main.rs", &text);
+    let blob = fixtures::file("src/main.rs", &text);
     let url = "https://github.com/gold-silver-copper/ghtui/blob/main/src/main.rs#L60-L62";
     let crate::route::Target::Page(route) = Dest::from_url(url).target else {
         panic!("{url}");
@@ -155,9 +155,7 @@ fn a_link_to_a_steps_line_opens_its_log() {
 fn a_filter_is_edited_in_place() {
     let mut state = with_repo();
     press(&mut state, "2/label:bug");
-    let Some(Overlay::Search(sb)) = &state.overlay else {
-        panic!("not filtering");
-    };
+    let sb = overlay!(state, Search);
     let (field, in_place) = state.search_field(sb);
     assert!(in_place);
     let buf = draw(&state);

@@ -37,7 +37,7 @@ fn a_release_is_edited_and_its_page_follows() {
     assert!(page_text(&s).contains("Editing v0.2.0"));
     assert!(page_text(&s).contains("Scope names in hunk headers"));
     press(&mut s, "c");
-    let c = crate::fixtures::composer(&mut s);
+    let c = fixtures::composer(&mut s);
     c.input.move_cursor(CursorMove::Top);
     c.input.move_cursor(CursorMove::End);
     c.input.insert_str(", fixed");
@@ -152,10 +152,7 @@ fn an_asset_is_saved_where_you_say() {
     fixtures::select_link(&mut s, &asset);
     press(&mut s, "<Enter>");
     press(&mut s, "Cargo.toml");
-    let Some(Overlay::Picker(p)) = &s.overlay else {
-        panic!("no picker")
-    };
-    assert_eq!(s.picker_rows(p)[0].0.label, "Replace Cargo.toml");
+    assert_eq!(picked_labels(&s)[0], "Replace Cargo.toml");
     let sent = fixtures::sent::<assets::Save>(&press(&mut s, "<Enter>"));
     assert!(sent.replace);
 }

@@ -3,6 +3,12 @@
 use super::*;
 use crate::route::{app, issues, search};
 
+/// What choosing each of the search box's suggestions does.
+fn picks(state: &State) -> Vec<nav::Pick> {
+    let rows = state.suggestions(overlay!(state, Search));
+    rows.into_iter().filter_map(|(_, p)| p).collect()
+}
+
 #[test]
 fn palette_goes_places_and_runs_actions() {
     let mut state = with_prs(1);
@@ -24,7 +30,7 @@ fn palette_goes_places_and_runs_actions() {
     let cmds = fetched(&mut state, key, Data::Issue(None));
     let pr = PrRef::parse("a/b#9").unwrap();
     assert_eq!(route(&state), Route::pr(pr.clone()));
-    assert_eq!(cmds[0], crate::fixtures::fetch_pr(&pr));
+    assert_eq!(cmds[0], fixtures::fetch_pr(&pr));
     assert_eq!(state.screens.len(), 2, "replaced, not pushed");
 
     // A bare number resolves against the repo on screen.
@@ -64,17 +70,11 @@ fn an_older_suggestion_reply_does_not_replace_a_newer_one() {
     press(&mut state, "t");
     let cmds = update(&mut state, Msg::SuggestDue("rat".into()));
     assert_eq!(fixtures::asked(&cmds), [suggest("rat")]);
-    let repos = |name: &str| Data::Suggestions(vec![crate::fixtures::repo_summary(name, 5)]);
+    let repos = |name: &str| Data::Suggestions(vec![fixtures::repo_summary(name, 5)]);
     fixtures::fetched(&mut state, suggest("rat"), repos("o/ratatui"));
     fixtures::fetched(&mut state, suggest("ra"), repos("o/rails"));
-    let sb = overlay!(state, Search);
-    let picks: Vec<nav::Pick> = state
-        .suggestions(sb)
-        .into_iter()
-        .filter_map(|(_, p)| p)
-        .collect();
     assert_eq!(
-        picks.last(),
+        picks(&state).last(),
         Some(&nav::Pick::Go(
             Target::Page(Route::code(RepoId::new("o", "ratatui"))).into()
         )),
@@ -159,13 +159,10 @@ fn a_picker_list_that_failed_says_why() {
         let result = Err(ApiError::Network("timed out".into()));
         let cached_at = None;
         let _ = update(&mut state, Msg::fetched_at(key.clone(), result, cached_at));
-        let f = overlay!(state, Picker);
-        let rows: Vec<String> = state
-            .picker_rows(f)
-            .into_iter()
-            .map(|(i, _)| i.label)
-            .collect();
-        assert_eq!(rows, [format!("{why}: network error: timed out")]);
+        assert_eq!(
+            picked_labels(&state),
+            [format!("{why}: network error: timed out")]
+        );
         press(&mut state, "<Esc>");
         assert_eq!(press(&mut state, keys), vec![fetch(key)]);
         press(&mut state, "<Esc>");
@@ -191,13 +188,10 @@ fn go_to_file_and_switch_branches() {
         ),
     );
     press(&mut state, "main");
-    let f = overlay!(state, Picker);
-    let rows: Vec<String> = state
-        .picker_rows(f)
-        .into_iter()
-        .map(|(i, _)| i.label)
-        .collect();
-    assert_eq!(rows, ["src/main.rs", "crates/ui/src/main_view.rs"]);
+    assert_eq!(
+        picked_labels(&state),
+        ["src/main.rs", "crates/ui/src/main_view.rs"]
+    );
     press(&mut state, "<Enter>");
     assert_eq!(route(&state), blob("main", "src/main.rs"));
     let cmds = press(&mut state, "B");
@@ -211,12 +205,7 @@ fn go_to_file_and_switch_branches() {
         }),
     );
     // Branches it didn't fetch can't be picked, and it says so.
-    let f = overlay!(state, Picker);
-    let rows: Vec<String> = state
-        .picker_rows(f)
-        .into_iter()
-        .map(|(i, _)| i.label)
-        .collect();
+    let rows = picked_labels(&state);
     assert_eq!(
         rows.last().map(String::as_str),
         Some("298 more branches on GitHub")
@@ -236,10 +225,8 @@ fn search_box_jumps_searches_and_loads_more() {
     let sb = overlay!(state, Search);
     assert!(!sb.filter);
     press(&mut state, "bug");
-    let sb = overlay!(state, Search);
-    let rows: Vec<Option<nav::Pick>> = state.suggestions(sb).into_iter().map(|(_, p)| p).collect();
     assert_eq!(
-        rows.iter().flatten().next(),
+        picks(&state).first(),
         Some(&nav::Pick::Search(
             crate::api::browse::SearchKind::Issues,
             "repo:gold-silver-copper/ghtui bug".into()
@@ -250,16 +237,10 @@ fn search_box_jumps_searches_and_loads_more() {
     let key = DataKey::Suggest("bug".into());
     let cmds = update(&mut state, Msg::SuggestDue("bug".into()));
     assert!(fixtures::asks(&cmds, &key));
-    let bugs = vec![crate::fixtures::repo_summary("o/bugs", 5)];
+    let bugs = vec![fixtures::repo_summary("o/bugs", 5)];
     fixtures::fetched(&mut state, key, Data::Suggestions(bugs));
-    let sb = overlay!(state, Search);
-    let picks: Vec<nav::Pick> = state
-        .suggestions(sb)
-        .into_iter()
-        .filter_map(|(_, p)| p)
-        .collect();
     assert_eq!(
-        picks.last(),
+        picks(&state).last(),
         Some(&nav::Pick::Go(
             Target::Page(Route::code(RepoId::new("o", "bugs"))).into()
         ))
@@ -271,20 +252,13 @@ fn search_box_jumps_searches_and_loads_more() {
     fetched(
         &mut state,
         key.clone(),
-        Data::from(crate::fixtures::issue_results(Some("c1"))),
+        Data::from(fixtures::issue_results(Some("c1"))),
     );
     press(&mut state, "<End>");
     assert!(selected_text(&state).starts_with("Load more"));
-    let cmds = press(&mut state, "<Enter>");
-    assert_eq!(
-        cmds,
-        vec![Cmd::Api(Api::FetchMore {
-            key: key.clone(),
-            after: "c1".into()
-        })]
-    );
+    assert_eq!(press(&mut state, "<Enter>"), [more(&key, "c1")]);
     // The next page: other issues.
-    let mut more = crate::fixtures::issue_results(None);
+    let mut more = fixtures::issue_results(None);
     if let SearchResults::Issues(r) = &mut more {
         for i in &mut r.items {
             i.number += 100;
@@ -309,23 +283,23 @@ fn search_box_jumps_searches_and_loads_more() {
     fetched(
         &mut state,
         key.clone(),
-        Data::from(crate::fixtures::issue_results(Some("c2"))),
+        Data::from(fixtures::issue_results(Some("c2"))),
     );
     press(&mut state, "G<Enter>");
     assert_eq!(state.busy().as_deref(), Some("Loading more"));
     let cmds = press(&mut state, "r");
-    assert!(!crate::fixtures::asked(&cmds).is_empty(), "{cmds:?}");
+    assert!(!fixtures::asked(&cmds).is_empty(), "{cmds:?}");
     fetched(
         &mut state,
         key.clone(),
-        Data::from(crate::fixtures::issue_results(Some("c2"))),
+        Data::from(fixtures::issue_results(Some("c2"))),
     );
     update(
         &mut state,
         Msg::FetchedMore(
             key.clone(),
             "c2".into(),
-            Ok(Data::from(crate::fixtures::issue_results(None))),
+            Ok(Data::from(fixtures::issue_results(None))),
             None,
         ),
     );

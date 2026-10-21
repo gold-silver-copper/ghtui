@@ -10,10 +10,10 @@ use crate::route::pulls;
 fn a_pr_diff_opened_from_a_cached_pr_fetches_the_pr() {
     let mut state = state();
     let pr = PrRef::parse("o/r#1").unwrap();
-    crate::fixtures::pr_cached(&mut state, &pr, crate::fixtures::pr_detail());
+    fixtures::pr_cached(&mut state, &pr, fixtures::pr_detail());
     let cmds = state.start_at(Target::Files(DiffOf::Pr(pr.clone())).into());
     assert!(
-        crate::fixtures::asks_pr(&cmds, &pr),
+        fixtures::asks_pr(&cmds, &pr),
         "the cached PR is never refreshed: {cmds:?}"
     );
 }
@@ -63,9 +63,9 @@ fn a_merged_prs_diff_is_from_its_own_base() {
         ),
     ] {
         let mut state = state();
-        let mut detail = crate::fixtures::pr_detail();
+        let mut detail = fixtures::pr_detail();
         detail.state = pr_state;
-        let _ = crate::fixtures::pr_fetched(&mut state, &pr, Ok(detail));
+        let _ = fixtures::pr_fetched(&mut state, &pr, Ok(detail));
         let cmds = state.open_diff(DiffOf::Pr(pr.clone()), None);
         let base = cmds.iter().find_map(|c| match c {
             Cmd::Git(Git::LoadDiff { base, .. }) => Some(base.clone()),
@@ -81,9 +81,9 @@ fn a_merged_prs_diff_is_from_its_own_base() {
 fn an_empty_diff_of_a_pr_with_changes_is_an_error() {
     let mut state = state();
     let pr = PrRef::parse("o/r#1").unwrap();
-    let detail = crate::fixtures::pr_detail();
+    let detail = fixtures::pr_detail();
     let head = crate::git::Oid::parse(&detail.head_oid).unwrap();
-    let _ = crate::fixtures::pr_fetched(&mut state, &pr, Ok(detail));
+    let _ = fixtures::pr_fetched(&mut state, &pr, Ok(detail));
     let cmds = state.open_diff(DiffOf::Pr(pr.clone()), None);
     let job = cmds
         .iter()
@@ -140,9 +140,9 @@ fn no_files(job: crate::diff_job::JobId, head: &str) -> DiffMsg {
 fn outdated_threads_that_beat_the_diff_are_mapped_when_it_lists() {
     let mut state = state();
     let pr = PrRef::parse("o/r#1").unwrap();
-    let detail = crate::fixtures::pr_detail();
+    let detail = fixtures::pr_detail();
     let head = detail.head_oid.clone();
-    let _ = crate::fixtures::pr_fetched(&mut state, &pr, Ok(detail));
+    let _ = fixtures::pr_fetched(&mut state, &pr, Ok(detail));
     let job = start_pr_diff(&mut state, &pr);
     let early = diff_msg(
         &mut state,
@@ -169,16 +169,16 @@ fn outdated_threads_that_beat_the_diff_are_mapped_when_it_lists() {
 fn a_diff_listed_under_a_cached_pr_is_checked_when_the_pr_refreshes() {
     let mut state = state();
     let pr = PrRef::parse("o/r#1").unwrap();
-    let detail = crate::fixtures::pr_detail();
+    let detail = fixtures::pr_detail();
     let head = detail.head_oid.clone();
-    crate::fixtures::pr_cached(&mut state, &pr, detail.clone());
+    fixtures::pr_cached(&mut state, &pr, detail.clone());
     let job = start_pr_diff(&mut state, &pr);
     let _ = diff_msg(&mut state, &pr, no_files(job, &head));
     assert!(
         state.diffs[&DiffOf::Pr(pr.clone())].error.is_none(),
         "a cached PR isn't trusted for the check"
     );
-    let _ = crate::fixtures::pr_fetched(&mut state, &pr, Ok(detail));
+    let _ = fixtures::pr_fetched(&mut state, &pr, Ok(detail));
     let error = state.diffs[&DiffOf::Pr(pr.clone())].error.clone();
     assert!(
         error
@@ -194,14 +194,14 @@ fn a_diff_listed_under_a_cached_pr_is_checked_when_the_pr_refreshes() {
 fn refreshing_a_pr_diff_refetches_the_pr() {
     let mut state = state();
     let pr = PrRef::parse("o/r#1").unwrap();
-    let detail = crate::fixtures::pr_detail();
-    let _ = crate::fixtures::pr_fetched(&mut state, &pr, Ok(detail));
+    let detail = fixtures::pr_detail();
+    let _ = fixtures::pr_fetched(&mut state, &pr, Ok(detail));
     let job = start_pr_diff(&mut state, &pr);
     let _ = diff_msg(&mut state, &pr, no_files(job, &"c".repeat(40)));
     warns(&state, "moved while loading");
     let cmds = act(&mut state, Action::Refresh);
     assert!(
-        crate::fixtures::asks_pr(&cmds, &pr),
+        fixtures::asks_pr(&cmds, &pr),
         "r reloads the diff but not the PR it's checked against: {cmds:?}"
     );
 }
@@ -212,9 +212,9 @@ fn refreshing_a_pr_diff_refetches_the_pr() {
 fn refreshing_a_pr_diff_waits_for_the_pr() {
     let mut state = state();
     let pr = PrRef::parse("o/r#1").unwrap();
-    let mut detail = crate::fixtures::pr_detail();
+    let mut detail = fixtures::pr_detail();
     detail.state = PrState::Open;
-    let _ = crate::fixtures::pr_fetched(&mut state, &pr, Ok(detail.clone()));
+    let _ = fixtures::pr_fetched(&mut state, &pr, Ok(detail.clone()));
     let _ = start_pr_diff(&mut state, &pr);
     let load = |cmds: &[Cmd]| {
         cmds.iter().find_map(|c| match c {
@@ -226,7 +226,7 @@ fn refreshing_a_pr_diff_waits_for_the_pr() {
     assert_eq!(load(&cmds), None, "started from the PR it had: {cmds:?}");
     detail.state = PrState::Merged;
     detail.base_oid = "c".repeat(40);
-    let cmds = crate::fixtures::pr_fetched(&mut state, &pr, Ok(detail));
+    let cmds = fixtures::pr_fetched(&mut state, &pr, Ok(detail));
     assert_eq!(
         load(&cmds).and_then(|b| b.oid),
         Oid::parse(&"c".repeat(40)).ok()
@@ -239,16 +239,16 @@ fn refreshing_a_pr_diff_waits_for_the_pr() {
 fn a_hidden_diff_is_checked_when_it_shows_again() {
     let mut state = state();
     let pr = PrRef::parse("o/r#1").unwrap();
-    let mut detail = crate::fixtures::pr_detail();
+    let mut detail = fixtures::pr_detail();
     detail.changed_files = 0;
     let head = detail.head_oid.clone();
-    let _ = crate::fixtures::pr_fetched(&mut state, &pr, Ok(detail.clone()));
+    let _ = fixtures::pr_fetched(&mut state, &pr, Ok(detail.clone()));
     let job = start_pr_diff(&mut state, &pr);
     let _ = diff_msg(&mut state, &pr, no_files(job, &head));
     let _ = state.back();
     state.notices.dismiss();
     detail.head_oid = "d".repeat(40);
-    let _ = crate::fixtures::pr_fetched(&mut state, &pr, Ok(detail));
+    let _ = fixtures::pr_fetched(&mut state, &pr, Ok(detail));
     assert_eq!(state.notices.shown(), None, "a diff off screen was checked");
     let _ = state.open_diff(DiffOf::Pr(pr.clone()), None);
     let _ = state.settle();
@@ -261,10 +261,10 @@ fn a_hidden_diff_is_checked_when_it_shows_again() {
 fn since_review_asked_on_a_diff_you_left_is_dropped() {
     let mut state = state();
     let pr = PrRef::parse("o/r#1").unwrap();
-    let mut detail = crate::fixtures::pr_detail();
+    let mut detail = fixtures::pr_detail();
     detail.changed_files = 0;
     let head = detail.head_oid.clone();
-    let _ = crate::fixtures::pr_fetched(&mut state, &pr, Ok(detail));
+    let _ = fixtures::pr_fetched(&mut state, &pr, Ok(detail));
     let job = start_pr_diff(&mut state, &pr);
     let _ = diff_msg(
         &mut state,
@@ -294,7 +294,7 @@ fn files_tab_opens_the_diff_once_the_pr_loads() {
     assert!(matches!(state.screen(), Screen::Diff(_)));
     assert_eq!(state.chrome().active, Some(3));
     assert_eq!(state.busy().as_deref(), Some("Loading o/r#1"));
-    let cmds = crate::fixtures::pr_fetched(&mut state, &pr, Ok(crate::fixtures::pr_detail()));
+    let cmds = fixtures::pr_fetched(&mut state, &pr, Ok(fixtures::pr_detail()));
     assert!(
         cmds.iter()
             .any(|c| matches!(c, Cmd::Git(Git::LoadDiff { .. }))),

@@ -1,12 +1,9 @@
 use super::*;
-use crate::route::{code, issues, releases};
+use crate::route::{code, releases};
 
-/// Two routes to tell tabs apart by.
-fn issue(n: u64) -> Route {
-    Route::Issues(issues::Issue {
-        repo: ghtui(),
-        number: n,
-    })
+/// The `#fragment` the page on screen was opened at.
+fn anchor(s: &State) -> Option<&str> {
+    page(s).anchor.as_deref()
 }
 
 #[test]
@@ -147,7 +144,7 @@ fn the_page_asked_for_loads_after_reopened_tabs() {
     s.restore_tabs(&[issue(1).url(), releases.url()]);
     let cmds = s.start_at(Target::Page(releases).into());
     assert_eq!(s.tab_count(), 3);
-    let fetches = |key: &DataKey| crate::fixtures::asks(&cmds, key);
+    let fetches = |key: &DataKey| fixtures::asks(&cmds, key);
     assert!(
         fetches(&DataKey::Releases(RepoId::new("o", "r"))),
         "{cmds:?}"
@@ -158,19 +155,15 @@ fn the_page_asked_for_loads_after_reopened_tabs() {
 /// tab, or from the command line after reopened tabs.
 #[test]
 fn anchors_survive_every_way_in() {
-    let anchor = |s: &State| match s.screen() {
-        Screen::Page(p) => p.anchor.clone(),
-        Screen::Diff(_) => None,
-    };
     let url = "https://github.com/o/r/issues/1#issuecomment-5";
     let mut s = state();
     let _ = s.open_tab(Dest::from_url(url));
     assert_eq!(s.tab_count(), 2);
-    assert_eq!(anchor(&s).as_deref(), Some("issuecomment-5"));
+    assert_eq!(anchor(&s), Some("issuecomment-5"));
     let mut s = state();
     s.restore_tabs(&[issue(2).url(), issue(3).url()]);
     let _ = s.start_at(Dest::from_url(url));
-    assert_eq!(anchor(&s).as_deref(), Some("issuecomment-5"));
+    assert_eq!(anchor(&s), Some("issuecomment-5"));
 }
 
 /// A plain link to a file on a slashed branch waits for GitHub to
@@ -217,11 +210,7 @@ fn an_issue_link_redirected_to_its_pr_keeps_the_anchor() {
     let url = "https://github.com/o/r/issues/7#issuecomment-5";
     let mut s = state();
     let _ = s.open_tab(Dest::from_url(url));
-    let anchor = |s: &State| match s.screen() {
-        Screen::Page(p) => p.anchor.clone(),
-        Screen::Diff(_) => None,
-    };
-    assert_eq!(anchor(&s).as_deref(), Some("issuecomment-5"));
+    assert_eq!(anchor(&s), Some("issuecomment-5"));
     let _ = fetched(
         &mut s,
         DataKey::Issue(RepoId::new("o", "r"), 7),
@@ -232,7 +221,7 @@ fn an_issue_link_redirected_to_its_pr_keeps_the_anchor() {
         Some(&Route::pr(PrRef::parse("o/r#7").unwrap())),
         "redirected"
     );
-    assert_eq!(anchor(&s).as_deref(), Some("issuecomment-5"));
+    assert_eq!(anchor(&s), Some("issuecomment-5"));
 }
 
 /// A capital hint letter follows the link in a new tab.

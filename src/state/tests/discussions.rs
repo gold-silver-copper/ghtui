@@ -34,7 +34,7 @@ fn select(s: &mut State, author: &str, text: &str) {
 fn c_answers_or_replies_in_the_thread() {
     let mut s = with_discussion();
     press(&mut s, "c");
-    let target = crate::fixtures::composer(&mut s).target.clone();
+    let target = fixtures::composer(&mut s).target.clone();
     let title = target.title(&s);
     assert_eq!(title, "Answer on “How do I review a PR offline?”");
     let cmds = press(&mut s, "Use git<C-s>");
@@ -150,13 +150,11 @@ fn comments_are_reacted_to_edited_and_deleted() {
     says(&s, "GitHub doesn't let you edit monalisa's comment");
     select(&mut s, "octocat", "That works");
     press(&mut s, "e");
-    let c = crate::fixtures::composer(&mut s);
+    let c = fixtures::composer(&mut s);
     assert_eq!(c.text(), "That works, thanks!");
     s.overlay = None;
     press(&mut s, "D");
-    let Some(Overlay::Ask(c)) = &s.overlay else {
-        panic!("not asked");
-    };
+    let c = overlay!(s, Ask);
     assert_eq!(c.title, "Delete octocat's reply?");
     let cmds = press(&mut s, "<Enter>");
     let delete = Change::Discussion(Discuss::Delete {

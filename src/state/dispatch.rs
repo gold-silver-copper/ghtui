@@ -14,14 +14,14 @@ pub fn update(state: &mut State, msg: Msg) -> Cmds {
 /// Handles a message without settling the screen: the runtime handles a
 /// burst of background results, then settles once.
 pub fn apply_msg(state: &mut State, msg: Msg) -> Cmds {
-    // What's followed until GitHub shows it is checked when data comes
-    // in. A page opened from cached data alone brings no data: its forms
-    // still need filling in.
-    let opened = state.route().cloned();
     // Who's signed in, and what the writes' answers changed of the
     // features' own state, show on pages too.
     let shown = matches!(msg, Msg::Viewer(_) | Msg::Done(_));
     let data = shown || matches!(msg, Msg::Fetched { .. } | Msg::FetchedMore(..));
+    // What's followed until GitHub shows it is checked when data comes
+    // in. A page opened from cached data alone brings no data: its forms
+    // still need filling in. With data it's checked anyway.
+    let opened = if data { None } else { state.route().cloned() };
     if shown {
         state.shown_gen += 1;
     }
@@ -73,7 +73,7 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Cmds {
 /// spinner's next frame while something loads. The runtime calls this.
 pub fn timers(state: &mut State) -> Cmds {
     let mut cmds = Cmds::from_iter(state.notices.timer(state.clock));
-    if state.busy().is_some() && !state.spinning {
+    if !state.spinning && state.busy().is_some() {
         state.spinning = true;
         cmds.push(Cmd::Timer(Timer::Spin, 90));
     }
