@@ -11,7 +11,6 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -241,7 +240,11 @@ impl Indexer {
     pub fn scratch(&self) -> PathBuf {
         let dir = self.git.cache_root.join("code-index");
         let _ = std::fs::create_dir_all(&dir);
-        dir.join(format!(".scratch-{}-{}", std::process::id(), unique()))
+        dir.join(format!(
+            ".scratch-{}-{}",
+            std::process::id(),
+            crate::fresh()
+        ))
     }
 
     /// The index of `repo` at `rev`, starting (or refreshing) its build;
@@ -559,7 +562,7 @@ fn save(file: &Path, index: &Index) -> std::io::Result<()> {
             let _ = writeln!(out, "\t{}\t{defines}\t{}", d.line, d.name);
         }
     }
-    let tmp = dir.join(format!(".tmp-{}-{}", std::process::id(), unique()));
+    let tmp = dir.join(format!(".tmp-{}-{}", std::process::id(), crate::fresh()));
     std::fs::write(&tmp, out)?;
     std::fs::rename(&tmp, file)?;
     let mut kept: Vec<_> = saved(dir)?.collect();
@@ -568,11 +571,6 @@ fn save(file: &Path, index: &Index) -> std::io::Result<()> {
         let _ = std::fs::remove_file(old);
     }
     Ok(())
-}
-
-fn unique() -> u64 {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 /// The indexes saved in `dir` (not one being written), with when.

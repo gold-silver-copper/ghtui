@@ -1,13 +1,7 @@
 //! Data from GitHub: what's fetched, when, and what's still running.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-
 use super::*;
 use crate::route::{app, issues, pulls};
-
-/// The last version given out, shared by every [`Remote`] so that one
-/// removed and made again never repeats a version a page was built at.
-static STAMP: AtomicU64 = AtomicU64::new(0);
 
 /// Data that comes from GitHub: what we have (possibly cached), whether a
 /// refresh is in flight, and the last refresh error.
@@ -81,9 +75,11 @@ impl<T> Remote<T> {
         remote
     }
 
-    /// Something a page may show of it changed.
+    /// Something a page may show of it changed: a version no [`Remote`]
+    /// has had, so one removed and made again never repeats a version a
+    /// page was built at.
     pub(crate) fn changed(&mut self) {
-        self.version = STAMP.fetch_add(1, Ordering::Relaxed) + 1;
+        self.version = crate::fresh();
     }
 
     /// Starts a fetch, unless one is running or (without `force`) the data

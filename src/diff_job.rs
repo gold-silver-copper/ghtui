@@ -10,7 +10,6 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::diff::FileDiff;
@@ -78,11 +77,6 @@ pub enum JobMsg {
 /// Identifies one run of a diff job: a refresh or a new commit range gets
 /// a new one.
 pub type JobId = u64;
-
-pub fn next_job() -> JobId {
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    NEXT.fetch_add(1, Ordering::Relaxed)
-}
 
 /// Sends a job's messages to the UI.
 #[derive(Clone)]

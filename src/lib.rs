@@ -96,6 +96,13 @@ pub(crate) fn lock<T: ?Sized>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGu
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+/// A number this run hasn't given out before, never 0: for IDs and
+/// versions that mustn't repeat.
+pub(crate) fn fresh() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// How long to wait for the terminal to report its background color.
 const BACKGROUND_QUERY_TIMEOUT: Duration = Duration::from_millis(100);
 

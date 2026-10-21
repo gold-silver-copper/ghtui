@@ -14,7 +14,6 @@
 use crate::route::{Route, pulls};
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::api::browse::PrActivity;
 use crate::api::model::{NodeId, PrRef, ReviewThread};
@@ -52,7 +51,7 @@ pub struct Pace<P> {
 impl<P: Clone + Eq + Hash> Pace<P> {
     fn new() -> Self {
         Self {
-            id: next_id(),
+            id: crate::fresh(),
             etags: HashMap::new(),
             wait: FIRST_MS,
             busy: false,
@@ -81,7 +80,7 @@ impl<P: Clone + Eq + Hash> Pace<P> {
     /// Back in focus: the next ask is soon. A timer already running is
     /// the old wait's, and ignored.
     fn refocus(&mut self) {
-        (self.id, self.busy, self.wait) = (next_id(), false, FIRST_MS);
+        (self.id, self.busy, self.wait) = (crate::fresh(), false, FIRST_MS);
     }
 
     /// `probe`, asked with the ETag of its last answer.
@@ -179,12 +178,6 @@ pub struct Watch {
     pub new_comments: HashSet<u64>,
     /// The reviews that did.
     pub new_reviews: HashSet<u64>,
-}
-
-/// An id no watch has had.
-fn next_id() -> u64 {
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 impl Watch {

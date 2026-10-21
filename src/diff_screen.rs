@@ -2,7 +2,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::api::model::{NodeId, PatchFile, PrRef, RepoId, ReviewThread, ViewedFiles};
 use crate::diff::anchor::{Commentable, LinePos, Side};
@@ -19,7 +18,7 @@ use crate::ui::pages::url as links;
 use crate::ui::text::{self, short_sha};
 use ratatui::layout::Rect;
 
-use crate::diff_job::{DiffFiles, JobId, JobMsg, next_job};
+use crate::diff_job::{DiffFiles, JobId, JobMsg};
 use crate::join;
 use crate::keymap::Action;
 use crate::notice::Notices;
@@ -371,12 +370,6 @@ pub struct DiffState {
     version: u64,
 }
 
-/// A version no diff's inputs have had.
-fn next_version() -> u64 {
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    NEXT.fetch_add(1, Ordering::Relaxed)
-}
-
 impl DiffState {
     /// A new diff of the whole PR that knows nothing yet: all is fetched again.
     pub fn fresh() -> Self {
@@ -393,8 +386,8 @@ impl DiffState {
             since_commit: None,
             range: None,
             requested: HashSet::new(),
-            job: next_job(),
-            version: next_version(),
+            job: crate::fresh(),
+            version: crate::fresh(),
         }
     }
 
@@ -443,7 +436,7 @@ impl DiffState {
     /// Changes the inputs with `f` and shows the change.
     pub fn edit<R>(&mut self, f: impl FnOnce(&mut DiffInputs) -> R) -> R {
         let r = f(&mut self.inputs);
-        self.version = next_version();
+        self.version = crate::fresh();
         self.doc.set_inputs(self.doc_inputs());
         r
     }
