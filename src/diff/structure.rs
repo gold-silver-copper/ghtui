@@ -27,7 +27,9 @@ use tree_sitter::{Node as TsNode, Tree};
 use crate::diff::blocks::Fnv;
 use crate::diff::file::{Alignment, TextDiff};
 use crate::diff::hunks::DiffLine;
-use crate::diff::intraline::{IntraLine, changed_tokens, similarity};
+use crate::diff::intraline::{
+    IntraLine, best_pairing, changed_tokens, dice, greedy_pairing, similarity,
+};
 use crate::diff::sat_u32;
 use crate::diff::text::Text;
 
@@ -383,8 +385,8 @@ impl<'a> Matcher<'a> {
         Ok(())
     }
 
-    fn node(&self, s: S, n: u32) -> Option<&Node> {
-        self.sides.get(s)?.nodes.get(n as usize)
+    fn node(&self, s: S, n: u32) -> Option<&'a Node> {
+        self.sides.get(s).copied()?.nodes.get(n as usize)
     }
 
     fn hash(&self, s: S, n: u32) -> u64 {
@@ -457,11 +459,9 @@ impl<'a> Matcher<'a> {
                     ..
                 }),
             ) if lk.len() == rk.len() => {
-                let (lo, lc, ro, rc) = (*lo, *lc, *ro, *rc);
-                let kids: Vec<(u32, u32)> = lk.iter().copied().zip(rk.iter().copied()).collect();
-                self.pair(lo, ro);
-                self.pair(lc, rc);
-                for (x, y) in kids {
+                self.pair(*lo, *ro);
+                self.pair(*lc, *rc);
+                for (&x, &y) in lk.iter().zip(rk) {
                     self.same(x, y);
                 }
                 return;
@@ -511,11 +511,9 @@ impl<'a> Matcher<'a> {
                     ..
                 }),
             ) => {
-                let (lo, lc, ro, rc) = (*lo, *lc, *ro, *rc);
-                let (lk, rk) = (lk.clone(), rk.clone());
-                self.pair(lo, ro);
-                self.pair(lc, rc);
-                self.seq(&lk, &rk)
+                self.pair(*lo, *ro);
+                self.pair(*lc, *rc);
+                self.seq(lk, rk)
             }
             (Some(Node::Atom { token: x, .. }), Some(Node::Atom { token: y, .. })) => {
                 let (x, y) = (*x, *y);
@@ -541,7 +539,7 @@ impl<'a> Matcher<'a> {
 
     /// How much two nodes are alike, if they may pair at all.
     fn score(&mut self, a: u32, b: u32) -> Result<Option<f64>, Fallback> {
-        let open = |s: S, t: &Option<u32>| t.map(|t| self.text(s, t).to_owned());
+        let open = |s: S, t: &Option<u32>| t.map(|t| self.text(s, t));
         let lists = match (self.node(0, a), self.node(1, b)) {
             (
                 Some(Node::List {
@@ -628,7 +626,10 @@ impl<'a> Matcher<'a> {
 
     /// The bags of several nodes, merged.
     fn bag_of(&mut self, s: S, ns: &[u32]) -> Vec<u64> {
-        let mut out: Vec<u64> = ns.iter().flat_map(|&n| self.bag(s, n).to_vec()).collect();
+        let mut out = Vec::new();
+        for &n in ns {
+            out.extend_from_slice(&self.bag(s, n));
+        }
         out.sort_unstable();
         out
     }
@@ -637,72 +638,22 @@ impl<'a> Matcher<'a> {
     /// greatest total likeness, weighted by size, or greedily when there
     /// are too many candidates.
     fn pair_up(&mut self, ls: &[u32], rs: &[u32]) -> Result<Vec<(usize, usize)>, Fallback> {
-        let weight = |m: &mut Self, a: u32, b: u32| -> Result<Option<f64>, Fallback> {
-            let Some(s) = m.score(a, b)? else {
+        let weight = |me: &mut Self, i: usize, j: usize| -> Result<Option<f64>, Fallback> {
+            let (Some(&a), Some(&b)) = (ls.get(i), rs.get(j)) else {
                 return Ok(None);
             };
-            let size = m.bag(0, a).len() + m.bag(1, b).len();
+            let Some(s) = me.score(a, b)? else {
+                return Ok(None);
+            };
+            let size = me.bag(0, a).len() + me.bag(1, b).len();
             Ok(Some(s * size as f64))
         };
-        if ls.len().saturating_mul(rs.len()) > MAX_PAIRING {
-            let mut pairs = Vec::new();
-            let mut next = 0;
-            for (i, &a) in ls.iter().enumerate() {
-                let mut best: Option<(usize, f64)> = None;
-                for (j, &b) in rs.iter().enumerate().skip(next).take(16) {
-                    if let Some(w) = weight(self, a, b)?
-                        && best.is_none_or(|(_, bw)| w > bw)
-                    {
-                        best = Some((j, w));
-                    }
-                }
-                if let Some((j, _)) = best {
-                    pairs.push((i, j));
-                    next = j + 1;
-                }
-            }
-            return Ok(pairs);
+        let (n, m) = (ls.len(), rs.len());
+        if n.saturating_mul(m) > MAX_PAIRING {
+            greedy_pairing(n, m, |i, j| weight(self, i, j))
+        } else {
+            best_pairing(n, m, |i, j| weight(self, i, j))
         }
-        // `table[i][j]`: the best total for the first `i` and `j` nodes,
-        // and whether it pairs node `i - 1` with `j - 1`.
-        let width = rs.len() + 1;
-        let mut table = vec![(0.0_f64, 0u8); (ls.len() + 1) * width];
-        let at = |i: usize, j: usize| i * width + j;
-        for (i, &a) in ls.iter().enumerate() {
-            for (j, &b) in rs.iter().enumerate() {
-                let get = |i, j| table.get(at(i, j)).copied().unwrap_or_default();
-                let (up, left, diag) = (get(i, j + 1), get(i + 1, j), get(i, j));
-                let mut best = if up.0 >= left.0 {
-                    (up.0, 1)
-                } else {
-                    (left.0, 2)
-                };
-                if let Some(w) = weight(self, a, b)?
-                    && diag.0 + w > best.0
-                {
-                    best = (diag.0 + w, 3);
-                }
-                if let Some(cell) = table.get_mut(at(i + 1, j + 1)) {
-                    *cell = best;
-                }
-            }
-        }
-        let mut pairs = Vec::new();
-        let (mut i, mut j) = (ls.len(), rs.len());
-        while i > 0 && j > 0 {
-            match table.get(at(i, j)).map(|c| c.1) {
-                Some(3) => {
-                    i -= 1;
-                    j -= 1;
-                    pairs.push((i, j));
-                }
-                Some(1) => i -= 1,
-                Some(2) => j -= 1,
-                _ => break,
-            }
-        }
-        pairs.reverse();
-        Ok(pairs)
     }
 
     /// Unpaired nodes between two anchors: code wrapped in a new list on
@@ -754,30 +705,12 @@ impl<'a> Matcher<'a> {
         let Some(Node::List { children, .. }) = self.node(s, n) else {
             return Ok(());
         };
-        let children = children.clone();
         if s == 1 {
-            self.seq(ls, &children)
+            self.seq(ls, children)
         } else {
-            self.seq(&children, rs)
+            self.seq(children, rs)
         }
     }
-}
-
-/// Dice coefficient of two sorted multisets.
-fn dice(x: &[u64], y: &[u64]) -> f64 {
-    let (mut i, mut j, mut common) = (0, 0, 0usize);
-    while let (Some(p), Some(q)) = (x.get(i), y.get(j)) {
-        match p.cmp(q) {
-            std::cmp::Ordering::Less => i += 1,
-            std::cmp::Ordering::Greater => j += 1,
-            std::cmp::Ordering::Equal => {
-                common += 1;
-                i += 1;
-                j += 1;
-            }
-        }
-    }
-    2.0 * common as f64 / (x.len() + y.len()).max(1) as f64
 }
 
 /// The 1-based line holding byte `at` of `text`.
@@ -983,45 +916,17 @@ fn pair_lines(
     {
         return Vec::new();
     }
-    let width = added.len() + 1;
-    let at = |i: usize, j: usize| i * width + j;
-    let mut table = vec![(0usize, 0u8); (removed.len() + 1) * width];
-    for (i, &(_, o)) in removed.iter().enumerate() {
-        for (j, &(_, n)) in added.iter().enumerate() {
-            let get = |i, j| table.get(at(i, j)).copied().unwrap_or_default();
-            let (up, left, diag) = (get(i, j + 1), get(i + 1, j), get(i, j));
-            let mut best = if up.0 >= left.0 {
-                (up.0, 1)
-            } else {
-                (left.0, 2)
-            };
-            let w = shared.get(&(o, n)).copied().unwrap_or(0);
-            if w > 0 && diag.0 + w > best.0 {
-                best = (diag.0 + w, 3);
-            }
-            if let Some(cell) = table.get_mut(at(i + 1, j + 1)) {
-                *cell = best;
-            }
-        }
-    }
-    let mut pairs = Vec::new();
-    let (mut i, mut j) = (removed.len(), added.len());
-    while i > 0 && j > 0 {
-        match table.get(at(i, j)).map(|c| c.1) {
-            Some(3) => {
-                i -= 1;
-                j -= 1;
-                if let (Some(r), Some(a)) = (removed.get(i), added.get(j)) {
-                    pairs.push((r.0, a.0));
-                }
-            }
-            Some(1) => i -= 1,
-            Some(2) => j -= 1,
-            _ => break,
-        }
-    }
-    pairs.reverse();
-    pairs
+    let weight = |i: usize, j: usize| {
+        let shared = match (removed.get(i), added.get(j)) {
+            (Some(&(_, o)), Some(&(_, n))) => shared.get(&(o, n)).copied().unwrap_or(0),
+            _ => 0,
+        };
+        Ok::<_, std::convert::Infallible>((shared > 0).then_some(shared as f64))
+    };
+    let Ok(pairs) = best_pairing(removed.len(), added.len(), weight);
+    (pairs.into_iter())
+        .filter_map(|(i, j)| Some((removed.get(i)?.0, added.get(j)?.0)))
+        .collect()
 }
 
 #[cfg(test)]

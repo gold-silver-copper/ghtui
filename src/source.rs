@@ -111,19 +111,7 @@ pub fn by_git(key: &DataKey, after: Option<&str>) -> bool {
     match key {
         DataKey::History(..) => after.is_none_or(|a| read::history_skip(a).is_some()),
         _ if after.is_some() => false,
-        DataKey::Tree(..)
-        | DataKey::Blob(..)
-        | DataKey::Files(..)
-        | DataKey::Commit(..)
-        | DataKey::Blame(..)
-        | DataKey::Compare(..)
-        | DataKey::LastCommits(..)
-        | DataKey::Refs(..)
-        | DataKey::Tags(..)
-        | DataKey::RefIn(..)
-        | DataKey::Activity(_) => true,
-        DataKey::Search(SearchKind::Code, query) => code_search(query).is_some(),
-        _ => false,
+        _ => repo_of(key).is_some(),
     }
 }
 
@@ -577,16 +565,12 @@ impl Local {
                 .await)
                 .map_err(|e| e.to_string())?;
             let mut room = budget;
-            let blobs: Vec<String> = (out.split('\0'))
-                .filter_map(|line| {
-                    let (meta, _) = line.split_once('\t')?;
-                    let mut meta = meta.split_whitespace();
-                    let (_, kind, oid, size) =
-                        (meta.next()?, meta.next()?, meta.next()?, meta.next()?);
-                    let size: u64 = size.parse().ok()?;
-                    (kind == "blob" && size <= room).then(|| {
+            let blobs: Vec<String> = (crate::git::index::parse_tree(&out).into_iter())
+                .filter_map(|f| {
+                    let size = f.size?;
+                    (size <= room).then(|| {
                         room -= size;
-                        oid.to_owned()
+                        f.blob
                     })
                 })
                 .collect();
@@ -674,7 +658,11 @@ impl Local {
         key: &DataKey,
         after: Option<String>,
     ) -> Result<Answer, ReadError> {
-        let absent = |what: String| Ok(Answer::Absent(what));
+        // What was read at `oid`, or `what` isn't there.
+        let found = |data: Option<Data>, oid: Oid, what: String| match data {
+            Some(data) => Answer::Data(data, Some(oid)),
+            None => Answer::Absent(what),
+        };
         let at = |rev: String| async move {
             let oid = self.at(gh, repo, clone, &rev).await?;
             oid.ok_or_else(|| {
@@ -684,17 +672,13 @@ impl Local {
         Ok(match key {
             DataKey::Tree(_, rev, path) => {
                 let oid = at(rev.clone()).await?;
-                match read::tree(clone, &oid, path).await? {
-                    Some(entries) => Answer::Data(Data::Tree(entries), Some(oid)),
-                    None => return absent(format!("{repo}/{path} at {rev}")),
-                }
+                let tree = read::tree(clone, &oid, path).await?.map(Data::Tree);
+                found(tree, oid, format!("{repo}/{path} at {rev}"))
             }
             DataKey::Blob(_, rev, path) => {
                 let oid = at(rev.clone()).await?;
-                match read::blob(clone, &oid, path).await? {
-                    Some(blob) => Answer::Data(Data::from(blob), Some(oid)),
-                    None => return absent(format!("{repo}/{path} at {rev}")),
-                }
+                let blob = read::blob(clone, &oid, path).await?.map(Data::from);
+                found(blob, oid, format!("{repo}/{path} at {rev}"))
             }
             DataKey::Files(_, rev) => {
                 let oid = at(rev.clone()).await?;
@@ -711,17 +695,13 @@ impl Local {
                 let Some(oid) = self.at(gh, repo, clone, rev).await? else {
                     return Err(ReadError::Limit(format!("git doesn't have commit {rev}")));
                 };
-                match read::commit(clone, &oid).await? {
-                    Some(c) => Answer::Data(Data::from(c), Some(oid)),
-                    None => return absent(format!("{repo}@{rev}")),
-                }
+                let commit = read::commit(clone, &oid).await?.map(Data::from);
+                found(commit, oid, format!("{repo}@{rev}"))
             }
             DataKey::Blame(_, rev, path) => {
                 let oid = at(rev.clone()).await?;
-                match read::blame(clone, &oid, path).await? {
-                    Some(b) => Answer::Data(Data::from(b), Some(oid)),
-                    None => return absent(format!("{repo}/{path} at {rev}")),
-                }
+                let blame = read::blame(clone, &oid, path).await?.map(Data::from);
+                found(blame, oid, format!("{repo}/{path} at {rev}"))
             }
             DataKey::Compare(_, spec) => {
                 let (base, head, direct) = match spec.split_once("...") {
@@ -749,7 +729,7 @@ impl Local {
                     return Ok(Answer::Data(Data::LastCommits(found.clone()), Some(oid)));
                 }
                 let Some(entries) = read::tree(clone, &oid, path).await? else {
-                    return absent(format!("{repo}/{path} at {rev}"));
+                    return Ok(Answer::Absent(format!("{repo}/{path} at {rev}")));
                 };
                 let names: Vec<String> = entries.into_iter().map(|e| e.name).collect();
                 let names = names
@@ -925,6 +905,7 @@ mod tests {
         assert!(!by_git(&history, Some("Y3Vyc29y")), "GitHub's own cursor");
     }
 
+    use crate::git::fixture::{cache_clone, commit, origin};
     use crate::git::set_up as git;
 
     /// Pages read from the cache's clone at the commit GitHub's branch is
@@ -934,28 +915,13 @@ mod tests {
     async fn pages_read_from_the_clone_at_github_s_commit() {
         let github = tempfile::tempdir().unwrap();
         let g = github.path();
-        git(g, &["init", "-q", "-b", "main"]).await;
-        for (key, value) in [
-            ("user.name", "Ann"),
-            ("user.email", "ann@example.com"),
-            ("uploadpack.allowFilter", "true"),
-            ("uploadpack.allowAnySHA1InWant", "true"),
-        ] {
-            git(g, &["config", key, value]).await;
-        }
-        std::fs::write(g.join("a.txt"), "one\n").unwrap();
-        git(g, &["add", "a.txt"]).await;
-        git(g, &["commit", "-q", "-m", "First"]).await;
-        let cache = tempfile::tempdir().unwrap();
-        let url = format!("file://{}", g.display());
-        let credentials = crate::git::credentials::Credentials::Ambient;
-        Repo::open_cache(cache.path(), "o", "r", &url, credentials.clone(), &|_| {})
-            .await
-            .unwrap();
+        origin(g).await;
+        commit(g, &[("a.txt", "one\n")], "First").await;
+        let (cache, _) = cache_clone(g).await;
         let elsewhere = tempfile::tempdir().unwrap();
         let local = Local::new(GitContext {
             cache_root: cache.path().to_owned(),
-            credentials,
+            credentials: crate::git::credentials::Credentials::Ambient,
             cwd: elsewhere.path().to_owned(),
         });
         let gh = GitHub::new(
@@ -967,10 +933,7 @@ mod tests {
         let blob = |path: &str| DataKey::Blob(repo.clone(), "main".into(), path.into());
 
         // GitHub moved on since the clone was made.
-        std::fs::write(g.join("b.txt"), "two\n").unwrap();
-        git(g, &["add", "b.txt"]).await;
-        git(g, &["commit", "-q", "-m", "Second"]).await;
-        let head = Oid::parse(git(g, &["rev-parse", "main"]).await.trim()).unwrap();
+        let head = Oid::parse(&commit(g, &[("b.txt", "two\n")], "Second").await).unwrap();
         let (data, from) = local.fetch(&gh, &blob("b.txt"), None).await;
         let Ok(Data::Blob(b)) = data else {
             panic!("{data:?}")
@@ -1037,22 +1000,12 @@ mod tests {
     async fn offline_the_clone_reads_at_the_branch_github_last_listed() {
         let github = tempfile::tempdir().unwrap();
         let g = github.path().join("r.git");
-        std::fs::create_dir(&g).unwrap();
-        git(&g, &["init", "-q", "-b", "main"]).await;
-        git(&g, &["config", "uploadpack.allowFilter", "true"]).await;
-        std::fs::write(g.join("a.txt"), "one\n").unwrap();
-        git(&g, &["add", "a.txt"]).await;
-        let who = ["-c", "user.name=Ann", "-c", "user.email=ann@example.com"];
-        git(&g, &[&who[..], &["commit", "-q", "-m", "First"]].concat()).await;
-        let cache = tempfile::tempdir().unwrap();
-        let url = format!("file://{}", g.display());
-        let credentials = crate::git::credentials::Credentials::Ambient;
-        Repo::open_cache(cache.path(), "o", "r", &url, credentials.clone(), &|_| {})
-            .await
-            .unwrap();
+        origin(&g).await;
+        commit(&g, &[("a.txt", "one\n")], "First").await;
+        let (cache, _) = cache_clone(&g).await;
         let context = GitContext {
             cache_root: cache.path().to_owned(),
-            credentials,
+            credentials: crate::git::credentials::Credentials::Ambient,
             cwd: cache.path().to_owned(),
         };
         let store = crate::store::Store::open(&cache.path().join("cache.redb"));

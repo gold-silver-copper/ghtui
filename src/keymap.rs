@@ -414,18 +414,12 @@ pub fn parse_key(s: &str) -> Result<Key, String> {
     match (chars.next(), chars.next()) {
         (None, _) => Err("empty key".into()),
         (Some(c), None) => Ok(Key::new(KeyCode::Char(c), KeyModifiers::NONE)),
-        (Some('<'), Some(_)) => {
-            let name = s
-                .strip_prefix('<')
-                .and_then(|k| k.strip_suffix('>'))
-                .ok_or_else(|| {
-                    format!("`{s}` is more than one key: bind one key, like `x` or `<C-x>`")
-                })?;
-            parse_named(name).ok_or_else(|| format!("unknown key `{s}`"))
-        }
-        _ => Err(format!(
-            "`{s}` is more than one key: bind one key, like `x` or `<C-x>`"
-        )),
+        _ => match s.strip_prefix('<').and_then(|k| k.strip_suffix('>')) {
+            Some(name) => parse_named(name).ok_or_else(|| format!("unknown key `{s}`")),
+            None => Err(format!(
+                "`{s}` is more than one key: bind one key, like `x` or `<C-x>`"
+            )),
+        },
     }
 }
 
@@ -474,16 +468,14 @@ pub fn format_key(key: Key) -> String {
             .find(|(_, c)| *c == code)
             .map_or_else(|| format!("{code:?}"), |(n, _)| (*n).to_owned()),
     };
-    let mut prefix = String::new();
-    if key.mods.contains(KeyModifiers::CONTROL) {
-        prefix.push_str("C-");
-    }
-    if key.mods.contains(KeyModifiers::ALT) {
-        prefix.push_str("A-");
-    }
-    if key.mods.contains(KeyModifiers::SHIFT) {
-        prefix.push_str("S-");
-    }
+    let mods = [
+        (KeyModifiers::CONTROL, "C-"),
+        (KeyModifiers::ALT, "A-"),
+        (KeyModifiers::SHIFT, "S-"),
+    ];
+    let prefix: String = (mods.into_iter())
+        .filter_map(|(m, said)| key.mods.contains(m).then_some(said))
+        .collect();
     format!("<{prefix}{base}>")
 }
 

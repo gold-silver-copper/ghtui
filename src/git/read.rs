@@ -148,8 +148,7 @@ pub async fn blob(repo: &Repo, at: &Oid, path: &str) -> Read<Option<Blob>> {
 /// [`TEXT_MAX`]), or nothing for a binary file (a NUL in its first 8000
 /// bytes, as git judges).
 fn blob_of(path: &str, bytes: &[u8]) -> Blob {
-    let head = bytes.get(..8000).unwrap_or(bytes);
-    let binary = head.contains(&0);
+    let binary = crate::diff::is_binary(bytes);
     let truncated = !binary && bytes.len() > TEXT_MAX;
     let text = (!binary).then(|| {
         let shown = bytes.get(..TEXT_MAX).unwrap_or(bytes);
@@ -242,7 +241,7 @@ async fn line_counts(repo: &Repo, from: &str, to: &str, files: &[ChangedFile]) -
         )));
     }
     let blobs: Vec<String> = (files.iter())
-        .flat_map(|f| f.blob_oids().map(str::to_owned).collect::<Vec<_>>())
+        .flat_map(|f| f.blob_oids().map(str::to_owned))
         .collect();
     repo.prefetch(&blobs).await?;
     let out = repo
@@ -346,6 +345,7 @@ pub async fn blame(repo: &Repo, at: &Oid, path: &str) -> Read<Option<Blame>> {
 /// `git blame --porcelain`'s output as runs of lines by commit, each aged
 /// from 1 (the newest commit in it) to 10 (the oldest), as GitHub's.
 fn parse_blame(out: &str) -> Blame {
+    #[derive(Default)]
     struct Seen {
         name: String,
         email: String,
@@ -371,12 +371,7 @@ fn parse_blame(out: &str) -> Blame {
                 lines.push((n, key));
             }
             current = Some(key);
-            commits.entry(key).or_insert_with(|| Seen {
-                name: String::new(),
-                email: String::new(),
-                time: String::new(),
-                summary: String::new(),
-            });
+            commits.entry(key).or_default();
             continue;
         }
         let Some(seen) = current.and_then(|c| commits.get_mut(c)) else {
@@ -610,12 +605,8 @@ pub async fn tags(repo: &Repo, tags: &[(String, Oid)]) -> Read<Vec<TagInfo>> {
         let wants: Vec<&str> = missing.iter().map(String::as_str).collect();
         repo.fetch(&wants, &|_| {}).await?;
     }
-    let out = repo
-        .run_with_input(
-            &["log", "--no-walk=unsorted", "--stdin", "--format=%H %ct"],
-            oids.join("\n") + "\n",
-        )
-        .await?;
+    let log = ["log", "--no-walk=unsorted", "--stdin", "--format=%H %ct"];
+    let out = repo.git(&log, &[], Some(oids.join("\n") + "\n")).await?;
     let dates: HashMap<&str, u64> = (out.lines())
         .filter_map(|l| l.split_once(' '))
         .filter_map(|(oid, time)| Some((oid, time.parse().ok()?)))
@@ -684,8 +675,7 @@ pub async fn grep(repo: &Repo, of: &RepoId, at: &Oid, grep: &Grep) -> Read<Vec<C
                 blobs.len()
             )));
         }
-        let missing = repo.missing(&blobs).await?;
-        repo.prefetch(&missing).await?;
+        repo.prefetch(&blobs).await?;
     }
     let mut args = vec![
         "-c",
@@ -758,10 +748,7 @@ mod tests {
     async fn github() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let d = dir.path();
-        git(d, &["init", "-q", "-b", "main"]).await;
-        for (key, value) in [("user.name", "Ann"), ("user.email", "ann@example.com")] {
-            git(d, &["config", key, value]).await;
-        }
+        crate::git::fixture::origin(d).await;
         let me = "1+ann@users.noreply.github.com";
         write(
             d,
@@ -793,20 +780,7 @@ mod tests {
 
     /// A partial clone of "GitHub", as the cache keeps.
     async fn partial(github: &Path) -> (tempfile::TempDir, Repo) {
-        let cache = tempfile::tempdir().unwrap();
-        git(github, &["config", "uploadpack.allowFilter", "true"]).await;
-        git(github, &["config", "uploadpack.allowAnySHA1InWant", "true"]).await;
-        let url = format!("file://{}", github.display());
-        let repo = Repo::open_cache(
-            cache.path(),
-            "o",
-            "r",
-            &url,
-            crate::git::credentials::Credentials::Ambient,
-            &|_| {},
-        )
-        .await
-        .unwrap();
+        let (cache, repo) = crate::git::fixture::cache_clone(github).await;
         assert!(repo.partial);
         (cache, repo)
     }

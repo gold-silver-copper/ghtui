@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{OnceCell, Semaphore, watch};
 
 use crate::api::model::RepoId;
+use crate::code_nav::github_language;
 use crate::diff::Language;
 use crate::diff::scope;
 use crate::diff::text::Text;
@@ -50,6 +51,8 @@ pub const LIMITS: Limits = Limits {
 
 /// Blobs fetched in one request, and files read between progress reports.
 const BATCH: usize = 1000;
+/// Blobs asked of `git cat-file` in one go.
+const READ_AT_ONCE: usize = 64;
 /// Files' definitions kept in memory, per repository, before they're
 /// let go (they're on disk).
 const KEPT_BLOBS: usize = 200_000;
@@ -77,12 +80,15 @@ pub struct FileDefs {
     pub defs: Arc<[Def]>,
 }
 
-/// The limit a build stopped at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Cut {
-    Files,
-    Bytes,
-    Time,
+words! {
+    /// The limit a build stopped at.
+    pub enum Cut {
+        /// As a saved index names it.
+        fn word -> fn from_word,
+    }
+    Files "files";
+    Bytes "bytes";
+    Time "time";
 }
 
 /// A commit's definitions, nearest the file it was asked from first.
@@ -413,14 +419,21 @@ impl Build {
             self.tx
                 .send_modify(|s| s.stage = Stage::Reading { done, total });
             let mut sources = Vec::new();
-            for f in batch {
-                let source = match reader.read(&f.blob).await {
-                    Ok(Some(source)) => source,
+            // Asked a few at a time: a whole batch's names at once could
+            // fill both of git's pipes.
+            for files in batch.chunks(READ_AT_ONCE) {
+                let names: Vec<&str> = files.iter().map(|f| f.blob.as_str()).collect();
+                let mut read = reader
+                    .read_each(&names)
+                    .await
+                    .unwrap_or_default()
+                    .into_iter();
+                for f in files {
                     // Unreadable: indexed as defining nothing.
-                    _ => Vec::new(),
-                };
-                bytes = bytes.saturating_add(source.len() as u64);
-                sources.push((f.path.clone(), f.blob.clone(), source));
+                    let source = read.next().flatten().unwrap_or_default();
+                    bytes = bytes.saturating_add(source.len() as u64);
+                    sources.push((f.path.clone(), f.blob.clone(), source));
+                }
             }
             let file_bytes = self.limits.file_bytes;
             let parsed = blocking(move || {
@@ -504,7 +517,7 @@ fn choose(
     limits: &Limits,
 ) -> (Vec<TreeFile>, usize, Option<Cut>) {
     let readable = |f: &TreeFile| {
-        let named = Language::from_path(&f.path).is_some_and(has_scopes);
+        let named = Language::from_path(&f.path).is_some_and(|l| github_language(l).is_some());
         let size = f.size.unwrap_or(1);
         named && size > 0 && size <= limits.file_bytes && !f.path.contains(['\t', '\n'])
     };
@@ -537,12 +550,6 @@ fn choose(
     (chosen, eligible, cut)
 }
 
-/// Languages whose scopes ghtui names.
-fn has_scopes(lang: Language) -> bool {
-    use Language::{Go, JavaScript, Python, Rust, Tsx, TypeScript};
-    matches!(lang, Rust | TypeScript | Tsx | JavaScript | Python | Go)
-}
-
 const MAGIC: &str = "ghtui code index 1";
 
 /// Saves `index` as `file`, keeping only the newest [`KEEP`] beside it.
@@ -552,12 +559,7 @@ fn save(file: &Path, index: &Index) -> std::io::Result<()> {
         return Ok(());
     };
     std::fs::create_dir_all(dir)?;
-    let cut = match index.cut {
-        None => "-",
-        Some(Cut::Files) => "files",
-        Some(Cut::Bytes) => "bytes",
-        Some(Cut::Time) => "time",
-    };
+    let cut = index.cut.map_or("-", Cut::word);
     let mut out = format!("{MAGIC}\n{}\t{cut}\n", index.eligible);
     for f in &index.files {
         let _ = writeln!(out, "{}\t{}", f.blob, f.path);
@@ -569,11 +571,7 @@ fn save(file: &Path, index: &Index) -> std::io::Result<()> {
     let tmp = dir.join(format!(".tmp-{}-{}", std::process::id(), unique()));
     std::fs::write(&tmp, out)?;
     std::fs::rename(&tmp, file)?;
-    let mut kept: Vec<(std::time::SystemTime, PathBuf)> = (std::fs::read_dir(dir)?)
-        .filter_map(Result::ok)
-        .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
-        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
-        .collect();
+    let mut kept: Vec<_> = saved(dir)?.collect();
     kept.sort_by_key(|a| std::cmp::Reverse(a.0));
     for (_, old) in kept.iter().skip(KEEP) {
         let _ = std::fs::remove_file(old);
@@ -586,12 +584,17 @@ fn unique() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
+/// The indexes saved in `dir` (not one being written), with when.
+fn saved(dir: &Path) -> std::io::Result<impl Iterator<Item = (std::time::SystemTime, PathBuf)>> {
+    let entries = std::fs::read_dir(dir)?.filter_map(Result::ok);
+    let saved = entries.filter(|e| !e.file_name().to_string_lossy().starts_with('.'));
+    Ok(saved.filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path()))))
+}
+
 /// The most recently saved index in `dir`.
 fn newest(dir: &Path) -> Option<PathBuf> {
-    let entries = std::fs::read_dir(dir).ok()?.filter_map(Result::ok);
-    let saved = entries.filter(|e| !e.file_name().to_string_lossy().starts_with('.'));
-    let dated = saved.filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())));
-    dated.max_by_key(|(at, _)| *at).map(|(_, path)| path)
+    let newest = saved(dir).ok()?.max_by_key(|(at, _)| *at);
+    newest.map(|(_, path)| path)
 }
 
 /// An index saved by [`save`]; `None` if there's none or it doesn't read.
@@ -602,12 +605,7 @@ fn load(file: &Path) -> Option<Index> {
         return None;
     }
     let (eligible, cut) = lines.next()?.split_once('\t')?;
-    let cut = match cut {
-        "files" => Some(Cut::Files),
-        "bytes" => Some(Cut::Bytes),
-        "time" => Some(Cut::Time),
-        _ => None,
-    };
+    let cut = Cut::from_word(cut);
     let mut files: Vec<(String, String, Vec<Def>)> = Vec::new();
     for line in lines {
         if let Some(def) = line.strip_prefix('\t') {
@@ -641,19 +639,8 @@ mod tests {
     use super::*;
     use crate::git::credentials::Credentials;
 
+    use crate::git::fixture::{commit, origin};
     use crate::git::set_up as git;
-
-    async fn commit(dir: &Path, files: &[(&str, &str)]) -> String {
-        for (path, text) in files {
-            let path = dir.join(path);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, text).unwrap();
-        }
-        git(dir, &["add", "."]).await;
-        let who = ["-c", "user.name=a", "-c", "user.email=a@b"];
-        git(dir, &[&who[..], &["commit", "-qm", "x"]].concat()).await;
-        git(dir, &["rev-parse", "HEAD"]).await.trim().to_owned()
-    }
 
     /// Indexes your clone at `clone`, kept in `cache`.
     fn indexer(cache: &Path, clone: &Path, limits: Limits) -> Indexer {
@@ -758,8 +745,7 @@ mod tests {
     async fn indexes_a_clone_at_a_commit_and_moves_on_incrementally() {
         let tmp = tempfile::tempdir().unwrap();
         let (clone, cache) = (tmp.path().join("clone"), tmp.path().join("cache"));
-        std::fs::create_dir(&clone).unwrap();
-        git(&clone, &["init", "-q", "-b", "main"]).await;
+        origin(&clone).await;
         git(
             &clone,
             &["remote", "add", "origin", "git@github.com:o/r.git"],
@@ -772,6 +758,7 @@ mod tests {
                 ("tools/b.py", "def gamma():\n    pass\n"),
                 ("README.md", "# alpha\n"),
             ],
+            "x",
         )
         .await;
 
@@ -789,7 +776,7 @@ mod tests {
         assert!(cache.join("code-index/o/r").join(&first).exists());
 
         // Another run of ghtui, a commit later: one file read.
-        let second = commit(&clone, &[("tools/b.py", "def delta():\n    pass\n")]).await;
+        let second = commit(&clone, &[("tools/b.py", "def delta():\n    pass\n")], "x").await;
         let snap = built(&indexer(&cache, &clone, LIMITS), &second, "src/a.rs").await;
         assert_eq!(snap.index.read, 1);
         assert_eq!(found(&snap, "gamma"), []);

@@ -221,7 +221,11 @@ impl FileDiff {
         let lines = align(&old, &new, Algorithm::Histogram, Whitespace::Exact);
         let (additions, deletions) = counts(&lines);
         let changed = additions + deletions > 0;
-        let ignoring = changed.then(|| align(&old, &new, Algorithm::Histogram, Whitespace::Ignore));
+        // A plain diff only reads exact blocks, and an ignoring alignment
+        // equal to the exact one would derive the same everything.
+        let ignoring = (changed && rich)
+            .then(|| align(&old, &new, Algorithm::Histogram, Whitespace::Ignore))
+            .filter(|l| *l != lines);
         // Only highlight and compare by syntax files with changes to show.
         let lang = Language::from_path(path).filter(|_| changed && rich);
         let trees = lang.map(|lang| (parse(lang, &old), parse(lang, &new)));
@@ -262,8 +266,16 @@ impl FileDiff {
         let exact = alignment(lines);
         let mut ignoring = ignoring.map_or_else(|| exact.clone(), alignment);
         blocks::name_after(&exact, &mut ignoring);
-        text.structural = matching
-            .map(|m| m.map(|m| Box::new([m.apply(&text, &exact), m.apply(&text, &ignoring)])));
+        text.structural = matching.map(|m| {
+            m.map(|m| {
+                let exact_match = m.apply(&text, &exact);
+                let ignoring_match = match ignoring.lines == exact.lines {
+                    true => exact_match.clone(),
+                    false => m.apply(&text, &ignoring),
+                };
+                Box::new([exact_match, ignoring_match])
+            })
+        });
         (text.exact, text.ignoring_whitespace) = (exact, ignoring);
         Self {
             content: Content::Text(Box::new(text)),

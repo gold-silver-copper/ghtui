@@ -186,7 +186,6 @@ impl SubmitDialog {
     }
 }
 
-/// A box for writing Markdown: long lines wrap, at words where they can.
 /// Why `$EDITOR` was opened, and where its text goes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditPurpose {
@@ -219,6 +218,18 @@ pub struct SubmitOutcome {
     /// GitHub couldn't be reached, and nothing was sent: the review, to
     /// queue ([`crate::offline`]).
     pub unsent: Option<Box<crate::offline::queue::Review>>,
+}
+
+impl SubmitOutcome {
+    /// `drafts` without those GitHub took, each refused one saying why.
+    fn keep_refused(&self, drafts: &mut Vec<DraftComment>) {
+        drafts.retain(|d| !self.accepted.contains(&d.id));
+        for draft in drafts {
+            draft.error = (self.rejected.iter())
+                .find(|(id, _)| *id == draft.id)
+                .map(|(_, reason)| reason.clone());
+        }
+    }
 }
 
 pub fn suggestion_body(suggested: &str) -> String {
@@ -455,14 +466,7 @@ pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcom
         return cmds;
     }
     let apply = |review: &mut ReviewState, head: Option<String>| {
-        review.pending.retain(|d| !outcome.accepted.contains(&d.id));
-        for draft in &mut review.pending {
-            draft.error = outcome
-                .rejected
-                .iter()
-                .find(|(id, _)| *id == draft.id)
-                .map(|(_, reason)| reason.clone());
-        }
+        outcome.keep_refused(&mut review.pending);
         if outcome.submitted {
             review.last_reviewed_head = head;
         }
@@ -1303,6 +1307,14 @@ async fn submit_review(gh: &GitHub, pr: &PrRef, head: &str, review: Review<'_>) 
             seen: review.seen,
         }))
     };
+    // Offline, the review is kept to send later.
+    let failed = |mut outcome: SubmitOutcome, err: &ApiError, what: &str| {
+        if let ApiError::Offline(_) = err {
+            outcome.unsent = unsent(&review);
+        }
+        outcome.error = Some(format!("{what}: {}", api_message(err)));
+        outcome
+    };
     let (review_id, held) = match gh.pending_review(pr).await {
         Ok((_, Some(pending))) if pending.comments > review.seen => {
             outcome.on_github = Some(pending.comments);
@@ -1320,21 +1332,9 @@ async fn submit_review(gh: &GitHub, pr: &PrRef, head: &str, review: Review<'_>) 
         },
         Ok((pr_id, None)) => match gh.start_review(&pr_id, head).await {
             Ok(id) => (id, 0),
-            Err(err) => {
-                if let ApiError::Offline(_) = err {
-                    outcome.unsent = unsent(&review);
-                }
-                outcome.error = Some(format!("Couldn't start the review: {}", api_message(&err)));
-                return outcome;
-            }
+            Err(err) => return failed(outcome, &err, "Couldn't start the review"),
         },
-        Err(err) => {
-            if let ApiError::Offline(_) = err {
-                outcome.unsent = unsent(&review);
-            }
-            outcome.error = Some(format!("Couldn't reach the PR: {}", api_message(&err)));
-            return outcome;
-        }
+        Err(err) => return failed(outcome, &err, "Couldn't reach the PR"),
     };
     for draft in review.drafts {
         match gh.add_review_thread(&review_id, &new_thread(&draft)).await {
@@ -1387,12 +1387,7 @@ pub(crate) async fn send_review(
     };
     let seen = outcome.on_github.unwrap_or(queued.seen);
     let mut rest = queued;
-    rest.drafts.retain(|d| !outcome.accepted.contains(&d.id));
-    for draft in &mut rest.drafts {
-        draft.error = (outcome.rejected.iter())
-            .find(|(id, _)| *id == draft.id)
-            .map(|(_, reason)| reason.clone());
-    }
+    outcome.keep_refused(&mut rest.drafts);
     rest.seen = seen;
     Sent::Partly(rest, why)
 }
