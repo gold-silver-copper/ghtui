@@ -77,14 +77,8 @@ fn reviewers(page: &mut Page, pr: &PrRef, d: &PrDetail, activity: Fetched<'_, Pr
             } else {
                 " is asked to review"
             };
-            body(
-                page,
-                vec![
-                    Seg::new("●  ", Role::Accent),
-                    Seg::linked(name, Role::Link, link),
-                    meta(what),
-                ],
-            );
+            let name = Seg::linked(name, Role::Link, link);
+            body(page, vec![Seg::new("●  ", Role::Accent), name, meta(what)]);
         });
     }
     if a.requested.left_out() > 0 {

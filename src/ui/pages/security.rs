@@ -125,13 +125,10 @@ pub fn alerts(
     };
     let ignored = crate::api::security::filter(kind, query).ignored;
     if !ignored.is_empty() {
+        let (alerts, ignored) = (kind.alerts().to_lowercase(), ignored.join(" "));
         say(
             page,
-            format!(
-                "Not a filter of {}: {}",
-                kind.alerts().to_lowercase(),
-                ignored.join(" ")
-            ),
+            format!("Not a filter of {alerts}: {ignored}"),
             Role::Meta,
         );
         page.blank();
@@ -249,22 +246,12 @@ fn dependency(page: &mut Page, repo: &RepoId, d: &crate::api::security::Dependen
             let state = state.to_lowercase();
             let (text, pr) = (format!("#{number} {title}"), url::pull(&pr));
             let link = link_seg(page, text, pr, Role::Link);
-            body(
-                page,
-                vec![
-                    meta("Dependabot's pull request "),
-                    link,
-                    meta(format!(" · {state}")),
-                ],
-            );
+            let state = meta(format!(" · {state}"));
+            body(page, vec![meta("Dependabot's pull request "), link, state]);
         }
         Some(Update::Failed { title, body: why }) => {
-            body(
-                page,
-                vec![meta(format!(
-                    "Dependabot couldn't open a pull request: {title}"
-                ))],
-            );
+            let why_not = format!("Dependabot couldn't open a pull request: {title}");
+            body(page, vec![meta(why_not)]);
             if let Some(first) = why.lines().find(|l| !l.trim().is_empty()) {
                 body(page, vec![meta(first.trim().to_owned())]);
             }

@@ -135,10 +135,6 @@ pub(super) fn section_box<T>(
 /// wrong), so every section has a row to select and change it by.
 pub(super) fn section_note(page: &mut Page, i: usize, text: &str, role: Role) {
     item(page, Link::Section(i), |page, link| {
-        page.wrapped(
-            vec![Seg::linked(text.to_owned(), role, link)],
-            0,
-            Frame::Body,
-        );
+        page.wrapped(vec![Seg::linked(text, role, link)], 0, Frame::Body);
     });
 }

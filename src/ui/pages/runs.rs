@@ -185,14 +185,11 @@ pub(super) fn status_row(
 
 pub(super) fn outcome_title(page: &mut Page, title: String, outcome: CheckOutcome) {
     let (mark, role) = outcome_mark(outcome);
-    page.wrapped(
-        vec![
-            Seg::new(format!("{mark} "), role),
-            Seg::new(title, Role::Title),
-        ],
-        0,
-        Frame::None,
-    );
+    let segs = vec![
+        Seg::new(format!("{mark} "), role),
+        Seg::new(title, Role::Title),
+    ];
+    page.wrapped(segs, 0, Frame::None);
 }
 
 /// A workflow run: what it ran for, and its jobs, failures first. Re-runs
@@ -741,14 +738,8 @@ pub struct DispatchView<'a> {
 }
 
 pub fn dispatch_form(page: &mut Page, v: &DispatchView<'_>) {
-    page.wrapped(
-        vec![
-            Seg::new("▶ ", Role::Accent),
-            Seg::new(format!("Run {}", v.name), Role::Title),
-        ],
-        0,
-        Frame::None,
-    );
+    let title = Seg::new(format!("Run {}", v.name), Role::Title);
+    page.wrapped(vec![Seg::new("▶ ", Role::Accent), title], 0, Frame::None);
     say(page, v.path.to_owned(), Role::Code);
     page.blank();
     page.box_top(vec![strong("Use workflow from")], Vec::new());

@@ -144,13 +144,8 @@ pub(super) fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons,
         )
     });
     for ((icon, role), text) in rows.chain(behind).chain(joins) {
-        body(
-            page,
-            vec![
-                Seg::new(format!("{icon}  "), role),
-                Seg::new(text, Role::Body),
-            ],
-        );
+        let mark = Seg::new(format!("{icon}  "), role);
+        body(page, vec![mark, Seg::new(text, Role::Body)]);
     }
     page.box_rule();
     item(page, url::pull_tab(pr, "files"), |page, link| {
@@ -158,13 +153,8 @@ pub(super) fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons,
             1 => "Review the changed file".to_owned(),
             n => format!("Review the {n} changed files"),
         };
-        body(
-            page,
-            vec![
-                meta(format!("{}  ", icons.external())),
-                Seg::linked(review, Role::Link, link),
-            ],
-        );
+        let external = meta(format!("{}  ", icons.external()));
+        body(page, vec![external, Seg::linked(review, Role::Link, link)]);
     });
     page.box_bottom();
 }

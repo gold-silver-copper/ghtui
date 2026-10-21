@@ -42,13 +42,8 @@ pub fn commits_box(page: &mut Page, commits: &[(String, String)], more: u64) {
         empty_row(page, "No commits to merge");
     }
     for (oid, subject) in commits {
-        body(
-            page,
-            vec![
-                Seg::new(format!("{oid} "), Role::Code),
-                Seg::new(subject.clone(), Role::Body),
-            ],
-        );
+        let oid = Seg::new(format!("{oid} "), Role::Code);
+        body(page, vec![oid, Seg::new(subject.clone(), Role::Body)]);
     }
     if more > 0 {
         empty_row(page, &format!("and {}, older", plural(more, "commit")));

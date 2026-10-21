@@ -79,33 +79,19 @@ pub fn columns(page: &mut Page, values: &[u64], width: usize, height: usize) {
         } else {
             " ".repeat(7)
         };
-        body(
-            page,
-            vec![meta(format!("{axis}│")), Seg::new(line, Role::Accent)],
-        );
+        let axis = meta(format!("{axis}│"));
+        body(page, vec![axis, Seg::new(line, Role::Accent)]);
     }
-    body(
-        page,
-        vec![meta(format!(
-            "{}└{}",
-            label(0),
-            "─".repeat(values.len() * width.max(1))
-        ))],
-    );
+    let foot = "─".repeat(values.len() * width.max(1));
+    body(page, vec![meta(format!("{}└{foot}", label(0)))]);
 }
 
 /// The dates under [`columns`]: the first column's and the last's.
 pub fn column_dates(page: &mut Page, columns: usize, first: &str, last: &str) {
     let room = columns.saturating_sub(width(first));
     let gap = room.saturating_sub(width(last)).max(1);
-    body(
-        page,
-        vec![meta(format!(
-            "{}{first}{}{last}",
-            " ".repeat(8),
-            " ".repeat(gap)
-        ))],
-    );
+    let (indent, gap) = (" ".repeat(8), " ".repeat(gap));
+    body(page, vec![meta(format!("{indent}{first}{gap}{last}"))]);
 }
 
 /// "Oct 5, 2026" for unix seconds.

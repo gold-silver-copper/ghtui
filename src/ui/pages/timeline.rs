@@ -752,10 +752,8 @@ pub(super) fn review(
                 .map(|c| c.url.clone())
                 .unwrap_or_default();
             item(page, target, |page, link| {
-                body(
-                    page,
-                    vec![meta("↳ replied in "), Seg::linked(at, Role::Link, link)],
-                );
+                let at = Seg::linked(at, Role::Link, link);
+                body(page, vec![meta("↳ replied in "), at]);
             });
         }
     }

@@ -65,11 +65,8 @@ pub fn settings_page(
 ) {
     settings_nav(page, repo, at);
     if !admin {
-        say(
-            page,
-            format!("You don't administer {repo}: GitHub shows its settings only to admins."),
-            Role::Meta,
-        );
+        let why = format!("You don't administer {repo}: GitHub shows its settings only to admins.");
+        say(page, why, Role::Meta);
         page.blank();
     }
     let Some(data) = data.show(page, &at.name().to_lowercase()) else {
@@ -150,10 +147,8 @@ fn general(page: &mut Page, repo: &RepoId, g: &General, keys: SettingKeys<'_>) {
             },
         ),
     ] {
-        body(
-            page,
-            vec![meta(format!("{name:<14}  ")), Seg::new(value, Role::Body)],
-        );
+        let name = meta(format!("{name:<14}  "));
+        body(page, vec![name, Seg::new(value, Role::Body)]);
     }
     page.box_bottom();
     page.blank();
@@ -337,14 +332,9 @@ fn access(page: &mut Page, a: &Access, keys: SettingKeys<'_>, now: u64) {
         },
     );
     page.blank();
-    say(
-        page,
-        format!(
-            "{} changes the selected one's role, {} removes them",
-            keys.edit, keys.delete
-        ),
-        Role::Meta,
-    );
+    let (edit, delete) = (keys.edit, keys.delete);
+    let how = format!("{edit} changes the selected one's role, {delete} removes them");
+    say(page, how, Role::Meta);
 }
 
 /// What a webhook's last delivery got back.
@@ -414,19 +404,11 @@ fn hook(page: &mut Page, h: &HookPage, keys: SettingKeys<'_>, now: u64) {
         hook.form.content_type,
         last_said(hook)
     );
-    page.wrapped(
-        vec![active_chip(hook.form.active), meta(subline)],
-        0,
-        Frame::None,
-    );
-    say(
-        page,
-        format!(
-            "{} edits it, {} turns it on or off, {} deletes it",
-            keys.edit, keys.toggle, keys.delete
-        ),
-        Role::Meta,
-    );
+    let active = active_chip(hook.form.active);
+    page.wrapped(vec![active, meta(subline)], 0, Frame::None);
+    let (edit, toggle, delete) = (keys.edit, keys.toggle, keys.delete);
+    let how = format!("{edit} edits it, {toggle} turns it on or off, {delete} deletes it");
+    say(page, how, Role::Meta);
     page.blank();
     let right = vec![meta(format!(
         "{} redelivers the selected one",
