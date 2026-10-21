@@ -474,7 +474,7 @@ impl GitHub {
         struct Wire {
             id: NodeId,
             discussion_categories: crate::api::browse::wire::Counted<WireCategory>,
-            templates: Option<Tree>,
+            templates: Option<crate::api::create::TextFiles>,
         }
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
@@ -485,19 +485,6 @@ impl GitHub {
             description: Option<String>,
             is_answerable: bool,
         }
-        #[derive(Deserialize)]
-        struct Tree {
-            entries: Option<Vec<Entry>>,
-        }
-        #[derive(Deserialize)]
-        struct Entry {
-            name: String,
-            object: Option<Blob>,
-        }
-        #[derive(Deserialize)]
-        struct Blob {
-            text: Option<String>,
-        }
         let found: Wire = (self.graphql_json(
             raw::DISCUSSION_FORMS,
             json!({ "owner": repo.owner, "name": repo.name }),
@@ -505,12 +492,7 @@ impl GitHub {
             "/repository",
         ))
         .await?;
-        let files: Vec<(String, String)> = (found.templates)
-            .and_then(|t| t.entries)
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|e| Some((e.name, e.object?.text?)))
-            .collect();
+        let files = crate::api::create::TextFiles::files(found.templates);
         let form = |slug: &str| {
             (files.iter())
                 .find(|(name, _)| {

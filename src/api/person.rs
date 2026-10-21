@@ -32,19 +32,16 @@ impl Person {
     /// (`123+login@users.noreply.github.com`), which GitHub links to that
     /// account too; else their name.
     pub fn from_git(name: &str, email: &str) -> Person {
-        let noreply = format!(
-            "@users.noreply.{}",
-            crate::host::current()
-                .name()
-                .split(':')
-                .next()
-                .unwrap_or_default()
-        );
-        let at = email.len().saturating_sub(noreply.len());
-        let login = (email.get(at..))
-            .filter(|domain| domain.eq_ignore_ascii_case(&noreply))
-            .and_then(|_| email.get(..at))
-            .map(|user| user.rsplit('+').next().unwrap_or(user))
+        // Matched in place: this runs once per commit.
+        const NOREPLY: &str = "users.noreply.";
+        let host = crate::host::current().name();
+        let host = host.split(':').next().unwrap_or_default();
+        let login = (email.rsplit_once('@'))
+            .filter(|(_, domain)| {
+                let (noreply, rest) = domain.split_at_checked(NOREPLY.len()).unwrap_or_default();
+                noreply.eq_ignore_ascii_case(NOREPLY) && rest.eq_ignore_ascii_case(host)
+            })
+            .map(|(user, _)| user.rsplit('+').next().unwrap_or(user))
             .filter(|login| {
                 !login.is_empty() && login.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
             });

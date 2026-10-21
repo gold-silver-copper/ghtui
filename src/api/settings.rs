@@ -298,17 +298,24 @@ pub struct HookPage {
     pub deliveries: Listed<Delivery>,
 }
 
+/// A webhook's delivery, read straight from GitHub's REST answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Delivery {
     pub id: u64,
     /// Shared by a delivery and its redeliveries.
+    #[serde(default)]
     pub guid: String,
     /// ISO 8601.
+    #[serde(default)]
     pub delivered_at: String,
+    #[serde(default)]
     pub redelivery: bool,
     /// `OK`, or what went wrong.
+    #[serde(default)]
     pub status: String,
+    #[serde(default, alias = "status_code")]
     pub code: u16,
+    #[serde(default)]
     pub event: String,
     pub action: Option<String>,
 }
@@ -454,7 +461,7 @@ impl GitHub {
                 let deliveries = format!("hooks/{id}/deliveries?");
                 let (answer, deliveries) = tokio::try_join!(
                     self.admin_answer(&path, "webhooks"),
-                    self.listed(repo, &deliveries, "webhooks", wire::delivery),
+                    self.listed(repo, &deliveries, "webhooks", Some),
                 )?;
                 let hook = wire::hook(serde_json::from_str(answer.body())?)
                     .ok_or_else(|| ApiError::Decode(format!("{repo}'s webhook {id}")))?;
@@ -665,133 +672,89 @@ impl GitHub {
     }
 }
 
+/// One of a rule's settings, as GitHub's input has it, read from its form.
+type Field = fn(&RuleForm) -> Value;
+
+/// A rule's reviews, the defaults when it asks for none.
+fn reviews(f: &RuleForm) -> Reviews {
+    f.reviews.clone().unwrap_or_default()
+}
+
+/// A rule's status checks, the defaults when it asks for none.
+fn checks(f: &RuleForm) -> Checks {
+    f.checks.clone().unwrap_or_default()
+}
+
 /// A rule's input for GitHub's mutations: every field of `to` (`all`), or
 /// those that differ from `from`. Status checks named as before keep the
 /// app they're bound to.
-/// One of a rule's yes-or-no settings, read from its form.
-type Flag = fn(&RuleForm) -> bool;
-
 fn rule_input(
     from: &RuleForm,
     to: &RuleForm,
     apps: &[(String, NodeId)],
     all: bool,
 ) -> Map<String, Value> {
-    let mut input = Map::new();
-    let mut put = |name: &str, old: Value, new: Value| {
-        if all || old != new {
-            input.insert(name.to_owned(), new);
-        }
-    };
-    put(
-        "pattern",
-        from.pattern.clone().into(),
-        to.pattern.clone().into(),
-    );
-    let reviews = |f: &RuleForm| f.reviews.clone();
-    let (old, new) = (reviews(from), reviews(to));
-    put(
-        "requiresApprovingReviews",
-        old.is_some().into(),
-        new.is_some().into(),
-    );
-    let (old, new) = (old.unwrap_or_default(), new.unwrap_or_default());
-    put(
-        "requiredApprovingReviewCount",
-        old.count.into(),
-        new.count.into(),
-    );
-    put(
-        "dismissesStaleReviews",
-        old.dismiss_stale.into(),
-        new.dismiss_stale.into(),
-    );
-    put(
-        "requiresCodeOwnerReviews",
-        old.code_owners.into(),
-        new.code_owners.into(),
-    );
-    put(
-        "requireLastPushApproval",
-        old.last_push.into(),
-        new.last_push.into(),
-    );
-    let (old, new) = (from.checks.clone(), to.checks.clone());
-    put(
-        "requiresStatusChecks",
-        old.is_some().into(),
-        new.is_some().into(),
-    );
-    let (old, new) = (old.unwrap_or_default(), new.unwrap_or_default());
-    put(
-        "requiresStrictStatusChecks",
-        old.strict.into(),
-        new.strict.into(),
-    );
-    let checks = |c: &Checks| -> Value {
-        c.contexts
+    let fields: [(&str, Field); 15] = [
+        ("pattern", |f| f.pattern.clone().into()),
+        ("requiresApprovingReviews", |f| f.reviews.is_some().into()),
+        ("requiredApprovingReviewCount", |f| reviews(f).count.into()),
+        ("dismissesStaleReviews", |f| reviews(f).dismiss_stale.into()),
+        ("requiresCodeOwnerReviews", |f| {
+            reviews(f).code_owners.into()
+        }),
+        ("requireLastPushApproval", |f| reviews(f).last_push.into()),
+        ("requiresStatusChecks", |f| f.checks.is_some().into()),
+        ("requiresStrictStatusChecks", |f| checks(f).strict.into()),
+        ("requiresConversationResolution", |f| f.conversations.into()),
+        ("requiresCommitSignatures", |f| f.signed.into()),
+        ("requiresLinearHistory", |f| f.linear.into()),
+        ("lockBranch", |f| f.lock.into()),
+        ("isAdminEnforced", |f| f.admins.into()),
+        ("allowsForcePushes", |f| f.force_pushes.into()),
+        ("allowsDeletions", |f| f.deletions.into()),
+    ];
+    // The one that isn't a [`Field`]: it reads `apps`.
+    let contexts = |f: &RuleForm| -> Value {
+        checks(f)
+            .contexts
             .iter()
-            .map(|context| {
-                let app = apps.iter().find(|(name, _)| name == context);
-                match app {
+            .map(
+                |context| match apps.iter().find(|(name, _)| name == context) {
                     Some((_, id)) => json!({ "context": context, "appId": id.as_str() }),
                     None => json!({ "context": context }),
-                }
-            })
+                },
+            )
             .collect()
     };
-    put("requiredStatusChecks", checks(&old), checks(&new));
-    let flags: [(&str, Flag); 7] = [
-        ("requiresConversationResolution", |f| f.conversations),
-        ("requiresCommitSignatures", |f| f.signed),
-        ("requiresLinearHistory", |f| f.linear),
-        ("lockBranch", |f| f.lock),
-        ("isAdminEnforced", |f| f.admins),
-        ("allowsForcePushes", |f| f.force_pushes),
-        ("allowsDeletions", |f| f.deletions),
-    ];
-    for (name, flag) in flags {
-        put(name, flag(from).into(), flag(to).into());
-    }
-    input
+    (fields.into_iter())
+        .map(|(name, field)| (name, field(from), field(to)))
+        .chain([("requiredStatusChecks", contexts(from), contexts(to))])
+        .filter(|(_, old, new)| all || old != new)
+        .map(|(name, _, new)| (name.to_owned(), new))
+        .collect()
 }
 
 /// A webhook's body for REST: everything (`from: None`), or what differs.
 fn hook_body(from: Option<&HookForm>, to: &HookForm) -> Value {
     let mut body = Map::new();
-    let mut config = Map::new();
     let changed = |f: fn(&HookForm) -> Value| from.is_none_or(|from| f(from) != f(to));
-    if changed(|h| h.url.clone().into()) {
-        config.insert("url".into(), to.url.clone().into());
-    }
-    if changed(|h| h.content_type.clone().into()) {
-        config.insert("content_type".into(), to.content_type.clone().into());
-    }
-    if changed(|h| h.verify_ssl.into()) {
-        let insecure = if to.verify_ssl { "0" } else { "1" };
-        config.insert("insecure_ssl".into(), insecure.into());
-    }
-    if let Some(secret) = &to.secret {
-        config.insert("secret".into(), secret.clone().into());
-    }
     if from.is_none() {
         body.insert("name".into(), "web".into());
     }
-    // REST replaces the whole config: a change sends the rest as it was.
-    if !config.is_empty() {
-        if let Some(from) = from {
-            config
-                .entry("url")
-                .or_insert_with(|| from.url.clone().into());
-            config
-                .entry("content_type")
-                .or_insert_with(|| from.content_type.clone().into());
-            let insecure = if from.verify_ssl { "0" } else { "1" };
-            config
-                .entry("insecure_ssl")
-                .or_insert_with(|| insecure.into());
+    let config = |h: &HookForm| {
+        let insecure = if h.verify_ssl { "0" } else { "1" };
+        let mut config =
+            json!({ "url": h.url, "content_type": h.content_type, "insecure_ssl": insecure });
+        if let (Some(secret), Value::Object(config)) = (&h.secret, &mut config) {
+            config.insert("secret".into(), secret.as_str().into());
         }
-        body.insert("config".into(), Value::Object(config));
+        config
+    };
+    // REST replaces the whole config, so a change sends all of it: what
+    // didn't change is the same in `to`. A hook's form holds a secret only
+    // when it's new.
+    if changed(config) {
+        body.insert("config".into(), config(to));
     }
     if changed(|h| h.events.clone().into()) {
         body.insert("events".into(), to.events.clone().into());
@@ -1002,38 +965,6 @@ mod wire {
                     message: l.message.filter(|m| !m.is_empty()),
                 }),
             updated_at: h.updated_at,
-        })
-    }
-
-    #[derive(Deserialize)]
-    pub(super) struct DeliveryWire {
-        id: u64,
-        #[serde(default)]
-        guid: String,
-        #[serde(default)]
-        delivered_at: String,
-        #[serde(default)]
-        redelivery: bool,
-        #[serde(default)]
-        status: String,
-        #[serde(default)]
-        status_code: u16,
-        #[serde(default)]
-        event: String,
-        action: Option<String>,
-    }
-
-    #[expect(clippy::unnecessary_wraps, reason = "read as every list's items are")]
-    pub(super) fn delivery(d: DeliveryWire) -> Option<Delivery> {
-        Some(Delivery {
-            id: d.id,
-            guid: d.guid,
-            delivered_at: d.delivered_at,
-            redelivery: d.redelivery,
-            status: d.status,
-            code: d.status_code,
-            event: d.event,
-            action: d.action,
         })
     }
 

@@ -9,6 +9,7 @@ use crate::api::browse::{Results, wire};
 use crate::api::client::{ApiError, GitHub, encode_path};
 use crate::api::model::{NodeId, RepoId};
 use crate::api::raw::raw;
+use crate::ui::pages::url;
 
 // ---- labels ---------------------------------------------------------------------------
 
@@ -207,15 +208,6 @@ pub fn workflow_scoped(err: ApiError) -> ApiError {
     }
 }
 
-/// A ref's path below `/git/refs/` or a label's name, each segment
-/// escaped.
-fn segments(path: &str) -> String {
-    path.split('/')
-        .map(encode_path)
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
 impl GitHub {
     /// A repository's labels by name, 100 at a time from `after`.
     pub async fn labels(
@@ -325,7 +317,7 @@ impl GitHub {
         struct Wire {
             sha: String,
         }
-        let path = format!("/repos/{repo}/commits/{}", segments(rev));
+        let path = format!("/repos/{repo}/commits/{}", url::encode_path(rev));
         let answer = self.rest_get(&path, format!("{rev} in {repo}")).await?;
         Ok(serde_json::from_str::<Wire>(&answer)?.sha)
     }
@@ -353,7 +345,7 @@ impl GitHub {
         let path = format!(
             "/repos/{repo}/git/refs/{}/{}",
             kind.prefix(),
-            segments(name)
+            url::encode_path(name)
         );
         self.rest_write(http::Method::DELETE, &path, None).await
     }
@@ -370,10 +362,10 @@ impl GitHub {
             #[serde(rename = "type")]
             kind: String,
         }
-        let path = format!("/repos/{repo}/branches/{}", segments(name));
+        let path = format!("/repos/{repo}/branches/{}", url::encode_path(name));
         let branch: Branch = serde_json::from_str(&self.rest_get(&path, name).await?)?;
         // Rulesets: GitHub lists the rules that apply to the branch.
-        let path = format!("/repos/{repo}/rules/branches/{}", segments(name));
+        let path = format!("/repos/{repo}/rules/branches/{}", url::encode_path(name));
         let rules: Vec<Rule> = match self.rest_get(&path, name).await {
             Ok(body) => serde_json::from_str(&body)?,
             // An older Enterprise Server has no rulesets.

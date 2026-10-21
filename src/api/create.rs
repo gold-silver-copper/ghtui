@@ -64,6 +64,8 @@ pub struct NewPr {
     pub draft: bool,
 }
 
+pub(crate) use wire::TextFiles;
+
 mod wire {
     use serde::Deserialize;
 
@@ -81,7 +83,7 @@ mod wire {
         pub labels: Option<Counted<Label>>,
         pub assignable_users: Counted<User>,
         pub milestones: Option<Counted<Milestone>>,
-        pub issue_templates: Option<Tree>,
+        pub issue_templates: Option<TextFiles>,
         pub pull_request_templates: Option<Vec<Template>>,
     }
 
@@ -108,21 +110,30 @@ mod wire {
         pub due_on: Option<String>,
     }
 
-    /// A directory; anything else (no directory there) has no entries.
+    /// A directory's files; anything else (no directory there) has none.
     #[derive(Deserialize)]
-    pub struct Tree {
-        pub entries: Option<Vec<Entry>>,
+    pub(crate) struct TextFiles {
+        entries: Option<Vec<Entry>>,
     }
 
     #[derive(Deserialize)]
-    pub struct Entry {
-        pub name: String,
-        pub object: Option<Blob>,
+    struct Entry {
+        name: String,
+        object: Option<Blob>,
     }
 
     #[derive(Deserialize)]
-    pub struct Blob {
-        pub text: Option<String>,
+    struct Blob {
+        text: Option<String>,
+    }
+
+    impl TextFiles {
+        /// Each text file's name and text.
+        pub(crate) fn files(tree: Option<Self>) -> Vec<(String, String)> {
+            (tree.and_then(|t| t.entries).into_iter().flatten())
+                .filter_map(|e| Some((e.name, e.object?.text?)))
+                .collect()
+        }
     }
 
     #[derive(Deserialize)]
@@ -164,13 +175,7 @@ impl GitHub {
             r.viewer_permission.as_deref(),
             Some("ADMIN" | "MAINTAIN" | "WRITE" | "TRIAGE")
         );
-        let entries = r
-            .issue_templates
-            .and_then(|t| t.entries)
-            .unwrap_or_default();
-        let issue_templates = (entries.into_iter())
-            .filter_map(|e| Some((e.name, e.object?.text?)))
-            .collect();
+        let issue_templates = wire::TextFiles::files(r.issue_templates);
         // GitHub's own choice of template, when it finds one: the first.
         let pr_template = (r.pull_request_templates.unwrap_or_default().into_iter())
             .filter(|t| t.filename.is_some())
