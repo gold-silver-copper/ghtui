@@ -20,43 +20,16 @@ impl Store {
     /// Writes (or rewrites) row `id`, durably, before returning; false
     /// when it couldn't (the store is disabled, or the disk refused).
     pub fn queue_put<T: Serialize>(&self, id: u64, value: &T) -> bool {
-        let Some(db) = self.db.as_ref() else {
-            return false;
-        };
-        let key = self.queue_key(id);
-        let result = (|| -> Result<(), StoreError> {
-            let bytes = serde_json::to_vec(value)?;
-            let txn = db.database.begin_write()?;
-            {
-                let mut table = txn.open_table(QUEUE)?;
-                table.insert(key.as_str(), bytes.as_slice())?;
-            }
-            txn.commit()?;
-            Ok(())
-        })();
-        result
-            .inspect_err(|err| tracing::warn!(%err, id, "couldn't keep a queued write"))
-            .is_ok()
+        self.write_json(QUEUE, &self.queue_key(id), value)
     }
 
     /// Takes row `id` out.
     pub fn queue_remove(&self, id: u64) -> bool {
-        let Some(db) = self.db.as_ref() else {
-            return false;
-        };
         let key = self.queue_key(id);
-        let result = (|| -> Result<(), StoreError> {
-            let txn = db.database.begin_write()?;
-            {
-                let mut table = txn.open_table(QUEUE)?;
-                table.remove(key.as_str())?;
-            }
-            txn.commit()?;
+        self.write(&key, |txn| {
+            txn.open_table(QUEUE)?.remove(key.as_str())?;
             Ok(())
-        })();
-        result
-            .inspect_err(|err| tracing::warn!(%err, id, "couldn't take out a queued write"))
-            .is_ok()
+        })
     }
 
     /// This account's rows, in order; a row that no longer decodes is
@@ -68,10 +41,8 @@ impl Store {
         let prefix = self.scoped("queue/");
         let result = (|| -> Result<Vec<(u64, T)>, StoreError> {
             let txn = db.database.begin_read()?;
-            let table = match txn.open_table(QUEUE) {
-                Ok(table) => table,
-                Err(redb::TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
-                Err(err) => return Err(err.into()),
+            let Some(table) = super::open(&txn, QUEUE)? else {
+                return Ok(Vec::new());
             };
             let mut rows = Vec::new();
             for row in table.range(prefix.as_str()..)? {
