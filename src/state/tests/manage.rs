@@ -181,7 +181,7 @@ fn a_new_base_is_picked_from_the_branches() {
         branches: vec!["main".into(), "next".into(), "syntax-palette".into()].into(),
         tags: Capped::default(),
     };
-    fetched(&mut s, DataKey::Refs(ghtui()), Data::Refs(Box::new(refs)));
+    fetched(&mut s, DataKey::Refs(ghtui()), Data::from(refs));
     press(&mut s, "next<Enter>");
     assert_eq!(overlay!(s, Ask).title, "Change #12's base to next?");
     let cmds = press(&mut s, "<Enter>");
@@ -235,7 +235,7 @@ fn an_issue_closes_as_a_duplicate_of_one_chosen() {
     let key = DataKey::OpenIssues(ghtui());
     assert_eq!(fixtures::asked(&cmds), std::slice::from_ref(&key));
     let open = Capped::new(vec![(3, "Wrap long lines".into())], 1);
-    fixtures::fetched(&mut s, key, Data::OpenIssues(Box::new(open)));
+    fixtures::fetched(&mut s, key, Data::from(open));
     let cmds = press(&mut s, "wrap<Enter>");
     let close = Change::Manage(Manage::CloseAsDuplicate {
         issue: NodeId::new("I_14"),
@@ -401,7 +401,7 @@ fn an_issue_is_pinned_and_transferred() {
         repo: to.clone(),
         id: NodeId::new("R_2"),
     }];
-    fixtures::fetched(&mut s, key, Data::MoveTargets(Box::new(targets.into())));
+    fixtures::fetched(&mut s, key, Data::from(Capped::from(targets)));
     press(&mut s, "<Enter>");
     assert_eq!(
         overlay!(s, Ask).title,
@@ -459,11 +459,7 @@ fn a_discussion_closes_with_a_reason() {
     answer(&mut s, &cmds, Ok(()));
     let mut d = fixtures::discussion();
     d.closed = Some(Some(DiscussionReason::Resolved));
-    fetched(
-        &mut s,
-        DataKey::Discussion(of, 14603),
-        Data::Discussion(Box::new(d)),
-    );
+    fetched(&mut s, DataKey::Discussion(of, 14603), Data::from(d));
     assert!(s.following.is_none());
     assert!(screen_text(&s).contains("Closed as resolved"));
 }
@@ -489,7 +485,7 @@ fn a_new_discussion_starts_from_its_categorys_form() {
         repo: NodeId::new("R_1"),
         categories: vec![ideas].into(),
     };
-    fixtures::fetched(&mut s, key, Data::Categories(Box::new(found)));
+    fixtures::fetched(&mut s, key, Data::from(found));
     press(&mut s, "<Enter>");
     let Some(Overlay::Compose(c)) = &s.overlay else {
         panic!("no composer");

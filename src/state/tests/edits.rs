@@ -335,11 +335,7 @@ fn reviewers_include_teams() {
         })
         .to_vec()
         .into();
-    fetched(
-        &mut s,
-        DataKey::PrActivity(pr()),
-        Data::PrActivity(Box::new(activity)),
-    );
+    fetched(&mut s, DataKey::PrActivity(pr()), Data::from(activity));
     assert!(s.following.is_none());
 }
 

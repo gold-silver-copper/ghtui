@@ -17,7 +17,7 @@ use crate::ui::form::Row;
 fn form(action: Action) -> (State, Vec<Cmd>) {
     let mut s = with_repo();
     let cmds = act(&mut s, action);
-    let form = Data::NewForm(Box::new(crate::fixtures::new_form()));
+    let form = Data::from(crate::fixtures::new_form());
     let mut more = fetched(&mut s, DataKey::NewForm(ghtui()), form);
     more.extend(cmds);
     (s, more)
@@ -162,7 +162,7 @@ fn head(s: &mut State, on_github: Option<&str>) -> Vec<Cmd> {
         )]
         .into(),
     };
-    fixtures::fetched(s, compare(), Data::Head(Box::new(hs)))
+    fixtures::fetched(s, compare(), Data::from(hs))
 }
 
 /// Where `fix-parser` stands against main, as it's asked for.

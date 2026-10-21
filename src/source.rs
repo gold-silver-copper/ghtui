@@ -692,7 +692,7 @@ impl Local {
             DataKey::Blob(_, rev, path) => {
                 let oid = at(rev.clone()).await?;
                 match read::blob(clone, &oid, path).await? {
-                    Some(blob) => Answer::Data(Data::Blob(Box::new(blob)), Some(oid)),
+                    Some(blob) => Answer::Data(Data::from(blob), Some(oid)),
                     None => return absent(format!("{repo}/{path} at {rev}")),
                 }
             }
@@ -705,21 +705,21 @@ impl Local {
                 let oid = at(rev.clone()).await?;
                 let skip = after.as_deref().and_then(read::history_skip).unwrap_or(0);
                 let page = read::history(clone, &oid, path, skip).await?;
-                Answer::Data(Data::History(Box::new(page)), Some(oid))
+                Answer::Data(Data::from(page), Some(oid))
             }
             DataKey::Commit(_, rev) => {
                 let Some(oid) = self.at(gh, repo, clone, rev).await? else {
                     return Err(ReadError::Limit(format!("git doesn't have commit {rev}")));
                 };
                 match read::commit(clone, &oid).await? {
-                    Some(c) => Answer::Data(Data::Commit(Box::new(c)), Some(oid)),
+                    Some(c) => Answer::Data(Data::from(c), Some(oid)),
                     None => return absent(format!("{repo}@{rev}")),
                 }
             }
             DataKey::Blame(_, rev, path) => {
                 let oid = at(rev.clone()).await?;
                 match read::blame(clone, &oid, path).await? {
-                    Some(b) => Answer::Data(Data::Blame(Box::new(b)), Some(oid)),
+                    Some(b) => Answer::Data(Data::from(b), Some(oid)),
                     None => return absent(format!("{repo}/{path} at {rev}")),
                 }
             }
@@ -739,7 +739,7 @@ impl Local {
                 }
                 let (base, head) = (at(base).await?, at(head).await?);
                 let c = read::compare(clone, &base, &head, direct).await?;
-                Answer::Data(Data::Compare(Box::new(c)), Some(head))
+                Answer::Data(Data::from(c), Some(head))
             }
             DataKey::LastCommits(_, rev, path) => {
                 let oid = at(rev.clone()).await?;
@@ -786,7 +786,7 @@ impl Local {
                     branches: names(listed.branches),
                     tags: names(tags),
                 };
-                Answer::Data(Data::Refs(Box::new(refs)), None)
+                Answer::Data(Data::from(refs), None)
             }
             DataKey::Tags(_) => {
                 let listed = self.remote_refs(gh, repo, clone).await?;
@@ -796,7 +796,7 @@ impl Local {
                     items: tags,
                     next: None,
                 };
-                Answer::Data(Data::Tags(Box::new(tags)), None)
+                Answer::Data(Data::from(tags), None)
             }
             DataKey::RefIn(_, spot) => {
                 let listed = self.remote_refs(gh, repo, clone).await?;
@@ -814,13 +814,13 @@ impl Local {
                     next: None,
                 };
                 let found = SearchResults::Code(results);
-                Answer::Data(Data::Search(Box::new(found)), Some(oid))
+                Answer::Data(Data::from(found), Some(oid))
             }
             DataKey::Activity(_) => {
                 let oid = at("HEAD".into()).await?;
                 let now = crate::store::now();
                 let activity = crate::site::insights::activity(clone, &oid, now).await?;
-                Answer::Data(Data::Activity(Box::new(activity)), Some(oid))
+                Answer::Data(Data::from(activity), Some(oid))
             }
             _ => return Err(ReadError::Limit("git doesn't know it".into())),
         })

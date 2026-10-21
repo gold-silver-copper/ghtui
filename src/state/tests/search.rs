@@ -213,10 +213,10 @@ fn go_to_file_and_switch_branches() {
     fetched(
         &mut state,
         DataKey::Refs(ghtui()),
-        Data::Refs(Box::new(crate::api::browse::Refs {
+        Data::from(crate::api::browse::Refs {
             branches: crate::api::model::Capped::new(vec!["main".into(), "next".into()], 300),
             tags: vec!["v1.0".into()].into(),
-        })),
+        }),
     );
     // Branches it didn't fetch can't be picked, and it says so.
     let f = overlay!(state, Picker);
@@ -279,7 +279,7 @@ fn search_box_jumps_searches_and_loads_more() {
     fetched(
         &mut state,
         key.clone(),
-        Data::Search(Box::new(crate::fixtures::issue_results(Some("c1")))),
+        Data::from(crate::fixtures::issue_results(Some("c1"))),
     );
     press(&mut state, "<End>");
     assert!(selected_text(&state).starts_with("Load more"));
@@ -300,12 +300,7 @@ fn search_box_jumps_searches_and_loads_more() {
     }
     update(
         &mut state,
-        Msg::FetchedMore(
-            key.clone(),
-            "c1".into(),
-            Ok(Data::Search(Box::new(more))),
-            None,
-        ),
+        Msg::FetchedMore(key.clone(), "c1".into(), Ok(Data::from(more)), None),
     );
     let Some(Data::Search(results)) = state.get(&key) else {
         panic!()
@@ -322,7 +317,7 @@ fn search_box_jumps_searches_and_loads_more() {
     fetched(
         &mut state,
         key.clone(),
-        Data::Search(Box::new(crate::fixtures::issue_results(Some("c2")))),
+        Data::from(crate::fixtures::issue_results(Some("c2"))),
     );
     press(&mut state, "G<Enter>");
     assert_eq!(state.busy().as_deref(), Some("Loading more"));
@@ -331,14 +326,14 @@ fn search_box_jumps_searches_and_loads_more() {
     fetched(
         &mut state,
         key.clone(),
-        Data::Search(Box::new(crate::fixtures::issue_results(Some("c2")))),
+        Data::from(crate::fixtures::issue_results(Some("c2"))),
     );
     update(
         &mut state,
         Msg::FetchedMore(
             key.clone(),
             "c2".into(),
-            Ok(Data::Search(Box::new(crate::fixtures::issue_results(None)))),
+            Ok(Data::from(crate::fixtures::issue_results(None))),
             None,
         ),
     );

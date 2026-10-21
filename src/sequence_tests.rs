@@ -70,11 +70,7 @@ fn page(route: &Route, start: u64, len: u8, total: u64, next: bool) -> Data {
                     )
                 })
                 .collect();
-            Data::Search(Box::new(SearchResults::Issues(Results {
-                total,
-                items,
-                next,
-            })))
+            Data::from(SearchResults::Issues(Results { total, items, next }))
         }
         Route::Code(code::Branches(_)) => {
             let base = fixtures::branches().items.into_iter().next();
@@ -86,12 +82,12 @@ fn page(route: &Route, start: u64, len: u8, total: u64, next: bool) -> Data {
                     })
                 })
                 .collect();
-            Data::Branches(Box::new(Results { total, items, next }))
+            Data::from(Results { total, items, next })
         }
         _ => {
             let mut overview = fixtures::overview();
             overview.commits = total;
-            Data::Repo(Box::new(overview))
+            Data::from(overview)
         }
     }
 }
@@ -416,7 +412,7 @@ fn joined_diff_work_is_the_same_in_every_arrival_order() {
                 }
                 _ => Msg::Fetched {
                     key: DataKey::Pr(pr.clone()),
-                    result: Ok(Data::Pr(Box::new(detail.clone()))),
+                    result: Ok(Data::from(detail.clone())),
                     cached_at: None,
                     source: None,
                 },

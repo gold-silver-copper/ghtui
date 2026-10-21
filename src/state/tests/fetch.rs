@@ -24,7 +24,7 @@ fn cached_data_shows_while_fetching() {
         &mut state,
         Msg::Fetched {
             key: DataKey::Profile("octocat".into()),
-            result: Ok(Data::Profile(Box::new(crate::fixtures::profile()))),
+            result: Ok(Data::from(crate::fixtures::profile())),
             cached_at: Some(0),
             source: None,
         },
@@ -59,7 +59,7 @@ fn a_refresh_error_shared_by_needs_is_said_once() {
         source: None,
     };
     let none = SearchResults::Repos(crate::api::browse::Results::default());
-    update(&mut state, fetched(Ok(Data::Search(Box::new(none)))));
+    update(&mut state, fetched(Ok(Data::from(none))));
     let _ = state.load_visible(true);
     mine_failed(&mut state, ApiError::RateLimited(30));
     update(&mut state, fetched(Err(ApiError::RateLimited(30))));
@@ -151,14 +151,14 @@ fn a_fresh_copy_keeps_the_selected_issue() {
     let (kind, query) = route(&state).search().unwrap();
     let key = DataKey::Search(kind, query);
     let list = |numbers: &[u64]| {
-        Data::Search(Box::new(SearchResults::Issues(crate::fixtures::page(
+        Data::from(SearchResults::Issues(crate::fixtures::page(
             numbers.len() as u64,
             numbers
                 .iter()
                 .map(|&n| crate::fixtures::issue_summary(n, Status::Issue(IssueState::Open)))
                 .collect(),
             None,
-        ))))
+        )))
     };
     update(
         &mut state,

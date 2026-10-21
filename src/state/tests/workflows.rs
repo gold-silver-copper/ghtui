@@ -35,7 +35,7 @@ fn a_workflow_runs_by_hand_with_its_inputs_and_is_followed() {
     assert_eq!(route(&s), dispatch);
     let blob = crate::fixtures::file(".github/workflows/ci.yml", WORKFLOW);
     let key = DataKey::Blob(ghtui(), "HEAD".into(), ".github/workflows/ci.yml".into());
-    fetched(&mut s, key, Data::Blob(Box::new(blob)));
+    fetched(&mut s, key, Data::from(blob));
     select_link(&mut s, &Link::Form(Row::Input("outcome".into())));
     press(&mut s, "<Enter>");
     press(&mut s, "pass<Enter>");
@@ -68,7 +68,7 @@ fn a_workflow_that_cant_run_by_hand_says_so() {
     act(&mut s, Action::RunWorkflow);
     let blob = crate::fixtures::file(".github/workflows/ci.yml", "on: push\n");
     let key = DataKey::Blob(ghtui(), "HEAD".into(), ".github/workflows/ci.yml".into());
-    fetched(&mut s, key, Data::Blob(Box::new(blob)));
+    fetched(&mut s, key, Data::from(blob));
     assert!(fetches(act(&mut s, Action::RunWorkflow)).is_empty());
     says(&s, "can't be run by hand");
 }
@@ -118,11 +118,7 @@ fn check_annotations_show_on_their_lines_in_files_changed() {
     let mut on_file = crate::fixtures::check_annotation();
     on_file.path = Some("src/point.rs".into());
     checks.items.items[0].annotations = vec![on_file, on_run].into();
-    fetched(
-        &mut s,
-        DataKey::PrChecks(pr.clone()),
-        Data::Checks(Box::new(checks)),
-    );
+    fetched(&mut s, DataKey::PrChecks(pr.clone()), Data::from(checks));
     let anns = s.diffs[&crate::diff_screen::DiffOf::Pr(pr)]
         .doc
         .annotations();

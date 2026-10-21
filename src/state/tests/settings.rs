@@ -19,21 +19,13 @@ pub(super) fn on(at: SettingsPage) -> State {
         can_admin: true,
         ..fixtures::overview()
     };
-    fetched(
-        &mut s,
-        DataKey::Repo(ghtui()),
-        Data::Repo(Box::new(overview)),
-    );
+    fetched(&mut s, DataKey::Repo(ghtui()), Data::from(overview));
     deliver(&mut s, at, page(at));
     s
 }
 
 fn deliver(s: &mut State, at: SettingsPage, data: Settings) -> Vec<Cmd> {
-    fetched(
-        s,
-        DataKey::Settings(ghtui(), at),
-        Data::Settings(Box::new(data)),
-    )
+    fetched(s, DataKey::Settings(ghtui(), at), Data::from(data))
 }
 
 /// The one change `cmds` sends.

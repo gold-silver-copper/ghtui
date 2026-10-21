@@ -43,7 +43,7 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
         crate::fixtures::asks(&cmds, &DataKey::Tags(repo.clone())),
         "{cmds:?}"
     );
-    let tags = Data::Tags(Box::new(fixtures::tags()));
+    let tags = Data::from(fixtures::tags());
     fetched(&mut s, DataKey::Tags(repo.clone()), tags);
     assert!(
         matches!(&s.overlay, Some(Overlay::Picker(_))),
@@ -56,7 +56,7 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
         exists: false,
         release: None,
     };
-    fixtures::fetched(&mut s, look, Data::TagLook(Box::new(new_tag)));
+    fixtures::fetched(&mut s, look, Data::from(new_tag));
     assert!(
         page_text(&s).contains("v9.0 is a new tag"),
         "the form behind the composer says what GitHub found"
@@ -98,7 +98,7 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
     assert_eq!(s.route(), Some(&page));
     says(&s, "Published v9.0");
     assert!(s.busy().is_some_and(|b| b.contains("Waiting for GitHub")));
-    let release = Data::Release(Box::new(fixtures::release(true)));
+    let release = Data::from(fixtures::release(true));
     fetched(&mut s, DataKey::Release(repo, "v9.0".into()), release);
     assert!(s.following.is_none(), "GitHub shows it");
 }
@@ -115,7 +115,7 @@ fn a_tag_with_a_release_is_refused() {
         release: Some((false, String::new())),
     };
     let look = DataKey::TagLook(ghtui(), "v0.2.0".into());
-    fixtures::fetched(&mut s, look, Data::TagLook(Box::new(taken)));
+    fixtures::fetched(&mut s, look, Data::from(taken));
     let sent = press(&mut s, "<C-s>");
     assert_eq!(sent, []);
     assert_eq!(
@@ -135,7 +135,7 @@ fn a_thread_is_unsubscribed_and_followed() {
         crate::fixtures::asks(&cmds, &DataKey::Subscription(of.clone())),
         "{cmds:?}"
     );
-    let now = Data::Subscription(Box::new(fixtures::subscription()));
+    let now = Data::from(fixtures::subscription());
     fetched(&mut s, DataKey::Subscription(of.clone()), now);
     let Some(Overlay::Picker(p)) = &s.overlay else {
         panic!("no picker");
@@ -159,11 +159,7 @@ fn a_thread_is_unsubscribed_and_followed() {
         state: Some(SubscriptionState::Unsubscribed),
         ..fixtures::subscription()
     };
-    fetched(
-        &mut s,
-        DataKey::Subscription(of),
-        Data::Subscription(Box::new(shown)),
-    );
+    fetched(&mut s, DataKey::Subscription(of), Data::from(shown));
     assert!(s.following.is_none());
 }
 
@@ -289,7 +285,7 @@ fn a_wiki_page_is_edited_never_over_a_newer_one() {
     assert_eq!(s.route(), Some(&route));
     let key = DataKey::Wiki(ghtui(), Some("Home".into()));
     assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
-    fetched(&mut s, key, Data::Wiki(Box::new(fixtures::wiki())));
+    fetched(&mut s, key, Data::from(fixtures::wiki()));
     assert!(composer(&mut s).text().starts_with("Welcome to the wiki."));
     write(&mut s, "Welcome, all.");
     let sent = press(&mut s, "<C-s>");

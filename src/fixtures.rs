@@ -197,7 +197,7 @@ pub(crate) fn pr_fetched(
     result: Result<PrDetail, ApiError>,
 ) -> Vec<Cmd> {
     let key = DataKey::Pr(pr.clone());
-    let result = result.map(|d| Data::Pr(Box::new(d)));
+    let result = result.map(Data::from);
     let cached_at = None;
     update(
         state,
@@ -213,7 +213,7 @@ pub(crate) fn pr_fetched(
 /// Puts pull request `pr` in the state as the disk cache had it.
 pub(crate) fn pr_cached(state: &mut State, pr: &PrRef, detail: PrDetail) {
     let cached = crate::store::Cached {
-        value: Data::Pr(Box::new(detail)),
+        value: Data::from(detail),
         fetched_at: 0,
     };
     let key = DataKey::Pr(pr.clone());
@@ -223,7 +223,7 @@ pub(crate) fn pr_cached(state: &mut State, pr: &PrRef, detail: PrDetail) {
 /// Fills Home's section `i` with a search's results.
 pub(crate) fn section(state: &mut State, i: usize, results: SearchResults) -> Vec<Cmd> {
     let search = state.home[i].search.clone().unwrap();
-    fetched(state, search.key(), Data::Search(Box::new(results)))
+    fetched(state, search.key(), Data::from(results))
 }
 
 /// Pull requests as a search finds them, of `total`.
@@ -2283,103 +2283,103 @@ pub(crate) fn sample(key: &DataKey) -> Data {
         SearchKind::Code => code_results(),
     };
     match key {
-        K::Repo(_) => Data::Repo(Box::new(overview())),
+        K::Repo(_) => Data::from(overview()),
         K::Readme(_) => Data::Readme(Some(Box::new(readme()))),
         K::Tree(..) => Data::Tree(tree()),
-        K::Blob(..) => Data::Blob(Box::new(blob())),
-        K::Search(kind, _) => Data::Search(Box::new(search(kind))),
+        K::Blob(..) => Data::from(blob()),
+        K::Search(kind, _) => Data::from(search(kind)),
         K::StateCounts(_) => {
             Data::StateCounts(crate::api::browse::StateCounts { open: 2, closed: 5 })
         }
         K::Issue(..) => Data::Issue(Some(Box::new(issue()))),
-        K::Pr(_) => Data::Pr(Box::new(pr_detail())),
-        K::PrActivity(_) => Data::PrActivity(Box::new(activity())),
-        K::Reviews(_) => Data::Reviews(Box::new(reviews())),
-        K::CommitComments(..) => Data::CommitComments(Box::new(vec![commit_comment()].into())),
+        K::Pr(_) => Data::from(pr_detail()),
+        K::PrActivity(_) => Data::from(activity()),
+        K::Reviews(_) => Data::from(reviews()),
+        K::CommitComments(..) => Data::from(Capped::from(vec![commit_comment()])),
         K::Lines(..) => Data::Lines(Arc::default()),
-        K::InProjects(..) => Data::InProjects(Box::new(in_projects())),
-        K::Profile(login) if login == "ratatui" => Data::Profile(Box::new(org_profile())),
-        K::Profile(_) => Data::Profile(Box::new(profile())),
+        K::InProjects(..) => Data::from(in_projects()),
+        K::Profile(login) if login == "ratatui" => Data::from(org_profile()),
+        K::Profile(_) => Data::from(profile()),
         K::Files(..) => Data::Files(Arc::new(vec!["README.md".into()]), false),
         K::Refs(_) => Data::Refs(Box::default()),
-        K::NewForm(_) => Data::NewForm(Box::new(new_form())),
+        K::NewForm(_) => Data::from(new_form()),
         K::RefIn(..) => Data::RefIn(None),
         K::LastCommits(..) => Data::LastCommits(Arc::new(last_commits())),
-        K::Commit(..) => Data::Commit(Box::new(commit())),
-        K::History(..) => Data::History(Box::new(history(Some("h1")))),
-        K::PrChecks(_) | K::CommitChecks(..) => Data::Checks(Box::new(checks())),
-        K::Users(_) => Data::Users(Box::new(people())),
-        K::Forks(_) => Data::RepoPage(Box::new(forks())),
-        K::OwnerRepos(..) | K::Stars(_) => Data::RepoPage(Box::new(profile_repos())),
-        K::Releases(_) => Data::Releases(Box::new(releases())),
-        K::Release(..) => Data::Release(Box::new(release(true))),
-        K::Tags(_) => Data::Tags(Box::new(tags())),
-        K::Branches(_) => Data::Branches(Box::new(branches())),
-        K::Wiki(..) => Data::Wiki(Box::new(wiki())),
+        K::Commit(..) => Data::from(commit()),
+        K::History(..) => Data::from(history(Some("h1"))),
+        K::PrChecks(_) | K::CommitChecks(..) => Data::from(checks()),
+        K::Users(_) => Data::from(people()),
+        K::Forks(_) => Data::from(forks()),
+        K::OwnerRepos(..) | K::Stars(_) => Data::from(profile_repos()),
+        K::Releases(_) => Data::from(releases()),
+        K::Release(..) => Data::from(release(true)),
+        K::Tags(_) => Data::from(tags()),
+        K::Branches(_) => Data::from(branches()),
+        K::Wiki(..) => Data::from(wiki()),
         K::Advisories(_) => {
             let items = advisories();
             let total = items.len() as u64;
-            Data::Advisories(Box::new(page(total, items, None)))
+            Data::from(page(total, items, None))
         }
-        K::Advisory(..) => Data::Advisory(Box::new(advisory())),
-        K::Sidebar(..) => Data::Sidebar(Box::new(sidebar())),
-        K::Teams(_) => Data::Teams(Box::new(teams())),
-        K::Team(..) => Data::Team(Box::new(team())),
-        K::Gist(_) => Data::Gist(Box::new(gist())),
-        K::Gists(_) => Data::Gists(Box::new(gists())),
-        K::Blame(..) => Data::Blame(Box::new(blame())),
-        K::Compare(..) => Data::Compare(Box::new(comparison())),
-        K::Deployments(..) => Data::Deployments(Box::new(deployments())),
-        K::Milestones(..) => Data::Milestones(Box::new(milestones())),
-        K::Milestone(..) => Data::Milestone(Box::new(milestone())),
-        K::Discussions(..) => Data::Discussions(Box::new(discussions())),
-        K::Discussion(..) => Data::Discussion(Box::new(discussion())),
-        K::Run(..) => Data::Run(Box::new(workflow_run())),
-        K::Job(..) => Data::Job(Box::new(job().0)),
+        K::Advisory(..) => Data::from(advisory()),
+        K::Sidebar(..) => Data::from(sidebar()),
+        K::Teams(_) => Data::from(teams()),
+        K::Team(..) => Data::from(team()),
+        K::Gist(_) => Data::from(gist()),
+        K::Gists(_) => Data::from(gists()),
+        K::Blame(..) => Data::from(blame()),
+        K::Compare(..) => Data::from(comparison()),
+        K::Deployments(..) => Data::from(deployments()),
+        K::Milestones(..) => Data::from(milestones()),
+        K::Milestone(..) => Data::from(milestone()),
+        K::Discussions(..) => Data::from(discussions()),
+        K::Discussion(..) => Data::from(discussion()),
+        K::Run(..) => Data::from(workflow_run()),
+        K::Job(..) => Data::from(job().0),
         K::JobLog(..) => Data::Log(Arc::new(job().1)),
-        K::Workflow(..) => Data::Workflow(Box::new(workflow_runs().0)),
-        K::Runs(..) => Data::Runs(Box::new(workflow_runs().1)),
-        K::Notifications(_) => Data::Notifications(Box::new(notifications())),
-        K::Projects(_) => Data::Projects(Box::new(projects())),
-        K::Project(..) => Data::Project(Box::new(project())),
-        K::Alerts(_, kind, _) => Data::Alerts(Box::new(crate::security::fixtures::alerts(*kind))),
-        K::Alert(a) => Data::Alert(Box::new(crate::security::fixtures::alert(a.kind, a.number))),
-        K::Subscription(_) => Data::Subscription(Box::new(subscription())),
-        K::Activity(_) => Data::Activity(Box::new(site::activity())),
-        K::Traffic(_) => Data::Traffic(Box::new(site::traffic())),
-        K::Dependencies(_) => Data::Dependencies(Box::new(site::dependencies())),
-        K::Featured => Data::Topics(Box::new(site::featured())),
-        K::Topic(_) => Data::Topic(Box::new(site::rust())),
-        K::StarLists(_) => Data::StarLists(Box::new(site::star_lists())),
-        K::StarList(..) => Data::StarList(Box::new(site::list_page())),
-        K::MyLists(_) => Data::MyLists(Box::new(site::my_lists())),
-        K::Packages(_) => Data::Packages(Box::new(site::packages())),
-        K::Package(_) => Data::Package(Box::new(site::package_detail())),
-        K::SavedReplies => Data::SavedReplies(Box::new(site::saved_replies())),
-        K::Labels(_) => Data::Labels(Box::new(housekeeping::labels())),
-        K::Owners => Data::Owners(Box::new(housekeeping::owners())),
-        K::Templates => Data::Templates(Box::new(housekeeping::templates())),
-        K::Settings(_, page) => Data::Settings(Box::new(crate::settings::fixtures::page(*page))),
-        K::OpenIssues(_) => Data::OpenIssues(Box::new(vec![(7, "Wrapping".into())].into())),
+        K::Workflow(..) => Data::from(workflow_runs().0),
+        K::Runs(..) => Data::from(workflow_runs().1),
+        K::Notifications(_) => Data::from(notifications()),
+        K::Projects(_) => Data::from(projects()),
+        K::Project(..) => Data::from(project()),
+        K::Alerts(_, kind, _) => Data::from(crate::security::fixtures::alerts(*kind)),
+        K::Alert(a) => Data::from(crate::security::fixtures::alert(a.kind, a.number)),
+        K::Subscription(_) => Data::from(subscription()),
+        K::Activity(_) => Data::from(site::activity()),
+        K::Traffic(_) => Data::from(site::traffic()),
+        K::Dependencies(_) => Data::from(site::dependencies()),
+        K::Featured => Data::from(site::featured()),
+        K::Topic(_) => Data::from(site::rust()),
+        K::StarLists(_) => Data::from(site::star_lists()),
+        K::StarList(..) => Data::from(site::list_page()),
+        K::MyLists(_) => Data::from(site::my_lists()),
+        K::Packages(_) => Data::from(site::packages()),
+        K::Package(_) => Data::from(site::package_detail()),
+        K::SavedReplies => Data::from(site::saved_replies()),
+        K::Labels(_) => Data::from(housekeeping::labels()),
+        K::Owners => Data::from(housekeeping::owners()),
+        K::Templates => Data::from(housekeeping::templates()),
+        K::Settings(_, page) => Data::from(crate::settings::fixtures::page(*page)),
+        K::OpenIssues(_) => Data::from(Capped::from(vec![(7, "Wrapping".into())])),
         K::MoveTargets(_) => Data::MoveTargets(Box::default()),
-        K::Categories(_) => Data::Categories(Box::new(crate::api::manage::Categories {
+        K::Categories(_) => Data::from(crate::api::manage::Categories {
             repo: NodeId::new("R_1"),
             categories: Capped::default(),
-        })),
+        }),
         K::Clone(_) => Data::Clone(None),
-        K::Head { .. } => Data::Head(Box::new(crate::create::HeadState {
+        K::Head { .. } => Data::from(crate::create::HeadState {
             local: None,
             commits: Capped::default(),
-        })),
-        K::TagLook(..) => Data::TagLook(Box::new(crate::api::release::TagLook {
+        }),
+        K::TagLook(..) => Data::from(crate::api::release::TagLook {
             exists: true,
             release: None,
-        })),
-        K::BranchRules(..) => Data::BranchRules(Box::new(crate::api::housekeeping::BranchRules {
+        }),
+        K::BranchRules(..) => Data::from(crate::api::housekeeping::BranchRules {
             protected: false,
             undeletable: false,
-        })),
-        K::FileLook(..) => Data::FileLook(Box::new(file_look())),
+        }),
+        K::FileLook(..) => Data::from(file_look()),
         K::Mentionable(_) => Data::Mentionable(Box::default()),
         K::Suggest(_) => Data::Suggestions(Vec::new()),
         K::Unread => Data::Unread(crate::api::notifications::Unread {

@@ -22,7 +22,7 @@ fn failed(state: &mut State, key: DataKey) {
 fn a_failed_readme_says_why_under_the_files() {
     let mut state = state();
     let _ = state.push(Route::Code(code::Repo(ghtui())));
-    let overview = Data::Repo(Box::new(fixtures::overview()));
+    let overview = Data::from(fixtures::overview());
     fetched(&mut state, DataKey::Repo(ghtui()), overview);
     failed(&mut state, DataKey::Readme(ghtui()));
     let text = page_text(&state);

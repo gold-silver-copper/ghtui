@@ -157,11 +157,7 @@ fn a_running_job_is_followed_to_its_end() {
         step.completed_at = None;
     }
     running.steps[3].started_at = None;
-    fetched(
-        &mut s,
-        DataKey::Job(ghtui(), 2),
-        Data::Job(Box::new(running)),
-    );
+    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::from(running));
     let waiting = JobLog {
         running: true,
         ..JobLog::default()
@@ -193,7 +189,7 @@ fn a_running_job_is_followed_to_its_end() {
     assert!(keys.contains(&DataKey::Job(ghtui(), 2)), "{keys:?}");
     assert!(keys.contains(&DataKey::JobLog(ghtui(), 2)), "{keys:?}");
 
-    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::Job(Box::new(done)));
+    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::from(done));
     says(&s, "test (ubuntu) failed");
     fetched(
         &mut s,
@@ -232,6 +228,6 @@ fn new_runs_on_the_actions_tab_are_said() {
     let mut new = more.items[0].clone();
     (new.id, new.actor) = (999, Some("monalisa".into()));
     more.items.insert(0, new);
-    fetched(&mut s, key, Data::Runs(Box::new(more)));
+    fetched(&mut s, key, Data::from(more));
     says(&s, "New on the Actions tab: 1 run");
 }

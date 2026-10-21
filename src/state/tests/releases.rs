@@ -88,15 +88,11 @@ fn a_release_is_edited_and_its_page_follows() {
     says(&s, "Updated v0.2.0");
     // GitHub still shows the old title: the page waits.
     let key = DataKey::Release(ghtui(), "v0.2.0".into());
-    fetched(
-        &mut s,
-        key.clone(),
-        Data::Release(Box::new(fixtures::release(true))),
-    );
+    fetched(&mut s, key.clone(), Data::from(fixtures::release(true)));
     assert!(s.following.is_some());
     let mut edited = fixtures::release(true);
     edited.name = "ghtui 0.2.0, fixed".into();
-    fetched(&mut s, key, Data::Release(Box::new(edited)));
+    fetched(&mut s, key, Data::from(edited));
     assert!(s.following.is_none(), "GitHub shows it");
 }
 
@@ -135,16 +131,12 @@ fn a_release_is_deleted_then_its_tag_asked_about() {
     fetched(
         &mut s,
         DataKey::Releases(ghtui()),
-        Data::Releases(Box::new(fixtures::releases())),
+        Data::from(fixtures::releases()),
     );
     assert!(s.following.is_some());
     let mut gone = fixtures::releases();
     gone.items.retain(|r| r.tag != "v0.2.0");
-    fetched(
-        &mut s,
-        DataKey::Releases(ghtui()),
-        Data::Releases(Box::new(gone)),
-    );
+    fetched(&mut s, DataKey::Releases(ghtui()), Data::from(gone));
     assert!(s.following.is_none());
 }
 
@@ -210,7 +202,7 @@ fn assets_are_uploaded_and_deleted() {
     toml.name = "Cargo.toml".into();
     with.assets.items.push(toml);
     let key = DataKey::Release(ghtui(), "v0.2.0".into());
-    fetched(&mut s, key.clone(), Data::Release(Box::new(with)));
+    fetched(&mut s, key.clone(), Data::from(with));
     assert!(s.following.is_none());
 
     let name = "ghtui-aarch64-macos.tar.gz";
@@ -229,6 +221,6 @@ fn assets_are_uploaded_and_deleted() {
     assert!(s.overlay.is_none());
     let mut without = fixtures::release(true);
     without.assets.items.retain(|a| a.name != name);
-    fetched(&mut s, key, Data::Release(Box::new(without)));
+    fetched(&mut s, key, Data::from(without));
     assert!(s.following.is_none());
 }

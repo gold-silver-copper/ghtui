@@ -504,7 +504,7 @@ fn gx_opens_the_address_under_the_cursor() {
     let mut s = super::with_repo();
     let route = Route::blob(super::ghtui(), "main".into(), "a.rs".into());
     let blob = crate::fixtures::file("a.rs", "// See https://example.com/docs.\n");
-    super::open(&mut s, route, crate::data::Data::Blob(Box::new(blob)));
+    super::open(&mut s, route, crate::data::Data::from(blob));
     let opened = |s: &mut State| match super::act(s, Action::OpenLink).as_slice() {
         [crate::state::Cmd::OpenUrl(url)] => url.clone(),
         cmds => panic!("{cmds:?}"),
@@ -571,7 +571,7 @@ fn log_lines_are_rows() {
     super::fetched(
         &mut s,
         crate::data::DataKey::Job(ghtui.clone(), 2),
-        crate::data::Data::Job(Box::new(job)),
+        crate::data::Data::from(job),
     );
     super::fetched(
         &mut s,

@@ -31,7 +31,7 @@ fn comment_links_scroll_to_the_comment() {
     let comment = "https://github.com/cli/cli/discussions/14603#discussioncomment-18765100";
     let _ = s.follow(&crate::ui::page::Link::Url(comment.into()));
     let of = crate::api::browse::DiscussionsOf::Repo(RepoId::new("cli", "cli"));
-    let detail = Data::Discussion(Box::new(crate::fixtures::discussion()));
+    let detail = Data::from(crate::fixtures::discussion());
     fetched(&mut s, DataKey::Discussion(of, 14603), detail);
     let Screen::Page(p) = s.screen() else {
         panic!()

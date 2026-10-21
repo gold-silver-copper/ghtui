@@ -99,7 +99,7 @@ fn a_label_is_made_and_the_page_follows() {
         description: String::new(),
         open: 0,
     });
-    let data = Data::Labels(Box::new(labels));
+    let data = Data::from(labels);
     fetched(&mut s, labels_key(), data);
     assert!(s.following.is_none(), "GitHub lists it");
 }
@@ -161,7 +161,7 @@ fn milestones_are_closed_edited_and_deleted() {
     let mut list = fixtures::milestones();
     list.results.items.retain(|m| m.number != 5);
     let key = DataKey::Milestones(ghtui(), false);
-    fetched(&mut s, key, Data::Milestones(Box::new(list)));
+    fetched(&mut s, key, Data::from(list));
     assert!(s.following.is_none(), "gone from the open ones");
 
     select(&mut s, "Links");
@@ -174,7 +174,7 @@ fn milestones_are_closed_edited_and_deleted() {
     fetched(
         &mut s,
         DataKey::Milestone(ghtui(), 3),
-        Data::Milestone(Box::new(fixtures::milestone())),
+        Data::from(fixtures::milestone()),
     );
     assert!(page_text(&s).contains("2026-11-05"), "{}", page_text(&s));
     select(&mut s, "Due date");
@@ -248,7 +248,7 @@ fn branches_are_made_and_protected_ones_kept() {
         protected: false,
         undeletable: true,
     };
-    fixtures::fetched(&mut s, key, Data::BranchRules(Box::new(rules)));
+    fixtures::fetched(&mut s, key, Data::from(rules));
     says(
         &s,
         "a ruleset of the repository's keeps it from being deleted",
@@ -275,7 +275,7 @@ fn in_a_clone_git_pushes_after_asking() {
         undeletable: false,
     };
     let key = DataKey::BranchRules(repo.clone(), "tabs".into());
-    fixtures::fetched(&mut s, key.clone(), Data::BranchRules(Box::new(rules)));
+    fixtures::fetched(&mut s, key.clone(), Data::from(rules));
     assert_eq!(fixtures::asked(&cmds), [key]);
     let ask = overlay!(s, Ask);
     assert_eq!(ask.title, "Delete the branch tabs?");
@@ -299,11 +299,7 @@ fn in_a_clone_git_pushes_after_asking() {
     says(&s, "Deleted the branch tabs");
     let mut branches = fixtures::branches();
     branches.items.retain(|b| b.name != "tabs");
-    fetched(
-        &mut s,
-        DataKey::Branches(repo),
-        Data::Branches(Box::new(branches)),
-    );
+    fetched(&mut s, DataKey::Branches(repo), Data::from(branches));
     assert!(s.following.is_none());
 }
 
@@ -315,7 +311,7 @@ fn a_repository_is_forked_and_opened() {
     act(&mut s, Action::Fork);
     let form = Route::Housekeeping(FormOf::Fork(ghtui()));
     assert_eq!(s.route(), Some(&form));
-    let owners = Data::Owners(Box::new(crate::housekeeping::fixtures::owners()));
+    let owners = Data::from(crate::housekeeping::fixtures::owners());
     fetched(&mut s, DataKey::Owners, owners);
     assert!(page_text(&s).contains("It will be octocat/ghtui"));
     let cmds = press(&mut s, "<C-s>");
@@ -346,9 +342,9 @@ fn a_new_repository_is_made_and_cloning_offered() {
     act(&mut s, Action::NewRepo);
     let form = Route::Housekeeping(FormOf::NewRepo);
     assert_eq!(s.route(), Some(&form));
-    let owners = Data::Owners(Box::new(crate::housekeeping::fixtures::owners()));
+    let owners = Data::from(crate::housekeeping::fixtures::owners());
     fetched(&mut s, DataKey::Owners, owners);
-    let templates = Data::Templates(Box::new(crate::housekeeping::fixtures::templates()));
+    let templates = Data::from(crate::housekeeping::fixtures::templates());
     fetched(&mut s, DataKey::Templates, templates);
     assert!(picker(&s), "its name first");
     press(&mut s, "tools<Enter>");
@@ -549,11 +545,7 @@ fn without_write_access_each_says_why() {
     let mut s = with_file();
     let mut overview = fixtures::overview();
     overview.can_write = false;
-    fetched(
-        &mut s,
-        DataKey::Repo(ghtui()),
-        Data::Repo(Box::new(overview)),
-    );
+    fetched(&mut s, DataKey::Repo(ghtui()), Data::from(overview));
     press(&mut s, "e");
     says(
         &s,
@@ -581,5 +573,5 @@ fn a_file_form_opened_from_a_page_reads_the_file() {
 /// GitHub's src/main.rs on main, read for its form.
 fn read(s: &mut State) -> Vec<Cmd> {
     let file = DataKey::FileLook(ghtui(), "main".into(), "src/main.rs".into());
-    fixtures::fetched(s, file, Data::FileLook(Box::new(look())))
+    fixtures::fetched(s, file, Data::from(look()))
 }

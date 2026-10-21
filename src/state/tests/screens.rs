@@ -311,7 +311,7 @@ pub(crate) fn with_pr_review() -> State {
     fetched(
         &mut state,
         DataKey::Reviews(pr),
-        Data::Reviews(Box::new(fixtures::reviews())),
+        Data::from(fixtures::reviews()),
     );
     state
 }

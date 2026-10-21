@@ -16,7 +16,7 @@ fn deliver(s: &mut State, f: impl FnOnce(&mut DiscussionDetail)) -> Vec<Cmd> {
     let mut d = fixtures::discussion();
     f(&mut d);
     let key = DataKey::Discussion(DiscussionsOf::Repo(ghtui()), 14603);
-    fetched(s, key, Data::Discussion(Box::new(d)))
+    fetched(s, key, Data::from(d))
 }
 
 /// Selects the comment `author` wrote that starts with `text`.

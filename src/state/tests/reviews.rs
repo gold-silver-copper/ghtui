@@ -112,7 +112,7 @@ fn the_review_tab_lists_reviews_and_one_opens_its_page() {
     fetched(
         &mut s,
         DataKey::Reviews(pr()),
-        Data::Reviews(Box::new(fixtures::reviews())),
+        Data::from(fixtures::reviews()),
     );
     let page = text(&s);
     let (monalisa, hubot) = (page.find("monalisa approved"), page.rfind("hubot reviewed"));
@@ -202,11 +202,7 @@ fn a_long_review_folds() {
         })
         .collect();
     let mut s = conversation();
-    fetched(
-        &mut s,
-        DataKey::PrActivity(pr()),
-        Data::PrActivity(Box::new(activity)),
-    );
+    fetched(&mut s, DataKey::PrActivity(pr()), Data::from(activity));
     let count = |s: &State| text(s).matches("src/theme.rs:").count();
     assert_eq!(count(&s), 2, "{}", text(&s));
     assert!(
@@ -267,11 +263,7 @@ fn a_closed_pr_says_who_closed_it() {
         },
     ));
     let mut s = conversation();
-    fetched(
-        &mut s,
-        DataKey::PrActivity(pr()),
-        Data::PrActivity(Box::new(activity)),
-    );
+    fetched(&mut s, DataKey::PrActivity(pr()), Data::from(activity));
     assert!(
         text(&s).contains("monalisa closed this 1d ago"),
         "{}",
@@ -301,11 +293,7 @@ fn a_new_review_is_marked_new() {
         "Done.",
         "2026-10-03T11:30:00Z",
     )));
-    fetched(
-        &mut s,
-        DataKey::PrActivity(pr()),
-        Data::PrActivity(Box::new(activity)),
-    );
+    fetched(&mut s, DataKey::PrActivity(pr()), Data::from(activity));
     fixtures::says(&s, "defunkt requested changes");
     let page = text(&s);
     let defunkt = page

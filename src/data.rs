@@ -247,9 +247,16 @@ impl Picked for Data {
     }
 }
 
-/// The [`Data`] enum, and how each kind is [`Picked`] from it.
+/// The [`Data`] enum, and how each kind is [`Picked`] from it: a kind
+/// after `=>` is also made into its [`Data`] by `From`, one after `as`
+/// (unsized) isn't. A paged list says, in brackets, which of its fields
+/// is the [`Results`] (none: it is) and the id that dedupes its pages.
 macro_rules! data {
-    ($($(#[$meta:meta])* $variant:ident($($field:ty),+) $(=> $picked:ty)?,)*) => {
+    ($(
+        $(#[$meta:meta])* $variant:ident($($field:ty),+)
+        $(=> $picked:ty $([$(.$list:ident)? $id:expr])?)?
+        $(as $unsized:ty)?,
+    )*) => {
         #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
         pub enum Data {
             $($(#[$meta])* $variant($($field),+),)*
@@ -264,7 +271,46 @@ macro_rules! data {
                     }
                 }
             }
+
+            impl From<$picked> for Data {
+                fn from(x: $picked) -> Self {
+                    Data::$variant(x.into())
+                }
+            }
         )?)*
+
+        $($(
+            impl Picked for $unsized {
+                fn pick(data: &Data) -> Option<&Self> {
+                    match data {
+                        Data::$variant(x) => Some(std::borrow::Borrow::borrow(x)),
+                        _ => None,
+                    }
+                }
+            }
+        )?)*
+
+        impl Data {
+            /// Where a paged list's next page starts, if there's more.
+            fn paged_next(&self) -> Option<&str> {
+                match self {
+                    $($($(Data::$variant(x) => x$(.$list)?.next.as_deref(),)?)?)*
+                    _ => None,
+                }
+            }
+
+            /// Appends a paged list's next page.
+            fn append_paged(&mut self, more: Data) {
+                match (self, more) {
+                    $($($(
+                        (Data::$variant(a), Data::$variant(b)) => {
+                            extend(&mut (**a)$(.$list)?, (*b)$(.$list)?, $id);
+                        }
+                    )?)?)*
+                    _ => {}
+                }
+            }
+        }
     };
 }
 
@@ -272,7 +318,7 @@ data! {
     Repo(Box<RepoOverview>) => RepoOverview,
     /// `None`: the repository has no README.
     Readme(Option<Box<Readme>>) => Option<Box<Readme>>,
-    Tree(Vec<TreeEntry>) => [TreeEntry],
+    Tree(Vec<TreeEntry>) as [TreeEntry],
     Blob(Box<Blob>) => Blob,
     Search(Box<SearchResults>) => SearchResults,
     StateCounts(StateCounts) => StateCounts,
@@ -293,43 +339,43 @@ data! {
     RefIn(Option<String>) => Option<String>,
     LastCommits(Arc<HashMap<String, CommitInfo>>) => HashMap<String, CommitInfo>,
     Commit(Box<CommitDetail>) => CommitDetail,
-    History(Box<Results<CommitInfo>>) => Results<CommitInfo>,
+    History(Box<Results<CommitInfo>>) => Results<CommitInfo> [|c| c.oid.clone()],
     Checks(Box<Checks>) => Checks,
-    Users(Box<Results<UserSummary>>) => Results<UserSummary>,
+    Users(Box<Results<UserSummary>>) => Results<UserSummary> [|u| u.login.clone()],
     /// A page of a list of repositories.
-    RepoPage(Box<Results<RepoSummary>>) => Results<RepoSummary>,
-    Releases(Box<Results<Release>>) => Results<Release>,
-    Discussions(Box<DiscussionList>) => DiscussionList,
+    RepoPage(Box<Results<RepoSummary>>) => Results<RepoSummary> [|r| r.repo.clone()],
+    Releases(Box<Results<Release>>) => Results<Release> [|r| r.tag.clone()],
+    Discussions(Box<DiscussionList>) => DiscussionList [.results |d| d.number],
     Discussion(Box<DiscussionDetail>) => DiscussionDetail,
     Run(Box<WorkflowRun>) => WorkflowRun,
     Job(Box<Job>) => Job,
     #[serde(skip)]
     Log(Arc<JobLog>) => JobLog,
     Workflow(Box<Workflow>) => Workflow,
-    Runs(Box<Results<RunSummary>>) => Results<RunSummary>,
+    Runs(Box<Results<RunSummary>>) => Results<RunSummary> [|r| r.id],
     Release(Box<Release>) => Release,
-    Tags(Box<Results<TagInfo>>) => Results<TagInfo>,
-    Branches(Box<Results<BranchInfo>>) => Results<BranchInfo>,
+    Tags(Box<Results<TagInfo>>) => Results<TagInfo> [|t| t.name.clone()],
+    Branches(Box<Results<BranchInfo>>) => Results<BranchInfo> [|b| b.name.clone()],
     Wiki(Box<WikiPage>) => WikiPage,
-    Advisories(Box<Results<Advisory>>) => Results<Advisory>,
+    Advisories(Box<Results<Advisory>>) => Results<Advisory> [|a| a.ghsa.clone()],
     Advisory(Box<Advisory>) => Advisory,
-    Teams(Box<Results<TeamSummary>>) => Results<TeamSummary>,
+    Teams(Box<Results<TeamSummary>>) => Results<TeamSummary> [|t| t.slug.clone()],
     Team(Box<TeamDetail>) => TeamDetail,
     Gist(Box<Gist>) => Gist,
-    Gists(Box<Results<GistSummary>>) => Results<GistSummary>,
+    Gists(Box<Results<GistSummary>>) => Results<GistSummary> [|g| g.id.clone()],
     Blame(Box<Blame>) => Blame,
     Compare(Box<Comparison>) => Comparison,
-    Deployments(Box<DeploymentList>) => DeploymentList,
-    Milestones(Box<MilestoneList>) => MilestoneList,
-    Milestone(Box<MilestoneDetail>) => MilestoneDetail,
+    Deployments(Box<DeploymentList>) => DeploymentList [.results |d| (d.created_at.clone(), d.environment.clone(), d.oid.clone())],
+    Milestones(Box<MilestoneList>) => MilestoneList [.results |m| m.number],
+    Milestone(Box<MilestoneDetail>) => MilestoneDetail [.items |i| (i.repo.clone(), i.number)],
     Notifications(Box<Inbox>) => Inbox,
     #[serde(skip)]
     Sidebar(Box<Sidebar>) => Sidebar,
     #[serde(skip)]
     NewForm(Box<NewForm>) => NewForm,
-    Projects(Box<Results<ProjectSummary>>) => Results<ProjectSummary>,
-    Project(Box<Project>) => Project,
-    Alerts(Box<AlertList>) => AlertList,
+    Projects(Box<Results<ProjectSummary>>) => Results<ProjectSummary> [|p| p.number],
+    Project(Box<Project>) => Project [.items |i| i.id.clone()],
+    Alerts(Box<AlertList>) => AlertList [.results |a| a.number],
     Alert(Box<Alert>) => Alert,
     #[serde(skip)]
     Subscription(Box<Subscription>) => Subscription,
@@ -340,12 +386,12 @@ data! {
     Topics(Box<Topics>) => Topics,
     Topic(Box<Topic>) => Topic,
     StarLists(Box<Capped<StarList>>) => Capped<StarList>,
-    StarList(Box<ListPage>) => ListPage,
+    StarList(Box<ListPage>) => ListPage [.repos |r| r.repo.clone()],
     MyLists(Box<MyLists>) => MyLists,
     Packages(Box<PackageList>) => PackageList,
-    Package(Box<PackageDetail>) => PackageDetail,
+    Package(Box<PackageDetail>) => PackageDetail [.versions |v| v.id],
     SavedReplies(Box<Capped<SavedReply>>) => Capped<SavedReply>,
-    Labels(Box<Results<LabelInfo>>) => Results<LabelInfo>,
+    Labels(Box<Results<LabelInfo>>) => Results<LabelInfo> [|l| l.name.clone()],
     Owners(Box<Owners>) => Owners,
     Templates(Box<Templates>) => Templates,
     #[serde(skip)]
@@ -370,7 +416,7 @@ data! {
     #[serde(skip)]
     Unread(Unread) => Unread,
     #[serde(skip)]
-    Suggestions(Vec<RepoSummary>) => [RepoSummary],
+    Suggestions(Vec<RepoSummary>) as [RepoSummary],
 }
 
 impl Data {
@@ -394,28 +440,8 @@ impl Data {
     pub fn next_cursor(&self) -> Option<&str> {
         match self {
             Data::Search(r) => r.next(),
-            Data::History(r) => r.next.as_deref(),
-            Data::Users(r) => r.next.as_deref(),
-            Data::RepoPage(r) => r.next.as_deref(),
-            Data::Releases(r) => r.next.as_deref(),
-            Data::Runs(r) => r.next.as_deref(),
-            Data::Discussions(d) => d.results.next.as_deref(),
-            Data::Tags(r) => r.next.as_deref(),
-            Data::Branches(r) => r.next.as_deref(),
-            Data::Teams(r) => r.next.as_deref(),
-            Data::Gists(r) => r.next.as_deref(),
-            Data::Deployments(d) => d.results.next.as_deref(),
-            Data::Milestones(m) => m.results.next.as_deref(),
-            Data::Milestone(m) => m.items.next.as_deref(),
-            Data::Advisories(r) => r.next.as_deref(),
             Data::Notifications(i) => i.list.next.as_deref(),
-            Data::Projects(r) => r.next.as_deref(),
-            Data::Project(p) => p.items.next.as_deref(),
-            Data::Alerts(a) => a.results.next.as_deref(),
-            Data::StarList(l) => l.repos.next.as_deref(),
-            Data::Package(p) => p.versions.next.as_deref(),
-            Data::Labels(l) => l.next.as_deref(),
-            _ => None,
+            _ => self.paged_next(),
         }
     }
 
@@ -423,44 +449,12 @@ impl Data {
     pub fn append(&mut self, more: Data) {
         match (self, more) {
             (Data::Search(a), Data::Search(b)) => append(a, *b),
-            (Data::History(a), Data::History(b)) => extend(a, *b, |c| c.oid.clone()),
-            (Data::Users(a), Data::Users(b)) => extend(a, *b, |u| u.login.clone()),
-            (Data::RepoPage(a), Data::RepoPage(b)) => extend(a, *b, |r| r.repo.clone()),
-            (Data::Releases(a), Data::Releases(b)) => extend(a, *b, |r| r.tag.clone()),
-            (Data::Runs(a), Data::Runs(b)) => extend(a, *b, |r| r.id),
-            (Data::Discussions(a), Data::Discussions(b)) => {
-                extend(&mut a.results, b.results, |d| d.number);
-            }
-            (Data::Tags(a), Data::Tags(b)) => extend(a, *b, |t| t.name.clone()),
-            (Data::Branches(a), Data::Branches(b)) => extend(a, *b, |b| b.name.clone()),
-            (Data::Teams(a), Data::Teams(b)) => extend(a, *b, |t| t.slug.clone()),
-            (Data::Gists(a), Data::Gists(b)) => extend(a, *b, |g| g.id.clone()),
-            (Data::Deployments(a), Data::Deployments(b)) => {
-                extend(&mut a.results, b.results, |d| {
-                    (d.created_at.clone(), d.environment.clone(), d.oid.clone())
-                });
-            }
-            (Data::Milestones(a), Data::Milestones(b)) => {
-                extend(&mut a.results, b.results, |m| m.number);
-            }
-            (Data::Milestone(a), Data::Milestone(b)) => {
-                extend(&mut a.items, b.items, |i| (i.repo.clone(), i.number));
-            }
-            (Data::Advisories(a), Data::Advisories(b)) => extend(a, *b, |a| a.ghsa.clone()),
             (Data::Notifications(a), Data::Notifications(b)) => {
                 extend(&mut a.list, b.list, |n| n.id.clone());
                 a.searched += b.searched;
                 a.cut = b.cut;
             }
-            (Data::Projects(a), Data::Projects(b)) => extend(a, *b, |p| p.number),
-            (Data::Project(a), Data::Project(b)) => extend(&mut a.items, b.items, |i| i.id.clone()),
-            (Data::Alerts(a), Data::Alerts(b)) => extend(&mut a.results, b.results, |a| a.number),
-            (Data::StarList(a), Data::StarList(b)) => {
-                extend(&mut a.repos, b.repos, |r| r.repo.clone());
-            }
-            (Data::Package(a), Data::Package(b)) => extend(&mut a.versions, b.versions, |v| v.id),
-            (Data::Labels(a), Data::Labels(b)) => extend(a, *b, |l| l.name.clone()),
-            _ => {}
+            (this, more) => this.append_paged(more),
         }
     }
 }
@@ -514,8 +508,8 @@ mod tests {
             items: names.map(branch).collect(),
             next: next.then(|| "c".to_owned()),
         };
-        let mut shown = Data::Branches(Box::new(page(0..3, true)));
-        shown.append(Data::Branches(Box::new(page(2..5, false))));
+        let mut shown = Data::from(page(0..3, true));
+        shown.append(Data::from(page(2..5, false)));
         let Data::Branches(r) = shown else { panic!() };
         let names: Vec<&str> = r.items.iter().map(|b| b.name.as_str()).collect();
         assert_eq!(names, ["b0", "b1", "b2", "b3", "b4"]);

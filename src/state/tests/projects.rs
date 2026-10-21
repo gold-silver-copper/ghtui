@@ -26,7 +26,7 @@ pub(super) fn with_project(view: Option<u64>) -> State {
         project: roadmap(),
         view,
     });
-    open(&mut s, route, Data::Project(Box::new(p)));
+    open(&mut s, route, Data::from(p));
     s
 }
 
@@ -68,11 +68,7 @@ fn projects_are_reached_from_profiles_and_repositories() {
         projects(&s),
         Some(crate::route::Target::Page(linked.clone()))
     );
-    open(
-        &mut s,
-        linked,
-        Data::Projects(Box::new(fixtures::projects())),
-    );
+    open(&mut s, linked, Data::from(fixtures::projects()));
     let active = s
         .chrome()
         .active
@@ -131,7 +127,7 @@ fn with_lanes() -> State {
         project: roadmap(),
         view: None,
     });
-    open(&mut s, route, Data::Project(Box::new(p)));
+    open(&mut s, route, Data::from(p));
     s
 }
 
@@ -178,7 +174,7 @@ fn a_roadmap_puts_items_on_a_timeline() {
         project: roadmap(),
         view: Some(2),
     });
-    open(&mut s, route, Data::Project(Box::new(p)));
+    open(&mut s, route, Data::from(p));
     let text = page_text(&s);
     assert!(text.contains("On a timeline by Start date → Due"), "{text}");
     assert!(text.contains("Oct 2026"), "{text}");
@@ -253,7 +249,7 @@ fn moving_a_card_sets_its_column_and_the_board_follows() {
     // Until GitHub shows it moved, the board is fetched again.
     let key = DataKey::Project(roadmap(), None);
     let mut p: Project = fixtures::project();
-    fetched(&mut s, key.clone(), Data::Project(Box::new(p.clone())));
+    fetched(&mut s, key.clone(), Data::from(p.clone()));
     assert!(s.following.is_some());
     press(&mut s, "m");
     says(&s, "GitHub hasn't shown the last change yet");
@@ -261,7 +257,7 @@ fn moving_a_card_sets_its_column_and_the_board_follows() {
         it.values.retain(|(f, _)| f.as_str() != "F_status");
         it.values.push((NodeId::new("F_status"), done));
     }
-    fetched(&mut s, key, Data::Project(Box::new(p)));
+    fetched(&mut s, key, Data::from(p));
     assert!(s.following.is_none());
     let text = page_text(&s);
     let (done_at, issue_at) = (text.find(" Done "), text.find("Projects aren't there yet"));
@@ -309,7 +305,7 @@ fn a_project_you_cant_change_says_so() {
         project: roadmap(),
         view: None,
     });
-    open(&mut s, route, Data::Project(Box::new(p)));
+    open(&mut s, route, Data::from(p));
     assert!(press(&mut s, "m").is_empty());
     says(&s, "GitHub doesn't let you change this project");
     assert!(s.overlay.is_none());
@@ -352,7 +348,7 @@ fn items_are_added_by_reference_or_as_drafts() {
         l.number = 20;
     }
     p.items.items.push(added);
-    fetched(&mut s, key, Data::Project(Box::new(p)));
+    fetched(&mut s, key, Data::from(p));
     assert!(s.following.is_none());
 
     // A draft: its title typed, its text written in the composer.
@@ -393,7 +389,7 @@ fn items_are_archived_and_restored() {
     let mut gone = p.items.items.remove(0);
     gone.archived = true;
     p.archived.items.push(gone);
-    fetched(&mut s, key, Data::Project(Box::new(p)));
+    fetched(&mut s, key, Data::from(p));
     assert!(s.following.is_none());
 
     // Restoring asks nothing.
@@ -475,11 +471,11 @@ fn an_issues_field_is_set_from_its_sidebar() {
     let polled = crate::follow::poll(&mut s);
     assert!(polled.contains(&key), "{polled:?}");
     let mut projects = fixtures::in_projects();
-    let unchanged = Data::InProjects(Box::new(projects.clone()));
+    let unchanged = Data::from(projects.clone());
     fetched(&mut s, key.clone(), unchanged);
     assert!(s.following.is_some());
     projects.items[0].values[0].1 = done;
-    fetched(&mut s, key, Data::InProjects(Box::new(projects)));
+    fetched(&mut s, key, Data::from(projects));
     assert!(s.following.is_none());
     let said = "Roadmap (Done · Estimate: 3)";
     assert!(page_text(&s).contains(said), "{}", page_text(&s));
