@@ -98,6 +98,21 @@ enum Node {
     },
 }
 
+impl Node {
+    /// A list's children and brackets.
+    fn list(&self) -> Option<(&[u32], Option<u32>, Option<u32>)> {
+        match self {
+            Node::List {
+                open,
+                close,
+                children,
+                ..
+            } => Some((children, *open, *close)),
+            Node::Atom { .. } => None,
+        }
+    }
+}
+
 /// One side's tree as lists and atoms.
 #[derive(Debug, Default)]
 struct Side {
@@ -209,12 +224,7 @@ impl Side {
         }
         let text = is_text(n, source);
         if n.child_count() == 0 || text {
-            let token = self.token(n, source, text);
-            return Some(self.push(Node::Atom {
-                token,
-                kind: n.kind_id(),
-                text,
-            }));
+            return Some(self.atom(n, source, text));
         }
         let kind = n.kind_id();
         if depth >= MAX_DEPTH {
@@ -269,6 +279,13 @@ impl Side {
         Some(self.list(kind, None, None, children))
     }
 
+    /// `n` as one token.
+    fn atom(&mut self, n: TsNode<'_>, source: &str, text: bool) -> u32 {
+        let token = self.token(n, source, text);
+        let kind = n.kind_id();
+        self.push(Node::Atom { token, kind, text })
+    }
+
     /// A list without brackets; one child stands for itself.
     fn list(
         &mut self,
@@ -296,12 +313,7 @@ impl Side {
             let node = cursor.node();
             let text = is_text(node, source);
             if (node.child_count() == 0 || text) && node.start_byte() < node.end_byte() {
-                let token = self.token(node, source, text);
-                out.push(self.push(Node::Atom {
-                    token,
-                    kind: node.kind_id(),
-                    text,
-                }));
+                out.push(self.atom(node, source, text));
             } else if cursor.goto_first_child() {
                 continue;
             }
@@ -389,6 +401,19 @@ impl<'a> Matcher<'a> {
         self.sides.get(s).copied()?.nodes.get(n as usize)
     }
 
+    /// Old node `a` and new node `b`.
+    fn nodes(&self, a: u32, b: u32) -> Option<(&'a Node, &'a Node)> {
+        Some((self.node(0, a)?, self.node(1, b)?))
+    }
+
+    /// Pairs the brackets of two lists.
+    fn pair_brackets(&mut self, l: &Node, r: &Node) {
+        if let (Some((_, lo, lc)), Some((_, ro, rc))) = (l.list(), r.list()) {
+            self.pair(lo, ro);
+            self.pair(lc, rc);
+        }
+    }
+
     fn hash(&self, s: S, n: u32) -> u64 {
         (self.sides.get(s))
             .and_then(|side| side.hash.get(n as usize))
@@ -441,35 +466,22 @@ impl<'a> Matcher<'a> {
 
     /// Pairs the tokens of two equal subtrees.
     fn same(&mut self, a: u32, b: u32) {
-        let (x, y) = match (self.node(0, a), self.node(1, b)) {
-            (Some(Node::Atom { token: x, .. }), Some(Node::Atom { token: y, .. })) => {
-                (Some(*x), Some(*y))
+        match self.nodes(a, b) {
+            Some((Node::Atom { token: x, .. }, Node::Atom { token: y, .. })) => {
+                self.pair(Some(*x), Some(*y));
             }
-            (
-                Some(Node::List {
-                    open: lo,
-                    close: lc,
-                    children: lk,
-                    ..
-                }),
-                Some(Node::List {
-                    open: ro,
-                    close: rc,
-                    children: rk,
-                    ..
-                }),
-            ) if lk.len() == rk.len() => {
-                self.pair(*lo, *ro);
-                self.pair(*lc, *rc);
-                for (&x, &y) in lk.iter().zip(rk) {
-                    self.same(x, y);
+            Some((l, r)) => match (l.list(), r.list()) {
+                (Some((lk, ..)), Some((rk, ..))) if lk.len() == rk.len() => {
+                    self.pair_brackets(l, r);
+                    for (&x, &y) in lk.iter().zip(rk) {
+                        self.same(x, y);
+                    }
                 }
-                return;
-            }
-            // Equal hashes, different shapes: a collision; leave it novel.
-            _ => return,
-        };
-        self.pair(x, y);
+                // Equal hashes, different shapes: a collision; leave it novel.
+                _ => {}
+            },
+            None => {}
+        }
     }
 
     /// Matches what a sequence diff left unmatched between two anchors.
@@ -496,26 +508,12 @@ impl<'a> Matcher<'a> {
 
     /// Matches inside two paired nodes.
     fn inside(&mut self, a: u32, b: u32) -> Result<(), Fallback> {
-        match (self.node(0, a), self.node(1, b)) {
-            (
-                Some(Node::List {
-                    open: lo,
-                    close: lc,
-                    children: lk,
-                    ..
-                }),
-                Some(Node::List {
-                    open: ro,
-                    close: rc,
-                    children: rk,
-                    ..
-                }),
-            ) => {
-                self.pair(*lo, *ro);
-                self.pair(*lc, *rc);
+        match self.nodes(a, b) {
+            Some((l @ Node::List { children: lk, .. }, r @ Node::List { children: rk, .. })) => {
+                self.pair_brackets(l, r);
                 self.seq(lk, rk)
             }
-            (Some(Node::Atom { token: x, .. }), Some(Node::Atom { token: y, .. })) => {
+            Some((Node::Atom { token: x, .. }, Node::Atom { token: y, .. })) => {
                 let (x, y) = (*x, *y);
                 self.pair(Some(x), Some(y));
                 let texts = [self.text(0, x), self.text(1, y)];
@@ -540,38 +538,38 @@ impl<'a> Matcher<'a> {
     /// How much two nodes are alike, if they may pair at all.
     fn score(&mut self, a: u32, b: u32) -> Result<Option<f64>, Fallback> {
         let open = |s: S, t: &Option<u32>| t.map(|t| self.text(s, t));
-        let lists = match (self.node(0, a), self.node(1, b)) {
-            (
-                Some(Node::List {
+        let lists = match self.nodes(a, b) {
+            Some((
+                Node::List {
                     kind: k1,
                     open: o1,
                     close: c1,
                     ..
-                }),
-                Some(Node::List {
+                },
+                Node::List {
                     kind: k2,
                     open: o2,
                     close: c2,
                     ..
-                }),
-            ) => {
+                },
+            )) => {
                 // Bracketed lists pair by their brackets, whatever the node
                 // (`(a)` and the tuple `(a,)`); others by their kind.
                 let (o1, o2) = (open(0, o1), open(1, o2));
                 (k1 == k2 || o1.is_some()) && o1 == o2 && open(0, c1) == open(1, c2)
             }
-            (
-                Some(Node::Atom {
+            Some((
+                Node::Atom {
                     token: x,
                     kind: k1,
                     text: true,
-                }),
-                Some(Node::Atom {
+                },
+                Node::Atom {
                     token: y,
                     kind: k2,
                     text: true,
-                }),
-            ) if k1 == k2 => {
+                },
+            )) if k1 == k2 => {
                 let (x, y) = (*x, *y);
                 let (tx, ty) = (self.text(0, x), self.text(1, y));
                 let cost = tx.len() + ty.len();
@@ -689,13 +687,10 @@ impl<'a> Matcher<'a> {
             // replacement, so only the characters that differ stand out.
             if ls.len() == rs.len() {
                 for (&a, &b) in ls.iter().zip(rs) {
-                    let same_kind = match (self.node(0, a), self.node(1, b)) {
-                        (Some(Node::Atom { kind: x, .. }), Some(Node::Atom { kind: y, .. })) => {
-                            x == y
-                        }
-                        _ => false,
-                    };
-                    if same_kind {
+                    if let Some((Node::Atom { kind: x, .. }, Node::Atom { kind: y, .. })) =
+                        self.nodes(a, b)
+                        && x == y
+                    {
                         self.inside(a, b)?;
                     }
                 }
