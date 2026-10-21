@@ -30,19 +30,6 @@ fn conversation() -> State {
     sized(with_pr(), 200, 80)
 }
 
-/// Selects the first item whose link `pick` likes, going down with `}`.
-fn select(s: &mut State, pick: impl Fn(&Link) -> bool) {
-    for _ in 0..200 {
-        if let Screen::Page(p) = s.screen()
-            && p.selected_link().is_some_and(&pick)
-        {
-            return;
-        }
-        press(s, "<Down>");
-    }
-    panic!("nothing selectable like that:\n{}", text(s));
-}
-
 /// A review shows its state, its summary, and the threads it started
 /// with the lines they're on and their replies; Enter on a thread opens
 /// it in Files changed.
@@ -62,7 +49,7 @@ fn a_review_shows_its_threads_and_opens_them() {
     ] {
         assert!(page.contains(part), "{part:?} in\n{page}");
     }
-    select(
+    fixtures::select_by(
         &mut s,
         |l| matches!(l, Link::Url(u) if u.contains("discussion_r")),
     );
@@ -120,7 +107,7 @@ fn the_review_tab_lists_reviews_and_one_opens_its_page() {
         monalisa.zip(hubot).is_some_and(|(m, h)| m < h),
         "newest first:\n{page}"
     );
-    select(&mut s, |l| {
+    fixtures::select_by(&mut s, |l| {
         matches!(l, Link::Review(ReviewLink::Open { id: 2_000_002, .. }))
     });
     press(&mut s, "<Enter>");
@@ -141,7 +128,7 @@ fn the_review_tab_lists_reviews_and_one_opens_its_page() {
         page.contains("What changed since, from 1b2c3d4 to fedcba9"),
         "{page}"
     );
-    select(&mut s, |l| {
+    fixtures::select_by(&mut s, |l| {
         matches!(l, Link::Review(ReviewLink::AsReviewed { .. }))
     });
     let cmds = press(&mut s, "<Enter>");
@@ -164,7 +151,7 @@ fn the_review_tab_lists_reviews_and_one_opens_its_page() {
 #[test]
 fn a_reviews_summary_is_edited() {
     let mut s = conversation();
-    select(
+    fixtures::select_by(
         &mut s,
         |l| matches!(l, Link::Quote { author, body, .. } if author == "hubot" && body.starts_with("Yes")),
     );
@@ -210,13 +197,13 @@ fn a_long_review_folds() {
         "{}",
         text(&s)
     );
-    select(
+    fixtures::select_by(
         &mut s,
         |l| matches!(l, Link::Quote { body, .. } if body.starts_with("Yes")),
     );
     act(&mut s, Action::FoldToggle);
     assert_eq!(count(&s), 6, "{}", text(&s));
-    select(&mut s, |l| matches!(l, Link::Review(ReviewLink::Fold(_))));
+    fixtures::select_by(&mut s, |l| matches!(l, Link::Review(ReviewLink::Fold(_))));
     press(&mut s, "<Enter>");
     assert_eq!(count(&s), 2);
 }

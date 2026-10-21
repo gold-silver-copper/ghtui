@@ -100,6 +100,48 @@ pub(crate) fn sent_change(cmds: &[Cmd]) -> (&Change, &By) {
     }
 }
 
+/// Moves the selection down from the top to the first row of the page
+/// where `is`.
+pub(crate) fn select_where(state: &mut State, is: impl Fn(&crate::nav::PageScreen) -> bool) {
+    press(state, "<Home>");
+    for _ in 0..200 {
+        if let crate::state::Screen::Page(p) = state.screen()
+            && is(p)
+        {
+            return;
+        }
+        press(state, "<Down>");
+    }
+    panic!("no row is what's wanted");
+}
+
+/// Moves the selection down from the top to the first row whose link
+/// `is`.
+pub(crate) fn select_by(state: &mut State, is: impl Fn(&crate::ui::page::Link) -> bool) {
+    select_where(state, |p| p.selected_link().is_some_and(&is));
+}
+
+/// Selects the row on screen whose link is `link`.
+pub(crate) fn select_link(state: &mut State, link: &crate::ui::page::Link) {
+    let height = state.page_height();
+    let crate::state::Screen::Page(p) = state.screen_mut() else {
+        panic!("not on a page")
+    };
+    let page = p.page();
+    let i = (0..page.items.len())
+        .find(|&i| page.target(page.items[i].link) == Some(link))
+        .unwrap_or_else(|| panic!("no {link:?} row"));
+    p.select(i, height);
+}
+
+/// The open composer.
+pub(crate) fn composer(state: &mut State) -> &mut crate::compose::Compose {
+    match &mut state.overlay {
+        Some(crate::state::Overlay::Compose(c)) => c,
+        _ => panic!("no composer"),
+    }
+}
+
 /// GitHub's answer to `change`, sent from `by`.
 pub(crate) fn changed(
     state: &mut State,

@@ -22,18 +22,6 @@ fn page() -> Route {
     })
 }
 
-fn select_link(s: &mut State, link: &Link) {
-    let height = s.page_height();
-    let Screen::Page(p) = s.screen_mut() else {
-        panic!("not on a page")
-    };
-    let page = p.page();
-    let i = (0..page.items.len())
-        .find(|&i| page.target(page.items[i].link) == Some(link))
-        .unwrap_or_else(|| panic!("no {link:?} row"));
-    p.select(i, height);
-}
-
 /// `,e` on a release opens it as the form, filled from it; saving asks
 /// whether to update it or make it a draft again, sends the whole of it
 /// to the release's ID, and its page follows until it shows the edit.
@@ -148,7 +136,7 @@ fn an_asset_is_saved_where_you_say() {
     let mut s = with_release();
     let name = "ghtui-x86_64-linux.tar.gz";
     let asset = Link::Asset(name.into());
-    select_link(&mut s, &asset);
+    fixtures::select_link(&mut s, &asset);
     press(&mut s, "<Enter>");
     let sent = fixtures::sent::<assets::Save>(&press(&mut s, "<Enter>"));
     let of = Of {
@@ -163,7 +151,7 @@ fn an_asset_is_saved_where_you_say() {
         replace: false,
     };
     assert_eq!(sent, save);
-    select_link(&mut s, &asset);
+    fixtures::select_link(&mut s, &asset);
     press(&mut s, "<Enter>");
     press(&mut s, "Cargo.toml");
     let Some(Overlay::Picker(p)) = &s.overlay else {
@@ -206,7 +194,7 @@ fn assets_are_uploaded_and_deleted() {
     assert!(s.following.is_none());
 
     let name = "ghtui-aarch64-macos.tar.gz";
-    select_link(&mut s, &Link::Asset(name.into()));
+    fixtures::select_link(&mut s, &Link::Asset(name.into()));
     press(&mut s, "D");
     assert_eq!(overlay!(s, Ask).title, format!("Delete {name}?"));
     let sent = fixtures::sent::<assets::Delete>(&press(&mut s, "<Enter>"));

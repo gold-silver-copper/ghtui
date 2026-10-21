@@ -21,28 +21,11 @@ fn picker(s: &State) -> bool {
 
 /// Selects the row whose line has `text`.
 fn select(s: &mut State, text: &str) {
-    press(s, "<Home>");
-    for _ in 0..200 {
-        let crate::state::Screen::Page(p) = s.screen() else {
-            panic!("not a page");
-        };
-        let on = p
-            .selected
-            .and_then(|i| p.page().items.get(i))
-            .is_some_and(|item| {
-                let line = p
-                    .page()
-                    .lines
-                    .get(item.start)
-                    .map(crate::ui::page::PageLine::text);
-                line.is_some_and(|l| l.contains(text))
-            });
-        if on {
-            return;
-        }
-        press(s, "<Down>");
-    }
-    panic!("no row has {text}");
+    fixtures::select_where(s, |p| {
+        let item = p.selected.and_then(|i| p.page().items.get(i));
+        item.and_then(|item| p.page().lines.get(item.start))
+            .is_some_and(|line| line.text().contains(text))
+    });
 }
 
 /// The labels page, with GitHub's labels.

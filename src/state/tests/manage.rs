@@ -32,11 +32,6 @@ fn linked(number: u64, title: &str) -> Linked {
     }
 }
 
-/// The one change `cmds` sends.
-fn sent(cmds: &[Cmd]) -> (&Change, &By) {
-    fixtures::sent_change(cmds)
-}
-
 fn pick(s: &State) -> &Pick {
     match &s.overlay {
         Some(Overlay::Picker(p)) => match &p.kind {
@@ -45,22 +40,6 @@ fn pick(s: &State) -> &Pick {
         },
         _ => panic!("no picker"),
     }
-}
-
-/// Moves the selection, comment by comment, to the first where `is`.
-fn select(s: &mut State, is: impl Fn(&Link) -> bool) {
-    let selected = |s: &State| match s.screen() {
-        Screen::Page(p) => p.selected_link().is_some_and(&is),
-        Screen::Diff(_) => false,
-    };
-    press(s, "<Home>");
-    for _ in 0..200 {
-        if selected(s) {
-            return;
-        }
-        press(s, "<Down>");
-    }
-    assert!(selected(s), "nothing selected is what's wanted");
 }
 
 /// Runs the menu's row that `filter` finds.
@@ -85,7 +64,7 @@ fn a_conversation_is_locked_with_a_reason_and_unlocked_after_asking() {
         subject: NodeId::new("I_14"),
         reason: Some(LockReason::TooHeated),
     });
-    assert_eq!(sent(&cmds), (&lock, &By::Act(issue())));
+    assert_eq!(fixtures::sent_change(&cmds), (&lock, &By::Act(issue())));
     answer(&mut s, &cmds, Ok(()));
     assert!(s.following.is_some(), "it waits for GitHub to show it");
     issue_shows(&mut s, |d| {
@@ -105,7 +84,7 @@ fn a_conversation_is_locked_with_a_reason_and_unlocked_after_asking() {
     let unlock = Change::Manage(Manage::Unlock {
         subject: NodeId::new("I_14"),
     });
-    assert_eq!(sent(&cmds).0, &unlock);
+    assert_eq!(fixtures::sent_change(&cmds).0, &unlock);
 
     let mut s = issue_with(|d| d.sidebar.labels = false);
     act(&mut s, Action::Lock);
@@ -132,7 +111,7 @@ fn a_merged_pull_requests_branch_is_deleted_and_restored() {
         repo: ghtui(),
         branch: "syntax-palette".into(),
     });
-    assert_eq!(sent(&cmds).0, &delete);
+    assert_eq!(fixtures::sent_change(&cmds).0, &delete);
     answer(&mut s, &cmds, Ok(()));
     pr_shows(&mut s, |d| {
         same(d);
@@ -147,7 +126,7 @@ fn a_merged_pull_requests_branch_is_deleted_and_restored() {
         branch: "syntax-palette".into(),
         oid: pr_detail().head_oid,
     });
-    assert_eq!(sent(&cmds).0, &restore);
+    assert_eq!(fixtures::sent_change(&cmds).0, &restore);
 
     let mut s = pr_with(|d| d.state = PrState::Merged);
     act(&mut s, Action::DeleteBranch);
@@ -165,7 +144,10 @@ fn a_pull_request_converts_back_to_a_draft_after_asking() {
     let draft = Change::Manage(Manage::ConvertToDraft {
         pr: NodeId::new("PR_12"),
     });
-    assert_eq!(sent(&cmds), (&draft, &By::Confirm(Subject::Pr(pr()))));
+    assert_eq!(
+        fixtures::sent_change(&cmds),
+        (&draft, &By::Confirm(Subject::Pr(pr())))
+    );
     answer(&mut s, &cmds, Ok(()));
     pr_shows(&mut s, |d| d.state = PrState::Draft);
     assert!(s.following.is_none());
@@ -189,7 +171,7 @@ fn a_new_base_is_picked_from_the_branches() {
         pr: NodeId::new("PR_12"),
         base: "next".into(),
     });
-    assert_eq!(sent(&cmds).0, &base);
+    assert_eq!(fixtures::sent_change(&cmds).0, &base);
 }
 
 /// Reverting asks first; GitHub's new pull request opens.
@@ -241,7 +223,7 @@ fn an_issue_closes_as_a_duplicate_of_one_chosen() {
         issue: NodeId::new("I_14"),
         of: Some(at(3)),
     });
-    assert_eq!(sent(&cmds), (&close, &By::Act(issue())));
+    assert_eq!(fixtures::sent_change(&cmds), (&close, &By::Act(issue())));
     answer(&mut s, &cmds, Ok(()));
     issue_shows(&mut s, |d| d.state = IssueState::NotPlanned);
     assert!(s.following.is_none());
@@ -252,7 +234,7 @@ fn an_issue_closes_as_a_duplicate_of_one_chosen() {
 #[test]
 fn a_comment_is_hidden_with_a_reason_and_shows_folded() {
     let mut s = issue_with(|_| {});
-    select(
+    fixtures::select_by(
         &mut s,
         |l| matches!(l, Link::Quote { author, .. } if author == "hubot"),
     );
@@ -263,7 +245,7 @@ fn a_comment_is_hidden_with_a_reason_and_shows_folded() {
         comment: NodeId::new("IC_1"),
         reason: HideReason::OffTopic,
     });
-    assert_eq!(sent(&cmds), (&hide, &By::Act(issue())));
+    assert_eq!(fixtures::sent_change(&cmds), (&hide, &By::Act(issue())));
     answer(&mut s, &cmds, Ok(()));
     issue_shows(&mut s, |d| {
         if let Some(c) = d.first_comment() {
@@ -274,14 +256,14 @@ fn a_comment_is_hidden_with_a_reason_and_shows_folded() {
     let shown = screen_text(&s);
     assert!(shown.contains("Hidden as off-topic"), "{shown}");
     assert!(!shown.contains("120 columns, centered?"), "{shown}");
-    select(&mut s, |l| matches!(l, Link::Review(ReviewLink::Fold(_))));
+    fixtures::select_by(&mut s, |l| matches!(l, Link::Review(ReviewLink::Fold(_))));
     act(&mut s, Action::FoldToggle);
     assert!(screen_text(&s).contains("120 columns, centered?"));
     let cmds = act(&mut s, Action::HideComment);
     let unhide = Change::Manage(Manage::Unhide {
         comment: NodeId::new("IC_1"),
     });
-    assert_eq!(sent(&cmds).0, &unhide);
+    assert_eq!(fixtures::sent_change(&cmds).0, &unhide);
 }
 
 /// Sub-issues: one typed is added, one there is removed, and alt-↓ moves
@@ -301,7 +283,7 @@ fn sub_issues_and_what_blocks_an_issue_change_in_their_pickers() {
         sibling: at(3),
         before: false,
     });
-    assert_eq!(sent(&cmds).0, &moved);
+    assert_eq!(fixtures::sent_change(&cmds).0, &moved);
     assert!(matches!(pick(&s), Pick::SubIssues { .. }), "it stays open");
     answer(&mut s, &cmds, Ok(()));
     issue_shows(&mut s, |d| {
@@ -314,7 +296,7 @@ fn sub_issues_and_what_blocks_an_issue_change_in_their_pickers() {
         child: at(5),
         add: true,
     });
-    assert_eq!(sent(&cmds).0, &add);
+    assert_eq!(fixtures::sent_change(&cmds).0, &add);
     answer(&mut s, &cmds, Ok(()));
     issue_shows(&mut s, |d| {
         d.sub_issues = vec![linked(3, "Second"), linked(2, "First"), linked(5, "Third")].into();
@@ -328,7 +310,7 @@ fn sub_issues_and_what_blocks_an_issue_change_in_their_pickers() {
         child: at(3),
         add: false,
     });
-    assert_eq!(sent(&cmds).0, &remove);
+    assert_eq!(fixtures::sent_change(&cmds).0, &remove);
 
     let mut s = issue_with(|_| {});
     act(&mut s, Action::BlockedBy);
@@ -338,7 +320,7 @@ fn sub_issues_and_what_blocks_an_issue_change_in_their_pickers() {
         by: at(4),
         add: true,
     });
-    assert_eq!(sent(&cmds).0, &blocked);
+    assert_eq!(fixtures::sent_change(&cmds).0, &blocked);
     answer(&mut s, &cmds, Ok(()));
     issue_shows(&mut s, |d| d.blocked_by = vec![linked(4, "Blocker")].into());
     assert!(s.following.is_none());
@@ -357,7 +339,7 @@ fn a_branch_for_an_issue_is_made_then_checked_out() {
         repo: ghtui(),
         name: "14-pages-wrap-at-the-terminal-width".into(),
     });
-    assert_eq!(sent(&cmds), (&branch, &By::Act(issue())));
+    assert_eq!(fixtures::sent_change(&cmds), (&branch, &By::Act(issue())));
     answer(&mut s, &cmds, Ok(()));
     assert!(matches!(pick(&s), Pick::Checkout { .. }));
     let cmds = press(&mut s, "<Enter>");
@@ -387,7 +369,7 @@ fn an_issue_is_pinned_and_transferred() {
         issue: NodeId::new("I_14"),
         on: true,
     });
-    assert_eq!(sent(&cmds).0, &pin);
+    assert_eq!(fixtures::sent_change(&cmds).0, &pin);
     answer(&mut s, &cmds, Ok(()));
     issue_shows(&mut s, |d| d.pinned = true);
     assert!(s.following.is_none());
@@ -453,7 +435,7 @@ fn a_discussion_closes_with_a_reason() {
     });
     let of = DiscussionsOf::Repo(ghtui());
     assert_eq!(
-        sent(&cmds),
+        fixtures::sent_change(&cmds),
         (&close, &By::Confirm(Subject::Discussion(of.clone(), 14603)))
     );
     answer(&mut s, &cmds, Ok(()));

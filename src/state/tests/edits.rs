@@ -11,23 +11,10 @@ fn issue() -> Subject {
 
 /// Selects hubot's comment.
 fn on_hubot(s: &mut State) {
-    let selected = |s: &State| match s.screen() {
-        Screen::Page(p) => {
-            matches!(p.selected_link(), Some(Link::Quote { author, .. }) if author == "hubot")
-        }
-        Screen::Diff(_) => false,
-    };
-    for _ in 0..200 {
-        if selected(s) {
-            return;
-        }
-        press(s, "<Down>");
-    }
-    assert!(selected(s), "hubot's comment is selected");
-}
-
-fn sent(cmds: &[Cmd]) -> (&Change, &By) {
-    fixtures::sent_change(cmds)
+    fixtures::select_by(
+        s,
+        |l| matches!(l, Link::Quote { author, .. } if author == "hubot"),
+    );
 }
 
 fn hooray(count: u64, mine: bool) -> Reaction {
@@ -73,7 +60,10 @@ fn a_comment_is_edited_in_place_and_followed() {
         id: NodeId::new("IC_1"),
         body: "Agreed. 120 columns, centered?!".into(),
     };
-    assert_eq!(sent(&cmds), (&Change::Edit(edit), &By::Edit(issue())));
+    assert_eq!(
+        fixtures::sent_change(&cmds),
+        (&Change::Edit(edit), &By::Edit(issue()))
+    );
 
     answer(&mut s, &cmds, Ok(()));
     assert!(s.overlay.is_none());
@@ -151,7 +141,10 @@ fn deleting_a_comment_asks_first() {
         of: Written::IssueComment,
         id: NodeId::new("IC_1"),
     };
-    assert_eq!(sent(&cmds), (&Change::Edit(delete), &By::Confirm(issue())));
+    assert_eq!(
+        fixtures::sent_change(&cmds),
+        (&Change::Edit(delete), &By::Confirm(issue()))
+    );
     answer(&mut s, &cmds, Ok(()));
     assert!(s.overlay.is_none());
     says(&s, "Deleted");
@@ -222,7 +215,10 @@ fn reacting_toggles_yours() {
         content: ReactionContent::Hooray,
         on: false,
     };
-    assert_eq!(sent(&cmds), (&Change::Edit(take_back), &By::Edit(issue())));
+    assert_eq!(
+        fixtures::sent_change(&cmds),
+        (&Change::Edit(take_back), &By::Edit(issue()))
+    );
     assert!(s.overlay.is_none());
     answer(&mut s, &cmds, Ok(()));
     issue_shows(&mut s, |d| d.editable.reactions = vec![hooray(1, false)]);
@@ -236,7 +232,7 @@ fn reacting_toggles_yours() {
         content: ReactionContent::ThumbsUp,
         on: true,
     };
-    assert_eq!(sent(&cmds).0, &Change::Edit(give));
+    assert_eq!(fixtures::sent_change(&cmds).0, &Change::Edit(give));
 }
 
 /// The labels picker, as GitHub's sidebar has it: what's set checked and
@@ -277,7 +273,10 @@ fn labels_are_checked_then_applied() {
         add: vec![named("L_docs", "documentation")],
         remove: vec![named("L_ui", "ui")],
     };
-    assert_eq!(sent(&cmds), (&Change::Edit(labels), &By::Edit(issue())));
+    assert_eq!(
+        fixtures::sent_change(&cmds),
+        (&Change::Edit(labels), &By::Edit(issue()))
+    );
     says(&s, "Changing the labels");
     answer(&mut s, &cmds, Ok(()));
     issue_shows(&mut s, |_| {});
@@ -320,7 +319,7 @@ fn reviewers_include_teams() {
     ];
     assert_eq!(rows, names);
     let cmds = press(&mut s, "<Down><Enter><Down><Enter><C-s>");
-    let Change::Edit(Edit::Reviewers { users, teams, .. }) = sent(&cmds).0 else {
+    let Change::Edit(Edit::Reviewers { users, teams, .. }) = fixtures::sent_change(&cmds).0 else {
         panic!("{cmds:?}")
     };
     let names = |list: &[Named]| list.iter().map(|n| n.name.clone()).collect::<Vec<_>>();
@@ -347,7 +346,7 @@ fn milestone_and_title() {
     fixtures::served(&mut s, &cmds);
     // No milestone, Links (current), 1.0.
     let cmds = press(&mut s, "<Down><Down><Enter>");
-    let Change::Edit(Edit::Milestone { milestone, .. }) = sent(&cmds).0 else {
+    let Change::Edit(Edit::Milestone { milestone, .. }) = fixtures::sent_change(&cmds).0 else {
         panic!("{cmds:?}")
     };
     assert_eq!(milestone.as_ref().map(|m| m.id.as_str()), Some("M_4"));
@@ -366,5 +365,8 @@ fn milestone_and_title() {
         id: NodeId::new("I_14"),
         title: "Pages wrap at the terminal width!".into(),
     };
-    assert_eq!(sent(&cmds), (&Change::Edit(title), &By::Edit(issue())));
+    assert_eq!(
+        fixtures::sent_change(&cmds),
+        (&Change::Edit(title), &By::Edit(issue()))
+    );
 }

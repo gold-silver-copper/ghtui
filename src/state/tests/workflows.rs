@@ -6,19 +6,6 @@ use crate::ui::form::Row;
 use crate::ui::page::Link;
 use crate::workflows::{Dispatch, SaveArtifact};
 
-/// Selects the row on screen whose link is `link`.
-fn select_link(s: &mut State, link: &Link) {
-    let height = s.page_height();
-    let Screen::Page(p) = s.screen_mut() else {
-        panic!("not on a page")
-    };
-    let page = p.page();
-    let i = (0..page.items.len())
-        .find(|&i| page.target(page.items[i].link) == Some(link))
-        .unwrap_or_else(|| panic!("no {link:?} row"));
-    p.select(i, height);
-}
-
 const WORKFLOW: &str = "name: CI\non:\n  workflow_dispatch:\n    inputs:\n      outcome:\n        type: choice\n        options: [fail, pass]\n        default: fail\n      seconds:\n        type: string\n        default: \"60\"\n";
 
 /// `,E` on a workflow opens the form of its inputs, read from its file;
@@ -36,7 +23,7 @@ fn a_workflow_runs_by_hand_with_its_inputs_and_is_followed() {
     let blob = crate::fixtures::file(".github/workflows/ci.yml", WORKFLOW);
     let key = DataKey::Blob(ghtui(), "HEAD".into(), ".github/workflows/ci.yml".into());
     fetched(&mut s, key, Data::from(blob));
-    select_link(&mut s, &Link::Form(Row::Input("outcome".into())));
+    fixtures::select_link(&mut s, &Link::Form(Row::Input("outcome".into())));
     press(&mut s, "<Enter>");
     press(&mut s, "pass<Enter>");
     let cmds = act(&mut s, Action::RunWorkflow);
@@ -82,7 +69,7 @@ fn an_artifact_is_saved_where_you_say() {
         id: 31,
         name: "coverage-report".into(),
     };
-    select_link(&mut s, &artifact);
+    fixtures::select_link(&mut s, &artifact);
     press(&mut s, "<Enter>");
     let cmds = press(&mut s, "<Enter>");
     let saved = SaveArtifact {
@@ -94,7 +81,7 @@ fn an_artifact_is_saved_where_you_say() {
     };
     assert_eq!(crate::fixtures::sent::<SaveArtifact>(&cmds), saved);
     // Cargo.toml is there: the row asks to replace it.
-    select_link(&mut s, &artifact);
+    fixtures::select_link(&mut s, &artifact);
     press(&mut s, "<Enter>");
     press(&mut s, "Cargo.toml");
     let Some(Overlay::Picker(p)) = &s.overlay else {

@@ -11,16 +11,9 @@ use ratatui_textarea::CursorMove;
 use super::*;
 use crate::fixtures::{self};
 
-fn composer(s: &mut State) -> &mut crate::compose::Compose {
-    match &mut s.overlay {
-        Some(Overlay::Compose(c)) => c,
-        _ => panic!("no composer"),
-    }
-}
-
 /// Replaces the composer's text with `text`.
 fn write(s: &mut State, text: &str) {
-    let c = composer(s);
+    let c = fixtures::composer(s);
     c.input.select_all();
     c.input.cut();
     c.input.insert_str(text);
@@ -119,7 +112,7 @@ fn a_tag_with_a_release_is_refused() {
     let sent = press(&mut s, "<C-s>");
     assert_eq!(sent, []);
     assert_eq!(
-        composer(&mut s).sent.error.as_deref(),
+        fixtures::composer(&mut s).sent.error.as_deref(),
         Some("v0.2.0 has a release already")
     );
 }
@@ -180,9 +173,13 @@ fn your_gist_is_edited_and_its_page_follows() {
         "{text}"
     );
     press(&mut s, "c");
-    composer(&mut s).input.move_cursor(CursorMove::Bottom);
-    composer(&mut s).input.move_cursor(CursorMove::End);
-    composer(&mut s).input.insert_str("\n// more");
+    fixtures::composer(&mut s)
+        .input
+        .move_cursor(CursorMove::Bottom);
+    fixtures::composer(&mut s)
+        .input
+        .move_cursor(CursorMove::End);
+    fixtures::composer(&mut s).input.insert_str("\n// more");
     let sent = press(&mut s, "<C-s>");
     let update = fixtures::sent::<crate::gist::Update>(&sent);
     let change = &update.change;
@@ -286,7 +283,11 @@ fn a_wiki_page_is_edited_never_over_a_newer_one() {
     let key = DataKey::Wiki(ghtui(), Some("Home".into()));
     assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
     fetched(&mut s, key, Data::from(fixtures::wiki()));
-    assert!(composer(&mut s).text().starts_with("Welcome to the wiki."));
+    assert!(
+        fixtures::composer(&mut s)
+            .text()
+            .starts_with("Welcome to the wiki.")
+    );
     write(&mut s, "Welcome, all.");
     let sent = press(&mut s, "<C-s>");
     let wiki = fixtures::wiki();
@@ -302,7 +303,7 @@ fn a_wiki_page_is_edited_never_over_a_newer_one() {
     assert_eq!(sent, [fixtures::start(save.clone())]);
     let changed = "Home changed on GitHub since you opened it";
     fixtures::done(&mut s, save.clone(), Err(fixtures::failure(changed)));
-    let c = composer(&mut s);
+    let c = fixtures::composer(&mut s);
     assert!(!c.sent.sending);
     assert_eq!(c.sent.error.as_deref(), Some(changed));
     assert_eq!(c.text(), "Welcome, all.");

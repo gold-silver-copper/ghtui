@@ -45,18 +45,7 @@ fn asked(s: &State) -> String {
 
 /// Selects the first row that `is`.
 fn select(s: &mut State, is: impl Fn(&SettingLink) -> bool) {
-    let selected = |s: &State| match s.screen() {
-        Screen::Page(p) => matches!(p.selected_link(), Some(Link::Setting(l)) if is(l)),
-        Screen::Diff(_) => false,
-    };
-    press(s, "<Home>");
-    for _ in 0..200 {
-        if selected(s) {
-            return;
-        }
-        press(s, "<Down>");
-    }
-    assert!(selected(s), "nothing selected is what's wanted");
+    fixtures::select_by(s, |l| matches!(l, Link::Setting(l) if is(l)));
 }
 
 /// Writes `text` in the open composer, in place of what's there.
