@@ -85,13 +85,7 @@ impl Fux {
     /// Stops a server left under `runtime`, if one answers there.
     pub fn stop_at(bin: &Path, runtime: &Path) {
         if runtime.join("fux").join(format!("{SERVER}.sock")).exists() {
-            let _ = Command::new(bin)
-                .args(["str", SERVER, "server", "force-kill-server"])
-                .env_remove("FUX_PANE")
-                .env_remove("FUX_SERVER")
-                .env_remove("FUX_SOCKET")
-                .env("XDG_RUNTIME_DIR", runtime)
-                .output();
+            let _ = server(bin, runtime).arg("force-kill-server").output();
         }
     }
 
@@ -101,13 +95,8 @@ impl Fux {
 
     /// A fuxth program for this server: its words follow.
     fn command(&self) -> Command {
-        let mut cmd = Command::new(&self.bin);
-        cmd.args(["str", SERVER, "server"])
-            .env_remove("FUX_PANE")
-            .env_remove("FUX_SERVER")
-            .env_remove("FUX_SOCKET")
-            .env("XDG_RUNTIME_DIR", &self.runtime)
-            .env("PATH", &self.path);
+        let mut cmd = server(&self.bin, &self.runtime);
+        cmd.env("PATH", &self.path);
         cmd
     }
 
@@ -149,6 +138,17 @@ impl Fux {
             fux: self.clone(),
         })
     }
+}
+
+/// A fuxth program for the server under `runtime`, never your own.
+fn server(bin: &Path, runtime: &Path) -> Command {
+    let mut cmd = Command::new(bin);
+    cmd.args(["str", SERVER, "server"])
+        .env_remove("FUX_PANE")
+        .env_remove("FUX_SERVER")
+        .env_remove("FUX_SOCKET")
+        .env("XDG_RUNTIME_DIR", runtime);
+    cmd
 }
 
 fn check(out: &Output, what: &str) -> Result<()> {
