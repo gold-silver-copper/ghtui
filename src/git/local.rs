@@ -102,13 +102,11 @@ pub async fn branch(top: &Path, fallback: &str, name: &str) -> Result<Option<Bra
         return Ok(None);
     };
     let upstream = config(top, &format!("branch.{name}.remote")).await;
-    let remote = match config(top, &format!("branch.{name}.pushRemote")).await {
-        Some(remote) => remote,
-        None => match config(top, "remote.pushDefault").await {
-            Some(remote) => remote,
-            None => upstream.clone().unwrap_or_else(|| fallback.to_owned()),
-        },
-    };
+    let mut remote = config(top, &format!("branch.{name}.pushRemote")).await;
+    if remote.is_none() {
+        remote = config(top, "remote.pushDefault").await;
+    }
+    let remote = (remote.or_else(|| upstream.clone())).unwrap_or_else(|| fallback.to_owned());
     let url = config(top, &format!("remote.{remote}.url")).await;
     let owner = url.and_then(|u| github_repo_from_url(&u)).map(|r| r.owner);
     // GitHub's copy, fetched to compare with (none when it has none).

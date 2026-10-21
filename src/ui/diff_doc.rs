@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::diff::anchor::{Commentable, LinePos, RangeSource, Side};
+use crate::diff::anchor::{Commentable, LinePos, Side};
 use crate::diff::blocks::ChangeBlock;
 use crate::diff::moves::Move;
 use crate::diff::{
@@ -1269,7 +1269,6 @@ impl Doc {
             file.local_commentable = match &diff.content {
                 Content::Text(t) => Some(Commentable {
                     ranges: t.local_ranges.clone(),
-                    source: RangeSource::LocalFallback,
                 }),
                 _ => None,
             };

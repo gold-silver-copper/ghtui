@@ -46,7 +46,7 @@ impl Batch {
 
     /// Asks for every one of `names` at once, then reads the replies.
     async fn read(&mut self, names: &[&str]) -> Result<Vec<Option<Vec<u8>>>, GitError> {
-        let asked: String = names.iter().map(|name| format!("{name}\n")).collect();
+        let asked: String = names.iter().flat_map(|name| [*name, "\n"]).collect();
         self.stdin.write_all(asked.as_bytes()).await?;
         self.stdin.flush().await?;
         let mut replies = Vec::with_capacity(names.len());
