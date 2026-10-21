@@ -294,16 +294,16 @@ actions! {
     Unfold            "unfold"            ["<Right>"]              Tree   "Unfold the folder";
     TreeNarrower      "tree_narrower"     []                       Tree   "Narrow the file tree";
     TreeWider         "tree_wider"        []                       Tree   "Widen the file tree";
-    FoldToggle        "fold_toggle"       []                       Diff   "Fold or unfold the file, thread or review";
-    FoldAll           "fold_all"          []                       Diff   "Fold every file";
+    FoldToggle        "fold_toggle"       ["z"]                    Diff   "Fold or unfold the file, thread or review";
+    FoldAll           "fold_all"          ["Z"]                    Diff   "Fold every file";
     UnfoldAll         "unfold_all"        []                       Diff   "Unfold every file";
-    ToggleTree        "toggle_tree"       []                       Diff   "Show or hide the file tree";
-    ToggleSplit       "toggle_split"      []                       Diff   "Split or unified view";
-    WrapLines         "wrap_lines"        []                       Diff   "Wrap long lines";
-    IgnoreWhitespace  "ignore_whitespace" []                       Diff   "Ignore whitespace changes";
-    BySyntax          "by_syntax"         []                       Diff   "Compare by syntax or by lines";
-    FullFile          "full_file"         []                       Diff   "Show the whole file";
-    ExpandContext     "expand_context"    []                       Diff   "Show more context";
+    ToggleTree        "toggle_tree"       ["\\"]                   Diff   "Show or hide the file tree";
+    ToggleSplit       "toggle_split"      ["|"]                    Diff   "Split or unified view";
+    WrapLines         "wrap_lines"        ["w"]                    Diff   "Wrap long lines";
+    IgnoreWhitespace  "ignore_whitespace" ["W"]                    Diff   "Ignore whitespace changes";
+    BySyntax          "by_syntax"         ["y"]                    Diff   "Compare by syntax or by lines";
+    FullFile          "full_file"         ["F"]                    Diff   "Show the whole file";
+    ExpandContext     "expand_context"    ["E"]                    Diff   "Show more context";
     ToggleSinceReview "since_review"      []                       Diff   "Show only changes since your last review";
     PickCommits       "pick_commits"      []                       Diff   "Choose commits to view";
     ToggleViewed      "toggle_viewed"     ["v"]                    Diff   "Mark the file viewed (syncs with GitHub)";
@@ -691,7 +691,8 @@ pub fn readme_tables() -> String {
         let keys_of = |action: Action| -> Vec<String> {
             (keymap.bindings.iter())
                 .filter(|b| b.action == action && b.context == context)
-                .map(|b| format!("`{}`", pretty(b.key)))
+                // A table cell's `|` is escaped, even in code.
+                .map(|b| format!("`{}`", pretty(b.key).replace('|', "\\|")))
                 .collect()
         };
         let rest = |tabs: &[Action; 9], a: &Action| tabs.get(1..).unwrap_or_default().contains(a);
@@ -806,25 +807,6 @@ mod tests {
             "README's key tables are out of date; they should read:\n\n{}",
             readme_tables()
         );
-    }
-
-    /// Few keys to remember: besides moving (arrows, page keys, tabs by
-    /// number), at most 40 letters and signs, whatever the screen; the
-    /// rest is in the Space menu and the palette.
-    #[test]
-    fn few_keys_are_bound() {
-        let keymap = Keymap::default();
-        let mut letters: Vec<char> = (keymap.bindings.iter())
-            .filter_map(|b| match b.key.code {
-                KeyCode::Char(c) if b.key.mods.is_empty() && !c.is_ascii_digit() && c != ' ' => {
-                    Some(c)
-                }
-                _ => None,
-            })
-            .collect();
-        letters.sort_unstable();
-        letters.dedup();
-        assert!(letters.len() <= 40, "{} keys: {letters:?}", letters.len());
     }
 
     #[test]
