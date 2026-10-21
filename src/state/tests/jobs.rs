@@ -108,7 +108,7 @@ fn a_failed_job_opens_at_its_first_error() {
 #[test]
 fn a_running_jobs_log_is_checked_again() {
     let mut s = with_job(None);
-    let (mut job, _) = crate::fixtures::job();
+    let (mut job, _) = fixtures::job();
     job.outcome = crate::api::browse::CheckOutcome::Pending;
     let running = crate::api::browse::JobLog {
         running: true,
@@ -122,11 +122,11 @@ fn a_running_jobs_log_is_checked_again() {
     );
     let _ = s.push(Route::code(ghtui()));
     let cmds = s.back();
-    let keys = crate::fixtures::asked(&cmds);
+    let keys = fixtures::asked(&cmds);
     assert!(keys.contains(&DataKey::JobLog(ghtui(), 2)), "{keys:?}");
     assert!(keys.contains(&DataKey::Job(ghtui(), 2)), "{keys:?}");
     // A finished one isn't.
-    crate::fixtures::served(&mut s, &cmds);
+    fixtures::served(&mut s, &cmds);
     let _ = s.push(Route::code(ghtui()));
-    assert_eq!(crate::fixtures::asked(&s.back()), Vec::new());
+    assert_eq!(fixtures::asked(&s.back()), Vec::new());
 }

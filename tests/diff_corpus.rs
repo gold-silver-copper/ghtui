@@ -16,16 +16,10 @@ mod common;
 
 use std::path::Path;
 
-use common::{git, git_bytes};
+use common::{git, git_bytes, write};
 use ghtui::diff::anchor::{Commentable, parse_patch_headers};
 use ghtui::diff::{Content, FileDiff, Text};
 use ghtui::git::files::{FileStatus, MODE_SUBMODULE, MODE_SYMLINK, parse_raw};
-
-fn write(dir: &Path, path: &str, bytes: &[u8]) {
-    let path = dir.join(path);
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, bytes).unwrap();
-}
 
 fn lines(n: u32, f: impl Fn(u32) -> String) -> String {
     (1..=n).map(|i| format!("{}\n", f(i))).collect()

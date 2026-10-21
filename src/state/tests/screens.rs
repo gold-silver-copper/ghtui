@@ -67,7 +67,7 @@ pub(crate) fn fill_home(state: &mut State) {
         fixtures::repo_summary("gold-silver-copper/ghtui", 1234),
         fixtures::repo_summary("gold-silver-copper/fux", 87),
     ];
-    let repos = SearchResults::Repos(crate::fixtures::page(2, repos, None));
+    let repos = SearchResults::Repos(fixtures::page(2, repos, None));
     fixtures::section(state, 2, repos);
 }
 

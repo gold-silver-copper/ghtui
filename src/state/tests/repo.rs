@@ -11,7 +11,7 @@ fn an_empty_repository_shows_its_about() {
         let mut s = state();
         s.size = (width, 30);
         let _ = s.push(Route::code(ghtui()));
-        let mut o = crate::fixtures::overview();
+        let mut o = fixtures::overview();
         (o.entries, o.default_branch) = (Vec::new(), None);
         fetched(&mut s, DataKey::Repo(ghtui()), Data::from(o));
         let page = page(&s).page();
@@ -195,7 +195,7 @@ fn directories_and_files_open_from_the_repo() {
         ],
         "the listing, and each entry's latest commit"
     );
-    fetched(&mut state, tree, Data::Tree(crate::fixtures::tree()));
+    fetched(&mut state, tree, Data::Tree(fixtures::tree()));
     while !selected_text(&state).contains("README.md") {
         press(&mut state, "<Down>");
     }

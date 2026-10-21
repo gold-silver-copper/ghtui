@@ -37,7 +37,7 @@ fn a_release_is_edited_and_its_page_follows() {
     assert!(page_text(&s).contains("Editing v0.2.0"));
     assert!(page_text(&s).contains("Scope names in hunk headers"));
     press(&mut s, "c");
-    let c = crate::fixtures::composer(&mut s);
+    let c = fixtures::composer(&mut s);
     c.input.move_cursor(CursorMove::Top);
     c.input.move_cursor(CursorMove::End);
     c.input.insert_str(", fixed");

@@ -35,7 +35,7 @@ fn a_loading_conversation_stays_on_the_timeline() {
     let pr = pr();
     let route = Route::pr(pr.clone());
     let _ = state.push(route.clone());
-    crate::fixtures::pr_fetched(&mut state, &pr, Ok(pr_detail()));
+    fixtures::pr_fetched(&mut state, &pr, Ok(pr_detail()));
     let lines: Vec<String> = (state.build_page(&route, 100, NOW).lines.iter())
         .map(crate::ui::page::PageLine::text)
         .collect();
@@ -147,7 +147,7 @@ fn every_route_says_why_when_its_needs_fail() {
                 let result = if &key == failing {
                     err()
                 } else {
-                    Ok(crate::fixtures::sample(&key))
+                    Ok(fixtures::sample(&key))
                 };
                 update(&mut state, Msg::fetched(key, result));
             }

@@ -68,7 +68,7 @@ fn loading() -> (State, PrRef, crate::diff_job::JobId) {
         of,
         DiffPrefs::fit(120),
     ))));
-    crate::fixtures::pr_cached(&mut s, &pr, crate::fixtures::pr_detail());
+    fixtures::pr_cached(&mut s, &pr, fixtures::pr_detail());
     diff_msg(
         &mut s,
         &pr,

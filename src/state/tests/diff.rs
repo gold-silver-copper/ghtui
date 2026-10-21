@@ -89,13 +89,13 @@ fn the_review_tab_lists_drafts_and_threads_and_opens_them() {
         pr: pr.clone(),
         tab: PrTab::Review,
     }));
-    let cmds = crate::fixtures::pr_fetched(&mut s, &pr, Ok(crate::fixtures::pr_detail()));
+    let cmds = fixtures::pr_fetched(&mut s, &pr, Ok(fixtures::pr_detail()));
     assert!(cmds.contains(&Cmd::LoadReview(pr.clone())), "{cmds:?}");
     assert!(cmds.contains(&Cmd::Api(Api::FetchThreads(pr.clone()))));
     // The diff job lists the files.
     s.diffs.insert(of.clone(), fixture_diff());
     let review = ReviewState {
-        pending: vec![crate::fixtures::draft(1, 5, "Name it for what it holds")],
+        pending: vec![fixtures::draft(1, 5, "Name it for what it holds")],
         ..ReviewState::default()
     };
     diff_msg(&mut s, &pr, DiffMsg::ReviewLoaded(Ok(review)));
@@ -135,7 +135,7 @@ fn review_tab(drafts: Vec<crate::store::DraftComment>) -> (State, PrRef) {
         pr: pr.clone(),
         tab: PrTab::Review,
     }));
-    let _ = crate::fixtures::pr_fetched(&mut s, &pr, Ok(crate::fixtures::pr_detail()));
+    let _ = fixtures::pr_fetched(&mut s, &pr, Ok(fixtures::pr_detail()));
     s.diffs.insert(DiffOf::Pr(pr.clone()), fixture_diff());
     let review = ReviewState {
         pending: drafts,
@@ -164,11 +164,7 @@ fn select_draft(s: &mut State, id: u64) {
 /// there, and `,e` edits it in Files changed.
 #[test]
 fn the_review_tab_edits_and_deletes_drafts() {
-    let (mut s, pr) = review_tab(vec![crate::fixtures::draft(
-        1,
-        5,
-        "Name it for what it holds",
-    )]);
+    let (mut s, pr) = review_tab(vec![fixtures::draft(1, 5, "Name it for what it holds")]);
     select_draft(&mut s, 1);
     let cmds = press(&mut s, "D");
     assert!(
@@ -205,7 +201,7 @@ fn a_files_draft_opens_in_view() {
     let draft = crate::store::DraftComment {
         path: "zz/pending.rs".into(),
         line: None,
-        ..crate::fixtures::draft(1, 0, "Is this file needed?")
+        ..fixtures::draft(1, 0, "Is this file needed?")
     };
     let (mut s, pr) = review_tab(vec![draft]);
     select_draft(&mut s, 1);

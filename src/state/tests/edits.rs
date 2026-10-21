@@ -41,7 +41,7 @@ fn a_comment_is_edited_in_place_and_followed() {
         fixtures::asked(&opened) == [DataKey::Mentionable(ghtui())] && opened.len() == 1,
         "{opened:?}"
     );
-    let c = crate::fixtures::composer(&mut s);
+    let c = fixtures::composer(&mut s);
     assert_eq!(c.text(), "Agreed. 120 columns, centered?");
     let screen = screen_text(&s);
     let editor = screen
@@ -109,7 +109,7 @@ fn edits_are_offered_only_where_github_allows_them() {
     press(&mut s, "D");
     says(&s, "Select a comment first");
     press(&mut s, "e");
-    let c = crate::fixtures::composer(&mut s);
+    let c = fixtures::composer(&mut s);
     assert!(c.text().starts_with("On a 200-column terminal"));
 
     // Elsewhere, they say where they work.
@@ -233,7 +233,7 @@ fn the_labels_picker_lists_whats_set_first() {
     let mut s = issue_with(|_| {});
     let cmds = act(&mut s, Action::EditLabels);
     let key = DataKey::Sidebar(ghtui(), 14);
-    assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
+    assert!(fixtures::asks(&cmds, &key), "{cmds:?}");
     fixtures::served(&mut s, &cmds);
     press(&mut s, "<Down><Down><Enter><Up><Enter>");
     let screen = screen_text(&s);

@@ -24,7 +24,7 @@ fn palette_goes_places_and_runs_actions() {
     let cmds = fetched(&mut state, key, Data::Issue(None));
     let pr = PrRef::parse("a/b#9").unwrap();
     assert_eq!(route(&state), Route::pr(pr.clone()));
-    assert_eq!(cmds[0], crate::fixtures::fetch_pr(&pr));
+    assert_eq!(cmds[0], fixtures::fetch_pr(&pr));
     assert_eq!(state.screens.len(), 2, "replaced, not pushed");
 
     // A bare number resolves against the repo on screen.
@@ -64,7 +64,7 @@ fn an_older_suggestion_reply_does_not_replace_a_newer_one() {
     press(&mut state, "t");
     let cmds = update(&mut state, Msg::SuggestDue("rat".into()));
     assert_eq!(fixtures::asked(&cmds), [suggest("rat")]);
-    let repos = |name: &str| Data::Suggestions(vec![crate::fixtures::repo_summary(name, 5)]);
+    let repos = |name: &str| Data::Suggestions(vec![fixtures::repo_summary(name, 5)]);
     fixtures::fetched(&mut state, suggest("rat"), repos("o/ratatui"));
     fixtures::fetched(&mut state, suggest("ra"), repos("o/rails"));
     let sb = overlay!(state, Search);
@@ -239,7 +239,7 @@ fn search_box_jumps_searches_and_loads_more() {
     let key = DataKey::Suggest("bug".into());
     let cmds = update(&mut state, Msg::SuggestDue("bug".into()));
     assert!(fixtures::asks(&cmds, &key));
-    let bugs = vec![crate::fixtures::repo_summary("o/bugs", 5)];
+    let bugs = vec![fixtures::repo_summary("o/bugs", 5)];
     fixtures::fetched(&mut state, key, Data::Suggestions(bugs));
     let sb = overlay!(state, Search);
     let picks: Vec<nav::Pick> = state
@@ -260,7 +260,7 @@ fn search_box_jumps_searches_and_loads_more() {
     fetched(
         &mut state,
         key.clone(),
-        Data::from(crate::fixtures::issue_results(Some("c1"))),
+        Data::from(fixtures::issue_results(Some("c1"))),
     );
     press(&mut state, "<End>");
     assert!(selected_text(&state).starts_with("Load more"));
@@ -273,7 +273,7 @@ fn search_box_jumps_searches_and_loads_more() {
         })]
     );
     // The next page: other issues.
-    let mut more = crate::fixtures::issue_results(None);
+    let mut more = fixtures::issue_results(None);
     if let SearchResults::Issues(r) = &mut more {
         for i in &mut r.items {
             i.number += 100;
@@ -298,23 +298,23 @@ fn search_box_jumps_searches_and_loads_more() {
     fetched(
         &mut state,
         key.clone(),
-        Data::from(crate::fixtures::issue_results(Some("c2"))),
+        Data::from(fixtures::issue_results(Some("c2"))),
     );
     press(&mut state, "G<Enter>");
     assert_eq!(state.busy().as_deref(), Some("Loading more"));
     let cmds = press(&mut state, "r");
-    assert!(!crate::fixtures::asked(&cmds).is_empty(), "{cmds:?}");
+    assert!(!fixtures::asked(&cmds).is_empty(), "{cmds:?}");
     fetched(
         &mut state,
         key.clone(),
-        Data::from(crate::fixtures::issue_results(Some("c2"))),
+        Data::from(fixtures::issue_results(Some("c2"))),
     );
     update(
         &mut state,
         Msg::FetchedMore(
             key.clone(),
             "c2".into(),
-            Ok(Data::from(crate::fixtures::issue_results(None))),
+            Ok(Data::from(fixtures::issue_results(None))),
             None,
         ),
     );

@@ -98,7 +98,7 @@ fn a_failed_home_section_says_why_and_the_others_show() {
 fn a_failed_refresh_keeps_what_was_loaded() {
     let mut state = with_pr();
     let pr = pr();
-    crate::fixtures::pr_fetched(&mut state, &pr, Err(ApiError::RateLimited(42)));
+    fixtures::pr_fetched(&mut state, &pr, Err(ApiError::RateLimited(42)));
     let page = page_text(&state);
     let why = "Couldn't refresh: rate limited by GitHub; retry in 42s.";
     assert!(page.contains(why), "{page}");
@@ -126,7 +126,7 @@ fn tabs_that_dont_fit_say_how_many_are_hidden() {
 fn a_link_to_lines_opens_on_them() {
     let mut state = with_repo();
     let text: String = (1..=80).map(|n| format!("let x{n} = {n};\n")).collect();
-    let blob = crate::fixtures::file("src/main.rs", &text);
+    let blob = fixtures::file("src/main.rs", &text);
     let url = "https://github.com/gold-silver-copper/ghtui/blob/main/src/main.rs#L60-L62";
     let crate::route::Target::Page(route) = Dest::from_url(url).target else {
         panic!("{url}");

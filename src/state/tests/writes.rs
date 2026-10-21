@@ -33,7 +33,7 @@ fn a_release_is_made_from_a_new_tag_and_its_page_follows() {
         Some(&Route::Releases(releases::NewRelease(repo.clone())))
     );
     assert!(
-        crate::fixtures::asks(&cmds, &DataKey::Tags(repo.clone())),
+        fixtures::asks(&cmds, &DataKey::Tags(repo.clone())),
         "{cmds:?}"
     );
     let tags = Data::from(fixtures::tags());
@@ -125,7 +125,7 @@ fn a_thread_is_unsubscribed_and_followed() {
     let of = Watched::Thread(ghtui(), 14);
     let cmds = act(&mut s, Action::Watch);
     assert!(
-        crate::fixtures::asks(&cmds, &DataKey::Subscription(of.clone())),
+        fixtures::asks(&cmds, &DataKey::Subscription(of.clone())),
         "{cmds:?}"
     );
     let now = Data::from(fixtures::subscription());
@@ -142,7 +142,7 @@ fn a_thread_is_unsubscribed_and_followed() {
     let cmds = fixtures::done(&mut s, work, Ok(()));
     says(&s, "Unsubscribed from gold-silver-copper/ghtui#14");
     assert!(
-        crate::fixtures::asks(&cmds, &DataKey::Subscription(of.clone())),
+        fixtures::asks(&cmds, &DataKey::Subscription(of.clone())),
         "{cmds:?}"
     );
     let shown = Subscription {
@@ -278,7 +278,7 @@ fn a_wiki_page_is_edited_never_over_a_newer_one() {
     });
     assert_eq!(s.route(), Some(&route));
     let key = DataKey::Wiki(ghtui(), Some("Home".into()));
-    assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
+    assert!(fixtures::asks(&cmds, &key), "{cmds:?}");
     fetched(&mut s, key, Data::from(fixtures::wiki()));
     assert!(
         fixtures::composer(&mut s)

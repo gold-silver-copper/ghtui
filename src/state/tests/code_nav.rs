@@ -11,7 +11,7 @@ const LIB_RS: &str = "use std::io;\n\nfn main() {\n    helper(io::stdin());\n   
 fn with_code() -> State {
     let mut s = with_repo();
     let route = Route::blob(ghtui(), "main".into(), "src/lib.rs".into());
-    let blob = crate::fixtures::file("src/lib.rs", LIB_RS);
+    let blob = fixtures::file("src/lib.rs", LIB_RS);
     open(&mut s, route, Data::from(blob));
     s
 }
@@ -213,7 +213,7 @@ fn a_search_match_is_the_word_gd_reads() {
     long.push_str("fn last() {\n    valid_login(login).then(|| x);\n}\n");
     let mut s = with_repo();
     let route = Route::blob(ghtui(), "main".into(), "src/lib.rs".into());
-    let blob = crate::fixtures::file("src/lib.rs", &long);
+    let blob = fixtures::file("src/lib.rs", &long);
     open(&mut s, route, Data::from(blob));
     press(&mut s, "gOlast<Enter>ww/valid_login<Enter>");
     assert_eq!(

@@ -50,7 +50,7 @@ fn select(s: &mut State, is: impl Fn(&SettingLink) -> bool) {
 
 /// Writes `text` in the open composer, in place of what's there.
 fn write(s: &mut State, text: &str) {
-    let c = crate::fixtures::composer(s);
+    let c = fixtures::composer(s);
     let target = c.target.clone();
     let _ = s.compose(target, text);
 }
@@ -145,7 +145,7 @@ fn a_new_rule_refused_comes_back_to_edit() {
     assert!(matches!(sent(&cmds).0, SettingsChange::CreateRule { .. }));
     let refused = crate::api::ApiError::GraphQl(vec!["Name already protected: release/*".into()]);
     answer(&mut s, &cmds, Err(refused));
-    let c = crate::fixtures::composer(&mut s);
+    let c = fixtures::composer(&mut s);
     assert!(c.text().contains("release/*"));
     assert!(
         c.sent

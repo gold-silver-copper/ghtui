@@ -31,7 +31,7 @@ fn comment_links_scroll_to_the_comment() {
     let comment = "https://github.com/cli/cli/discussions/14603#discussioncomment-18765100";
     let _ = s.follow(&crate::ui::page::Link::Url(comment.into()));
     let of = crate::api::browse::DiscussionsOf::Repo(RepoId::new("cli", "cli"));
-    let detail = Data::from(crate::fixtures::discussion());
+    let detail = Data::from(fixtures::discussion());
     fetched(&mut s, DataKey::Discussion(of, 14603), detail);
     let p = page(&s);
     let line = p.page().anchors["discussioncomment-18765100"];
@@ -49,7 +49,7 @@ fn comment_links_scroll_to_the_comment() {
         ghtui()
     );
     let _ = s.follow(&crate::ui::page::Link::Url(url));
-    let issue = Data::Issue(Some(Box::new(crate::fixtures::issue())));
+    let issue = Data::Issue(Some(Box::new(fixtures::issue())));
     fetched(&mut s, DataKey::Issue(ghtui(), 14), issue);
     let p = page(&s);
     assert!(p.page().anchors.contains_key("issuecomment-1000001"));
@@ -70,7 +70,7 @@ fn a_comment_link_follows_its_comment_when_the_issue_refreshes() {
         );
         let _ = s.follow(&crate::ui::page::Link::Url(url));
         let key = DataKey::Issue(ghtui(), 14);
-        let cached = Data::Issue(Some(Box::new(crate::fixtures::issue())));
+        let cached = Data::Issue(Some(Box::new(fixtures::issue())));
         let _ = update(&mut s, Msg::fetched_at(key.clone(), Ok(cached), Some(0)));
         moved(&mut s);
         let shown = |s: &State| {
@@ -84,7 +84,7 @@ fn a_comment_link_follows_its_comment_when_the_issue_refreshes() {
             )
         };
         let at = shown(&s);
-        let mut issue = crate::fixtures::issue();
+        let mut issue = fixtures::issue();
         issue.body.push_str(&"\n\nMore.".repeat(20));
         fetched(&mut s, key, Data::Issue(Some(Box::new(issue))));
         (

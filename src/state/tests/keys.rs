@@ -76,7 +76,7 @@ fn arrows_move_comment_by_comment_and_enter_quotes() {
     let mut state = state();
     update(&mut state, Msg::Resize(100, 14));
     let _ = state.push(issue(14));
-    let mut issue = crate::fixtures::issue();
+    let mut issue = fixtures::issue();
     issue.body = (1..=30).map(|n| format!("Line {n}.\n\n")).collect();
     fetched(
         &mut state,
@@ -492,7 +492,7 @@ fn words_in_a_file() {
 fn gx_opens_the_address_under_the_cursor() {
     let mut s = super::with_repo();
     let route = Route::blob(super::ghtui(), "main".into(), "a.rs".into());
-    let blob = crate::fixtures::file("a.rs", "// See https://example.com/docs.\n");
+    let blob = fixtures::file("a.rs", "// See https://example.com/docs.\n");
     super::open(&mut s, route, crate::data::Data::from(blob));
     let opened = |s: &mut State| match super::act(s, Action::OpenLink).as_slice() {
         [crate::state::Cmd::OpenUrl(url)] => url.clone(),
@@ -551,7 +551,7 @@ fn log_lines_are_rows() {
     press(&mut s, "<Enter>");
     assert!(format!("{:?}", s.notices.shown()).contains("Line 3 of step 3"));
     let _ = s.go(crate::route::Dest::from_url(&url));
-    let (job, log) = crate::fixtures::job();
+    let (job, log) = fixtures::job();
     let ghtui = super::ghtui();
     super::fetched(
         &mut s,
@@ -615,14 +615,14 @@ fn pr_commits_step_and_go_up() {
 fn a_quote_reply_opens_under_the_comment() {
     use crate::ui::page::Link;
     let mut s = super::sized(super::with_issue(), 100, 40);
-    crate::fixtures::select_by(
+    fixtures::select_by(
         &mut s,
         |l| matches!(l, Link::Quote { author, .. } if author == "hubot"),
     );
     press(&mut s, "<Enter>");
     assert!(s.overlay.is_none(), "Enter doesn't start writing");
     press(&mut s, ">");
-    let c = crate::fixtures::composer(&mut s);
+    let c = fixtures::composer(&mut s);
     assert!(c.text().starts_with("> @hubot wrote:"), "{}", c.text());
     let screen = screen_text(&s);
     let row = |text: &str| screen.lines().position(|l| l.contains(text));
