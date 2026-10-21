@@ -600,12 +600,7 @@ fn a_rerun_job_is_followed_to_its_new_attempt() {
     job.run.rerun = Some(9);
     let cmds = update(
         &mut s,
-        Msg::Fetched {
-            key: DataKey::Job(ghtui(), 2),
-            result: Ok(Data::from(job)),
-            cached_at: None,
-            source: None,
-        },
+        Msg::fetched(DataKey::Job(ghtui(), 2), Ok(Data::from(job))),
     );
     assert!(
         matches!(s.route(), Some(Route::Runs(runs::Job { job: 9, .. }))),

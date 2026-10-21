@@ -158,15 +158,7 @@ fn a_picker_list_that_failed_says_why() {
         assert_eq!(press(&mut state, keys), vec![fetch(key.clone())]);
         let result = Err(ApiError::Network("timed out".into()));
         let cached_at = None;
-        let _ = update(
-            &mut state,
-            Msg::Fetched {
-                key: key.clone(),
-                result,
-                cached_at,
-                source: None,
-            },
-        );
+        let _ = update(&mut state, Msg::fetched_at(key.clone(), result, cached_at));
         let f = overlay!(state, Picker);
         let rows: Vec<String> = state
             .picker_rows(f)

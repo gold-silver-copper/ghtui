@@ -206,15 +206,7 @@ fn a_next_page_survives_a_failed_refresh() {
     let _ = press(&mut state, "r");
     let result = Err(ApiError::Network("offline".into()));
     let cached_at = None;
-    update(
-        &mut state,
-        Msg::Fetched {
-            key: key.clone(),
-            result,
-            cached_at,
-            source: None,
-        },
-    );
+    update(&mut state, Msg::fetched_at(key.clone(), result, cached_at));
     update(
         &mut state,
         Msg::FetchedMore(key.clone(), "h1".into(), Ok(page(None)), None),

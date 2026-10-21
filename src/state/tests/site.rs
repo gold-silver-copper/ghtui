@@ -178,12 +178,10 @@ fn packages_say_what_the_token_lacks() {
     let why = "Packages take your token's read:packages scope, which it lacks: `gh auth refresh -s read:packages` adds it";
     update(
         &mut s,
-        Msg::Fetched {
-            key: DataKey::Packages(of),
-            result: Err(crate::api::ApiError::Denied(why.into())),
-            cached_at: None,
-            source: None,
-        },
+        Msg::fetched(
+            DataKey::Packages(of),
+            Err(crate::api::ApiError::Denied(why.into())),
+        ),
     );
     let text = page_text(&s);
     assert!(text.contains("gh auth refresh -s read:packages"), "{text}");

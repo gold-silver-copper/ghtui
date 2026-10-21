@@ -7,12 +7,7 @@ use crate::route::{code, pulls, search};
 fn failed(state: &mut State, key: DataKey) {
     update(
         state,
-        Msg::Fetched {
-            key,
-            result: Err(crate::api::ApiError::Network("timed out".into())),
-            cached_at: None,
-            source: None,
-        },
+        Msg::fetched(key, Err(crate::api::ApiError::Network("timed out".into()))),
     );
 }
 
@@ -149,18 +144,12 @@ fn every_route_says_why_when_its_needs_fail() {
             let mut state = state();
             let _ = state.push(route.clone());
             for key in all.iter().cloned() {
-                let fail = &key == failing;
-                let msg = Msg::Fetched {
-                    result: if fail {
-                        err()
-                    } else {
-                        Ok(crate::fixtures::sample(&key))
-                    },
-                    key,
-                    cached_at: None,
-                    source: None,
+                let result = if &key == failing {
+                    err()
+                } else {
+                    Ok(crate::fixtures::sample(&key))
                 };
-                update(&mut state, msg);
+                update(&mut state, Msg::fetched(key, result));
             }
             let text = page_text(&state);
             let at = format!("{url}, {failing:?} failing:\n{text}");

@@ -451,12 +451,7 @@ fn spawn(
                 let send_cached = |gh: GitHub, key: DataKey| async {
                     let lookup = key.clone();
                     if let Some(c) = blocking(move || data::load::cached(&gh, &lookup)).await {
-                        let _ = tx.send(Msg::Fetched {
-                            key,
-                            result: Ok(c.value),
-                            cached_at: Some(c.fetched_at),
-                            source: None,
-                        });
+                        let _ = tx.send(Msg::fetched_at(key, Ok(c.value), Some(c.fetched_at)));
                     }
                 };
                 if cached && key.cache_first() {
@@ -631,12 +626,7 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
     }
     let msg = match cmd {
         Cmd::Api(Api::FetchViewer) => Msg::Viewer(api()),
-        Cmd::Api(Api::Fetch { key, .. }) => Msg::Fetched {
-            key: key.clone(),
-            result: api(),
-            cached_at: None,
-            source: None,
-        },
+        Cmd::Api(Api::Fetch { key, .. }) => Msg::fetched(key.clone(), api()),
         Cmd::Api(Api::FetchMore { key, after }) => {
             Msg::FetchedMore(key.clone(), after.clone(), api(), None)
         }

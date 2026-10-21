@@ -89,12 +89,11 @@ async fn answer(
         K::Search(kind, query) => {
             let found = |r: &crate::api::browse::SearchResults| {
                 if let Some(tx) = early {
-                    let _ = tx.send(Msg::Fetched {
-                        key: key.clone(),
-                        result: Ok(Data::from(r.clone())),
-                        cached_at: Some(crate::store::now()),
-                        source: None,
-                    });
+                    let _ = tx.send(Msg::fetched_at(
+                        key.clone(),
+                        Ok(Data::from(r.clone())),
+                        Some(crate::store::now()),
+                    ));
                 }
             };
             let results = gh.search_showing(*kind, query, after, found).await?;
@@ -106,12 +105,7 @@ async fn answer(
             let detail = gh.pull_request_alone(pr).await?;
             // Shown before how far behind its base it is arrives.
             if let Some(tx) = early.filter(|_| detail.state.is_open()) {
-                let _ = tx.send(Msg::Fetched {
-                    key: key.clone(),
-                    result: Ok(Data::from(detail.clone())),
-                    cached_at: None,
-                    source: None,
-                });
+                let _ = tx.send(Msg::fetched(key.clone(), Ok(Data::from(detail.clone()))));
             }
             Data::from(gh.with_behind(pr, detail).await)
         }

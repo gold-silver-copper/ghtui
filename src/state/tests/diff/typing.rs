@@ -111,15 +111,7 @@ fn saved_replies(s: &mut State, result: Result<Vec<(&str, &str)>, ApiError>) {
         Data::from(crate::api::model::Capped::from(replies))
     });
     let key = DataKey::SavedReplies;
-    update(
-        s,
-        Msg::Fetched {
-            key,
-            result,
-            cached_at: None,
-            source: None,
-        },
-    );
+    update(s, Msg::fetched(key, result));
 }
 
 /// ctrl-g lists your saved replies (asking GitHub for them), typing

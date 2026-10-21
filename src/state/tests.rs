@@ -39,15 +39,7 @@ fn mine_key(state: &State) -> DataKey {
 /// Home's second section's fetch failed.
 fn mine_failed(state: &mut State, err: ApiError) {
     let key = mine_key(state);
-    update(
-        state,
-        Msg::Fetched {
-            key,
-            result: Err(err),
-            cached_at: None,
-            source: None,
-        },
-    );
+    update(state, Msg::fetched(key, Err(err)));
 }
 
 /// Home with `n` of your pull requests and nothing else.

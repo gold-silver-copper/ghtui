@@ -84,15 +84,7 @@ fn a_failed_home_section_says_why_and_the_others_show() {
     state.data.remove(&key);
     let _ = state.load_visible(false);
     let err = ApiError::Network("connection refused".into());
-    update(
-        &mut state,
-        Msg::Fetched {
-            key,
-            result: Err(err),
-            cached_at: None,
-            source: None,
-        },
-    );
+    update(&mut state, Msg::fetched(key, Err(err)));
     let page = page_text(&state);
     let why = "Couldn't load your pull requests: network error: connection refused";
     assert!(page.contains(why), "{page}");

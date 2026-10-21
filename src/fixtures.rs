@@ -151,17 +151,7 @@ pub(crate) fn failure(why: &str) -> Failure {
 
 /// Delivers freshly fetched page data.
 pub(crate) fn fetched(state: &mut State, key: DataKey, data: Data) -> Vec<Cmd> {
-    let result = Ok(data);
-    let cached_at = None;
-    update(
-        state,
-        Msg::Fetched {
-            key,
-            result,
-            cached_at,
-            source: None,
-        },
-    )
+    update(state, Msg::fetched(key, Ok(data)))
 }
 
 /// What `cmds` fetch, by key.
@@ -197,17 +187,7 @@ pub(crate) fn pr_fetched(
     result: Result<PrDetail, ApiError>,
 ) -> Vec<Cmd> {
     let key = DataKey::Pr(pr.clone());
-    let result = result.map(Data::from);
-    let cached_at = None;
-    update(
-        state,
-        Msg::Fetched {
-            key,
-            result,
-            cached_at,
-            source: None,
-        },
-    )
+    update(state, Msg::fetched(key, result.map(Data::from)))
 }
 
 /// Puts pull request `pr` in the state as the disk cache had it.

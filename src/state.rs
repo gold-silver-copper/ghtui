@@ -108,6 +108,27 @@ pub enum Msg {
     Offline(crate::offline::Msg),
 }
 
+impl Msg {
+    /// A fetch's answer.
+    pub fn fetched(key: DataKey, result: Result<Data, ApiError>) -> Self {
+        Msg::fetched_at(key, result, None)
+    }
+
+    /// A fetch's answer, as the disk cache had it at `cached_at` if it did.
+    pub fn fetched_at(
+        key: DataKey,
+        result: Result<Data, ApiError>,
+        cached_at: Option<u64>,
+    ) -> Self {
+        Msg::Fetched {
+            key,
+            result,
+            cached_at,
+            source: None,
+        }
+    }
+}
+
 /// What arrives for a PR's diff: from its job, GitHub, or the drafts.
 #[derive(Debug)]
 pub enum DiffMsg {

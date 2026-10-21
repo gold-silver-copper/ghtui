@@ -22,12 +22,11 @@ fn cached_data_shows_while_fetching() {
     let _ = state.push(Route::user("octocat"));
     update(
         &mut state,
-        Msg::Fetched {
-            key: DataKey::Profile("octocat".into()),
-            result: Ok(Data::from(crate::fixtures::profile())),
-            cached_at: Some(0),
-            source: None,
-        },
+        Msg::fetched_at(
+            DataKey::Profile("octocat".into()),
+            Ok(Data::from(crate::fixtures::profile())),
+            Some(0),
+        ),
     );
     assert!(page(&state).page().lines[0].text().contains("The Octocat"));
     let busy = state.busy().unwrap_or_default();
@@ -52,12 +51,7 @@ fn failed_refresh_keeps_cached_data() {
 fn a_refresh_error_shared_by_needs_is_said_once() {
     let mut state = with_prs(2);
     let repos = state.home[2].search.clone().unwrap().key();
-    let fetched = |result| Msg::Fetched {
-        key: repos.clone(),
-        result,
-        cached_at: None,
-        source: None,
-    };
+    let fetched = |result| Msg::fetched(repos.clone(), result);
     let none = SearchResults::Repos(crate::api::browse::Results::default());
     update(&mut state, fetched(Ok(Data::from(none))));
     let _ = state.load_visible(true);
@@ -162,12 +156,7 @@ fn a_fresh_copy_keeps_the_selected_issue() {
     };
     update(
         &mut state,
-        Msg::Fetched {
-            key: key.clone(),
-            result: Ok(list(&[14, 11, 8])),
-            cached_at: Some(0),
-            source: None,
-        },
+        Msg::fetched_at(key.clone(), Ok(list(&[14, 11, 8])), Some(0)),
     );
     while !selected_text(&state).contains("Issue 11") {
         press(&mut state, "<Down>");
@@ -191,12 +180,11 @@ fn an_edited_comment_stays_selected() {
     let mut issue = crate::fixtures::issue();
     update(
         &mut s,
-        Msg::Fetched {
-            key: key.clone(),
-            result: Ok(Data::Issue(Some(Box::new(issue.clone())))),
-            cached_at: Some(0),
-            source: None,
-        },
+        Msg::fetched_at(
+            key.clone(),
+            Ok(Data::Issue(Some(Box::new(issue.clone())))),
+            Some(0),
+        ),
     );
     let Screen::Page(p) = s.screen_mut() else {
         panic!("not on a page")
