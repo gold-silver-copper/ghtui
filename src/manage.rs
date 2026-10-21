@@ -27,7 +27,7 @@ use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::fuzzy_score;
-use crate::state::{Cmds, Overlay, Screen, State};
+use crate::state::{Cmds, Overlay, State};
 use crate::ui::page::Link;
 use crate::work::{self, Cx, Failure, Job};
 
@@ -98,9 +98,7 @@ struct Said {
 
 /// The comment selected in the conversation on screen.
 fn selected_comment(state: &State, about: &Subject) -> Result<Said, String> {
-    let Screen::Page(p) = state.screen() else {
-        return Err("Hiding works on a comment in a conversation".into());
-    };
+    let p = (state.screen().page()).ok_or("Hiding works on a comment in a conversation")?;
     let next = state.first_key(Action::Down);
     // A comment's box, or a hidden one's fold, which its anchor names.
     let (by, number) = match p.selected_link() {
@@ -398,10 +396,6 @@ fn pick(pick: Pick) -> Result<Step, String> {
     Ok(Step::Pick(crate::picker::Kind::Manage(pick)))
 }
 
-fn send(state: &mut State, change: Change, about: Subject) -> Cmds {
-    crate::act::take(state, Ok(Step::Send(change, about)))
-}
-
 /// The menu's rows where they apply.
 pub fn doables(state: &State, out: &mut Vec<Doable>) {
     let row = |action, label: &str| {
@@ -423,7 +417,7 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
         "Lock the conversation"
     };
     out.push(row(Action::Lock, lock));
-    if let Screen::Page(_) = state.screen() {
+    if state.screen().page().is_some() {
         out.push(row(
             Action::HideComment,
             "Hide the selected comment, or unhide it",
@@ -1063,7 +1057,8 @@ fn move_sub_issue(
         sibling,
         before: up,
     });
-    send(state, change, Subject::Issue(at.repo.clone(), at.number))
+    let about = Subject::Issue(at.repo.clone(), at.number);
+    crate::act::take(state, Ok(Step::Send(change, about)))
 }
 
 /// A change chosen in a confirmation that isn't simply sent: a revert or
@@ -1099,10 +1094,7 @@ pub fn confirmed(state: &mut State, change: &Change, about: &Subject) -> Option<
         .into(),
         _ => return None,
     };
-    if let Some(Overlay::Ask(c)) = &mut state.overlay {
-        c.sent.sending = true;
-        c.sent.error = None;
-    }
+    crate::forms::sending(state);
     Some(work::start(work))
 }
 
@@ -1151,15 +1143,14 @@ pub fn start(state: &mut State, s: &Starting, text: &str) -> Cmds {
     let (title, body) = crate::create::templates::split(text);
     let Some(Overlay::Compose(c)) = &mut state.overlay else { return Cmds::new() };
     if title.is_empty() {
-        c.sent.error = Some("Write its title on the first line".into());
+        c.sent.fail("Write its title on the first line".into());
         return Cmds::new();
     }
     if body.trim().is_empty() {
-        c.sent.error = Some("Write its text below the title".into());
+        c.sent.fail("Write its text below the title".into());
         return Cmds::new();
     }
-    c.sent.sending = true;
-    c.sent.error = None;
+    c.sent.start();
     work::start(Start {
         repo: s.repo.clone(),
         repo_id: s.repo_id.clone(),
@@ -1260,10 +1251,7 @@ impl Job for Start {
             Err(why) => {
                 let text = format!("GitHub didn't start the discussion: {why}");
                 match &mut state.overlay {
-                    Some(Overlay::Compose(c)) => {
-                        c.sent.sending = false;
-                        c.sent.error = Some(text);
-                    }
+                    Some(Overlay::Compose(c)) => c.sent.fail(text),
                     _ => state.error(text),
                 }
                 return Cmds::new();
@@ -1292,10 +1280,7 @@ fn close_confirm(state: &mut State) {
 /// still open.
 fn refused(state: &mut State, text: String) -> Cmds {
     match &mut state.overlay {
-        Some(Overlay::Ask(c)) if c.sent.sending => {
-            c.sent.sending = false;
-            c.sent.error = Some(text);
-        }
+        Some(Overlay::Ask(c)) if c.sent.sending => c.sent.fail(text),
         _ => state.error(text),
     }
     Cmds::new()
