@@ -29,29 +29,25 @@ pub fn lines(body: &str, width: usize, original: Option<&[String]>) -> Vec<Comme
     markdown::render_comment(&mut page, body, original);
     let width = width.max(1);
     let mut out = Vec::new();
-    for line in &page.lines {
+    for line in std::mem::take(&mut page.lines) {
         let mut segs = Vec::new();
         if line.indent > 0 {
             segs.push(Seg::new(" ".repeat(usize::from(line.indent)), Role::Body));
         }
-        segs.extend(line.segs.iter().cloned());
+        segs.extend(line.segs);
         // Code, tables and a page's rules can be wider than a thread.
-        for segs in wrap_segs(segs, width) {
+        for mut segs in wrap_segs(segs, width) {
             let mut links: Vec<String> = Vec::new();
-            let segs = segs
-                .into_iter()
-                .map(|seg| {
-                    let url = seg.link.and_then(|l| page.target(l)).and_then(|l| l.url());
-                    let link = url.map(|url| match links.iter().position(|u| u == url) {
-                        Some(i) => idx(i),
-                        None => {
-                            links.push(url.to_owned());
-                            idx(links.len().saturating_sub(1))
-                        }
-                    });
-                    Seg::linked(seg.text(), seg.role.clone(), link)
-                })
-                .collect();
+            for seg in &mut segs {
+                let url = seg.link.and_then(|l| page.target(l)).and_then(|l| l.url());
+                seg.link = url.map(|url| match links.iter().position(|u| u == url) {
+                    Some(i) => idx(i),
+                    None => {
+                        links.push(url.to_owned());
+                        idx(links.len().saturating_sub(1))
+                    }
+                });
+            }
             out.push(CommentLine {
                 segs,
                 tone: line.tone,

@@ -10,6 +10,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
+use std::borrow::Borrow;
 use std::ops::Range;
 
 use crate::diff::anchor::{LinePos, Side};
@@ -145,10 +146,9 @@ impl DiffView<'_> {
                 };
                 let room =
                     usize::from(area.width).saturating_sub(indent + text::width(&header.range) + 1);
-                let scope: Vec<&str> = header.scope.iter().map(String::as_str).collect();
                 Line::from(vec![
                     Span::styled(format!("{pad}{} ", header.range), theme.meta(quiet_bg)),
-                    Span::styled(scope_label(&scope, room), theme.body(quiet_bg)),
+                    Span::styled(scope_label(&header.scope, room), theme.body(quiet_bg)),
                 ])
                 .render(area, buf);
             }
@@ -187,7 +187,7 @@ impl DiffView<'_> {
                     FoldReason::Formatting => "Formatting-only change",
                     FoldReason::Seen => "Unchanged since your review",
                 };
-                let lines = format!("{lines} {}", crate::ui::text::noun(lines, "line"));
+                let lines = format!("{lines} {}", text::noun(lines, "line"));
                 let what = Span::styled(format!("{pad}⋯ {what}, {lines} · "), theme.meta(quiet_bg));
                 action(buf, what, self.keys.show, "to show");
             }
@@ -596,7 +596,7 @@ impl DiffView<'_> {
         let inner = inset(card, PAD_X, 0);
         let room = usize::from(inner.width);
         let keys = self.keys;
-        let mut spans: Vec<Span<'static>> = Vec::new();
+        let mut spans = Vec::new();
         match &row.kind {
             ThreadRowKind::Summary => {
                 let (mark, fg) = if ann.resolved {
@@ -609,8 +609,8 @@ impl DiffView<'_> {
                 if ann.comments.iter().any(|c| c.new) {
                     chips::push(&mut spans, ctx, "New", Bg::TertiaryContainer, bg);
                 }
-                let n = ann.comments.len();
-                let tail = format!("  {n} comment{}", if n == 1 { "" } else { "s" });
+                let n = ann.comments.len() as u64;
+                let tail = format!("  {n} {}", text::noun(n, "comment"));
                 let used = text::spans_width(&spans);
                 let text_room = room.saturating_sub(used + text::width(&tail));
                 spans.push(Span::styled(
@@ -665,18 +665,11 @@ impl DiffView<'_> {
             // Rendered Markdown: code and a suggestion's lines on their
             // own tint.
             ThreadRowKind::Body => {
-                let tint = |d| {
-                    if cursor {
-                        Bg::DiffSelected(d)
-                    } else {
-                        Bg::Diff(d)
-                    }
-                };
                 let bg = match row.line.tone {
                     Tone::Plain => bg,
-                    Tone::Code | Tone::Marked => tint(DiffBg::Context),
-                    Tone::Added => tint(DiffBg::Added),
-                    Tone::Removed => tint(DiffBg::Removed),
+                    Tone::Code | Tone::Marked => line_bg(DiffBg::Context, cursor),
+                    Tone::Added => line_bg(DiffBg::Added, cursor),
+                    Tone::Removed => line_bg(DiffBg::Removed, cursor),
                 };
                 fill(buf, inner, theme, bg);
                 let segs = row.line.segs.iter();
@@ -763,7 +756,7 @@ impl DiffView<'_> {
 
 /// `impl Doc › fn offset`, in at most `room` columns: outer scopes go
 /// first, so the innermost (where you are) stays named.
-fn scope_label(scope: &[&str], room: usize) -> String {
+fn scope_label<S: Borrow<str>>(scope: &[S], room: usize) -> String {
     (0..scope.len())
         .map(|skip| {
             let shown = scope.get(skip..).unwrap_or_default().join(" › ");
@@ -774,7 +767,7 @@ fn scope_label(scope: &[&str], room: usize) -> String {
             }
         })
         .find(|label| text::width(label) <= room)
-        .unwrap_or_else(|| text::truncate(scope.last().copied().unwrap_or_default(), room))
+        .unwrap_or_else(|| text::truncate(scope.last().map_or("", Borrow::borrow), room))
 }
 
 /// Where a thread's card goes on a row of the diff `area`: from the sign
@@ -1111,7 +1104,7 @@ mod tests {
         assert_eq!(scope_label(&scope, 40), "impl Doc › fn offset");
         assert_eq!(scope_label(&scope, 15), "… › fn offset");
         assert_eq!(scope_label(&scope, 6), "fn of…");
-        assert_eq!(scope_label(&[], 10), "");
+        assert_eq!(scope_label::<&str>(&[], 10), "");
     }
 
     /// A bidi override in code ("Trojan Source") is shown, not obeyed or

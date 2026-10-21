@@ -581,18 +581,18 @@ impl DocFile {
     fn insert_extras(&mut self, from: usize, extras: &Extras<'_>, wrap: usize) {
         let (anns, open) = (extras.anns, extras.open);
         let tail = self.rows.split_off(from);
+        let mut here: Vec<u32> = Vec::new();
         for row in tail {
             self.rows.push(row);
-            let entries: Vec<u32> = row.entries().collect();
             for (mv, range, is_from) in extras.moves {
-                if entries.contains(&range.start) {
+                if row.entries().any(|e| e == range.start) {
                     self.rows.push(Row::Moved {
                         mv: *mv,
                         from: *is_from,
                     });
                 }
             }
-            let mut here: Vec<u32> = Vec::new();
+            here.clear();
             for pos in self.shows(row) {
                 for i in self.annotations_at(pos) {
                     if !here.contains(i) {
@@ -600,7 +600,7 @@ impl DocFile {
                     }
                 }
             }
-            for i in here {
+            for &i in &here {
                 if let Some((_, ann)) = anns.iter().find(|(j, _)| *j == i)
                     && open(ann)
                 {
@@ -1566,14 +1566,14 @@ impl Doc {
     pub fn loading_in_view(&self, top: Pos, count: usize) -> Vec<usize> {
         let first = self.to_global(top);
         let end = (first + count).min(self.total);
-        let mut out = Vec::new();
-        for (i, (file, &start)) in self.files.iter().zip(&self.starts).enumerate() {
-            let shown = start < end && start + file.rows.len() > first;
-            if shown && file.diff.is_none() && !file.collapsed() {
-                out.push(i);
-            }
-        }
-        out
+        let files = self.files.iter().zip(&self.starts).enumerate();
+        files
+            .filter(|(_, (file, start))| {
+                let shown = **start < end && **start + file.rows.len() > first;
+                shown && file.diff.is_none() && !file.collapsed()
+            })
+            .map(|(i, _)| i)
+            .collect()
     }
 
     /// Added and removed lines across loaded files, under the current

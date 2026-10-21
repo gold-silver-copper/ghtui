@@ -505,8 +505,8 @@ impl Renderer<'_> {
             tone: Tone::Code,
             frame,
             indent,
-            right: Vec::new(),
             fixed: 1,
+            ..PageLine::default()
         };
         self.page.push(line(Vec::new()));
         for mut segs in highlighted(&code, lang) {
@@ -533,8 +533,8 @@ impl Renderer<'_> {
             tone,
             frame,
             indent,
-            right: Vec::new(),
             fixed: 1,
+            ..PageLine::default()
         };
         let title = vec![Seg::new("Suggested change", Role::Meta)];
         self.page.add(frame, indent, title, Vec::new());
@@ -658,6 +658,9 @@ pub(crate) fn highlighted(code: &str, lang: Option<Language>) -> Vec<Vec<Seg>> {
 }
 
 fn decode_entities(s: &str) -> String {
+    if !s.contains('&') {
+        return s.to_owned();
+    }
     s.replace("&nbsp;", " ")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
