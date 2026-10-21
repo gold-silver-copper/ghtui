@@ -7,6 +7,7 @@
 //! wait for the batch that covers their file, so a partial clone never falls
 //! back to fetching blobs one at a time.
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -410,14 +411,13 @@ pub async fn map_outdated(
     let mut maps = HashMap::new();
     let mut mapped = Vec::with_capacity(threads.len());
     for t in threads {
-        let key = (t.commit.as_str(), t.path.as_str());
-        if !maps.contains_key(&key) {
-            let map = line_map(repo, reader, head, &t.path, &t.commit).await;
-            maps.insert(key, map);
-        }
-        let to = maps
-            .get(&key)
-            .and_then(|m| m.as_ref()?.get(&t.line).copied());
+        let map = match maps.entry((t.commit.as_str(), t.path.as_str())) {
+            Entry::Occupied(known) => known.into_mut(),
+            Entry::Vacant(new) => {
+                new.insert(line_map(repo, reader, head, &t.path, &t.commit).await)
+            }
+        };
+        let to = map.as_ref().and_then(|m| m.get(&t.line).copied());
         mapped.push((t.thread.clone(), to));
     }
     mapped
