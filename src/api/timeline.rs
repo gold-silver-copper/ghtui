@@ -993,19 +993,14 @@ pub(crate) fn requested(r: Option<Requests>) -> Capped<Requested> {
 
 // ---- a pull request's reviews ----------------------------------------------------------
 
-/// A page of a pull request's reviews, oldest first.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "PageVariables")]
-pub struct ReviewsQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoReviews>,
+fragments! {
+    root "Query" repository(owner, name);
+    /// A page of a pull request's reviews, oldest first.
+    ReviewsQuery("PageVariables") => RepoReviews,
 }
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "PageVariables")]
-pub struct RepoReviews {
-    #[arguments(number: $number)]
-    pub pull_request: Option<PrReviews>,
+fragments! {
+    root "Repository" pull_request(number);
+    RepoReviews("PageVariables") => PrReviews,
 }
 
 #[derive(cynic::QueryFragment, Debug)]

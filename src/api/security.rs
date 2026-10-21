@@ -817,75 +817,40 @@ mod wire {
             };
             let (title, severity, level, detail) = match kind {
                 AlertKind::Dependabot => {
-                    let Advisory {
-                        ghsa_id,
-                        cve_id,
-                        summary,
-                        description,
-                        severity: advisory_severity,
-                        cwes,
-                        references,
-                    } = self.security_advisory.unwrap_or_default();
-                    let Vulnerability {
-                        severity,
-                        vulnerable_version_range,
-                        first_patched_version,
-                    } = self.security_vulnerability.unwrap_or_default();
-                    let Dependency {
-                        package,
-                        manifest_path,
-                        scope,
-                        relationship,
-                    } = self.dependency.unwrap_or_default();
-                    let (name, ecosystem) = package.map_or((None, None), |p| (p.name, p.ecosystem));
+                    let a = self.security_advisory.unwrap_or_default();
+                    let v = self.security_vulnerability.unwrap_or_default();
+                    let d = self.dependency.unwrap_or_default();
+                    let (name, ecosystem) =
+                        (d.package).map_or((None, None), |p| (p.name, p.ecosystem));
                     let detail = super::Dependency {
                         package: name.unwrap_or_default(),
                         ecosystem: ecosystem.unwrap_or_default(),
-                        manifest: manifest_path.unwrap_or_default(),
-                        scope,
-                        relationship: relationship.filter(|r| r != "unknown"),
-                        vulnerable: vulnerable_version_range,
-                        patched: first_patched_version.map(|v| v.identifier),
-                        ghsa: ghsa_id,
-                        cve: cve_id,
-                        description: description.unwrap_or_default(),
-                        cwes: cwes
-                            .into_iter()
+                        manifest: d.manifest_path.unwrap_or_default(),
+                        scope: d.scope,
+                        relationship: d.relationship.filter(|r| r != "unknown"),
+                        vulnerable: v.vulnerable_version_range,
+                        patched: v.first_patched_version.map(|v| v.identifier),
+                        ghsa: a.ghsa_id,
+                        cve: a.cve_id,
+                        description: a.description.unwrap_or_default(),
+                        cwes: (a.cwes.into_iter())
                             .map(|c| format!("{} {}", c.cwe_id, c.name))
                             .collect(),
-                        references: references.into_iter().map(|r| r.url).collect(),
+                        references: a.references.into_iter().map(|r| r.url).collect(),
                         update: None,
                     };
-                    let severity = severity.or(advisory_severity);
+                    let severity = v.severity.or(a.severity);
                     (
-                        summary,
+                        a.summary,
                         severity,
                         None,
                         Detail::Dependency(Box::new(detail)),
                     )
                 }
                 AlertKind::CodeScanning => {
-                    let Rule {
-                        id,
-                        name,
-                        severity,
-                        security_severity_level,
-                        description,
-                        full_description,
-                        help,
-                        tags,
-                    } = self.rule.unwrap_or_default();
-                    let Instance {
-                        git_ref,
-                        commit_sha,
-                        message,
-                        location,
-                    } = self.most_recent_instance.unwrap_or_default();
-                    let Location {
-                        path,
-                        start_line,
-                        end_line,
-                    } = location.unwrap_or_default();
+                    let rule = self.rule.unwrap_or_default();
+                    let at = self.most_recent_instance.unwrap_or_default();
+                    let place = at.location.unwrap_or_default();
                     let tool = self.tool.map(|t| {
                         let name = t.name.unwrap_or_default();
                         match t.version {
@@ -894,20 +859,20 @@ mod wire {
                         }
                     });
                     let detail = CodeAlert {
-                        rule: id.unwrap_or_default(),
-                        rule_description: nonempty(full_description).unwrap_or_default(),
-                        help: help.unwrap_or_default(),
+                        rule: rule.id.unwrap_or_default(),
+                        rule_description: nonempty(rule.full_description).unwrap_or_default(),
+                        help: rule.help.unwrap_or_default(),
                         tool: tool.unwrap_or_default(),
-                        message: message.and_then(|m| m.text).unwrap_or_default(),
-                        path,
-                        lines: start_line.map(|start| span(start, end_line)),
-                        commit: commit_sha,
-                        git_ref,
-                        tags,
+                        message: at.message.and_then(|m| m.text).unwrap_or_default(),
+                        path: place.path,
+                        lines: (place.start_line).map(|start| span(start, place.end_line)),
+                        commit: at.commit_sha,
+                        git_ref: at.git_ref,
+                        tags: rule.tags,
                     };
-                    let title = description.or(name).unwrap_or_default();
+                    let title = rule.description.or(rule.name).unwrap_or_default();
                     let detail = Detail::Code(Box::new(detail));
-                    (title, security_severity_level, severity, detail)
+                    (title, rule.security_severity_level, rule.severity, detail)
                 }
                 AlertKind::SecretScanning => {
                     let secret_type = self

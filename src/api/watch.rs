@@ -169,11 +169,19 @@ pub struct RepoNameVariables {
     pub name: String,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "RepoNameVariables")]
-pub struct RepoWatchQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoWatchRepo>,
+fragments! {
+    root "Query" repository(owner, name);
+    RepoWatchQuery("RepoNameVariables") => RepoWatchRepo,
+    ThreadWatchQuery("NumberVariables") => ThreadWatchRepo,
+    DiscussionWatchQuery("NumberVariables") => DiscussionWatchRepo,
+}
+fragments! {
+    root "Repository" issue_or_pull_request(number);
+    ThreadWatchRepo("NumberVariables") => ThreadWatchOf,
+}
+fragments! {
+    root "Repository" discussion(number);
+    DiscussionWatchRepo("NumberVariables") => DiscussionWatch,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -183,20 +191,6 @@ pub struct RepoWatchRepo {
     pub watch: RepoWatch,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "NumberVariables")]
-pub struct ThreadWatchQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<ThreadWatchRepo>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "NumberVariables")]
-pub struct ThreadWatchRepo {
-    #[arguments(number: $number)]
-    pub issue_or_pull_request: Option<ThreadWatchOf>,
-}
-
 #[derive(cynic::InlineFragments, Debug)]
 #[cynic(graphql_type = "IssueOrPullRequest")]
 pub enum ThreadWatchOf {
@@ -204,20 +198,6 @@ pub enum ThreadWatchOf {
     PullRequest(PrWatch),
     #[cynic(fallback)]
     Other,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "NumberVariables")]
-pub struct DiscussionWatchQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<DiscussionWatchRepo>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "NumberVariables")]
-pub struct DiscussionWatchRepo {
-    #[arguments(number: $number)]
-    pub discussion: Option<DiscussionWatch>,
 }
 
 #[derive(cynic::QueryVariables, Debug)]

@@ -166,10 +166,10 @@ pub const REASONS: [(&str, &str); 15] = [
 ];
 
 /// A reason as the inbox says it.
-pub fn reason_label(reason: &str) -> String {
+pub fn reason_label(reason: &str) -> std::borrow::Cow<'static, str> {
     REASONS.iter().find(|(r, _)| *r == reason).map_or_else(
-        || reason.replace('_', " "),
-        |(_, label)| (*label).to_owned(),
+        || reason.replace('_', " ").into(),
+        |(_, label)| (*label).into(),
     )
 }
 

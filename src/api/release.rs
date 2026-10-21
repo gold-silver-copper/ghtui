@@ -6,6 +6,7 @@ use serde::Deserialize;
 
 use crate::api::client::{ApiError, GitHub};
 use crate::api::model::RepoId;
+use crate::api::queries::fragments;
 use crate::schema::schema;
 
 /// A release to make.
@@ -242,11 +243,9 @@ pub struct TagVariables {
     pub tag: String,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "TagVariables")]
-pub struct TagQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<TagRepo>,
+fragments! {
+    root "Query" repository(owner, name);
+    TagQuery("TagVariables") => TagRepo,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
