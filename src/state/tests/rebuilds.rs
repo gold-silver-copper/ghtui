@@ -86,7 +86,7 @@ fn recent_times_build_a_page_at_most_once_a_minute() {
     static CLOCK: AtomicU64 = AtomicU64::new(NOW);
     let mut state = with_pr();
     state.clock = || CLOCK.load(Ordering::Relaxed);
-    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let pr = pr();
     let items = [130, 347, 615, 1801]
         .map(|ago| {
             Item::Comment(Comment {
@@ -157,7 +157,7 @@ fn idle_hour_timing_on_a_long_conversation() {
     static CLOCK: AtomicU64 = AtomicU64::new(NOW);
     let mut state = with_pr();
     state.clock = || CLOCK.load(Ordering::Relaxed);
-    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let pr = pr();
     // 300 comments with code, one every 10 minutes until two hours ago.
     let body = "Looks right, but:\n\n```rust\nfn main() {\n    let x = compute(1);\n    println!(\"{x}\");\n}\n```\n";
     let items: Vec<Item> = (0..300u64)

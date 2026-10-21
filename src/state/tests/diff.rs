@@ -30,13 +30,6 @@ pub(in crate::state) fn diff_state(width: u16) -> (State, PrRef) {
     (s, pr)
 }
 
-fn screen(s: &State) -> &DiffScreen {
-    match s.screen() {
-        Screen::Diff(screen) => screen,
-        Screen::Page(_) => panic!("not on the diff"),
-    }
-}
-
 fn viewed_files(pr_id: &str) -> ViewedFiles {
     ViewedFiles {
         pull_request_id: NodeId::new(pr_id),
@@ -56,7 +49,7 @@ fn split_is_automatic_by_width_and_toggles() {
 
 /// Where the cursor is, and the document it's in.
 fn cursor(s: &State) -> (Pos, &Doc) {
-    let screen = screen(s);
+    let screen = on_diff(s);
     (screen.cursor, &s.diffs[&screen.of].doc)
 }
 
@@ -127,7 +120,7 @@ fn the_review_tab_lists_drafts_and_threads_and_opens_them() {
         press(&mut s, "<Down>");
     }
     press(&mut s, "<Enter>");
-    let screen = screen(&s);
+    let screen = on_diff(&s);
     assert_eq!(screen.of, of);
     let doc = &s.diffs[&of].doc;
     assert_eq!(doc.annotation_at(screen.cursor), Some(1), "the open thread");
@@ -198,7 +191,7 @@ fn the_review_tab_edits_and_deletes_drafts() {
     press(&mut s, "<C-z>");
     select_draft(&mut s, 1);
     press(&mut s, "e");
-    assert_eq!(screen(&s).of, DiffOf::Pr(pr));
+    assert_eq!(on_diff(&s).of, DiffOf::Pr(pr));
     assert!(matches!(
         overlay!(s, Compose).target,
         compose::Target::Review(crate::review::Comment::Draft { id: 1 })
@@ -219,7 +212,7 @@ fn a_files_draft_opens_in_view() {
     press(&mut s, "<Enter>");
     let _ = s.settle_diff();
     let doc = &s.diffs[&DiffOf::Pr(pr)].doc;
-    let screen = screen(&s);
+    let screen = on_diff(&s);
     let height = usize::from(s.layout().content.height) - 1;
     let top = doc.to_global(screen.top);
     let body = (0..doc.total_rows())
@@ -304,7 +297,7 @@ fn viewed_state_applies_and_rolls_back_on_failure() {
     // Next unviewed skips the viewed file.
     press(&mut s, "<Home>");
     act(&mut s, Action::NextUnviewed);
-    assert_eq!(screen(&s).cursor.file, 1);
+    assert_eq!(on_diff(&s).cursor.file, 1);
 
     // Toggle file 1 viewed: optimistic, then GitHub refuses.
     let job = fixtures::sent::<crate::review::SetViewed>(&press(&mut s, "v"));
@@ -405,7 +398,7 @@ fn search_and_repeat() {
     assert!(matches!(s.overlay, Some(Overlay::Find(_))));
     press(&mut s, "origin<Enter>");
     assert!(s.overlay.is_none());
-    let cursor = screen(&s).cursor;
+    let cursor = on_diff(&s).cursor;
     assert!(
         s.diffs[&DiffOf::Pr(pr)]
             .doc
@@ -414,7 +407,7 @@ fn search_and_repeat() {
     );
     says(&s, "1 line");
     press(&mut s, "n");
-    assert_eq!(screen(&s).cursor, cursor, "single match wraps to itself");
+    assert_eq!(on_diff(&s).cursor, cursor, "single match wraps to itself");
     press(&mut s, "/");
     press(&mut s, "zzzz<Enter>");
     warns(&s, "");
@@ -425,7 +418,7 @@ fn search_and_repeat() {
 fn a_line_number_in_the_palette_goes_to_that_line() {
     let (mut s, pr) = diff_state(120);
     press(&mut s, ":5<Enter>");
-    let at = screen(&s).cursor;
+    let at = on_diff(&s).cursor;
     let doc = &s.diffs[&DiffOf::Pr(pr)].doc;
     let shown: Vec<_> = (doc.files().first().zip(doc.row(at)))
         .map(|(f, row)| f.shows(row).map(|p| p.line).collect())
@@ -440,14 +433,14 @@ fn n_and_shift_n_follow_a_search_and_esc_ends_it() {
     let (mut s, _) = diff_state(120);
     press(&mut s, "/");
     press(&mut s, "Point<Enter>");
-    let first = screen(&s).cursor;
+    let first = on_diff(&s).cursor;
     press(&mut s, "n");
-    assert_ne!(screen(&s).cursor, first, "n: the next match");
+    assert_ne!(on_diff(&s).cursor, first, "n: the next match");
     press(&mut s, "N");
-    assert_eq!(screen(&s).cursor, first, "N: back");
+    assert_eq!(on_diff(&s).cursor, first, "N: back");
     let depth = s.screens.len();
     press(&mut s, "<Esc>");
-    assert!(screen(&s).search.is_none(), "esc ends the search");
+    assert!(on_diff(&s).search.is_none(), "esc ends the search");
     assert_eq!(s.screens.len(), depth, "and stays");
     press(&mut s, "<Esc>");
     assert_eq!(s.screens.len(), depth - 1, "then goes back");
@@ -457,12 +450,11 @@ fn n_and_shift_n_follow_a_search_and_esc_ends_it() {
 fn file_finder_jumps_to_files() {
     let (mut s, _) = diff_state(120);
     press(&mut s, "fgone");
-    let p = overlay!(s, Picker);
-    assert_eq!(s.picker_rows(p)[0].0.label, "gone.py");
+    assert_eq!(picked_labels(&s)[0], "gone.py");
     press(&mut s, "<Enter>");
     assert!(s.overlay.is_none());
-    assert_eq!(screen(&s).cursor.file, 3);
-    assert_eq!(screen(&s).cursor.row, 0);
+    assert_eq!(on_diff(&s).cursor.file, 3);
+    assert_eq!(on_diff(&s).cursor.row, 0);
 }
 
 #[test]
@@ -471,13 +463,13 @@ fn whitespace_and_full_file_keep_the_cursor_line() {
     press(&mut s, "]<Down><Down><Down>");
     let text = s.diffs[&DiffOf::Pr(pr.clone())]
         .doc
-        .row_text(screen(&s).cursor);
+        .row_text(on_diff(&s).cursor);
     act(&mut s, Action::FullFile);
     assert!(s.diffs[&DiffOf::Pr(pr.clone())].doc.files()[0].full);
     assert_eq!(
         s.diffs[&DiffOf::Pr(pr.clone())]
             .doc
-            .row_text(screen(&s).cursor),
+            .row_text(on_diff(&s).cursor),
         text
     );
     act(&mut s, Action::IgnoreWhitespace);

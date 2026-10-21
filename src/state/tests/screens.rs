@@ -145,8 +145,97 @@ pub(crate) fn issue_with(f: impl FnOnce(&mut crate::api::browse::IssueDetail)) -
     s
 }
 
-pub(crate) fn with_pr() -> State {
-    at(with_home(), Route::pr(pr()))
+/// Each `name: from => route;` is a state `from`, gone to `route` with
+/// what it fetches answered ([`at`]).
+macro_rules! screens {
+    ($($(#[$doc:meta])* $name:ident: $from:expr => $route:expr;)*) => {$(
+        $(#[$doc])*
+        pub(crate) fn $name() -> State {
+            at($from, $route)
+        }
+    )*};
+}
+
+screens! {
+    with_pr: with_home() => Route::pr(pr());
+    /// A repository's Code tab with everything it asked for delivered.
+    with_repo: state() => Route::code(ghtui());
+    /// A file in the repository.
+    with_file: with_repo() => Route::blob(ghtui(), "main".into(), "src/main.rs".into());
+    /// A file's blame.
+    with_blame: with_repo() => Route::Code(code::Blame {
+        repo: ghtui(), rev: "main".into(), path: "src/main.rs".into(), lines: Some((5, 5)),
+    });
+    /// A gist.
+    with_gist: state() => Route::Gists(gists::Gist {
+        owner: Some("octocat".into()), id: "6cad326836d38bd3a7ae".into(),
+    });
+    /// Someone's gists.
+    with_gists: state() => Route::Gists(gists::Gists("octocat".into()));
+    /// An organization's teams.
+    with_teams: state() => Route::People(people::Teams("github".into()));
+    /// A team.
+    with_team: state() => Route::People(people::Team { org: "github".into(), slug: "core".into() });
+    /// A repository's security advisories.
+    with_advisories: with_repo() => Route::Security(security::Advisories(Some(ghtui())));
+    /// A security advisory from GitHub's database.
+    with_advisory: state() => Route::Security(security::Advisory {
+        repo: None, ghsa: "GHSA-6r3q-mjv7-xr8m".into(),
+    });
+    /// A wiki's Home.
+    with_wiki: with_repo() => Route::Wiki(wiki::Wiki { repo: ghtui(), page: None });
+    /// The repository's open issues.
+    with_issues: with_repo() => Route::Issues(issues::Issues { repo: ghtui(), query: OPEN.into() });
+    /// A commit, its repository's header loaded first.
+    with_commit: with_repo() => Route::Code(code::Commit {
+        repo: ghtui(), oid: fixtures::commit().oid, pr: None,
+    });
+    /// A pull request's Checks tab.
+    with_pr_checks: with_pr() => Route::Pulls(pulls::Pr { pr: pr(), tab: PrTab::Checks });
+    /// Your inbox, from Home.
+    with_notifications: with_home() => Route::Search(search::Notifications {
+        query: String::new(),
+    });
+    /// An organization's profile.
+    with_org: state() => Route::user("ratatui");
+    /// A repository's discussions.
+    with_discussions: with_repo() => Route::Discussions(discussions::Discussions {
+        of: crate::api::browse::DiscussionsOf::Repo(ghtui()), category: None,
+    });
+    /// A discussion.
+    with_discussion: with_repo() => Route::Discussions(discussions::Discussion {
+        of: crate::api::browse::DiscussionsOf::Repo(ghtui()), number: 14603,
+    });
+    /// A workflow run.
+    with_run: with_repo() => Route::Runs(runs::WorkflowRun {
+        repo: ghtui(), run: 7, attempt: None,
+    });
+    /// A workflow and its runs.
+    with_workflow: with_repo() => Route::Runs(runs::Workflow {
+        repo: ghtui(), file: "ci.yml".into(),
+    });
+    /// A release's page.
+    with_release: with_repo() => Route::Releases(releases::Release {
+        repo: ghtui(), tag: "v0.2.0".into(),
+    });
+    /// A repository's branches.
+    with_branches: with_repo() => Route::Code(code::Branches(ghtui()));
+    /// A repository's milestones.
+    with_milestones: with_repo() => Route::Issues(issues::Milestones {
+        repo: ghtui(), closed: false,
+    });
+    /// A milestone.
+    with_milestone: with_repo() => Route::Issues(issues::Milestone { repo: ghtui(), number: 3 });
+    /// A repository's deployments.
+    with_deployments: with_repo() => Route::Runs(runs::Deployments {
+        repo: ghtui(), environment: None,
+    });
+    /// Two tags compared.
+    with_compare: with_repo() => Route::Code(code::Compare {
+        repo: ghtui(), spec: "v0.1.0...v0.2.0".into(),
+    });
+    /// An issue, its repository's header loaded first.
+    with_issue: state() => Route::Issues(issues::Issue { repo: ghtui(), number: 14 });
 }
 
 /// Pushes `route` and delivers `data` for its page's own fetch (its last).
@@ -170,127 +259,11 @@ pub(crate) fn ghtui() -> RepoId {
     RepoId::new("gold-silver-copper", "ghtui")
 }
 
-/// A repository's Code tab with everything it asked for delivered.
-pub(crate) fn with_repo() -> State {
-    at(state(), Route::code(ghtui()))
-}
-
-/// A file in the repository.
-pub(crate) fn with_file() -> State {
-    at(
-        with_repo(),
-        Route::blob(ghtui(), "main".into(), "src/main.rs".into()),
-    )
-}
-
-/// A file's blame.
-pub(crate) fn with_blame() -> State {
-    let (repo, rev, path) = (ghtui(), "main".to_owned(), "src/main.rs".to_owned());
-    let lines = Some((5, 5));
-    at(
-        with_repo(),
-        Route::Code(code::Blame {
-            repo,
-            rev,
-            path,
-            lines,
-        }),
-    )
-}
-
-/// A gist.
-pub(crate) fn with_gist() -> State {
-    let owner = Some("octocat".into());
-    let id = "6cad326836d38bd3a7ae".into();
-    at(state(), Route::Gists(gists::Gist { owner, id }))
-}
-
-/// Someone's gists.
-pub(crate) fn with_gists() -> State {
-    at(state(), Route::Gists(gists::Gists("octocat".into())))
-}
-
-/// An organization's teams.
-pub(crate) fn with_teams() -> State {
-    at(state(), Route::People(people::Teams("github".into())))
-}
-
-/// A team.
-pub(crate) fn with_team() -> State {
-    let (org, slug) = ("github".into(), "core".into());
-    at(state(), Route::People(people::Team { org, slug }))
-}
-
-/// A repository's security advisories.
-pub(crate) fn with_advisories() -> State {
-    at(
-        with_repo(),
-        Route::Security(security::Advisories(Some(ghtui()))),
-    )
-}
-
-/// A security advisory from GitHub's database.
-pub(crate) fn with_advisory() -> State {
-    let ghsa = "GHSA-6r3q-mjv7-xr8m".into();
-    at(
-        state(),
-        Route::Security(security::Advisory { repo: None, ghsa }),
-    )
-}
-
-/// A wiki's Home.
-pub(crate) fn with_wiki() -> State {
-    at(
-        with_repo(),
-        Route::Wiki(wiki::Wiki {
-            repo: ghtui(),
-            page: None,
-        }),
-    )
-}
-
-/// The repository's open issues.
-pub(crate) fn with_issues() -> State {
-    let query = OPEN.into();
-    at(
-        with_repo(),
-        Route::Issues(issues::Issues {
-            repo: ghtui(),
-            query,
-        }),
-    )
-}
-
-/// A commit, its repository's header loaded first.
-pub(crate) fn with_commit() -> State {
-    let oid = fixtures::commit().oid;
-    at(
-        with_repo(),
-        Route::Code(code::Commit {
-            repo: ghtui(),
-            oid,
-            pr: None,
-        }),
-    )
-}
-
-/// A pull request's Checks tab.
-fn with_pr_checks() -> State {
-    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
-    at(
-        with_pr(),
-        Route::Pulls(pulls::Pr {
-            pr,
-            tab: PrTab::Checks,
-        }),
-    )
-}
-
 /// A pull request's Review tab: a draft, a thread still open (and one
 /// resolved), the reviewers and what stops the merge.
 pub(crate) fn with_pr_review() -> State {
     let mut state = with_pr();
-    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let pr = pr();
     act(&mut state, Action::ReviewGlance);
     // The diff it starts reads the drafts and threads.
     let of = crate::diff_screen::DiffOf::Pr(pr.clone());
@@ -316,12 +289,6 @@ pub(crate) fn with_pr_review() -> State {
     state
 }
 
-/// Your inbox, from Home.
-pub(crate) fn with_notifications() -> State {
-    let query = String::new();
-    at(with_home(), Route::Search(search::Notifications { query }))
-}
-
 /// `state` in a `w`×`h` terminal.
 pub(crate) fn sized(mut state: State, w: u16, h: u16) -> State {
     update(&mut state, Msg::Resize(w, h));
@@ -337,7 +304,7 @@ pub(crate) fn with_tabs(n: usize) -> State {
             repo: ghtui(),
             number: 14,
         }),
-        Route::pr(PrRef::parse("gold-silver-copper/ghtui#12").unwrap()),
+        Route::pr(pr()),
         Route::user("octocat"),
         Route::blob(ghtui(), "main".into(), "crates/app/src/main.rs".into()),
         Route::Code(code::Commit {
@@ -356,39 +323,6 @@ pub(crate) fn with_tabs(n: usize) -> State {
     state
 }
 
-/// An organization's profile.
-pub(crate) fn with_org() -> State {
-    at(state(), Route::user("ratatui"))
-}
-
-/// A repository's discussions.
-pub(crate) fn with_discussions() -> State {
-    let of = crate::api::browse::DiscussionsOf::Repo(ghtui());
-    at(
-        with_repo(),
-        Route::Discussions(discussions::Discussions { of, category: None }),
-    )
-}
-
-/// A discussion.
-pub(crate) fn with_discussion() -> State {
-    let of = crate::api::browse::DiscussionsOf::Repo(ghtui());
-    at(
-        with_repo(),
-        Route::Discussions(discussions::Discussion { of, number: 14603 }),
-    )
-}
-
-/// A workflow run.
-pub(crate) fn with_run() -> State {
-    let route = runs::WorkflowRun {
-        repo: ghtui(),
-        run: 7,
-        attempt: None,
-    };
-    at(with_repo(), Route::Runs(route))
-}
-
 /// A job, its failed step's log open; `step` is the step a link pointed at.
 pub(crate) fn with_job(step: Option<(u32, u32)>) -> State {
     let (repo, run, query) = (ghtui(), Some(7), String::new());
@@ -400,82 +334,6 @@ pub(crate) fn with_job(step: Option<(u32, u32)>) -> State {
             job: 2,
             step,
             query,
-        }),
-    )
-}
-
-/// A workflow and its runs.
-pub(crate) fn with_workflow() -> State {
-    let file = "ci.yml".into();
-    at(
-        with_repo(),
-        Route::Runs(runs::Workflow {
-            repo: ghtui(),
-            file,
-        }),
-    )
-}
-
-/// A release's page.
-pub(crate) fn with_release() -> State {
-    let tag = "v0.2.0".into();
-    at(
-        with_repo(),
-        Route::Releases(releases::Release { repo: ghtui(), tag }),
-    )
-}
-
-/// A repository's branches.
-pub(crate) fn with_branches() -> State {
-    at(with_repo(), Route::Code(code::Branches(ghtui())))
-}
-
-/// A repository's milestones.
-pub(crate) fn with_milestones() -> State {
-    let route = issues::Milestones {
-        repo: ghtui(),
-        closed: false,
-    };
-    at(with_repo(), Route::Issues(route))
-}
-
-/// A milestone.
-pub(crate) fn with_milestone() -> State {
-    let route = issues::Milestone {
-        repo: ghtui(),
-        number: 3,
-    };
-    at(with_repo(), Route::Issues(route))
-}
-
-/// A repository's deployments.
-pub(crate) fn with_deployments() -> State {
-    let route = runs::Deployments {
-        repo: ghtui(),
-        environment: None,
-    };
-    at(with_repo(), Route::Runs(route))
-}
-
-/// Two tags compared.
-pub(crate) fn with_compare() -> State {
-    let spec = "v0.1.0...v0.2.0".into();
-    at(
-        with_repo(),
-        Route::Code(code::Compare {
-            repo: ghtui(),
-            spec,
-        }),
-    )
-}
-
-/// An issue, its repository's header loaded first.
-pub(crate) fn with_issue() -> State {
-    at(
-        state(),
-        Route::Issues(issues::Issue {
-            repo: ghtui(),
-            number: 14,
         }),
     )
 }

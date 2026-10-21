@@ -33,9 +33,7 @@ fn comment_links_scroll_to_the_comment() {
     let of = crate::api::browse::DiscussionsOf::Repo(RepoId::new("cli", "cli"));
     let detail = Data::from(crate::fixtures::discussion());
     fetched(&mut s, DataKey::Discussion(of, 14603), detail);
-    let Screen::Page(p) = s.screen() else {
-        panic!()
-    };
+    let p = page(&s);
     let line = p.page().anchors["discussioncomment-18765100"];
     assert!(
         p.scroll > 0 && p.scroll <= line && line < p.scroll + 10,
@@ -53,9 +51,7 @@ fn comment_links_scroll_to_the_comment() {
     let _ = s.follow(&crate::ui::page::Link::Url(url));
     let issue = Data::Issue(Some(Box::new(crate::fixtures::issue())));
     fetched(&mut s, DataKey::Issue(ghtui(), 14), issue);
-    let Screen::Page(p) = s.screen() else {
-        panic!()
-    };
+    let p = page(&s);
     assert!(p.page().anchors.contains_key("issuecomment-1000001"));
     assert!(p.scroll > 0);
 }
@@ -222,9 +218,7 @@ fn the_header_counts_the_unread_and_opens_the_inbox() {
     // Followed by its letters.
     let _ = state.back();
     press(&mut state, "i");
-    let Some(Overlay::Hints(hints)) = &state.overlay else {
-        panic!("no hints");
-    };
+    let hints = overlay!(state, Hints);
     let label = (hints.labels.iter())
         .find(|h| (h.x, h.y) == (rects[0].x, rects[0].y))
         .map(|h| h.label.clone())
@@ -301,9 +295,7 @@ fn pages_link_to_milestones_branches_and_tags() {
     let issue = super::sized(with_issue(), 160, 40);
     assert!(routes(&issue).contains(&milestone("gold-silver-copper/ghtui")));
     let pr = super::sized(with_pr(), 160, 40);
-    let Screen::Page(p) = pr.screen() else {
-        panic!("not a page");
-    };
+    let p = page(&pr);
     let Route::Pulls(pulls::Pr { pr: pr_ref, .. }) = &p.route else {
         panic!("not a pull request");
     };
@@ -322,9 +314,7 @@ fn pages_link_to_milestones_branches_and_tags() {
 fn github_links_stay_in_ghtui() {
     let mut leaving = Vec::new();
     for (name, s) in pages() {
-        let Screen::Page(p) = s.screen() else {
-            panic!("{name} isn't a page");
-        };
+        let p = page(&s);
         let tabs = s.chrome().tabs.into_iter().map(|(_, t)| t);
         let links = p.page().links.iter().filter_map(|l| l.url());
         let targets = links.map(|u| Dest::from_url(u).target).chain(tabs);

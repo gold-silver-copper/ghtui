@@ -69,6 +69,24 @@ fn page(state: &State) -> &PageScreen {
     }
 }
 
+fn on_diff(state: &State) -> &DiffScreen {
+    match state.screen() {
+        Screen::Diff(d) => d,
+        Screen::Page(_) => panic!("not on the diff"),
+    }
+}
+
+/// The open picker's rows: each one's label and hint.
+fn picked(state: &State) -> Vec<(String, String)> {
+    let rows = state.picker_rows(overlay!(state, Picker));
+    (rows.into_iter()).map(|(r, _)| (r.label, r.hint)).collect()
+}
+
+/// The open picker's rows' labels.
+fn picked_labels(state: &State) -> Vec<String> {
+    picked(state).into_iter().map(|(label, _)| label).collect()
+}
+
 fn route(state: &State) -> Route {
     page(state).route.clone()
 }

@@ -159,13 +159,10 @@ fn a_picker_list_that_failed_says_why() {
         let result = Err(ApiError::Network("timed out".into()));
         let cached_at = None;
         let _ = update(&mut state, Msg::fetched_at(key.clone(), result, cached_at));
-        let f = overlay!(state, Picker);
-        let rows: Vec<String> = state
-            .picker_rows(f)
-            .into_iter()
-            .map(|(i, _)| i.label)
-            .collect();
-        assert_eq!(rows, [format!("{why}: network error: timed out")]);
+        assert_eq!(
+            picked_labels(&state),
+            [format!("{why}: network error: timed out")]
+        );
         press(&mut state, "<Esc>");
         assert_eq!(press(&mut state, keys), vec![fetch(key)]);
         press(&mut state, "<Esc>");
@@ -191,13 +188,10 @@ fn go_to_file_and_switch_branches() {
         ),
     );
     press(&mut state, "main");
-    let f = overlay!(state, Picker);
-    let rows: Vec<String> = state
-        .picker_rows(f)
-        .into_iter()
-        .map(|(i, _)| i.label)
-        .collect();
-    assert_eq!(rows, ["src/main.rs", "crates/ui/src/main_view.rs"]);
+    assert_eq!(
+        picked_labels(&state),
+        ["src/main.rs", "crates/ui/src/main_view.rs"]
+    );
     press(&mut state, "<Enter>");
     assert_eq!(route(&state), blob("main", "src/main.rs"));
     let cmds = press(&mut state, "B");
@@ -211,12 +205,7 @@ fn go_to_file_and_switch_branches() {
         }),
     );
     // Branches it didn't fetch can't be picked, and it says so.
-    let f = overlay!(state, Picker);
-    let rows: Vec<String> = state
-        .picker_rows(f)
-        .into_iter()
-        .map(|(i, _)| i.label)
-        .collect();
+    let rows = picked_labels(&state);
     assert_eq!(
         rows.last().map(String::as_str),
         Some("298 more branches on GitHub")

@@ -14,9 +14,7 @@ use crate::ui::page::{Link, ReviewLink};
 
 /// The page on screen, as text.
 fn text(s: &State) -> String {
-    let Screen::Page(p) = s.screen() else {
-        panic!("not a page");
-    };
+    let p = page(s);
     // Each line with what's on its right (a box's chips).
     let lines = p.page().lines.iter().map(|l| {
         let right: String = l.right.iter().map(crate::ui::page::Seg::text).collect();
@@ -54,9 +52,7 @@ fn a_review_shows_its_threads_and_opens_them() {
         |l| matches!(l, Link::Url(u) if u.contains("discussion_r")),
     );
     press(&mut s, "<Enter>");
-    let Screen::Diff(d) = s.screen() else {
-        panic!("Enter opens Files changed")
-    };
+    let d = on_diff(&s);
     assert_eq!(d.anchor.as_deref(), Some("discussion_r3000001"));
 }
 
@@ -66,9 +62,7 @@ fn a_review_shows_its_threads_and_opens_them() {
 #[test]
 fn the_sidebar_says_where_each_reviewer_stands() {
     let s = conversation();
-    let Screen::Page(p) = s.screen() else {
-        panic!("not a page")
-    };
+    let p = page(&s);
     let aside = p.page().aside.as_ref().expect("a sidebar");
     let aside: Vec<String> = aside
         .lines
@@ -218,9 +212,7 @@ fn an_issues_timeline_and_development() {
         page.contains("monalisa linked a pull request that will close this issue"),
         "{page}"
     );
-    let Screen::Page(p) = s.screen() else {
-        panic!()
-    };
+    let p = super::page(&s);
     let aside = p.page().aside.as_ref().expect("a sidebar");
     let aside: Vec<String> = aside
         .lines

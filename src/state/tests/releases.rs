@@ -152,10 +152,7 @@ fn an_asset_is_saved_where_you_say() {
     fixtures::select_link(&mut s, &asset);
     press(&mut s, "<Enter>");
     press(&mut s, "Cargo.toml");
-    let Some(Overlay::Picker(p)) = &s.overlay else {
-        panic!("no picker")
-    };
-    assert_eq!(s.picker_rows(p)[0].0.label, "Replace Cargo.toml");
+    assert_eq!(picked_labels(&s)[0], "Replace Cargo.toml");
     let sent = fixtures::sent::<assets::Save>(&press(&mut s, "<Enter>"));
     assert!(sent.replace);
 }

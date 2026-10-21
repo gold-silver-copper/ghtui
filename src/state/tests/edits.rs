@@ -125,9 +125,7 @@ fn deleting_a_comment_asks_first() {
     let mut s = issue_with(|_| {});
     on_hubot(&mut s);
     assert!(press(&mut s, "D").is_empty());
-    let Some(Overlay::Ask(c)) = &s.overlay else {
-        panic!("D asks first")
-    };
+    let c = overlay!(s, Ask);
     assert!(c.title.starts_with("Delete hubot's comment"), "{}", c.title);
     // Data arriving doesn't close or change it.
     issue_shows(&mut s, |_| {});
@@ -196,10 +194,7 @@ fn reacting_toggles_yours() {
         p.selected = None;
     }
     press(&mut s, "+");
-    let rows: Vec<String> = match &s.overlay {
-        Some(Overlay::Picker(p)) => s.picker_rows(p).into_iter().map(|(r, _)| r.label).collect(),
-        _ => panic!("+ opens the reactions"),
-    };
+    let rows = picked_labels(&s);
     assert_eq!(rows.len(), 8);
     assert!(
         rows[3].starts_with('✓') && rows[3].contains("Hooray"),
@@ -301,10 +296,7 @@ fn reviewers_include_teams() {
     let mut s = with_pr();
     let cmds = act(&mut s, Action::RequestReviews);
     fixtures::served(&mut s, &cmds);
-    let rows: Vec<String> = match &s.overlay {
-        Some(Overlay::Picker(p)) => s.picker_rows(p).into_iter().map(|(r, _)| r.label).collect(),
-        _ => panic!("asking for reviews opens the reviewers"),
-    };
+    let rows = picked_labels(&s);
     // Who's asked, then the rest; never the author (octocat).
     let names = [
         "✓ defunkt",

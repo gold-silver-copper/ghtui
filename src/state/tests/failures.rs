@@ -32,7 +32,7 @@ fn a_failed_readme_says_why_under_the_files() {
 #[test]
 fn a_loading_conversation_stays_on_the_timeline() {
     let mut state = with_home();
-    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let pr = pr();
     let route = Route::pr(pr.clone());
     let _ = state.push(route.clone());
     crate::fixtures::pr_fetched(&mut state, &pr, Ok(pr_detail()));

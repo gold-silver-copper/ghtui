@@ -48,9 +48,7 @@ fn a_jobs_log_search_goes_through_its_matches() {
     assert!(
         matches!(route(&s), Route::Runs(runs::Job { query, step: Some(_), .. }) if query == "TEST")
     );
-    let Screen::Page(p) = s.screen() else {
-        panic!()
-    };
+    let p = page(&s);
     let page = p.page();
     let line = |i: usize| -> String { page.lines[i].text() };
     assert!(!page.marks.is_empty());
@@ -69,9 +67,7 @@ fn a_jobs_log_search_goes_through_its_matches() {
     says(&s, &format!("Match 1 of {n}"));
     press(&mut s, "n");
     says(&s, &format!("Match 2 of {n}"));
-    let Screen::Page(p) = s.screen() else {
-        panic!()
-    };
+    let p = super::page(&s);
     assert_eq!(p.current_match(), p.page().marks.get(1).copied());
     press(&mut s, "N");
     says(&s, &format!("Match 1 of {n}"));
@@ -91,9 +87,7 @@ fn a_jobs_log_search_goes_through_its_matches() {
 #[test]
 fn a_failed_job_opens_at_its_first_error() {
     let s = with_job(None);
-    let Screen::Page(p) = s.screen() else {
-        panic!()
-    };
+    let p = page(&s);
     let page = p.page();
     let jump = page.jump.expect("it opens at a line");
     let text: String = page.lines[jump]

@@ -18,9 +18,7 @@ fn with_code() -> State {
 
 /// The selected line of the file, and the word under the cursor.
 fn at(s: &State) -> (Option<u32>, Option<String>) {
-    let Screen::Page(p) = s.screen() else {
-        panic!("not on a page")
-    };
+    let p = page(s);
     let word = (p.word_cursor()).map(|(_, code, w)| code.get(w.bytes).unwrap().to_owned());
     (p.selected.and_then(|i| p.line_of(i)), word)
 }
@@ -34,13 +32,7 @@ fn said(s: &State) -> String {
 fn symbols_go_to_their_line() {
     let mut s = with_code();
     act(&mut s, Action::Symbols);
-    let Some(Overlay::Picker(p)) = &s.overlay else {
-        panic!("no picker")
-    };
-    let labels: Vec<String> = (s.picker_rows(p).into_iter())
-        .map(|(item, _)| item.label)
-        .collect();
-    assert_eq!(labels, ["fn main", "fn helper", "fn ioctl"]);
+    assert_eq!(picked_labels(&s), ["fn main", "fn helper", "fn ioctl"]);
     press(&mut s, "help<Enter>");
     assert_eq!(at(&s).0, Some(8));
 }
@@ -147,13 +139,10 @@ fn repository_symbols_and_references_are_listed() {
         ..Answer::default()
     };
     update(&mut s, Msg::Code(refs.clone(), Ok(answer)));
-    let Some(Overlay::Picker(p)) = &s.overlay else {
-        panic!("no picker")
-    };
-    let rows: Vec<(String, String)> = (s.picker_rows(p).into_iter())
-        .map(|(item, _)| (item.label, item.hint))
-        .collect();
-    assert_eq!(rows[1], ("lib::helper(x)".into(), "src/main.rs:2".into()));
+    assert_eq!(
+        picked(&s)[1],
+        ("lib::helper(x)".into(), "src/main.rs:2".into())
+    );
     press(&mut s, "lib::<Enter>");
     assert_eq!(
         s.route(),
@@ -200,9 +189,7 @@ fn symbols_and_definitions_in_the_diff() {
     let at = Pos { file: 0, row: 0 };
     let mut s = screen_state(at, Pane::Diff);
     let line = |s: &State| {
-        let Screen::Diff(screen) = s.screen() else {
-            panic!("not the diff")
-        };
+        let screen = on_diff(s);
         let doc = &s.diff().unwrap().doc;
         doc.line_at(screen.cursor, Side::Right).map(|l| l.line)
     };

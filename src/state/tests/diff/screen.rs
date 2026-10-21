@@ -11,7 +11,7 @@ use crate::ui::diff_doc::{Doc, Pos};
 use crate::diff_screen::{DiffOf, DiffPrefs, DiffScreen, DiffState, Pane};
 use crate::fixtures::diff_msg;
 use crate::keymap::Action;
-use crate::state::tests::{NOW, act, press, screen_text, state};
+use crate::state::tests::{NOW, act, on_diff, press, screen_text, state};
 use crate::state::{DiffMsg, Msg, Screen, State, update};
 
 fn pr() -> PrRef {
@@ -179,9 +179,7 @@ fn diff_links_go_to_their_file() {
     let _ = s.follow(&crate::ui::page::Link::Url(url));
     s.diffs.insert(DiffOf::Pr(pr()), fixture_diff());
     let _ = s.settle_diff();
-    let Screen::Diff(d) = s.screen() else {
-        panic!("the link didn't open a diff");
-    };
+    let d = on_diff(&s);
     let doc = &s.diffs[&d.of].doc;
     assert_eq!(doc.files()[d.cursor.file].meta.path(), "notes.txt");
     assert_eq!(d.anchor, None);
@@ -348,9 +346,7 @@ fn review_comment_links_go_to_their_thread() {
     let _ = s.follow(&crate::ui::page::Link::Url(url));
     s.diffs.insert(DiffOf::Pr(pr()), fixture_diff());
     let _ = s.settle_diff();
-    let Screen::Diff(d) = s.screen() else {
-        panic!("the link didn't open a diff");
-    };
+    let d = on_diff(&s);
     assert!(d.anchor.is_some(), "waits for the threads");
     let mut thread = crate::fixtures::thread("t", Some(3), false, false);
     thread.comments[0].url = "https://github.com/o/r/pull/7#discussion_r42".into();
@@ -363,9 +359,7 @@ fn review_comment_links_go_to_their_thread() {
         });
     }
     let _ = s.settle_diff();
-    let Screen::Diff(d) = s.screen() else {
-        panic!("not a diff");
-    };
+    let d = on_diff(&s);
     let doc = &s.diffs[&d.of].doc;
     assert_eq!(d.anchor, None);
     assert_eq!(doc.annotation_at(d.cursor), Some(1), "the second thread");
@@ -413,9 +407,7 @@ fn review_comment_links_wait_for_their_file() {
         diff.doc.set_diff(0, Arc::new(d));
     }
     let _ = s.settle_diff();
-    let Screen::Diff(d) = s.screen() else {
-        panic!("not a diff");
-    };
+    let d = on_diff(&s);
     assert_eq!(d.anchor, None);
     assert_eq!(s.diffs[&d.of].doc.annotation_at(d.cursor), Some(0));
 }
@@ -553,9 +545,7 @@ fn links_in_threads_are_followed() {
     let guide = "https://example.com/guide";
     let mut s = with_markdown_thread();
     press(&mut s, "i");
-    let Some(Overlay::Hints(hints)) = &s.overlay else {
-        panic!("no hints: {:?}", s.notices.shown());
-    };
+    let hints = overlay!(s, Hints);
     let at = hints.links.iter().position(|l| *l == Link::from(guide));
     let label = hints.labels[at.expect("the guide is lettered")]
         .label

@@ -130,11 +130,8 @@ fn a_thread_is_unsubscribed_and_followed() {
     );
     let now = Data::from(fixtures::subscription());
     fetched(&mut s, DataKey::Subscription(of.clone()), now);
-    let Some(Overlay::Picker(p)) = &s.overlay else {
-        panic!("no picker");
-    };
-    let rows = s.picker_rows(p);
-    assert!(rows[0].0.hint.starts_with("current"), "{:?}", rows[0].0);
+    let rows = picked(&s);
+    assert!(rows[0].1.starts_with("current"), "{:?}", rows[0]);
     let sent = press(&mut s, "Unsub<Enter>");
     let work = crate::watch::Subscribe {
         of: of.clone(),

@@ -255,7 +255,7 @@ fn a_pull_request_from_the_clones_branch_is_pushed_then_made() {
 #[test]
 fn checkout_says_what_branch_or_why_not() {
     let mut s = with_pr();
-    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let pr = pr();
     let cmds = act(&mut s, Action::Checkout);
     let work = crate::clone::Checkout {
         repo: pr.repo,
@@ -283,7 +283,7 @@ fn checkout_on_a_row_waits_for_its_pull_request() {
     let mut s = with_home();
     s.data.retain(|key, _| !matches!(key, DataKey::Pr(_)));
     press(&mut s, "<Down><Down>");
-    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let pr = pr();
     assert_eq!(act(&mut s, Action::Checkout), [fixtures::fetch_pr(&pr)]);
     says(&s, "Loading gold-silver-copper/ghtui#12");
     let cmds = fixtures::pr_fetched(&mut s, &pr, Ok(fixtures::pr_detail()));

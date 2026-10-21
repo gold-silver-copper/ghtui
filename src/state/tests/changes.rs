@@ -326,9 +326,7 @@ fn approving_from_the_page_takes_your_saved_drafts() {
             Cmd::LoadReview(pr())
         ]
     );
-    let Some(Overlay::Submit(dialog)) = &s.overlay else {
-        panic!("no dialog");
-    };
+    let dialog = overlay!(s, Submit);
     assert_eq!(
         (dialog.event, dialog.quick),
         (crate::api::model::ReviewEvent::Approve, true)

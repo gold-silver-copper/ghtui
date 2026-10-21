@@ -122,9 +122,7 @@ fn the_menu_filters_as_you_type() {
     let shown: Vec<&str> = menu.shown().iter().map(|d| d.label.as_str()).collect();
     assert_eq!(shown, ["Go to file"]);
     press(&mut state, "<Esc>");
-    let Some(Overlay::Menu(menu)) = &state.overlay else {
-        panic!("Esc stopped filtering, not the menu")
-    };
+    let menu = overlay!(state, Menu);
     assert!(menu.filter.is_none() && menu.shown().len() > 1);
     press(&mut state, "/gotofile");
     let cmds = press(&mut state, "<Enter>");
@@ -182,10 +180,7 @@ fn errors_are_dismissed_and_kept() {
     assert!(state.notices.shown().is_none());
     assert_eq!(state.screens.len(), depth, "Esc only dismissed");
     act(&mut state, Action::Messages);
-    let p = overlay!(state, Picker);
-    let rows = state.picker_rows(p);
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].0.label, "boom");
+    assert_eq!(picked_labels(&state), ["boom"]);
     let cmds = press(&mut state, "<Enter>");
     assert!(matches!(&cmds[..], [Cmd::Copy(t)] if t == "boom"));
 }
@@ -468,9 +463,7 @@ fn file_lines_copy_and_blame() {
 
 /// The selected line, and the word under the cursor.
 fn word_here(s: &State) -> (Option<u32>, Option<String>) {
-    let Screen::Page(p) = s.screen() else {
-        panic!("not on a page")
-    };
+    let p = page(s);
     let word = p
         .word_cursor()
         .map(|(_, code, w)| code.get(w.bytes).unwrap().to_owned());
@@ -518,9 +511,7 @@ fn words_in_the_diff() {
     let at = Pos { file: 0, row: 0 };
     let mut s = screen_state(at, Pane::Diff);
     let code = |s: &State| {
-        let Screen::Diff(screen) = s.screen() else {
-            panic!("not the diff")
-        };
+        let screen = on_diff(s);
         let doc = &s.diff().unwrap().doc;
         doc.code_at(screen.cursor, screen.half)
             .unwrap_or_default()
@@ -536,9 +527,7 @@ fn words_in_the_diff() {
         &mut s,
         "<C-Right><C-Right><C-Right><C-Right><C-Right><C-Right><C-Right>",
     );
-    let Screen::Diff(screen) = s.screen() else {
-        panic!()
-    };
+    let screen = on_diff(&s);
     assert_eq!(screen.word, Some(18), "the first i32");
     act(&mut s, Action::SearchWord);
     assert!(code(&s).contains("as i32"), "{}", code(&s));
@@ -601,7 +590,7 @@ fn blame_runs_open_their_commit() {
 #[test]
 fn pr_commits_step_and_go_up() {
     let mut s = with_pr();
-    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let pr = pr();
     let commit = |oid: &str| {
         Route::Code(code::Commit {
             repo: pr.repo.clone(),

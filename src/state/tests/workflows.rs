@@ -84,11 +84,7 @@ fn an_artifact_is_saved_where_you_say() {
     fixtures::select_link(&mut s, &artifact);
     press(&mut s, "<Enter>");
     press(&mut s, "Cargo.toml");
-    let Some(Overlay::Picker(p)) = &s.overlay else {
-        panic!("no picker")
-    };
-    let rows = s.picker_rows(p);
-    assert_eq!(rows[0].0.label, "Replace Cargo.toml");
+    assert_eq!(picked_labels(&s)[0], "Replace Cargo.toml");
     let cmds = press(&mut s, "<Enter>");
     assert!(crate::fixtures::sent::<SaveArtifact>(&cmds).replace);
 }
