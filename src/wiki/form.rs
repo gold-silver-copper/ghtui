@@ -121,9 +121,7 @@ pub fn open_edit(state: &mut State) -> Cmds {
     let route = Route::Wiki(wiki::WikiEdit { repo, page });
     // Started again from what's read now.
     state.forms.take::<Form>(&route);
-    let mut cmds = state.push(route);
-    cmds.extend(follow(state));
-    cmds
+    crate::forms::open(state, route)
 }
 
 /// `,W`: a new page of the wiki on screen (or of the repository's).
@@ -139,9 +137,7 @@ pub fn open_new(state: &mut State) -> Cmds {
     if state.overview(&repo).is_some_and(|o| !o.has_wiki) {
         return state.just_say(format!("{repo} has its wiki turned off"));
     }
-    let mut cmds = state.push(Route::Wiki(wiki::WikiEdit { repo, page: None }));
-    cmds.extend(follow(state));
-    cmds
+    crate::forms::open(state, Route::Wiki(wiki::WikiEdit { repo, page: None }))
 }
 
 /// Brings the form on screen up to date: filled in from the page once

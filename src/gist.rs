@@ -144,9 +144,7 @@ pub fn open_new(state: &mut State) -> Cmds {
     if state.route() == Some(&Route::Gists(gists::NewGist)) {
         return compose(state, 0);
     }
-    let mut cmds = state.push(Route::Gists(gists::NewGist));
-    cmds.extend(follow(state));
-    cmds
+    crate::forms::open(state, Route::Gists(gists::NewGist))
 }
 
 /// `,e` on your gist: its form, filled in from it.
@@ -163,9 +161,7 @@ pub fn open_edit(state: &mut State) -> Cmds {
     });
     // Started again from what GitHub has now.
     state.forms.take::<Form>(&route);
-    let mut cmds = state.push(route);
-    cmds.extend(follow(state));
-    cmds
+    crate::forms::open(state, route)
 }
 
 /// Brings the form on screen up to date: an edit's filled in from the

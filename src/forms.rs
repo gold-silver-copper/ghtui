@@ -150,6 +150,14 @@ pub fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Cmds 
     (kind.fill)(state, route, row, value)
 }
 
+/// Opens the form at `route`, brought up to date at once: it may be the
+/// page on screen already, begun anew.
+pub fn open(state: &mut State, route: Route) -> Cmds {
+    let mut cmds = state.push(route);
+    cmds.extend(follow(state));
+    cmds
+}
+
 /// After GitHub's data arrives, or a form's page opens: brings the form
 /// on screen up to date.
 pub fn follow(state: &mut State) -> Cmds {

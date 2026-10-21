@@ -250,8 +250,7 @@ fn open(state: &mut State, pr: bool) -> Cmds {
             cmds.extend(state.ensure(key, true));
         }
     }
-    cmds.extend(state.push(route));
-    cmds.extend(follow(state));
+    cmds.extend(crate::forms::open(state, route));
     cmds
 }
 

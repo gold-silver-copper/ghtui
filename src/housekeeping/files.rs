@@ -536,9 +536,7 @@ pub(super) fn propose(
     if base.is_some() {
         form.base = base;
     }
-    let mut cmds = state.push(route);
-    cmds.extend(crate::forms::follow(state));
-    cmds
+    crate::forms::open(state, route)
 }
 
 /// The menu's rows on a repository's files.

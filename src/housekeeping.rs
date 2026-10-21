@@ -390,8 +390,7 @@ fn open(state: &mut State, of: FormOf) -> Cmds {
     }
     state.forms.take::<Form>(&route);
     let mut cmds = file.map_or_else(Cmds::new, |file| state.ensure(file, true));
-    cmds.extend(state.push(route));
-    cmds.extend(follow(state));
+    cmds.extend(crate::forms::open(state, route));
     cmds
 }
 

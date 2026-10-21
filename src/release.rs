@@ -312,9 +312,7 @@ pub fn open(state: &mut State) -> Cmds {
     if state.route() == Some(&route) {
         return compose(state);
     }
-    let mut cmds = state.push(route);
-    cmds.extend(follow(state));
-    cmds
+    crate::forms::open(state, route)
 }
 
 /// The release on screen (its page's), as loaded.
@@ -346,9 +344,7 @@ pub fn open_edit(state: &mut State) -> Cmds {
     let Some((repo, tag, _)) = shown(state) else {
         return Cmds::new();
     };
-    let mut cmds = state.push(Route::Releases(releases::EditRelease { repo, tag }));
-    cmds.extend(follow(state));
-    cmds
+    crate::forms::open(state, Route::Releases(releases::EditRelease { repo, tag }))
 }
 
 /// Brings the form on screen up to date: fills an edit's from its
