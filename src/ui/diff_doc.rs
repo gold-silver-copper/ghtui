@@ -219,6 +219,10 @@ pub struct DocFile {
     /// `(move index, entries, is the removed side)` in this file, as
     /// last built.
     moves: Vec<(u32, Range<u32>, bool)>,
+    /// Added and removed lines, and columns for line numbers (at least 3),
+    /// as last built: drawing reads them on every frame.
+    counts: (u32, u32),
+    number_width: usize,
 }
 
 impl DocFile {
@@ -255,7 +259,9 @@ impl DocFile {
 
     /// The block containing alignment entry `entry`.
     pub fn block_of(&self, entry: u32) -> Option<&ChangeBlock> {
-        self.blocks.iter().find(|b| b.entries.contains(&entry))
+        // Blocks are in entry order and don't overlap.
+        let i = self.blocks.partition_point(|b| b.entries.end <= entry);
+        self.blocks.get(i).filter(|b| b.entries.contains(&entry))
     }
 
     pub fn thread_row(&self, i: u32) -> Option<&ThreadRow> {
@@ -606,8 +612,18 @@ impl DocFile {
 
     /// Columns for line numbers in this file (at least 3).
     pub fn number_width(&self) -> usize {
+        self.number_width
+    }
+
+    /// Counts what the rows were just built from.
+    fn measure(&mut self) {
+        self.counts = match (self.alignment(), self.diff.as_deref()) {
+            (Some(a), _) => counts(&a.lines),
+            (None, Some(d)) => (d.additions, d.deletions),
+            (None, None) => (0, 0),
+        };
         let max = self.text().map_or(0, TextDiff::max_lines);
-        max.to_string().len().max(3)
+        self.number_width = max.to_string().len().max(3);
     }
 
     /// The line a line, gap or fold row stands for: the one a unified row
@@ -880,6 +896,8 @@ pub struct Doc {
     pub(crate) since_active: bool,
     starts: Vec<usize>,
     total: usize,
+    /// Added and removed lines across loaded files, as last built.
+    totals: (u32, u32),
 }
 
 impl Doc {
@@ -927,6 +945,8 @@ impl Doc {
                     by_line: HashMap::new(),
                     local_commentable: None,
                     moves: Vec::new(),
+                    counts: (0, 0),
+                    number_width: 3,
                 }
             })
             .collect();
@@ -1024,6 +1044,7 @@ impl Doc {
             };
             file.rebuild(*opts, &extras);
             file.moves = moves;
+            file.measure();
         }
         self.reindex();
     }
@@ -1247,6 +1268,8 @@ impl Doc {
         // file has none, so the document ends on a row of the file.
         let trailing = (self.files.last()).is_some_and(|f| f.rows.last() == Some(&Row::Spacer));
         self.total = total - usize::from(trailing);
+        self.totals =
+            (self.files.iter().map(|f| f.counts)).fold((0, 0), |(a, d), (fa, fd)| (a + fa, d + fd));
     }
 
     pub fn set_diff(&mut self, index: usize, diff: Arc<FileDiff>) {
@@ -1353,14 +1376,13 @@ impl Doc {
             return self.clamp(Pos::default());
         };
         let at = |row| self.clamp(Pos { file: index, row });
-        let rows = file.rows.iter().enumerate();
         let line = match anchor.held {
             Held::Top(row) => return at(row),
             Held::Line(line) => line,
             Held::Thread { key, nth, line } => {
                 let anns = self.annotations();
                 let on = |(i, r): (usize, &Row)| (file.key_at(*r, anns) == Some(&key)).then_some(i);
-                let rows: Vec<usize> = rows.clone().filter_map(on).collect();
+                let rows: Vec<usize> = file.rows.iter().enumerate().filter_map(on).collect();
                 match (rows.get(nth).or(rows.first()), line) {
                     (Some(row), _) => return at(*row),
                     (None, Some(line)) => line,
@@ -1368,10 +1390,7 @@ impl Doc {
                 }
             }
         };
-        let shown = rows.flat_map(|(i, r)| file.shows(*r).map(move |p| (p, i)));
-        // A line shows in one row only.
-        let here = shown.filter(|(p, _)| p.side == line.side && p.line >= line.line);
-        at(here.min_by_key(|(p, _)| p.line).map_or(0, |(_, row)| row))
+        at(self.line_row(index, line).map_or(0, |p| p.row))
     }
 
     /// The row showing `line` of file `file`, or the nearest line after it
@@ -1568,18 +1587,11 @@ impl Doc {
     /// Added and removed lines across loaded files, under the current
     /// whitespace mode.
     pub fn totals(&self) -> (u32, u32) {
-        self.files
-            .iter()
-            .map(|f| self.file_counts(f))
-            .fold((0, 0), |(a, d), (fa, fd)| (a + fa, d + fd))
+        self.totals
     }
 
     pub fn file_counts(&self, file: &DocFile) -> (u32, u32) {
-        match (file.alignment(), file.diff.as_deref()) {
-            (Some(a), _) => counts(&a.lines),
-            (None, Some(d)) => (d.additions, d.deletions),
-            (None, None) => (0, 0),
-        }
+        file.counts
     }
 
     pub fn ready_count(&self) -> usize {
