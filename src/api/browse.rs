@@ -708,6 +708,16 @@ fragments! {
     counted:
     Topics = "RepositoryTopicConnection" => RepoTopic,
     Assignees = "UserConnection" => UserLogin,
+    CommitParents = "CommitConnection" => ParentCommit,
+    OrgLogins = "OrganizationConnection" => OrgLogin,
+    MemberList = "OrganizationMemberConnection" => UserLogin,
+    RepoList = "RepositoryConnection" => RepoCard,
+    AssetList = "ReleaseAssetConnection" => WireAsset,
+}
+
+fragments! {
+    total_count: i32;
+    StarCount = "StarredRepositoryConnection",
 }
 
 fragments! {
@@ -1246,13 +1256,6 @@ pub struct WireCommit {
     pub deletions: i32,
     pub changed_files_if_available: Option<i32>,
     pub signature: Option<WireSignature>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CommitConnection")]
-pub struct CommitParents {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<ParentCommit>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -3846,29 +3849,9 @@ pub struct WireSocial {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "OrganizationConnection")]
-pub struct OrgLogins {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<OrgLogin>>>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Organization")]
 pub struct OrgLogin {
     pub login: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "OrganizationMemberConnection")]
-pub struct MemberList {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<UserLogin>>>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "StarredRepositoryConnection")]
-pub struct StarCount {
-    pub total_count: i32,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -4173,13 +4156,6 @@ pub enum PinnedItem {
     Other,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "RepositoryConnection")]
-pub struct RepoList {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<RepoCard>>>,
-}
-
 #[derive(cynic::QueryVariables, Debug)]
 pub struct ListVariables {
     pub owner: String,
@@ -4335,13 +4311,6 @@ pub struct WireReleaseFull {
     pub description: Option<String>,
     #[arguments(first: 50)]
     pub release_assets: AssetList,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ReleaseAssetConnection")]
-pub struct AssetList {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<WireAsset>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
