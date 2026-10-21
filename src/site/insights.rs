@@ -59,10 +59,15 @@ pub fn count_commits<'a>(lines: impl Iterator<Item = &'a str>, now: u64) -> Acti
             continue;
         };
         let name = name.trim();
-        let i = *names.entry(name.to_owned()).or_insert_with(|| {
-            authors.push((name.to_owned(), None, 0));
-            authors.len() - 1
-        });
+        // Looked up first: most commits are by someone already counted.
+        let i = match names.get(name) {
+            Some(&i) => i,
+            None => {
+                authors.push((name.to_owned(), None, 0));
+                names.insert(name.to_owned(), authors.len() - 1);
+                authors.len() - 1
+            }
+        };
         if let Some(a) = authors.get_mut(i) {
             a.2 += 1;
             if a.1.is_none() {
@@ -78,11 +83,10 @@ pub fn count_commits<'a>(lines: impl Iterator<Item = &'a str>, now: u64) -> Acti
     let index = |week: u64| weeks_between(start, week);
     // The authors listed: the most commits first.
     let mut order: Vec<usize> = (0..authors.len()).collect();
-    order.sort_by(|&a, &b| {
-        let (a, b) = (authors.get(a), authors.get(b));
-        let commits = |x: Option<&(String, Option<String>, u64)>| x.map_or(0, |x| x.2);
-        let name = |x: Option<&(String, Option<String>, u64)>| x.map(|x| x.0.clone());
-        commits(b).cmp(&commits(a)).then(name(a).cmp(&name(b)))
+    order.sort_by_key(|&i| {
+        authors
+            .get(i)
+            .map(|a| (std::cmp::Reverse(a.2), a.0.as_str()))
     });
     let listed: HashMap<usize, usize> = (order.iter().take(AUTHORS))
         .enumerate()

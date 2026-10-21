@@ -188,20 +188,25 @@ pub fn completions(state: &State) -> Option<Vec<Choice>> {
     let query = typed.query.to_lowercase();
     let choices: Vec<Choice> = if typed.sigil == '@' {
         let mut people = participants(state);
+        // GitHub lists each login once: only those taking part repeat.
+        let taking = people.len();
         for login in known.iter().flat_map(|m| &m.users) {
-            if !people.iter().any(|p| p.eq_ignore_ascii_case(login)) {
+            if !people
+                .iter()
+                .take(taking)
+                .any(|p| p.eq_ignore_ascii_case(login))
+            {
                 people.push(login.clone());
             }
         }
         // Logins that start with what's typed, then those that have it.
-        let (mut first, rest): (Vec<String>, Vec<String>) = people
-            .into_iter()
-            .filter(|login| login.to_lowercase().contains(&query))
-            .partition(|login| login.to_lowercase().starts_with(&query));
-        first.extend(rest);
-        first
-            .into_iter()
-            .map(|login| Choice {
+        let (first, rest): (Vec<_>, Vec<_>) = (people.into_iter())
+            .map(|login| (login.to_lowercase(), login))
+            .filter(|(low, _)| low.contains(&query))
+            .partition(|(low, _)| low.starts_with(&query));
+        (first.into_iter().chain(rest))
+            .take(SHOWN)
+            .map(|(_, login)| Choice {
                 label: format!("@{login}"),
                 insert: format!("@{login} "),
             })
@@ -212,13 +217,14 @@ pub fn completions(state: &State) -> Option<Vec<Choice>> {
             .filter(|(number, title)| {
                 number.to_string().starts_with(&query) || title.to_lowercase().contains(&query)
             })
+            .take(SHOWN)
             .map(|(number, title)| Choice {
                 label: format!("#{number} {title}"),
                 insert: format!("#{number} "),
             })
             .collect()
     };
-    (!choices.is_empty()).then(|| choices.into_iter().take(SHOWN).collect())
+    (!choices.is_empty()).then_some(choices)
 }
 
 /// A key in the comment box while its completion list shows: `⇥` or `↵`

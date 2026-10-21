@@ -253,9 +253,11 @@ async fn refresh(
             category: None,
         }),
     ];
+    // Each key once a refresh: every item's page needs the repository's.
+    let mut fetched = std::collections::HashSet::new();
     let pages = tabs.iter().flat_map(|r| r.family().needs());
     tracing::info!(%repo, "keeping offline: its tabs");
-    if let Err(err) = fetch_all(gh, local.git(), pages.collect()).await {
+    if let Err(err) = fetch_all(gh, local.git(), &mut fetched, pages).await {
         kept.problem = Some(err.to_string());
         return kept;
     }
@@ -279,11 +281,8 @@ async fn refresh(
             .into_iter()
             .filter(|(key, updated, _)| kept.seen.get(key) != Some(updated))
             .collect();
-        let needs: Vec<DataKey> = changed
-            .iter()
-            .flat_map(|(_, _, r)| r.family().needs())
-            .collect();
-        if let Err(err) = fetch_all(gh, local.git(), needs).await {
+        let needs = changed.iter().flat_map(|(_, _, r)| r.family().needs());
+        if let Err(err) = fetch_all(gh, local.git(), &mut fetched, needs).await {
             kept.problem = Some(err.to_string());
             return kept;
         }
@@ -400,12 +399,19 @@ async fn recent(
 
 /// Fetches what the pages need into the cache, a few at a time; stops at
 /// the first sign GitHub's gone. Other failures (an item since deleted)
-/// are left for the page to say.
-async fn fetch_all(gh: &GitHub, git: &GitContext, needs: Vec<DataKey>) -> Result<(), ApiError> {
-    let mut needs = needs;
-    needs.dedup();
+/// are left for the page to say. What's in `fetched` already isn't asked
+/// again, and what's asked goes in it.
+async fn fetch_all(
+    gh: &GitHub,
+    git: &GitContext,
+    fetched: &mut std::collections::HashSet<DataKey>,
+    needs: impl IntoIterator<Item = DataKey>,
+) -> Result<(), ApiError> {
+    let needs: Vec<DataKey> = (needs.into_iter())
+        .filter(|key| worth_keeping(key) && fetched.insert(key.clone()))
+        .collect();
     let mut asks =
-        futures::stream::iter(needs.into_iter().filter(worth_keeping))
+        futures::stream::iter(needs)
             .map(|key| async move {
                 (crate::data::load::fetch(gh, git, &key, None, None).await).map(drop)
             })

@@ -299,12 +299,11 @@ impl Store {
             Ok(Some(serde_json::from_slice(bytes.value())?))
         })();
         result.unwrap_or_else(|err| {
-            match err {
-                // What an older build wrote: fetched again.
-                StoreError::Encoding(_) => {
-                    tracing::debug!(key, %err, "cached row no longer decodes")
-                }
-                _ => tracing::warn!(key, %err, "cache read failed"),
+            // What an older build wrote is fetched again.
+            if matches!(err, StoreError::Encoding(_)) {
+                tracing::debug!(key, %err, "cached row no longer decodes");
+            } else {
+                tracing::warn!(key, %err, "cache read failed");
             }
             None
         })
