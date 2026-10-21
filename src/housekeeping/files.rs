@@ -202,14 +202,7 @@ fn message(f: &Form, of: &FormOf) -> String {
 }
 
 /// The branch picker's rows: the branch it's on, or a new one.
-pub(super) fn branch_rows(
-    state: &State,
-    route: &Route,
-    q: &str,
-) -> Vec<(
-    crate::ui::overlays::PaletteItem,
-    Option<crate::picker::Choice>,
-)> {
+pub(super) fn branch_rows(state: &State, route: &Route, q: &str) -> crate::picker::Rows {
     let Route::Housekeeping(of) = route else {
         return Vec::new();
     };

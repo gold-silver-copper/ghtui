@@ -35,18 +35,17 @@ fn milestone_url(repo: &RepoId, number: u64) -> String {
 
 /// The milestone on screen: its own page's, or the one selected in the
 /// list.
-fn picked(state: &State) -> Option<MilestoneInfo> {
+fn picked(state: &State) -> Option<&MilestoneInfo> {
     match state.route()? {
         Route::Issues(issues::Milestone { repo, number }) => state
             .picked::<MilestoneDetail>(&DataKey::Milestone(repo.clone(), *number))
-            .map(|d| d.info.clone()),
+            .map(|d| &d.info),
         Route::Issues(issues::Milestones { repo, closed }) => {
             let list =
                 state.picked::<MilestoneList>(&DataKey::Milestones(repo.clone(), *closed))?;
             selected(state, &list.results.items, |m| {
                 milestone_url(repo, m.number)
             })
-            .cloned()
         }
         _ => None,
     }
@@ -69,10 +68,10 @@ pub(super) fn open(state: &mut State, repo: &RepoId, number: Option<u64>) -> Vec
 
 #[must_use]
 pub(super) fn edit(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
-    let Some(m) = picked(state) else {
+    let Some(number) = picked(state).map(|m| m.number) else {
         return state.just_say("Select a milestone first");
     };
-    open(state, repo, Some(m.number))
+    open(state, repo, Some(number))
 }
 
 /// Fills the form from the milestone once it's loaded; a new one starts
@@ -123,13 +122,7 @@ fn valid_date(date: &str) -> bool {
 }
 
 /// The due date picker's rows: the date typed, or none.
-pub(super) fn due_rows(
-    route: &Route,
-    q: &str,
-) -> Vec<(
-    crate::ui::overlays::PaletteItem,
-    Option<crate::picker::Choice>,
-)> {
+pub(super) fn due_rows(route: &Route, q: &str) -> crate::picker::Rows {
     let set = |d: &str| setting(route, Field::Due, d);
     let mut rows = Vec::new();
     if !q.is_empty() {
@@ -194,12 +187,13 @@ pub(super) fn toggle(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
     let Some(m) = picked(state) else {
         return state.just_say("Select a milestone first");
     };
-    let verb = if m.closed { "Reopening" } else { "Closing" };
+    let (number, closed) = (m.number, m.closed);
+    let verb = if closed { "Reopening" } else { "Closing" };
     state.info(format!("{verb} {}…", m.title));
     work::start(Save {
         repo: repo.clone(),
-        number: Some(m.number),
-        write: MilestoneWrite::Close(!m.closed),
+        number: Some(number),
+        write: MilestoneWrite::Close(!closed),
     })
 }
 
@@ -219,9 +213,10 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
         n => format!("Its {n} issues and pull requests stay, without a milestone"),
     };
     let subject = Subject::Milestone(repo.clone(), m.number);
+    let title = format!("Delete the milestone {}?", m.title);
     ask(
         state,
-        format!("Delete the milestone {}?", m.title),
+        title,
         vec![(on, false), ("It can't be brought back".into(), true)],
         vec![("Delete milestone".into(), super::Answer::Delete(subject))],
     );
