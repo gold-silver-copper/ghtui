@@ -172,9 +172,9 @@ fn bigrams(line: &str) -> Vec<(char, char)> {
     v
 }
 
-/// Dice coefficient of two lines' sorted bigrams.
-fn dice(x: &[(char, char)], y: &[(char, char)]) -> f64 {
-    // Count common bigrams (multiset intersection of sorted lists).
+/// Dice coefficient of two sorted multisets.
+pub(crate) fn dice<T: Ord>(x: &[T], y: &[T]) -> f64 {
+    // Count common items (multiset intersection of sorted lists).
     let (mut i, mut j, mut common) = (0, 0, 0usize);
     while let (Some(p), Some(q)) = (x.get(i), y.get(j)) {
         match p.cmp(q) {
@@ -199,81 +199,113 @@ pub(crate) fn similarity(a: &str, b: &str) -> f64 {
     dice(&x, &y)
 }
 
-/// Which removed line pairs with which added line, in order: the pairing
-/// with the greatest total similarity, lines too unlike anything left
-/// unpaired. Big blocks pair each removed line with its best match ahead.
-fn pair_lines(old: &[&str], new: &[&str]) -> Vec<(usize, usize)> {
-    #[derive(Clone, Copy)]
+/// The in-order pairing of `n` old and `m` new items with the greatest
+/// total weight, `weight` being `None` for a pair that may not be made. Of
+/// equal totals, skipping an old item wins, and a pair is made only when
+/// strictly better.
+pub(crate) fn best_pairing<E>(
+    n: usize,
+    m: usize,
+    mut weight: impl FnMut(usize, usize) -> Result<Option<f64>, E>,
+) -> Result<Vec<(usize, usize)>, E> {
+    #[derive(Clone, Copy, Default)]
     enum Step {
-        Start,
+        #[default]
         SkipOld,
         SkipNew,
         Pair,
     }
-    let score = |a: &str, b: &str| Some(similarity(a, b)).filter(|s| *s >= MIN_SIMILARITY);
-    if old.len() > MAX_ALIGNED || new.len() > MAX_ALIGNED {
-        let mut pairs = Vec::new();
-        let mut next = 0;
-        for (i, a) in old.iter().enumerate() {
-            let best = (next..)
-                .zip(new.iter().skip(next).take(16))
-                .filter_map(|(j, b)| Some((j, score(a, b)?)))
-                .max_by(|x, y| x.1.total_cmp(&y.1));
-            if let Some((j, _)) = best {
-                pairs.push((i, j));
-                next = j + 1;
-            }
-        }
-        return pairs;
-    }
-    let new_grams: Vec<_> = new.iter().map(|b| bigrams(b)).collect();
-    // `table[i][j]`: the best total for the first `i` old and `j` new lines.
-    let mut table: Vec<Vec<(f64, Step)>> = vec![vec![(0.0, Step::Start); new.len() + 1]];
-    for a in old {
-        let grams = bigrams(a);
-        let prev = table.last().cloned().unwrap_or_default();
-        let mut row = vec![(0.0, Step::SkipOld)];
-        for (j, b) in new.iter().enumerate() {
-            let pair = match (grams.is_empty(), new_grams.get(j)) {
-                (false, Some(g)) if !g.is_empty() => dice(&grams, g),
-                _ => similarity(a, b),
-            };
-            let skip_old = (prev.get(j + 1).map_or(0.0, |c| c.0), Step::SkipOld);
-            let skip_new = (row.last().map_or(0.0, |c: &(f64, Step)| c.0), Step::SkipNew);
-            let mut best = if skip_old.0 >= skip_new.0 {
-                skip_old
+    // `table[at(i, j)]`: the best total for the first `i` old and `j` new
+    // items, and the step that got there.
+    let width = m + 1;
+    let at = |i: usize, j: usize| i * width + j;
+    let mut table = vec![(0.0_f64, Step::SkipOld); (n + 1) * width];
+    for i in 0..n {
+        for j in 0..m {
+            let get = |i, j| table.get(at(i, j)).copied().unwrap_or_default();
+            let (up, left, diag) = (get(i, j + 1), get(i + 1, j), get(i, j));
+            let mut best = if up.0 >= left.0 {
+                (up.0, Step::SkipOld)
             } else {
-                skip_new
+                (left.0, Step::SkipNew)
             };
-            if pair >= MIN_SIMILARITY {
-                let paired = prev.get(j).map_or(0.0, |c| c.0) + pair;
-                if paired > best.0 {
-                    best = (paired, Step::Pair);
-                }
+            if let Some(w) = weight(i, j)?
+                && diag.0 + w > best.0
+            {
+                best = (diag.0 + w, Step::Pair);
             }
-            row.push(best);
+            if let Some(cell) = table.get_mut(at(i + 1, j + 1)) {
+                *cell = best;
+            }
         }
-        table.push(row);
     }
     // Walk back from the end.
     let mut pairs = Vec::new();
-    let (mut i, mut j) = (old.len(), new.len());
-    while let Some(&(_, step)) = table.get(i).and_then(|row| row.get(j)) {
-        match step {
-            Step::Start => break,
-            Step::SkipOld => i = i.saturating_sub(1),
-            Step::SkipNew => j = j.saturating_sub(1),
+    let (mut i, mut j) = (n, m);
+    while i > 0 && j > 0 {
+        match table.get(at(i, j)).map_or(Step::SkipOld, |c| c.1) {
             Step::Pair => {
-                i = i.saturating_sub(1);
-                j = j.saturating_sub(1);
+                (i, j) = (i - 1, j - 1);
                 pairs.push((i, j));
             }
-        }
-        if i == 0 && j == 0 {
-            break;
+            Step::SkipOld => i -= 1,
+            Step::SkipNew => j -= 1,
         }
     }
     pairs.reverse();
+    Ok(pairs)
+}
+
+/// [`best_pairing`] for too many items to weigh every pair: each old item
+/// pairs with the heaviest of the next 16 new ones (the nearest of equals).
+pub(crate) fn greedy_pairing<E>(
+    n: usize,
+    m: usize,
+    mut weight: impl FnMut(usize, usize) -> Result<Option<f64>, E>,
+) -> Result<Vec<(usize, usize)>, E> {
+    let mut pairs = Vec::new();
+    let mut next = 0;
+    for i in 0..n {
+        let mut best: Option<(usize, f64)> = None;
+        for j in (next..m).take(16) {
+            if let Some(w) = weight(i, j)?
+                && best.is_none_or(|(_, bw)| w > bw)
+            {
+                best = Some((j, w));
+            }
+        }
+        if let Some((j, _)) = best {
+            pairs.push((i, j));
+            next = j + 1;
+        }
+    }
+    Ok(pairs)
+}
+
+/// Which removed line pairs with which added line, in order: the pairing
+/// with the greatest total similarity, lines too unlike anything left
+/// unpaired. Big blocks pair each removed line with its best match ahead.
+fn pair_lines(old: &[&str], new: &[&str]) -> Vec<(usize, usize)> {
+    let like = |s: f64| Ok::<_, std::convert::Infallible>(Some(s).filter(|s| *s >= MIN_SIMILARITY));
+    let pick = |i: usize, j: usize| (old.get(i).copied(), new.get(j).copied());
+    let Ok(pairs) = if old.len() > MAX_ALIGNED || new.len() > MAX_ALIGNED {
+        greedy_pairing(old.len(), new.len(), |i, j| match pick(i, j) {
+            (Some(a), Some(b)) => like(similarity(a, b)),
+            _ => Ok(None),
+        })
+    } else {
+        let [old_grams, new_grams] =
+            [old, new].map(|side| side.iter().map(|l| bigrams(l)).collect::<Vec<_>>());
+        best_pairing(old.len(), new.len(), |i, j| {
+            match (old_grams.get(i), new_grams.get(j)) {
+                (Some(x), Some(y)) if !x.is_empty() && !y.is_empty() => like(dice(x, y)),
+                _ => match pick(i, j) {
+                    (Some(a), Some(b)) => like(similarity(a, b)),
+                    _ => Ok(None),
+                },
+            }
+        })
+    };
     pairs
 }
 
