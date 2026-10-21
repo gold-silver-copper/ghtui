@@ -1128,14 +1128,6 @@ impl Pick {
     }
 }
 
-/// Whether `s` can be a GitHub login.
-fn is_login(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= 39
-        && !s.starts_with('-')
-        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-}
-
 pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Step>)> {
     match pick {
         Pick::Invite { repo } => {
@@ -1143,7 +1135,7 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Step>)> {
             if login.is_empty() {
                 return vec![(crate::picker::item("Type their GitHub login", ""), None)];
             }
-            if !is_login(login) {
+            if !crate::route::valid_login(login) {
                 return vec![(
                     crate::picker::item(format!("“{login}” isn't a GitHub login"), ""),
                     None,

@@ -525,23 +525,36 @@ pub(crate) fn is_reserved(s: &str) -> bool {
     RESERVED.contains(&s)
 }
 
+/// Whether `s` can be a GitHub login: up to 39 letters, digits and
+/// dashes, not starting with a dash.
 pub(crate) fn valid_login(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    !s.is_empty()
+        && s.len() <= 39
+        && !s.starts_with('-')
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
-/// A revision as git allows ref names and SHAs to be written (roughly
-/// `git check-ref-format`): no spaces or control characters, none of
-/// `~^:?*[\`, no `..` or `@{`, and no `/`-separated part that is empty,
-/// starts with `.` or ends with `.lock`.
+/// Why `name` can't name a branch or tag, as `git check-ref-format
+/// --branch` has it: no spaces or control characters, none of `~^:?*[\`,
+/// no `..` or `@{`, not `@` or starting with `-`, and no `/`-separated
+/// part that is empty, starts with `.` or ends with `.lock`.
+pub(crate) fn ref_problem(name: &str) -> Option<&'static str> {
+    let bad = |c: char| c.is_whitespace() || c.is_control() || "~^:?*[\\".contains(c);
+    let part = |p: &str| p.is_empty() || p.starts_with('.') || p.ends_with(".lock");
+    if name.is_empty() {
+        Some("Type its name")
+    } else if name.chars().any(bad) || name.contains("..") || name.contains("@{") || name == "@" {
+        Some("A name can't have spaces, .., @{, or any of ~^:?*[\\")
+    } else if name.starts_with('-') || name.ends_with('.') || name.split('/').any(part) {
+        Some("A name can't start with / . or -, or end with / . or .lock")
+    } else {
+        None
+    }
+}
+
+/// A revision as git allows ref names and SHAs to be written.
 fn valid_rev(s: &str) -> bool {
-    s.split('/')
-        .all(|c| !c.is_empty() && !c.starts_with('.') && !c.ends_with(".lock"))
-        && !s.contains("..")
-        && !s.contains("@{")
-        && !s.ends_with('.')
-        && !s
-            .chars()
-            .any(|c| c.is_control() || c.is_whitespace() || "~^:?*[\\".contains(c))
+    ref_problem(s).is_none()
 }
 
 /// A team's slug: its name, lowercased, its other characters dashes.
@@ -598,6 +611,8 @@ pub(crate) mod arb {
                 // trip catches it rejecting a legal name.
                 !r.contains("..")
                     && !r.ends_with('.')
+                    && !r.starts_with('-')
+                    && r != "@"
                     && !r.split('/').any(|c| c.ends_with(".lock"))
             })
     }
@@ -610,6 +625,24 @@ pub(crate) mod tests {
     use crate::api::project::{ProjectOwner, ProjectRef, ProjectsOf};
     use crate::git::Oid;
     use crate::route::security::valid_ghsa;
+
+    #[test]
+    fn ref_names_are_gits() {
+        assert_eq!(ref_problem("feature/x"), None);
+        assert_eq!(ref_problem("v1.2.0"), None);
+        for bad in [
+            "has space",
+            "a..b",
+            "-x",
+            "x.lock",
+            "a.lock/b",
+            "a/.b",
+            "a//b",
+            "@",
+        ] {
+            assert!(ref_problem(bad).is_some(), "{bad}");
+        }
+    }
 
     /// Names GitHub can't have aren't pages (found by fuzzing: a user
     /// named `https:` and NULs opened, and its URL led elsewhere).

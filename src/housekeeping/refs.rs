@@ -66,30 +66,10 @@ pub(super) fn start(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec<Cmd>
     state.open_picker(pick)
 }
 
-/// Why `name` can't name a branch or tag, as git's `check-ref-format`
-/// has it.
-pub(super) fn name_problem(name: &str) -> Option<&'static str> {
-    let bad = |c: char| c.is_whitespace() || c.is_control() || "~^:?*[\\".contains(c);
-    if name.is_empty() {
-        Some("Type its name")
-    } else if name.chars().any(bad) || name.contains("..") || name.contains("@{") || name == "@" {
-        Some("A name can't have spaces, .., @{, or any of ~^:?*[\\")
-    } else if name.starts_with(['/', '.', '-'])
-        || name.ends_with(['/', '.'])
-        || name.ends_with(".lock")
-        || name.contains("//")
-        || name.split('/').any(|part| part.starts_with('.'))
-    {
-        Some("A name can't start with / . or -, or end with / . or .lock")
-    } else {
-        None
-    }
-}
-
 /// The name picker's one row.
 pub(super) fn name_rows(repo: &RepoId, kind: RefKind, q: &str) -> crate::picker::Rows {
     let q = q.trim();
-    match name_problem(q) {
+    match crate::route::ref_problem(q) {
         Some(why) => vec![item(why, "", None)],
         None => vec![item(
             format!("Create {} {q}", kind.noun()),
@@ -436,20 +416,4 @@ pub(super) fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
         "delete",
         row_why,
     ));
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn names_are_gits() {
-        assert_eq!(name_problem("feature/x"), None);
-        assert_eq!(name_problem("v1.2.0"), None);
-        assert!(name_problem("has space").is_some());
-        assert!(name_problem("a..b").is_some());
-        assert!(name_problem("-x").is_some());
-        assert!(name_problem("x.lock").is_some());
-        assert!(name_problem("a/.b").is_some());
-    }
 }

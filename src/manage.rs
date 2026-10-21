@@ -676,12 +676,8 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
             if name.is_empty() {
                 return vec![crate::picker::entry("Type the branch's name", "", None)];
             }
-            if name.contains(char::is_whitespace) || name.contains("..") {
-                return vec![crate::picker::entry(
-                    "A branch's name has no spaces or ..",
-                    "",
-                    None,
-                )];
+            if let Some(why) = crate::route::ref_problem(name) {
+                return vec![crate::picker::entry(why, "", None)];
             }
             let default = state
                 .overview(&issue.repo)

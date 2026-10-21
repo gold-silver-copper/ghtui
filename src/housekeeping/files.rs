@@ -175,7 +175,7 @@ pub(super) fn problem(state: &State, route: &Route, of: &FormOf) -> Option<Strin
         return Some(format!("{rev} isn't a branch: commit to a new one"));
     }
     if !branch.is_empty()
-        && let Some(why) = super::refs::name_problem(branch)
+        && let Some(why) = crate::route::ref_problem(branch)
     {
         return Some(why.into());
     }
@@ -219,7 +219,7 @@ pub(super) fn branch_rows(
     let set = |b: &str| setting(route, Field::Branch, b);
     let mut rows = Vec::new();
     if !q.is_empty() {
-        rows.push(match super::refs::name_problem(q) {
+        rows.push(match crate::route::ref_problem(q) {
             Some(why) => item(why, "", None),
             None => item(
                 format!("A new branch, {q}"),
