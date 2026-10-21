@@ -299,7 +299,7 @@ impl Job for Save {
                     },
                     crate::state::Screen::Diff(_) => None,
                 });
-                let page = below.clone().unwrap_or_else(|| {
+                let page = below.unwrap_or_else(|| {
                     Route::Wiki(wiki::Wiki {
                         repo: repo.clone(),
                         page: Some(slug),
@@ -310,14 +310,7 @@ impl Job for Save {
                 };
                 let shows = Saved(DataKey::Wiki(repo.clone(), name.clone()), text);
                 crate::follow::expect(state, page.clone(), shows);
-                if below.is_some() {
-                    let mut cmds = state.back();
-                    state.forward.clear();
-                    cmds.extend(state.ensure_route(&page, true));
-                    cmds
-                } else {
-                    state.replace(page, true, None)
-                }
+                crate::gist::back_to(state, page)
             }
             Err(why) => crate::forms::failed(state, route, why.to_string()),
         }

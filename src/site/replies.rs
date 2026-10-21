@@ -21,14 +21,14 @@ pub struct Choosing {
 }
 
 /// A row of the list: what it says, and the reply it inserts.
-struct Row {
+struct Row<'a> {
     label: String,
-    insert: Option<String>,
+    insert: Option<&'a str>,
 }
 
 /// The list's rows, for what's typed: the replies whose title or text
 /// has it, else why there are none; then where they're made.
-fn rows(state: &State, query: &str) -> Vec<Row> {
+fn rows<'a>(state: &'a State, query: &str) -> Vec<Row<'a>> {
     let key = DataKey::SavedReplies;
     #[expect(clippy::disallowed_methods, reason = "said as the list's row")]
     let fetched = Remote::fetched(state.remote(&key), "")
@@ -50,11 +50,13 @@ fn rows(state: &State, query: &str) -> Vec<Row> {
             let q = query.to_lowercase();
             let mut found: Vec<Row> = (replies.iter())
                 .filter(|r| {
-                    r.title.to_lowercase().contains(&q) || r.body.to_lowercase().contains(&q)
+                    q.is_empty()
+                        || r.title.to_lowercase().contains(&q)
+                        || r.body.to_lowercase().contains(&q)
                 })
                 .map(|r| Row {
                     label: r.title.clone(),
-                    insert: Some(r.body.clone()),
+                    insert: Some(&r.body),
                 })
                 .collect();
             if found.is_empty() {
@@ -107,22 +109,22 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Option<Vec<Cmd>> {
     if !open {
         return None;
     }
-    let query = match &state.overlay {
-        Some(Overlay::Compose(c)) => c.saved.as_ref().map(|s| s.query.clone()),
+    let (query, selected) = match &state.overlay {
+        Some(Overlay::Compose(c)) => c.saved.as_ref().map(|s| (s.query.clone(), s.selected)),
         _ => None,
     }?;
     let rows = rows(state, &query);
+    let count = rows.len();
+    let chosen = rows.get(selected).and_then(|r| r.insert).map(str::to_owned);
     let Some(Overlay::Compose(c)) = &mut state.overlay else {
         return None;
     };
     let choosing = c.saved.as_mut()?;
-    let last = rows.len().saturating_sub(1);
+    if crate::picker::move_in_list(key, &mut choosing.selected, count) {
+        return Some(Vec::new());
+    }
     match key.code {
         KeyCode::Esc => c.saved = None,
-        KeyCode::Down | KeyCode::Tab => choosing.selected = (choosing.selected + 1).min(last),
-        KeyCode::Char('n') if ctrl => choosing.selected = (choosing.selected + 1).min(last),
-        KeyCode::Up | KeyCode::BackTab => choosing.selected = choosing.selected.saturating_sub(1),
-        KeyCode::Char('p') if ctrl => choosing.selected = choosing.selected.saturating_sub(1),
         KeyCode::Backspace => {
             choosing.query.pop();
             choosing.selected = 0;
@@ -132,11 +134,7 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Option<Vec<Cmd>> {
             choosing.selected = 0;
         }
         KeyCode::Enter => {
-            if let Some(text) = rows
-                .into_iter()
-                .nth(choosing.selected)
-                .and_then(|r| r.insert)
-            {
+            if let Some(text) = chosen {
                 c.input.insert_str(&text);
                 c.saved = None;
                 c.sent.error = None;

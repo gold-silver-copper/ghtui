@@ -21,6 +21,7 @@ use crate::api::browse::{
 use crate::api::model::RepoId;
 use crate::api::{ApiError, Polled};
 use crate::data::DataKey;
+use crate::discuss::same_text;
 use crate::state::{Api, Cmd, Screen, State};
 use crate::ui::text::noun;
 
@@ -426,43 +427,32 @@ pub fn on_watched(
     cmds
 }
 
-/// Whether a first answer shows something the page doesn't.
+/// Whether a first answer shows something the page doesn't: missing data
+/// or an unreadable answer counts as showing something.
 fn differs(state: &State, probe: &Probe, body: &str) -> bool {
-    match probe {
+    differs_or_none(state, probe, body).unwrap_or(true)
+}
+
+fn differs_or_none(state: &State, probe: &Probe, body: &str) -> Option<bool> {
+    Some(match probe {
         Probe::Job(repo, job) => {
-            let Some(shown) = state.picked::<Job>(&DataKey::Job(repo.clone(), *job)) else {
-                return true;
-            };
-            let Ok(wire) = serde_json::from_str::<rest_actions::Job>(body) else {
-                return true;
-            };
-            let steps: Vec<CheckOutcome> = wire
+            let shown = state.picked::<Job>(&DataKey::Job(repo.clone(), *job))?;
+            let wire: rest_actions::Job = serde_json::from_str(body).ok()?;
+            let steps = wire
                 .steps
                 .iter()
-                .map(|s| CheckOutcome::of(s.status, s.conclusion))
-                .collect();
-            let shown_steps: Vec<CheckOutcome> = shown.steps.iter().map(|s| s.outcome).collect();
-            wire.outcome() != shown.outcome || steps != shown_steps
+                .map(|s| CheckOutcome::of(s.status, s.conclusion));
+            wire.outcome() != shown.outcome || !steps.eq(shown.steps.iter().map(|s| s.outcome))
         }
         Probe::Run(repo, run, attempt) => {
-            let key = DataKey::Run(repo.clone(), *run, *attempt);
-            let Some(shown) = state.picked::<WorkflowRun>(&key) else {
-                return true;
-            };
-            let Ok(wire) = serde_json::from_str::<rest_actions::Run>(body) else {
-                return true;
-            };
+            let shown = state.picked::<WorkflowRun>(&DataKey::Run(repo.clone(), *run, *attempt))?;
+            let wire: rest_actions::Run = serde_json::from_str(body).ok()?;
             CheckOutcome::of(wire.status, wire.conclusion) != shown.outcome
                 || wire.updated_at != shown.updated_at
         }
         Probe::RunJobs(repo, run, attempt) => {
-            let key = DataKey::Run(repo.clone(), *run, *attempt);
-            let Some(shown) = state.picked::<WorkflowRun>(&key) else {
-                return true;
-            };
-            let Ok(wire) = serde_json::from_str::<rest_actions::Jobs>(body) else {
-                return true;
-            };
+            let shown = state.picked::<WorkflowRun>(&DataKey::Run(repo.clone(), *run, *attempt))?;
+            let wire: rest_actions::Jobs = serde_json::from_str(body).ok()?;
             wire.jobs.iter().any(|j| {
                 let outcome = j.outcome();
                 !shown
@@ -473,12 +463,8 @@ fn differs(state: &State, probe: &Probe, body: &str) -> bool {
         }
         Probe::Runs(repo, query) => {
             let key = DataKey::Runs(repo.clone(), query.clone());
-            let Some(shown) = state.picked::<Results<RunSummary>>(&key) else {
-                return true;
-            };
-            let Ok(wire) = serde_json::from_str::<rest_actions::Runs>(body) else {
-                return true;
-            };
+            let shown = state.picked::<Results<RunSummary>>(&key)?;
+            let wire: rest_actions::Runs = serde_json::from_str(body).ok()?;
             wire.workflow_runs.iter().any(|r| {
                 let outcome = CheckOutcome::of(r.status, r.conclusion);
                 !shown
@@ -489,46 +475,29 @@ fn differs(state: &State, probe: &Probe, body: &str) -> bool {
         }
         Probe::Issue(repo, number) => {
             let key = DataKey::Issue(repo.clone(), *number);
-            let Some(Some(shown)) = state.picked::<Option<Box<IssueDetail>>>(&key) else {
-                return true;
-            };
-            let Ok(wire) = serde_json::from_str::<wire::Issue>(body) else {
-                return true;
-            };
+            let shown = state.picked::<Option<Box<IssueDetail>>>(&key)?.as_ref()?;
+            let wire: wire::Issue = serde_json::from_str(body).ok()?;
             wire.differs(shown)
         }
         Probe::IssueComments(repo, number, _) => {
             let key = DataKey::Issue(repo.clone(), *number);
-            let Some(Some(shown)) = state.picked::<Option<Box<IssueDetail>>>(&key) else {
-                return true;
-            };
-            let Ok(wire) = serde_json::from_str::<Vec<wire::Comment>>(body) else {
-                return true;
-            };
+            let shown = state.picked::<Option<Box<IssueDetail>>>(&key)?.as_ref()?;
+            let wire: Vec<wire::Comment> = serde_json::from_str(body).ok()?;
             wire.iter().any(|c| {
+                let body = c.body.as_deref().unwrap_or_default();
                 !shown
                     .comments()
-                    .any(|s| s.id == Some(c.id) && same_text(&s.body, c.body.as_deref()))
+                    .any(|s| s.id == Some(c.id) && same_text(&s.body, body))
             })
         }
         Probe::Discussion(..) => {
-            let Some(shown) = discussion_here(state) else {
-                return true;
-            };
-            let Ok(wire) = serde_json::from_str::<wire::Discussion>(body) else {
-                return true;
-            };
+            let shown = discussion_here(state)?;
+            let wire: wire::Discussion = serde_json::from_str(body).ok()?;
             wire.title != shown.title
-                || !same_text(&shown.body, Some(&wire.body))
+                || !same_text(&shown.body, &wire.body)
                 || wire.comments.total_count != shown.comments.total()
         }
-    }
-}
-
-/// Two texts of a comment, the same but for line endings.
-fn same_text(a: &str, b: Option<&str>) -> bool {
-    let norm = |s: &str| s.replace("\r\n", "\n").trim().to_owned();
-    norm(a) == norm(b.unwrap_or_default())
+    })
 }
 
 /// The discussion on screen, as loaded.
@@ -591,20 +560,12 @@ pub fn loaded(state: &mut State, key: &DataKey) {
     let Some(w) = state.page_watch.as_mut() else {
         return;
     };
-    let Some(seen) = &mut w.seen else {
-        w.seen = Some(came.iter().map(|(id, _)| *id).collect());
-        return;
-    };
-    let mut new = 0;
-    for (id, mine) in came {
-        // Runs are said, not marked: the list's order shows them.
-        if seen.insert(id) && !mine {
-            if word != "run" {
-                w.new.insert(id);
-            }
-            new += 1;
-        }
+    let came = super::note(&mut w.seen, came, |mine| *mine);
+    // Runs are said, not marked: the list's order shows them.
+    if word != "run" {
+        w.new.extend(came.iter().map(|(id, _)| *id));
     }
+    let new = came.len() as u64;
     if new > 0 {
         state.shown_gen += 1;
         state.info(format!("New on {place}: {new} {}", noun(new, word)));
@@ -707,7 +668,7 @@ mod wire {
             people.sort_unstable();
             shown_people.sort_unstable();
             self.title != shown.title
-                || !super::same_text(&shown.body, self.body.as_deref())
+                || !crate::discuss::same_text(&shown.body, self.body.as_deref().unwrap_or_default())
                 || state != shown.state
                 || self.comments != shown.comment_count
                 || labels != shown_labels

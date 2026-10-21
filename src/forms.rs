@@ -105,6 +105,23 @@ pub fn row(state: &mut State, row: &Row) -> Vec<Cmd> {
     }
 }
 
+/// A form's row with no chips: `unset` when `value` is a placeholder or
+/// a note.
+pub(crate) fn form_row(
+    name: &'static str,
+    value: impl Into<String>,
+    unset: bool,
+    link: Option<Row>,
+) -> crate::ui::pages::FormRow {
+    crate::ui::pages::FormRow {
+        name,
+        value: value.into(),
+        unset,
+        chips: Vec::new(),
+        link,
+    }
+}
+
 /// The picker's row that sets the form at `route`'s `row` to `value`.
 pub(crate) fn filling(route: &Route, row: Row, value: impl Into<String>) -> crate::picker::Choice {
     crate::picker::Choice::Step(crate::act::Step::Fill(route.clone(), row, value.into()))

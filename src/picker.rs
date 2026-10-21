@@ -244,14 +244,27 @@ pub(crate) fn save_rows(
 const CODE_ROWS: usize = 1000;
 
 fn code_rows(rows: &[(PaletteItem, Choice)], q: &str) -> Rows {
-    let mut hits: Vec<_> = (rows.iter())
-        .filter_map(|(item, choice)| Some((fuzzy_score(q, item.label.trim_start())?, item, choice)))
+    let hits: Vec<_> = (rows.iter().enumerate())
+        .filter_map(|(i, (item, choice))| {
+            Some(((fuzzy_score(q, item.label.trim_start())?, i), item, choice))
+        })
         .collect();
-    hits.sort_by_key(|(score, ..)| *score);
     // A repository's symbols can be many: the best few are what's read.
-    let hits = hits.into_iter().take(CODE_ROWS);
-    hits.map(|(_, item, choice)| (item.clone(), Some(choice.clone())))
+    let hits = best(hits, CODE_ROWS, |(key, ..)| *key);
+    (hits.into_iter())
+        .map(|(_, item, choice)| (item.clone(), Some(choice.clone())))
         .collect()
+}
+
+/// The first `n` of `hits` by `key` (which ties nothing: it ends with
+/// each one's place), in order. Only those are sorted.
+fn best<T, K: Ord>(mut hits: Vec<T>, n: usize, key: impl Fn(&T) -> K + Copy) -> Vec<T> {
+    if let Some(last) = n.checked_sub(1).filter(|_| hits.len() > n) {
+        hits.select_nth_unstable_by_key(last, key);
+    }
+    hits.truncate(n);
+    hits.sort_unstable_by_key(key);
+    hits
 }
 
 /// Notices that match `q`; choosing one copies it.
@@ -538,14 +551,10 @@ impl State {
                 Ok(Data::Files(files, truncated)) => (files, truncated),
                 other => return other.err().unwrap_or_default(),
             };
-        let mut hits: Vec<(usize, &String)> = files
-            .iter()
-            .filter_map(|p| path_score(q, p).map(|s| (s, p)))
+        let hits: Vec<((usize, usize, usize), &String)> = (files.iter().enumerate())
+            .filter_map(|(i, p)| Some(((path_score(q, p)?, p.len(), i), p)))
             .collect();
-        hits.sort_by_key(|(s, p)| (*s, p.len()));
-        let mut rows: Rows = hits
-            .into_iter()
-            .take(200)
+        let mut rows: Rows = (best(hits, 200, |(key, _)| *key).into_iter())
             .map(|(_, path)| {
                 let target = Target::Page(Route::blob(repo.clone(), rev.to_owned(), path.clone()));
                 (item(path, ""), Some(Choice::Go(target.into())))
@@ -668,9 +677,8 @@ pub fn fuzzy_score(needle: &str, haystack: &str) -> Option<usize> {
     if needle.is_empty() {
         return Some(0);
     }
-    let needle = needle.to_lowercase();
-    let hay = haystack.to_lowercase();
-    if let Some(pos) = hay.find(&needle) {
+    let (needle, hay) = (lowered(needle), lowered(haystack));
+    if let Some(pos) = hay.find(&*needle) {
         return Some(pos);
     }
     let mut chars = hay.char_indices();
@@ -680,6 +688,16 @@ pub fn fuzzy_score(needle: &str, haystack: &str) -> Option<usize> {
         last = i;
     }
     Some(1000 + last)
+}
+
+/// `s` lowercased, copied only when that changes it: most of what's
+/// matched is lowercase already.
+fn lowered(s: &str) -> std::borrow::Cow<'_, str> {
+    if s.is_ascii() && !s.bytes().any(|b| b.is_ascii_uppercase()) {
+        std::borrow::Cow::Borrowed(s)
+    } else {
+        std::borrow::Cow::Owned(s.to_lowercase())
+    }
 }
 
 /// Fuzzy file matching that prefers the file name.

@@ -301,22 +301,29 @@ pub fn on_timer(state: &mut State, id: u64) -> Vec<Cmd> {
     })]
 }
 
-/// The head a pull request's REST answer names.
-fn head_of(body: &str) -> Option<String> {
-    let json: serde_json::Value = serde_json::from_str(body).ok()?;
-    Some(json.get("head")?.get("sha")?.as_str()?.to_owned())
+/// A pull request's REST answer, as much as is read of it: serde skips
+/// the rest without building it.
+#[derive(serde::Deserialize)]
+struct PullHead {
+    head: Option<Sha>,
+    updated_at: Option<String>,
 }
 
-/// When a pull request's REST answer says it was last updated.
-fn updated_of(body: &str) -> Option<String> {
-    let json: serde_json::Value = serde_json::from_str(body).ok()?;
-    Some(json.get("updated_at")?.as_str()?.to_owned())
+#[derive(serde::Deserialize)]
+struct Sha {
+    sha: String,
+}
+
+/// A review comment, as much as is read of it.
+#[derive(serde::Deserialize)]
+struct NodeIdOnly {
+    node_id: String,
 }
 
 /// The newest review comment a review comments answer names.
 fn newest_comment(body: &str) -> Option<NodeId> {
-    let json: serde_json::Value = serde_json::from_str(body).ok()?;
-    Some(NodeId::new(json.get(0)?.get("node_id")?.as_str()?))
+    let comments: Vec<NodeIdOnly> = serde_json::from_str(body).ok()?;
+    Some(NodeId::new(&comments.first()?.node_id))
 }
 
 /// GitHub's answers to an ask: what changed is fetched again, and a push
@@ -365,13 +372,14 @@ pub fn on_polled(
                 continue;
             }
         };
-        if probe == Probe::Pull
-            && let Some(head) = head_of(&body)
-        {
-            if w.head.as_ref().is_some_and(|h| *h != head) {
-                pushed = Some(head.clone());
+        let pull = (probe == Probe::Pull)
+            .then(|| serde_json::from_str::<PullHead>(&body).ok())
+            .flatten();
+        if let Some(head) = pull.as_ref().and_then(|p| p.head.as_ref()) {
+            if w.head.as_ref().is_some_and(|h| *h != head.sha) {
+                pushed = Some(head.sha.clone());
             }
-            w.head = Some(head);
+            w.head = Some(head.sha.clone());
         }
         // The first answer is only what's there, unless a comment came in
         // after the diff's threads were fetched.
@@ -380,9 +388,9 @@ pub fn on_polled(
             Probe::ReviewComments => (shown.as_ref())
                 .is_some_and(|ids| newest_comment(&body).is_some_and(|id| !ids.contains(&id))),
             // Updated after what's shown was fetched: a review, a comment.
-            Probe::Pull => updated_of(&body)
+            Probe::Pull => (pull.as_ref().and_then(|p| p.updated_at.as_deref()))
                 .zip(updated.as_deref())
-                .is_some_and(|(now, shown)| now.as_str() > shown),
+                .is_some_and(|(now, shown)| now > shown),
             Probe::CheckRuns(_) | Probe::Statuses(_) => false,
         };
         if first && pushed.is_none() && !unseen {
@@ -543,41 +551,24 @@ pub fn activity_loaded(state: &mut State, pr: &PrRef) {
         return;
     };
     let mut what = Vec::new();
+    let mine = |author: &&str| viewer == Some(*author);
     // Comments.
-    let comments: Vec<(u64, &str)> = comment_ids(activity).collect();
-    match &mut w.seen_comments {
-        None => w.seen_comments = Some(comments.iter().map(|(id, _)| *id).collect()),
-        Some(seen) => {
-            let mut new = 0;
-            for (id, author) in comments {
-                if seen.insert(id) && viewer != Some(author) {
-                    w.new_comments.insert(id);
-                    new += 1;
-                }
-            }
-            if new > 0 {
-                what.push(format!("{new} {}", noun(new, "comment")));
-            }
-        }
+    let came = note(&mut w.seen_comments, comment_ids(activity), mine);
+    w.new_comments.extend(came.iter().map(|(id, _)| *id));
+    let new = came.len() as u64;
+    if new > 0 {
+        what.push(format!("{new} {}", noun(new, "comment")));
     }
     // Reviews, each named.
-    let reviews: Vec<(u64, &str)> = review_ids(activity).collect();
-    match &mut w.seen_reviews {
-        None => w.seen_reviews = Some(reviews.iter().map(|(id, _)| *id).collect()),
-        Some(seen) => {
-            for (id, author) in reviews {
-                if seen.insert(id) && viewer != Some(author) {
-                    w.new_reviews.insert(id);
-                    let r = activity.reviews().find(|r| r.id == Some(id));
-                    let said = r.map_or("reviewed", |r| match r.state {
-                        crate::api::model::ReviewState::Approved => "approved",
-                        crate::api::model::ReviewState::ChangesRequested => "requested changes",
-                        _ => "reviewed",
-                    });
-                    what.push(format!("{author} {said}"));
-                }
-            }
-        }
+    for (id, author) in note(&mut w.seen_reviews, review_ids(activity), mine) {
+        w.new_reviews.insert(id);
+        let r = activity.reviews().find(|r| r.id == Some(id));
+        let said = r.map_or("reviewed", |r| match r.state {
+            crate::api::model::ReviewState::Approved => "approved",
+            crate::api::model::ReviewState::ChangesRequested => "requested changes",
+            _ => "reviewed",
+        });
+        what.push(format!("{author} {said}"));
     }
     // Threads, which the diff's own fetch may have noted already.
     let (new_threads, replies) = note_threads(w, &activity.threads, viewer);
@@ -586,6 +577,22 @@ pub fn activity_loaded(state: &mut State, pr: &PrRef) {
         *shown_gen += 1;
         notices.info(format!("New on {pr}: {}", what.join(", ")));
     }
+}
+
+/// Notes what's in, by GitHub's number: the first time, it's what was
+/// there; after, what wasn't is new. What came that isn't `mine`.
+fn note<T>(
+    seen: &mut Option<HashSet<u64>>,
+    items: impl IntoIterator<Item = (u64, T)>,
+    mine: impl Fn(&T) -> bool,
+) -> Vec<(u64, T)> {
+    let Some(known) = seen.as_mut() else {
+        *seen = Some(items.into_iter().map(|(id, _)| id).collect());
+        return Vec::new();
+    };
+    (items.into_iter())
+        .filter(|(id, t)| known.insert(*id) && !mine(t))
+        .collect()
 }
 
 /// Forgets what was new on `pr`: you've left it.

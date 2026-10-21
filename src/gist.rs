@@ -15,12 +15,12 @@ use crate::api::gist::{FileChange, GistChange, MadeGist, NewGist};
 use crate::route::{Route, app, gists, people};
 use crate::ui::form::Row;
 use crate::ui::page::{Link, Page};
-use crate::ui::pages::{FormRow, Mark, TextBox, WriteFormView};
+use crate::ui::pages::{Mark, TextBox, WriteFormView};
 
 use crate::data::DataKey;
 use crate::follow::{Expectation, Shown};
 use crate::forms::Answer;
-use crate::forms::{Fields, filling, say};
+use crate::forms::{Fields, filling, form_row, say};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
 use crate::picker::entry;
@@ -694,7 +694,7 @@ fn unsaved(state: &mut State, route: &Route, why: &Failure) -> Vec<Cmd> {
 
 /// Back to `page` when it's the page before, else to it in place.
 #[must_use]
-fn back_to(state: &mut State, page: Route) -> Vec<Cmd> {
+pub(crate) fn back_to(state: &mut State, page: Route) -> Vec<Cmd> {
     let below = state.screens.below().and_then(|s| match s {
         crate::state::Screen::Page(p) => Some(&p.route),
         crate::state::Screen::Diff(_) => None,
@@ -763,17 +763,18 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
     let form = state.forms.shown::<Form>(route);
     let composing = |i| crate::forms::composing(state, route, i);
     let editing = matches!(route, Route::Gists(gists::EditGist { .. }));
-    let mut rows = vec![FormRow {
-        name: "Description",
-        value: if form.description.is_empty() {
-            "Gist description…".into()
-        } else {
-            form.description.clone()
-        },
-        unset: form.description.is_empty(),
-        chips: Vec::new(),
-        link: Some(Row::Description),
-    }];
+    let unset = form.description.is_empty();
+    let description = if unset {
+        "Gist description…"
+    } else {
+        &form.description
+    };
+    let mut rows = vec![form_row(
+        "Description",
+        description,
+        unset,
+        Some(Row::Description),
+    )];
     let mut status = Vec::new();
     if editing {
         let (visibility, why) = if form.public {
@@ -784,13 +785,12 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
                 "Making it public works on github.com: GitHub's API can't",
             )
         };
-        rows.push(FormRow {
-            name: "Visibility",
-            value: format!("{visibility} · {why}"),
-            unset: true,
-            chips: Vec::new(),
-            link: None,
-        });
+        rows.push(form_row(
+            "Visibility",
+            format!("{visibility} · {why}"),
+            true,
+            None,
+        ));
         if !form.removed.is_empty() {
             let text = format!("Saving removes {}", form.removed.join(", "));
             status.push((text, Mark::Waiting, None));
@@ -818,13 +818,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
             }
         })
         .collect();
-    let after = vec![FormRow {
-        name: "",
-        value: "+ Add file".into(),
-        unset: false,
-        chips: Vec::new(),
-        link: Some(Row::AddFile),
-    }];
+    let after = vec![form_row("", "+ Add file", false, Some(Row::AddFile))];
     let write = state.first_key(Action::Comment);
     let save_key = state.first_key(Action::Create);
     let view = WriteFormView {
