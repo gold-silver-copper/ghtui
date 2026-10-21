@@ -685,20 +685,12 @@ fn doables(state: &State, out: &mut Vec<Doable>) {
             Some(g) => not_yours(state, g),
             None => Some("it hasn't loaded yet".into()),
         };
-        out.push(row(
-            "Edit",
-            Action::EditComment,
-            "Edit the gist",
-            "edit",
-            why.clone(),
-        ));
-        out.push(row(
-            "Edit",
-            Action::DeleteComment,
-            "Delete the gist",
-            "",
-            why,
-        ));
+        for (action, label, short) in [
+            (Action::EditComment, "Edit the gist", "edit"),
+            (Action::DeleteComment, "Delete the gist", ""),
+        ] {
+            out.push(row("Edit", action, label, short, why.clone()));
+        }
     }
     if matches!(
         route,
