@@ -6,7 +6,7 @@
 use crate::schema::schema;
 use serde::{Deserialize, Serialize};
 
-use crate::api::change::{IdVariables, IdVariablesFields, mutations};
+use crate::api::change::{IdVariablesFields, mutations};
 use crate::api::client::{ApiError, GitHub};
 use crate::api::model::{Capped, NodeId, RepoId, count};
 use crate::api::queries::{NumberVariables, NumberVariablesFields, fragments, nodes};
@@ -190,14 +190,11 @@ impl GitHub {
                     Written::Review => self.run::<UpdateReview, _>(vars).await,
                 }
             }
-            Edit::Delete { of, id } => {
-                let vars = IdVariables { id: id.gql() };
-                match of {
-                    Written::ReviewComment => self.run::<DeleteReviewComment, _>(vars).await,
-                    Written::Review => self.run::<DeleteReview, _>(vars).await,
-                    _ => self.run::<DeleteIssueComment, _>(vars).await,
-                }
-            }
+            Edit::Delete { of, id } => match of {
+                Written::ReviewComment => self.run_on::<DeleteReviewComment>(id).await,
+                Written::Review => self.run_on::<DeleteReview>(id).await,
+                _ => self.run_on::<DeleteIssueComment>(id).await,
+            },
             Edit::Title { pr, id, title } => {
                 let vars = TitleVariables {
                     id: id.gql(),

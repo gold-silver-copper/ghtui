@@ -201,34 +201,23 @@ impl GitHub {
                 })
                 .await
             }
-            Change::Star { id, starred, .. } => {
-                let vars = IdVariables { id: id.gql() };
-                if *starred {
-                    self.run::<AddStar, _>(vars).await
+            Change::Star {
+                id, starred: true, ..
+            } => self.run_on::<AddStar>(id).await,
+            Change::Star { id, .. } => self.run_on::<RemoveStar>(id).await,
+            Change::Merge { pr, method, head } | Change::EnableAutoMerge { pr, method, head } => {
+                let vars = MergeVariables {
+                    pr: pr.gql(),
+                    method: *method,
+                    head: GitObjectId(head.clone()),
+                };
+                if let Change::Merge { .. } = change {
+                    self.run::<MergePr, _>(vars).await
                 } else {
-                    self.run::<RemoveStar, _>(vars).await
+                    self.run::<EnableAutoMerge, _>(vars).await
                 }
             }
-            Change::Merge { pr, method, head } => {
-                self.run::<MergePr, _>(MergeVariables {
-                    pr: pr.gql(),
-                    method: *method,
-                    head: GitObjectId(head.clone()),
-                })
-                .await
-            }
-            Change::EnableAutoMerge { pr, method, head } => {
-                self.run::<EnableAutoMerge, _>(MergeVariables {
-                    pr: pr.gql(),
-                    method: *method,
-                    head: GitObjectId(head.clone()),
-                })
-                .await
-            }
-            Change::DisableAutoMerge { pr } => {
-                self.run::<DisableAutoMerge, _>(IdVariables { id: pr.gql() })
-                    .await
-            }
+            Change::DisableAutoMerge { pr } => self.run_on::<DisableAutoMerge>(pr).await,
             Change::Enqueue { pr, head } => {
                 self.run::<Enqueue, _>(EnqueueVariables {
                     pr: pr.gql(),
@@ -236,15 +225,9 @@ impl GitHub {
                 })
                 .await
             }
-            Change::Dequeue { pr } => self.run::<Dequeue, _>(IdVariables { id: pr.gql() }).await,
-            Change::SetPrOpen { pr, open } => {
-                let vars = IdVariables { id: pr.gql() };
-                if *open {
-                    self.run::<ReopenPr, _>(vars).await
-                } else {
-                    self.run::<ClosePr, _>(vars).await
-                }
-            }
+            Change::Dequeue { pr } => self.run_on::<Dequeue>(pr).await,
+            Change::SetPrOpen { pr, open: true } => self.run_on::<ReopenPr>(pr).await,
+            Change::SetPrOpen { pr, .. } => self.run_on::<ClosePr>(pr).await,
             Change::CloseIssue { issue, reason } => {
                 self.run::<CloseIssue, _>(CloseIssueVariables {
                     issue: issue.gql(),
@@ -252,13 +235,8 @@ impl GitHub {
                 })
                 .await
             }
-            Change::ReopenIssue { issue } => {
-                self.run::<ReopenIssue, _>(IdVariables { id: issue.gql() })
-                    .await
-            }
-            Change::ReadyForReview { pr } => {
-                self.run::<MarkReady, _>(IdVariables { id: pr.gql() }).await
-            }
+            Change::ReopenIssue { issue } => self.run_on::<ReopenIssue>(issue).await,
+            Change::ReadyForReview { pr } => self.run_on::<MarkReady>(pr).await,
             Change::UpdateBranch { pr, rebase, head } => {
                 self.run::<UpdateBranch, _>(UpdateBranchVariables {
                     pr: pr.gql(),
@@ -281,28 +259,16 @@ impl GitHub {
                 } else {
                     "rerun"
                 };
-                self.rest_write(
-                    http::Method::POST,
-                    &format!("/repos/{repo}/actions/runs/{run}/{what}"),
-                    None,
-                )
-                .await
+                self.post(&format!("/repos/{repo}/actions/runs/{run}/{what}"))
+                    .await
             }
             Change::RerunJob { repo, job } => {
-                self.rest_write(
-                    http::Method::POST,
-                    &format!("/repos/{repo}/actions/jobs/{job}/rerun"),
-                    None,
-                )
-                .await
+                self.post(&format!("/repos/{repo}/actions/jobs/{job}/rerun"))
+                    .await
             }
             Change::CancelRun { repo, run } => {
-                self.rest_write(
-                    http::Method::POST,
-                    &format!("/repos/{repo}/actions/runs/{run}/cancel"),
-                    None,
-                )
-                .await
+                self.post(&format!("/repos/{repo}/actions/runs/{run}/cancel"))
+                    .await
             }
             Change::MarkRead { thread } => self.mark(thread, false).await,
             Change::MarkDone { thread } => {
@@ -374,6 +340,11 @@ impl GitHub {
         self.rest_write(method, &path, None).await
     }
 
+    /// POSTs to `path` with no body.
+    async fn post(&self, path: &str) -> Result<(), ApiError> {
+        self.rest_write(http::Method::POST, path, None).await
+    }
+
     /// Sends mutation `M`, which only has to succeed.
     pub(crate) async fn run<M, V>(&self, vars: V) -> Result<(), ApiError>
     where
@@ -381,6 +352,14 @@ impl GitHub {
         V: serde::Serialize,
     {
         self.mutate(M::build(vars)).await.map(drop)
+    }
+
+    /// Sends mutation `M` on the node `id`.
+    pub(crate) async fn run_on<M>(&self, id: &NodeId) -> Result<(), ApiError>
+    where
+        M: cynic::MutationBuilder<IdVariables> + serde::de::DeserializeOwned,
+    {
+        self.run::<M, _>(IdVariables { id: id.gql() }).await
     }
 }
 
@@ -395,10 +374,10 @@ pub struct AddCommentVariables {
     pub body: String,
 }
 
-/// Mutations that only have to succeed, one row each: the struct, its
-/// variables, and the field it asks for with that field's payload and
-/// input. [`GitHub::run`] sends one. `MUTATIONS` counts the rows, for the
-/// test that every mutation is checked.
+/// Mutations, one row each: the struct, its variables, and the field it
+/// asks for with that field's payload and input. [`GitHub::run`] sends one
+/// that only has to succeed. `MUTATIONS` counts the rows, for the test
+/// that every mutation is checked.
 macro_rules! mutations {
     ($($(#[$doc:meta])* $name:ident($vars:literal) $field:ident: $payload:ident { $($input:tt)* })*) => {
         $(

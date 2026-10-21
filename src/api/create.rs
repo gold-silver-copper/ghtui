@@ -4,8 +4,11 @@
 
 use crate::schema::schema;
 
+use crate::api::browse::{IssueNumber, PrNumber};
+use crate::api::change::mutations;
 use crate::api::client::{ApiError, GitHub};
 use crate::api::model::{Capped, NodeId, RepoId};
+use crate::api::queries::fragments;
 use crate::git::local::CommitMessage;
 
 /// What a new issue or pull request in a repository can have.
@@ -294,18 +297,6 @@ pub struct CreateIssueVariables {
     pub milestone: Option<cynic::Id>,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "CreateIssueVariables")]
-pub struct CreateIssue {
-    #[arguments(input: { repositoryId: $repo, title: $title, body: $body, labelIds: $labels, assigneeIds: $assignees, milestoneId: $milestone })]
-    pub create_issue: Option<CreateIssuePayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-pub struct CreateIssuePayload {
-    pub issue: Option<crate::api::browse::IssueNumber>,
-}
-
 #[derive(cynic::QueryVariables, Debug)]
 pub struct CreatePrVariables {
     pub repo: cynic::Id,
@@ -316,15 +307,10 @@ pub struct CreatePrVariables {
     pub draft: bool,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "CreatePrVariables")]
-pub struct CreatePr {
-    #[arguments(input: { repositoryId: $repo, baseRefName: $base, headRefName: $head, title: $title, body: $body, draft: $draft })]
-    pub create_pull_request: Option<CreatePrPayload>,
-}
+fragments! { issue: Option<IssueNumber>; CreateIssuePayload = "CreateIssuePayload" }
+fragments! { pull_request: Option<PrNumber>; CreatePrPayload = "CreatePullRequestPayload" }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CreatePullRequestPayload")]
-pub struct CreatePrPayload {
-    pub pull_request: Option<crate::api::browse::PrNumber>,
+mutations! {
+    CreateIssue("CreateIssueVariables") create_issue: CreateIssuePayload { repositoryId: $repo, title: $title, body: $body, labelIds: $labels, assigneeIds: $assignees, milestoneId: $milestone }
+    CreatePr("CreatePrVariables") create_pull_request: CreatePrPayload { repositoryId: $repo, baseRefName: $base, headRefName: $head, title: $title, body: $body, draft: $draft }
 }

@@ -575,6 +575,8 @@ fn every_query_is_checked() {
         - 1
         + crate::api::change::MUTATIONS
         + crate::api::edit::MUTATIONS
+        + crate::api::create::MUTATIONS
+        + crate::api::watch::MUTATIONS
         + roots;
     assert_eq!(typed().len(), operations);
     // The text queries are listed by `raw!`, but those built at run time

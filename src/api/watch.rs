@@ -2,9 +2,10 @@
 //! discussion's thread, and a repository's watch settings. GitHub calls
 //! all of them subscribables, with one mutation for them all.
 
+use crate::api::change::mutations;
 use crate::api::client::{ApiError, GitHub};
 use crate::api::model::{NodeId, RepoId};
-use crate::api::queries::{NumberVariables, NumberVariablesFields};
+use crate::api::queries::{NumberVariables, NumberVariablesFields, fragments};
 use crate::schema::schema;
 
 /// What a subscription is to.
@@ -111,7 +112,6 @@ impl GitHub {
         id: &NodeId,
         state: SubscriptionState,
     ) -> Result<(), ApiError> {
-        use cynic::MutationBuilder;
         if let Watched::Repo(repo) = of {
             let path = format!("/repos/{repo}/subscription");
             let (subscribed, ignored) = match state {
@@ -125,11 +125,11 @@ impl GitHub {
             let body = serde_json::json!({ "subscribed": subscribed, "ignored": ignored });
             return self.rest_write(http::Method::PUT, &path, Some(&body)).await;
         }
-        let op = UpdateSubscription::build(SubscribeVariables {
+        let vars = SubscribeVariables {
             id: id.gql(),
             state,
-        });
-        self.mutate(op).await.map(drop)
+        };
+        self.run::<UpdateSubscription, _>(vars).await
     }
 }
 
@@ -226,15 +226,11 @@ pub struct SubscribeVariables {
     pub state: SubscriptionState,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "UpdateSubscriptionPayload")]
-pub struct SubscribePayload {
-    pub client_mutation_id: Option<String>,
+fragments! {
+    client_mutation_id: Option<String>;
+    SubscribePayload = "UpdateSubscriptionPayload",
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "SubscribeVariables")]
-pub struct UpdateSubscription {
-    #[arguments(input: { subscribableId: $id, state: $state })]
-    pub update_subscription: Option<SubscribePayload>,
+mutations! {
+    UpdateSubscription("SubscribeVariables") update_subscription: SubscribePayload { subscribableId: $id, state: $state }
 }
