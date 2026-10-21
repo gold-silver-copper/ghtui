@@ -111,19 +111,7 @@ pub fn by_git(key: &DataKey, after: Option<&str>) -> bool {
     match key {
         DataKey::History(..) => after.is_none_or(|a| read::history_skip(a).is_some()),
         _ if after.is_some() => false,
-        DataKey::Tree(..)
-        | DataKey::Blob(..)
-        | DataKey::Files(..)
-        | DataKey::Commit(..)
-        | DataKey::Blame(..)
-        | DataKey::Compare(..)
-        | DataKey::LastCommits(..)
-        | DataKey::Refs(..)
-        | DataKey::Tags(..)
-        | DataKey::RefIn(..)
-        | DataKey::Activity(_) => true,
-        DataKey::Search(SearchKind::Code, query) => code_search(query).is_some(),
-        _ => false,
+        _ => repo_of(key).is_some(),
     }
 }
 
@@ -577,16 +565,12 @@ impl Local {
                 .await)
                 .map_err(|e| e.to_string())?;
             let mut room = budget;
-            let blobs: Vec<String> = (out.split('\0'))
-                .filter_map(|line| {
-                    let (meta, _) = line.split_once('\t')?;
-                    let mut meta = meta.split_whitespace();
-                    let (_, kind, oid, size) =
-                        (meta.next()?, meta.next()?, meta.next()?, meta.next()?);
-                    let size: u64 = size.parse().ok()?;
-                    (kind == "blob" && size <= room).then(|| {
+            let blobs: Vec<String> = (crate::git::index::parse_tree(&out).into_iter())
+                .filter_map(|f| {
+                    let size = f.size?;
+                    (size <= room).then(|| {
                         room -= size;
-                        oid.to_owned()
+                        f.blob
                     })
                 })
                 .collect();
@@ -674,7 +658,11 @@ impl Local {
         key: &DataKey,
         after: Option<String>,
     ) -> Result<Answer, ReadError> {
-        let absent = |what: String| Ok(Answer::Absent(what));
+        // What was read at `oid`, or `what` isn't there.
+        let found = |data: Option<Data>, oid: Oid, what: String| match data {
+            Some(data) => Answer::Data(data, Some(oid)),
+            None => Answer::Absent(what),
+        };
         let at = |rev: String| async move {
             let oid = self.at(gh, repo, clone, &rev).await?;
             oid.ok_or_else(|| {
@@ -684,17 +672,13 @@ impl Local {
         Ok(match key {
             DataKey::Tree(_, rev, path) => {
                 let oid = at(rev.clone()).await?;
-                match read::tree(clone, &oid, path).await? {
-                    Some(entries) => Answer::Data(Data::Tree(entries), Some(oid)),
-                    None => return absent(format!("{repo}/{path} at {rev}")),
-                }
+                let tree = read::tree(clone, &oid, path).await?.map(Data::Tree);
+                found(tree, oid, format!("{repo}/{path} at {rev}"))
             }
             DataKey::Blob(_, rev, path) => {
                 let oid = at(rev.clone()).await?;
-                match read::blob(clone, &oid, path).await? {
-                    Some(blob) => Answer::Data(Data::from(blob), Some(oid)),
-                    None => return absent(format!("{repo}/{path} at {rev}")),
-                }
+                let blob = read::blob(clone, &oid, path).await?.map(Data::from);
+                found(blob, oid, format!("{repo}/{path} at {rev}"))
             }
             DataKey::Files(_, rev) => {
                 let oid = at(rev.clone()).await?;
@@ -711,17 +695,13 @@ impl Local {
                 let Some(oid) = self.at(gh, repo, clone, rev).await? else {
                     return Err(ReadError::Limit(format!("git doesn't have commit {rev}")));
                 };
-                match read::commit(clone, &oid).await? {
-                    Some(c) => Answer::Data(Data::from(c), Some(oid)),
-                    None => return absent(format!("{repo}@{rev}")),
-                }
+                let commit = read::commit(clone, &oid).await?.map(Data::from);
+                found(commit, oid, format!("{repo}@{rev}"))
             }
             DataKey::Blame(_, rev, path) => {
                 let oid = at(rev.clone()).await?;
-                match read::blame(clone, &oid, path).await? {
-                    Some(b) => Answer::Data(Data::from(b), Some(oid)),
-                    None => return absent(format!("{repo}/{path} at {rev}")),
-                }
+                let blame = read::blame(clone, &oid, path).await?.map(Data::from);
+                found(blame, oid, format!("{repo}/{path} at {rev}"))
             }
             DataKey::Compare(_, spec) => {
                 let (base, head, direct) = match spec.split_once("...") {
@@ -749,7 +729,7 @@ impl Local {
                     return Ok(Answer::Data(Data::LastCommits(found.clone()), Some(oid)));
                 }
                 let Some(entries) = read::tree(clone, &oid, path).await? else {
-                    return absent(format!("{repo}/{path} at {rev}"));
+                    return Ok(Answer::Absent(format!("{repo}/{path} at {rev}")));
                 };
                 let names: Vec<String> = entries.into_iter().map(|e| e.name).collect();
                 let names = names

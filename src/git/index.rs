@@ -112,7 +112,7 @@ async fn fetch_trees(repo: &Repo, commit: &Oid) -> Result<(), GitError> {
 }
 
 /// `<mode> blob <oid> <size>\t<path>` records, NUL-terminated.
-fn parse_tree(out: &str) -> Vec<TreeFile> {
+pub(crate) fn parse_tree(out: &str) -> Vec<TreeFile> {
     let file = |record: &str| {
         let (meta, path) = record.split_once('\t')?;
         let mut meta = meta.split_whitespace();
