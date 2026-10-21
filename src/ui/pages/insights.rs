@@ -140,21 +140,20 @@ pub fn contributors(page: &mut Page, repo: &RepoId, a: &Activity) {
             Role::Body,
         );
         let line = Seg::new(sparkline(&weeks), Role::Accent);
-        match &author.login {
-            Some(login) => {
-                let link = page.link(url::user(login));
-                let start = page.lines.len();
-                segs.push(Seg::linked(name, Role::Link, link));
-                segs.extend([Seg::new(pad, Role::Body), commits, line]);
-                body(page, segs);
-                page.item(start, link);
-            }
-            None => {
-                segs.extend([strong(name), Seg::new(pad, Role::Body)]);
+        maybe_item(
+            page,
+            author.login.as_deref().map(url::user),
+            |page, link| {
+                let role = if link.is_some() {
+                    Role::Link
+                } else {
+                    Role::Strong
+                };
+                segs.extend([Seg::linked(name, role, link), Seg::new(pad, Role::Body)]);
                 segs.extend([commits, line]);
                 body(page, segs);
-            }
-        }
+            },
+        );
     }
     if a.authors_left_out > 0 {
         page.box_rule();
@@ -359,18 +358,16 @@ pub fn dependencies(page: &mut Page, d: &Dependencies) {
                 Seg::new(want, Role::Body),
                 meta(format!("{gap}{}", dep.manager.to_lowercase())),
             ];
-            match &dep.repo {
-                Some(r) => item(page, url::repo(r), |page, link| {
-                    let mut segs = vec![Seg::linked(name, Role::Link, link)];
-                    segs.extend(rest);
-                    body(page, segs);
-                }),
-                None => {
-                    let mut segs = vec![strong(name)];
-                    segs.extend(rest);
-                    body(page, segs);
-                }
-            }
+            maybe_item(page, dep.repo.as_ref().map(url::repo), |page, link| {
+                let role = if link.is_some() {
+                    Role::Link
+                } else {
+                    Role::Strong
+                };
+                let mut segs = vec![Seg::linked(name, role, link)];
+                segs.extend(rest);
+                body(page, segs);
+            });
         }
         if m.dependencies.left_out() > 0 {
             page.box_rule();

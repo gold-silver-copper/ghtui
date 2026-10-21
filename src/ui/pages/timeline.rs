@@ -554,10 +554,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
         }
     }
     segs.push(when);
-    match link {
-        Some(target) => item(page, target, |page, _| event_line(page, icon, segs)),
-        None => event_line(page, icon, segs),
-    }
+    maybe_item(page, link, |page, _| event_line(page, icon, segs));
 }
 
 /// A run of commits: who added how many, then a line for each, each

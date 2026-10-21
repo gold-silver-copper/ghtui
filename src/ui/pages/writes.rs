@@ -75,16 +75,10 @@ pub fn write_form(page: &mut Page, v: &WriteFormView<'_>) {
             Mark::Waiting => ("… ", Role::Meta),
             Mark::Problem => ("! ", Role::Error),
         };
-        let start = page.lines.len();
-        let link = target.clone().map(|t| page.link(Link::Form(t)));
-        let text = match link {
-            Some(link) => Seg::linked(text.clone(), Role::Body, link),
-            None => Seg::new(text.clone(), Role::Body),
-        };
-        page.wrapped(vec![Seg::new(sign, role), text], 0, Frame::None);
-        if let Some(link) = link {
-            page.item(start, link);
-        }
+        maybe_item(page, target.clone().map(Link::Form), |page, link| {
+            let text = Seg::linked(text.clone(), Role::Body, link);
+            page.wrapped(vec![Seg::new(sign, role), text], 0, Frame::None);
+        });
     }
     for b in &v.boxes {
         text_box(page, b, v);
@@ -115,10 +109,7 @@ pub fn write_form(page: &mut Page, v: &WriteFormView<'_>) {
 fn form_row(page: &mut Page, row: &FormRow) {
     let value = |link: Option<u32>| {
         let role = if row.unset { Role::Meta } else { Role::Body };
-        match link {
-            Some(link) => Seg::linked(row.value.clone(), role, link),
-            None => Seg::new(row.value.clone(), role),
-        }
+        Seg::linked(row.value.clone(), role, link)
     };
     let segs = |link| {
         let mut segs = vec![strong(format!("{:<12}", row.name))];
@@ -129,12 +120,10 @@ fn form_row(page: &mut Page, row: &FormRow) {
         }
         segs
     };
-    match &row.link {
-        Some(target) => item(page, Link::Form(target.clone()), |page, link| {
-            page.wrapped(segs(Some(link)), 0, Frame::None);
-        }),
-        None => page.wrapped(segs(None), 0, Frame::None),
-    }
+    let target = row.link.clone().map(Link::Form);
+    maybe_item(page, target, |page, link| {
+        page.wrapped(segs(link), 0, Frame::None);
+    });
 }
 
 fn text_box(page: &mut Page, b: &TextBox<'_>, v: &WriteFormView<'_>) {
