@@ -204,15 +204,9 @@ pub(super) fn filter_field(page: &mut Page, query: &str, keys: Keys<'_>, verb: &
     let hint = format!("{} to {verb} ", keys.filter);
     let text = format!(" ⌕ {query}");
     let pad = room.saturating_sub(width(&text) + width(&hint));
-    let link = page.link(Link::Filter);
-    page.line(vec![
-        Seg::linked(
-            format!("{text}{}", " ".repeat(pad)),
-            Role::Chip(Bg::ContainerHigh),
-            link,
-        ),
-        Seg::linked(hint, Role::Chip(Bg::ContainerHigh), link),
-    ]);
+    let (link, role) = (page.link(Link::Filter), Role::Chip(Bg::ContainerHigh));
+    let field = Seg::linked(format!("{text}{}", " ".repeat(pad)), role.clone(), link);
+    page.line(vec![field, Seg::linked(hint, role, link)]);
 }
 
 /// Which list state a query shows.
@@ -328,14 +322,8 @@ pub fn search(
     let searching = |page: &mut Page| loading_box(page, vec![meta("Searching…")]);
     let Some(results) = results.show_or(page, "results", searching) else { return };
     let (total, shown) = results.counts();
-    page.box_top(
-        vec![strong(format!(
-            "{} {what} {}",
-            compact(total),
-            noun(total, "result")
-        ))],
-        Vec::new(),
-    );
+    let title = format!("{} {what} {}", compact(total), noun(total, "result"));
+    page.box_top(vec![strong(title)], Vec::new());
     if shown == 0 {
         empty_row(page, "Your search did not match anything.");
     }
@@ -356,12 +344,8 @@ pub fn search(
             item(page, url::commit(&hit.repo, &c.oid), |page, link| {
                 let right = vec![Seg::new(short_sha(&c.oid), Role::Code)];
                 link_line(page, c.headline.clone(), Role::Strong, link, right);
-                let subline = format!(
-                    "{} · {} committed {}",
-                    hit.repo,
-                    c.author.name(),
-                    time::ago_iso(&c.date, now)
-                );
+                let (who, when) = (c.author.name(), time::ago_iso(&c.date, now));
+                let subline = format!("{} · {who} committed {when}", hit.repo);
                 body(page, vec![meta(subline)]);
             });
         }),

@@ -77,15 +77,11 @@ pub(super) fn about(page: &mut Page, repo: &RepoId, o: &RepoOverview, compact_la
     if let Some(license) = &o.license {
         facts.push(meta(format!("⚖ {license} license")));
     }
+    let (stars, forks) = (o.summary.stars, o.summary.forks);
     for (icon, n, what, tab) in [
-        (
-            "☆",
-            o.summary.stars,
-            noun(o.summary.stars, "star"),
-            "stargazers",
-        ),
+        ("☆", stars, noun(stars, "star"), "stargazers"),
         ("◉", o.watchers, "watching".to_owned(), "watchers"),
-        ("⑂", o.summary.forks, noun(o.summary.forks, "fork"), "forks"),
+        ("⑂", forks, noun(forks, "fork"), "forks"),
     ] {
         let text = format!("{icon} {} {what}", compact(n));
         let target = format!("{}/{tab}", url::repo(repo));
@@ -290,14 +286,9 @@ pub fn repo_code(
             let author = person_seg(page, &c.author, Role::Strong);
             let commit = url::commit(repo, &c.oid);
             let headline = link_seg(page, &c.headline, commit, Role::Body);
-            (
-                vec![author, Seg::new("  ", Role::Body), headline],
-                vec![meta(format!(
-                    "{} · {}",
-                    short_sha(&c.oid),
-                    time::ago_iso(&c.date, now)
-                ))],
-            )
+            let when = format!("{} · {}", short_sha(&c.oid), time::ago_iso(&c.date, now));
+            let title = vec![author, Seg::new("  ", Role::Body), headline];
+            (title, vec![meta(when)])
         }
         None => (vec![strong("Files")], Vec::new()),
     };
@@ -405,20 +396,15 @@ pub fn release(page: &mut Page, repo: &RepoId, r: &Release, now: u64) {
         None => page.line(vec![meta("No release notes.")]),
     }
     page.blank();
-    let title = counted("Assets", &r.assets);
     let hint = if r.assets.is_empty() {
         Vec::new()
     } else {
         vec![meta("↵ saves one")]
     };
-    list_box(page, title, hint, &r.assets, "No assets.", |page, a| {
-        let target = Link::Asset(a.name.clone());
-        item(page, target, |page, link| {
-            let right = vec![meta(format!(
-                "{} · {}",
-                size(a.size),
-                plural(a.downloads, "download")
-            ))];
+    counted_box(page, "Assets", hint, &r.assets, "No assets.", |page, a| {
+        let (bytes, downloads) = (size(a.size), plural(a.downloads, "download"));
+        let right = vec![meta(format!("{bytes} · {downloads}"))];
+        item(page, Link::Asset(a.name.clone()), |page, link| {
             link_line(page, a.name.clone(), Role::Link, link, right);
         });
     });
@@ -490,20 +476,18 @@ pub fn compare(page: &mut Page, repo: &RepoId, spec: &str, c: &Comparison, now: 
         .split_once("...")
         .or_else(|| spec.split_once(".."))
         .unwrap_or(("the default branch", spec));
-    page.wrapped(
-        vec![
-            Seg::new("Comparing ", Role::Title),
-            Seg::new(base.to_owned(), Role::Code),
-            meta(if spec.contains("..") && !spec.contains("...") {
-                ".."
-            } else {
-                "..."
-            }),
-            Seg::new(head.to_owned(), Role::Code),
-        ],
-        0,
-        Frame::None,
-    );
+    let dots = if spec.contains("..") && !spec.contains("...") {
+        ".."
+    } else {
+        "..."
+    };
+    let segs = vec![
+        Seg::new("Comparing ", Role::Title),
+        Seg::new(base.to_owned(), Role::Code),
+        meta(dots),
+        Seg::new(head.to_owned(), Role::Code),
+    ];
+    page.wrapped(segs, 0, Frame::None);
     let status = match (c.ahead, c.behind) {
         (0, 0) => "These are identical.".to_owned(),
         (0, _) => format!("{head} is {} behind {base}.", plural(c.behind, "commit")),

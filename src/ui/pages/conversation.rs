@@ -395,17 +395,10 @@ pub fn discussions(
         page.wrapped(segs, 0, Frame::None);
         page.blank();
     }
-    let empty = "No discussions yet.";
-    counted_box(
-        page,
-        "Discussions",
-        Vec::new(),
-        &l.results,
-        empty,
-        |page, d| {
-            discussion_row(page, format!("{base}/{}", d.number), ("", true), d, now);
-        },
-    );
+    let (list, empty) = (&l.results, "No discussions yet.");
+    counted_box(page, "Discussions", Vec::new(), list, empty, |page, d| {
+        discussion_row(page, format!("{base}/{}", d.number), ("", true), d, now);
+    });
 }
 
 /// A discussion: its post, the answer at the top as GitHub shows it, then

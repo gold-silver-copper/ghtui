@@ -203,23 +203,17 @@ fn rule_meta(r: &Rule) -> String {
 fn branches(page: &mut Page, b: &Branches, keys: SettingKeys<'_>) {
     let right = add_button(page, "Add rule", keys);
     let none = "No branch protection rules: any branch can be pushed to, force-pushed and deleted.";
-    counted_box(
-        page,
-        "Branch protection rules",
-        right,
-        &b.rules,
-        none,
-        |page, r| {
-            let applies = match r.matching.total() {
-                0 => "applies to no branch yet".to_owned(),
-                1 => "applies to 1 branch".to_owned(),
-                n => format!("applies to {n} branches"),
-            };
-            let to = SettingLink::Rule(r.id.clone());
-            let right = vec![meta(applies)];
-            setting_row(page, to, r.form.pattern.clone(), right, Some(rule_meta(r)));
-        },
-    );
+    let (rules, name) = (&b.rules, "Branch protection rules");
+    counted_box(page, name, right, rules, none, |page, r| {
+        let applies = match r.matching.total() {
+            0 => "applies to no branch yet".to_owned(),
+            1 => "applies to 1 branch".to_owned(),
+            n => format!("applies to {n} branches"),
+        };
+        let to = SettingLink::Rule(r.id.clone());
+        let right = vec![meta(applies)];
+        setting_row(page, to, r.form.pattern.clone(), right, Some(rule_meta(r)));
+    });
     page.blank();
     let rulesets = match &b.rulesets {
         Ok(r) => r,
@@ -230,29 +224,21 @@ fn branches(page: &mut Page, b: &Branches, keys: SettingKeys<'_>) {
     };
     let title = vec![strong(format!("Rulesets  {}", rulesets.len()))];
     let empty = "No rulesets. They're made on github.com; here they're turned on and off.";
-    list_box(
-        page,
-        title,
-        Vec::new(),
-        &Whole(rulesets),
-        empty,
-        |page, r| {
-            let bg = match r.enforcement {
-                Enforcement::Active => Bg::SuccessContainer,
-                Enforcement::Evaluate => Bg::TertiaryContainer,
-                Enforcement::Disabled => Bg::SecondaryContainer,
-            };
-            let about = match &r.org {
-                Some(org) => format!("{} ruleset · from {org}", r.target),
-                None => format!("{} ruleset · {} turns it on or off", r.target, keys.toggle),
-            };
-            let (to, right) = (
-                SettingLink::Ruleset(r.id),
-                vec![chip(r.enforcement.label(), bg)],
-            );
-            setting_row(page, to, r.name.clone(), right, Some(about));
-        },
-    );
+    let rulesets = Whole(rulesets);
+    list_box(page, title, Vec::new(), &rulesets, empty, |page, r| {
+        let bg = match r.enforcement {
+            Enforcement::Active => Bg::SuccessContainer,
+            Enforcement::Evaluate => Bg::TertiaryContainer,
+            Enforcement::Disabled => Bg::SecondaryContainer,
+        };
+        let about = match &r.org {
+            Some(org) => format!("{} ruleset · from {org}", r.target),
+            None => format!("{} ruleset · {} turns it on or off", r.target, keys.toggle),
+        };
+        let right = vec![chip(r.enforcement.label(), bg)];
+        let to = SettingLink::Ruleset(r.id);
+        setting_row(page, to, r.name.clone(), right, Some(about));
+    });
 }
 
 fn access(page: &mut Page, a: &Access, keys: SettingKeys<'_>, now: u64) {
@@ -269,26 +255,20 @@ fn access(page: &mut Page, a: &Access, keys: SettingKeys<'_>, now: u64) {
     });
     page.blank();
     let (invitations, none) = (&a.invitations, "No invitations waiting.");
-    counted_box(
-        page,
-        "Pending invitations",
-        Vec::new(),
-        invitations,
-        none,
-        |page, i| {
-            let when = if i.expired {
-                "expired".to_owned()
-            } else {
-                format!("invited {}", time::ago_iso(&i.created_at, now))
-            };
-            let right = vec![
-                meta(format!("{when}  ")),
-                chip(i.permission.name(), Bg::SecondaryContainer),
-            ];
-            let to = SettingLink::Invitation(i.id, i.login.clone());
-            setting_row(page, to, format!("@{}", i.login), right, None);
-        },
-    );
+    let name = "Pending invitations";
+    counted_box(page, name, Vec::new(), invitations, none, |page, i| {
+        let when = if i.expired {
+            "expired".to_owned()
+        } else {
+            format!("invited {}", time::ago_iso(&i.created_at, now))
+        };
+        let right = vec![
+            meta(format!("{when}  ")),
+            chip(i.permission.name(), Bg::SecondaryContainer),
+        ];
+        let to = SettingLink::Invitation(i.id, i.login.clone());
+        setting_row(page, to, format!("@{}", i.login), right, None);
+    });
     page.blank();
     let (edit, delete) = (keys.edit, keys.delete);
     let how = format!("{edit} changes the selected one's role, {delete} removes them");
@@ -367,39 +347,30 @@ fn hook(page: &mut Page, h: &HookPage, keys: SettingKeys<'_>, now: u64) {
         keys.redeliver
     ))];
     let none = "Nothing delivered yet.";
-    counted_box(
-        page,
-        "Recent deliveries",
-        right,
-        &h.deliveries,
-        none,
-        |page, d| {
-            let (mark, role) = if (200..300).contains(&d.code) {
-                ("✓", Role::Success)
-            } else {
-                ("✗", Role::Error)
-            };
-            let event = match &d.action {
-                Some(action) => format!("{}.{action}", d.event),
-                None => d.event.clone(),
-            };
-            let when = time::ago_iso(&d.delivered_at, now);
-            let about = meta(format!("  {} · {when}", short(&d.guid)));
-            let mut right = vec![meta(format!("{} {}", d.code, d.status))];
-            if d.redelivery {
-                right.insert(0, meta("redelivery · "));
-            }
-            let mark = Seg::new(format!("{mark} "), role);
-            item(
-                page,
-                Link::Setting(SettingLink::Delivery(d.id)),
-                |page, link| {
-                    let segs = vec![mark, Seg::linked(event, Role::Strong, link), about];
-                    page.box_line(segs, right, 0);
-                },
-            );
-        },
-    );
+    let (deliveries, name) = (&h.deliveries, "Recent deliveries");
+    counted_box(page, name, right, deliveries, none, |page, d| {
+        let (mark, role) = if (200..300).contains(&d.code) {
+            ("✓", Role::Success)
+        } else {
+            ("✗", Role::Error)
+        };
+        let event = match &d.action {
+            Some(action) => format!("{}.{action}", d.event),
+            None => d.event.clone(),
+        };
+        let when = time::ago_iso(&d.delivered_at, now);
+        let about = meta(format!("  {} · {when}", short(&d.guid)));
+        let mut right = vec![meta(format!("{} {}", d.code, d.status))];
+        if d.redelivery {
+            right.insert(0, meta("redelivery · "));
+        }
+        let mark = Seg::new(format!("{mark} "), role);
+        let to = Link::Setting(SettingLink::Delivery(d.id));
+        item(page, to, |page, link| {
+            let segs = vec![mark, Seg::linked(event, Role::Strong, link), about];
+            page.box_line(segs, right, 0);
+        });
+    });
 }
 
 /// A GUID's first part, as GitHub shows deliveries.
@@ -419,34 +390,23 @@ fn key_text(k: &DeployKey) -> String {
 
 fn deploy_keys(page: &mut Page, list: &Listed<DeployKey>, keys: SettingKeys<'_>, now: u64) {
     let right = add_button(page, "Add deploy key", keys);
-    counted_box(
-        page,
-        "Deploy keys",
-        right,
-        list,
-        "No deploy keys.",
-        |page, k| {
-            let access = if k.read_only {
-                chip("Read-only", Bg::SecondaryContainer)
-            } else {
-                chip("Read/write", Bg::TertiaryContainer)
-            };
-            let added = time::ago_iso(&k.created_at, now);
-            let mut about = format!("{} · added {added}", key_text(k));
-            if let Some(by) = &k.added_by {
-                let _ = write!(about, " by {by}");
-            }
-            match &k.last_used {
-                Some(at) => _ = write!(about, " · last used {}", time::ago_iso(at, now)),
-                None => about.push_str(" · never used"),
-            }
-            setting_row(
-                page,
-                SettingLink::Key(k.id),
-                k.title.clone(),
-                vec![access],
-                Some(about),
-            );
-        },
-    );
+    let none = "No deploy keys.";
+    counted_box(page, "Deploy keys", right, list, none, |page, k| {
+        let access = if k.read_only {
+            chip("Read-only", Bg::SecondaryContainer)
+        } else {
+            chip("Read/write", Bg::TertiaryContainer)
+        };
+        let added = time::ago_iso(&k.created_at, now);
+        let mut about = format!("{} · added {added}", key_text(k));
+        if let Some(by) = &k.added_by {
+            let _ = write!(about, " by {by}");
+        }
+        match &k.last_used {
+            Some(at) => _ = write!(about, " · last used {}", time::ago_iso(at, now)),
+            None => about.push_str(" · never used"),
+        }
+        let (to, about) = (SettingLink::Key(k.id), Some(about));
+        setting_row(page, to, k.title.clone(), vec![access], about);
+    });
 }

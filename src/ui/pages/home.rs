@@ -42,20 +42,13 @@ impl<T> Rows<T> for Start<'_, T> {
 /// fails, or is written wrong, says why in its box; the others show.
 pub fn home(page: &mut Page, sections: &[HomeSection<'_>], icons: Icons, now: u64) {
     // Where GitHub's header has its inbox.
-    let inbox = button(
-        page,
-        "Notifications",
-        format!("{}/notifications", url::base()),
-    );
+    let inbox = format!("{}/notifications", url::base());
+    let inbox = button(page, "Notifications", inbox);
     page.line(vec![inbox]);
     page.blank();
     if sections.is_empty() {
-        page.box_top(vec![strong("Home")], Vec::new());
-        empty_row(
-            page,
-            "No sections. Add a search from its list (in the Space menu), or as [[home]] in config.toml.",
-        );
-        page.box_bottom();
+        let none = "No sections. Add a search from its list (in the Space menu), or as [[home]] in config.toml.";
+        empty_box(page, strong("Home"), none);
     }
     for (i, section) in sections.iter().enumerate() {
         if i > 0 {

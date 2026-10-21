@@ -561,17 +561,9 @@ fn commits(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&
     for c in infos {
         item(page, commit_link(place, &c.oid), |page, link| {
             let room = usize::from(page.room(Frame::None, 5)).saturating_sub(9);
-            let headline = truncate(&c.headline, room);
-            page.add(
-                Frame::None,
-                5,
-                vec![
-                    Seg::linked(headline, Role::Body, link),
-                    meta("  "),
-                    Seg::new(short_sha(&c.oid).to_owned(), Role::Code),
-                ],
-                Vec::new(),
-            );
+            let headline = Seg::linked(truncate(&c.headline, room), Role::Body, link);
+            let sha = Seg::new(short_sha(&c.oid).to_owned(), Role::Code);
+            page.add(Frame::None, 5, vec![headline, meta("  "), sha], Vec::new());
         });
     }
 }
@@ -730,13 +722,10 @@ pub(super) fn review(
         } else {
             ("▾ Fold this review's threads".to_owned(), " · ↵")
         };
-        item(
-            page,
-            Link::Review(ReviewLink::Fold(anchor)),
-            |page, link| {
-                body(page, vec![Seg::linked(label, Role::Link, link), meta(hint)]);
-            },
-        );
+        let fold = Link::Review(ReviewLink::Fold(anchor));
+        item(page, fold, |page, link| {
+            body(page, vec![Seg::linked(label, Role::Link, link), meta(hint)]);
+        });
     }
     if !replied.is_empty() {
         page.box_rule();
@@ -791,11 +780,8 @@ fn thread(page: &mut Page, place: &Place<'_>, t: &ReviewThread, marks: Marks<'_>
         page.box_line(segs, Vec::from_iter(right), 0);
         if t.resolved {
             let said = super::review::first_line(&first.body, page.room(Frame::Body, 2));
-            page.box_line(
-                vec![strong(format!("{}: ", first.author)), meta(said)],
-                Vec::new(),
-                2,
-            );
+            let who = strong(format!("{}: ", first.author));
+            page.box_line(vec![who, meta(said)], Vec::new(), 2);
             return;
         }
         if !t.file_level && !git_lines(page, t, marks.lines) {
@@ -1083,16 +1069,10 @@ pub fn commit_comments(
             &[],
         );
         if let Some((place, target)) = at {
+            let text = format!("Open {place} in the diff");
             item(page, target, |page, link| {
-                page.add(
-                    Frame::None,
-                    5,
-                    vec![
-                        meta("↳ "),
-                        Seg::linked(format!("Open {place} in the diff"), Role::Link, link),
-                    ],
-                    Vec::new(),
-                );
+                let segs = vec![meta("↳ "), Seg::linked(text, Role::Link, link)];
+                page.add(Frame::None, 5, segs, Vec::new());
             });
         }
     }

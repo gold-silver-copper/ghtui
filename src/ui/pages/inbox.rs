@@ -32,15 +32,12 @@ pub fn notifications(page: &mut Page, query: &str, inbox: Fetched<'_, Inbox>, cx
             } else {
                 ("  ", Role::Body)
             };
-            page.box_line(
-                vec![
-                    Seg::new(mark, Role::Accent),
-                    meta(format!("{} ", subject_icon(&n.kind, icons))),
-                    Seg::linked(n.title.clone(), role, link),
-                ],
-                vec![meta(time::ago_iso(&n.updated_at, now))],
-                0,
-            );
+            let segs = vec![
+                Seg::new(mark, Role::Accent),
+                meta(format!("{} ", subject_icon(&n.kind, icons))),
+                Seg::linked(n.title.clone(), role, link),
+            ];
+            page.box_line(segs, vec![meta(time::ago_iso(&n.updated_at, now))], 0);
             let subline = format!("{} · {}", n.repo, reason_label(&n.reason));
             page.box_line(vec![meta(subline)], Vec::new(), 4);
         });

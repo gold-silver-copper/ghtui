@@ -26,8 +26,7 @@ pub fn star_lists(page: &mut Page, login: &str, lists: Fetched<'_, Capped<StarLi
     if lists.is_empty() {
         return;
     }
-    let title = counted("Lists", lists);
-    list_box(page, title, Vec::new(), lists, "", |page, list| {
+    counted_box(page, "Lists", Vec::new(), lists, "", |page, list| {
         item(page, url::star_list(login, &list.slug), |page, link| {
             let mut segs = vec![Seg::linked(list.name.clone(), Role::Link, link)];
             segs.extend(about(list));
@@ -55,13 +54,9 @@ pub fn star_list(page: &mut Page, login: &str, l: &ListPage, now: u64) {
     ];
     page.wrapped(by, 0, Frame::None);
     page.blank();
-    let title = counted("Repositories", &l.repos);
-    list_box(
-        page,
-        title,
-        Vec::new(),
-        &l.repos,
-        "No repositories in this list yet.",
-        |page, r| repo_row(page, r, now, true),
-    );
+    let empty = "No repositories in this list yet.";
+    let repos = &l.repos;
+    counted_box(page, "Repositories", Vec::new(), repos, empty, |page, r| {
+        repo_row(page, r, now, true);
+    });
 }
