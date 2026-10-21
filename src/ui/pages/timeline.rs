@@ -2,7 +2,7 @@
 //! started, and GitHub's events, in order. Events are one line each, and a
 //! run of the same kind by the same person reads as one.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::*;
 use crate::api::commit_comments::CommitComment;
@@ -60,8 +60,8 @@ pub const FOLD_AFTER: usize = 3;
 pub(super) struct Place<'a> {
     pub(super) repo: &'a RepoId,
     pub(super) pr: Option<&'a PrRef>,
-    /// The pull request's review threads, which its reviews started.
-    pub(super) threads: &'a [ReviewThread],
+    /// The pull request's review threads, by the review they're in.
+    pub(super) threads: HashMap<u64, ReviewThreads<'a>>,
     pub(super) icons: Icons,
 }
 
@@ -129,6 +129,14 @@ fn event_line(page: &mut Page, (icon, role): (&str, Role), segs: Vec<Seg>) {
     for line in page.lines.iter_mut().skip(start) {
         line.indent = line.indent.saturating_add(2);
     }
+}
+
+/// ` and` before what's said after something already said.
+fn and(segs: &mut Vec<Seg>, said: &mut bool) {
+    if *said {
+        segs.push(meta(" and"));
+    }
+    *said = true;
 }
 
 /// `#12 Title`, linked, with its state's icon.
@@ -280,10 +288,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
                 if list.is_empty() {
                     continue;
                 }
-                if said {
-                    segs.push(meta(" and"));
-                }
-                said = true;
+                and(&mut segs, &mut said);
                 if list == [first.actor.as_str()] {
                     segs.push(meta(if verb == " assigned" {
                         " self-assigned this"
@@ -304,10 +309,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
             let mut said = false;
             for e in run {
                 if let What::Milestoned { title, added } = &e.what {
-                    if said {
-                        segs.push(meta(" and"));
-                    }
-                    said = true;
+                    and(&mut segs, &mut said);
                     let (verb, to) = if *added {
                         (" added this to the ", " milestone")
                     } else {
@@ -356,10 +358,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
                 if who.is_empty() {
                     continue;
                 }
-                if said {
-                    segs.push(meta(" and"));
-                }
-                said = true;
+                and(&mut segs, &mut said);
                 segs.push(meta(if added {
                     " requested a review from"
                 } else {
@@ -520,10 +519,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
                     What::Parent { issue, .. } => (" removed a parent issue", issue),
                     _ => continue,
                 };
-                if said {
-                    segs.push(meta(" and"));
-                }
-                said = true;
+                and(&mut segs, &mut said);
                 segs.push(meta(verb));
                 if let Some(issue) = issue {
                     segs.push(space());
@@ -646,27 +642,37 @@ fn state_chip_of(state: ReviewState) -> Seg {
     }
 }
 
-/// The threads a review started, in file order.
-pub(super) fn started_by<'a>(
-    threads: &'a [ReviewThread],
-    review: &Review,
-) -> Vec<&'a ReviewThread> {
-    let mut out: Vec<&ReviewThread> = (threads.iter())
-        .filter(|t| review.id.is_some() && t.comments.first().and_then(|c| c.review) == review.id)
-        .collect();
-    out.sort_by_key(|t| (&t.path, t.line.or(t.original_line)));
-    out
+/// A review's threads: those it started, in file order, and those it
+/// replied in without starting them.
+#[derive(Default)]
+pub(super) struct ReviewThreads<'a> {
+    started: Vec<&'a ReviewThread>,
+    replied: Vec<&'a ReviewThread>,
 }
 
-/// The threads a review replied in without starting them.
-fn replied_in<'a>(threads: &'a [ReviewThread], review: &Review) -> Vec<&'a ReviewThread> {
-    (threads.iter())
-        .filter(|t| {
-            review.id.is_some()
-                && t.comments.first().and_then(|c| c.review) != review.id
-                && t.comments.iter().skip(1).any(|c| c.review == review.id)
-        })
-        .collect()
+/// Each review's threads, by its ID, in one pass over them all.
+pub(super) fn by_review(threads: &[ReviewThread]) -> HashMap<u64, ReviewThreads<'_>> {
+    let mut out: HashMap<u64, ReviewThreads<'_>> = HashMap::new();
+    for t in threads {
+        let starter = t.comments.first().and_then(|c| c.review);
+        if let Some(id) = starter {
+            out.entry(id).or_default().started.push(t);
+        }
+        let mut repliers: Vec<u64> = (t.comments.iter().skip(1))
+            .filter_map(|c| c.review)
+            .filter(|&id| Some(id) != starter)
+            .collect();
+        repliers.sort_unstable();
+        repliers.dedup();
+        for id in repliers {
+            out.entry(id).or_default().replied.push(t);
+        }
+    }
+    for r in out.values_mut() {
+        r.started
+            .sort_by_key(|t| (&t.path, t.line.or(t.original_line)));
+    }
+    out
 }
 
 /// A review: its state and summary, then each thread it started with
@@ -684,8 +690,9 @@ pub(super) fn review(
     }
     let mine = marks.viewer == Some(r.author.as_str());
     let pending = r.state == ReviewState::Pending;
-    let started = started_by(place.threads, r);
-    let replied = replied_in(place.threads, r);
+    let none = ReviewThreads::default();
+    let threads = r.id.and_then(|id| place.threads.get(&id)).unwrap_or(&none);
+    let (started, replied) = (&threads.started, &threads.replied);
     let new = r.id.is_some_and(|id| marks.reviews.contains(&id));
     let (icon, what) = review_said(r.state);
     // A review that only decided: one line.
@@ -744,36 +751,23 @@ pub(super) fn review(
         page.box_rule();
         thread(page, place, t, marks, talk.now);
     }
-    if folds {
+    if started.len() > FOLD_AFTER {
         page.box_rule();
         let hidden = started.len().saturating_sub(shown) as u64;
-        let link = ReviewLink::Fold(anchor);
-        item(page, Link::Review(link), |page, link| {
-            body(
-                page,
-                vec![
-                    Seg::linked(
-                        format!("▸ {hidden} more {} in this review", noun(hidden, "thread")),
-                        Role::Link,
-                        link,
-                    ),
-                    meta(" · ↵ shows them"),
-                ],
-            );
-        });
-    } else if started.len() > FOLD_AFTER {
-        page.box_rule();
+        let (label, hint) = if folds {
+            let threads = noun(hidden, "thread");
+            (
+                format!("▸ {hidden} more {threads} in this review"),
+                " · ↵ shows them",
+            )
+        } else {
+            ("▾ Fold this review's threads".to_owned(), " · ↵")
+        };
         item(
             page,
             Link::Review(ReviewLink::Fold(anchor)),
             |page, link| {
-                body(
-                    page,
-                    vec![
-                        Seg::linked("▾ Fold this review's threads", Role::Link, link),
-                        meta(" · ↵"),
-                    ],
-                );
+                body(page, vec![Seg::linked(label, Role::Link, link), meta(hint)]);
             },
         );
     }

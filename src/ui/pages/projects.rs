@@ -226,10 +226,7 @@ fn column(
     shown: &[&ProjectField],
     cx: PageCtx<'_>,
 ) {
-    let title = vec![
-        group_chip(column),
-        meta(format!("  {}", column.items.len())),
-    ];
+    let title = group_title(column, false);
     // The description only where it fits beside the title and count,
     // which matter more.
     let room = usize::from(page.room(Frame::Top, 0));
@@ -264,23 +261,11 @@ fn archived(page: &mut Page, at: &Spot<'_>, cx: PageCtx<'_>) {
             ItemContent::Draft(_) => "Draft".to_owned(),
             ItemContent::Redacted => String::new(),
         };
-        let right = vec![meta(place)];
-        match item_link(at.project, at.view, it) {
-            Some(target) => item(page, target, |page, link| {
-                let segs = vec![
-                    Seg::new(format!("{icon} "), role.clone()),
-                    Seg::linked(it.title().to_owned(), Role::Strong, link),
-                ];
-                page.box_line(segs, right.clone(), 0);
-            }),
-            None => {
-                let segs = vec![
-                    Seg::new(format!("{icon} "), role.clone()),
-                    meta(it.title().to_owned()),
-                ];
-                page.box_line(segs, right, 0);
-            }
-        }
+        maybe_item(page, item_link(at.project, at.view, it), |page, link| {
+            let title = Seg::linked(it.title().to_owned(), title_role(link), link);
+            let segs = vec![Seg::new(format!("{icon} "), role), title];
+            page.box_line(segs, vec![meta(place)], 0);
+        });
     }
     if a.items.len() < usize::try_from(a.total).unwrap_or(usize::MAX) {
         let more = left_out_text(
@@ -315,6 +300,54 @@ fn option_description(field: &ProjectField, group: &Group<'_>) -> Option<String>
     (!option.description.is_empty()).then(|| option.description.clone())
 }
 
+/// A view's items in its groups, or in one group of them all.
+fn view_groups<'a>(
+    p: &'a Project,
+    view: &ProjectView,
+    items: Vec<&'a ProjectItem>,
+) -> Vec<Group<'a>> {
+    match view.group.as_ref().and_then(|id| p.field(id)) {
+        Some(field) => grouped(field, &items),
+        None => vec![Group {
+            value: None,
+            name: String::new(),
+            color: None,
+            items,
+        }],
+    }
+}
+
+/// A group's box title: `Items  n` when it's all of them (`plain`), else
+/// its chip and count.
+fn group_title(group: &Group<'_>, plain: bool) -> Vec<Seg> {
+    let n = group.items.len();
+    if plain {
+        vec![strong(format!("Items  {n}"))]
+    } else {
+        vec![group_chip(group), meta(format!("  {n}"))]
+    }
+}
+
+/// A group's box: `header` over its rows.
+fn group_box(
+    page: &mut Page,
+    (title, right): (Vec<Seg>, Vec<Seg>),
+    header: Vec<Seg>,
+    group: &Group<'_>,
+    mut row: impl FnMut(&mut Page, &ProjectItem),
+) {
+    page.box_top(title, right);
+    page.box_line(header, Vec::new(), 0);
+    page.box_rule();
+    if group.items.is_empty() {
+        empty_row(page, "No items");
+    }
+    for it in &group.items {
+        row(page, it);
+    }
+    page.box_bottom();
+}
+
 /// A column's or group's name, in its option's color.
 fn group_chip(group: &Group<'_>) -> Seg {
     Seg::new(
@@ -338,11 +371,11 @@ fn hex(color: Option<&str>) -> &'static str {
 }
 
 /// An item's icon: its state's for an issue or pull request.
-fn item_icon(it: &ProjectItem, icons: Icons) -> (String, Role) {
+fn item_icon(it: &ProjectItem, icons: Icons) -> (&'static str, Role) {
     match it.content.status() {
         Some(status) => issue_icon(icons, status),
-        None if matches!(it.content, ItemContent::Draft(_)) => ("◌".into(), Role::Meta),
-        None => ("⊘".into(), Role::Meta),
+        None if matches!(it.content, ItemContent::Draft(_)) => ("◌", Role::Meta),
+        None => ("⊘", Role::Meta),
     }
 }
 
@@ -497,22 +530,10 @@ fn table(page: &mut Page, at: &Spot<'_>, view: &ProjectView, cx: PageCtx<'_>) {
     let title_width = room
         .saturating_sub(used - TITLE_MIN)
         .max(TITLE_MIN.min(room));
-    let groups = match view.group.as_ref().and_then(|id| at.p.field(id)) {
-        Some(field) => grouped(field, &items),
-        None => vec![Group {
-            value: None,
-            name: String::new(),
-            color: None,
-            items,
-        }],
-    };
+    let groups = view_groups(at.p, view, items);
     let one = groups.len() == 1 && view.group.is_none();
     for group in &groups {
-        let title = if one {
-            vec![strong(format!("Items  {}", group.items.len()))]
-        } else {
-            vec![group_chip(group), meta(format!("  {}", group.items.len()))]
-        };
+        let title = group_title(group, one);
         let right = if hidden > 0 {
             vec![meta(format!(
                 "{} more {} past the edge",
@@ -522,20 +543,13 @@ fn table(page: &mut Page, at: &Spot<'_>, view: &ProjectView, cx: PageCtx<'_>) {
         } else {
             Vec::new()
         };
-        page.box_top(title, right);
         let mut header = vec![meta(pad("Title", title_width + 2))];
         for (field, w) in &columns {
             header.push(meta(pad(&truncate(&field.name, *w), w + 2)));
         }
-        page.box_line(header, Vec::new(), 0);
-        page.box_rule();
-        if group.items.is_empty() {
-            empty_row(page, "No items");
-        }
-        for it in &group.items {
+        group_box(page, (title, right), header, group, |page, it| {
             row(page, at, it, &columns, title_width, cx);
-        }
-        page.box_bottom();
+        });
     }
 }
 
@@ -597,36 +611,16 @@ fn roadmap(page: &mut Page, at: &Spot<'_>, view: &ProjectView, dates: Dates<'_>,
         "On a timeline by {by} ({scale}); GitHub's API doesn't say which fields the view uses, so these are its first date fields."
     );
     say(page, note, Role::Meta);
-    let groups = match view.group.as_ref().and_then(|id| at.p.field(id)) {
-        Some(field) => grouped(field, &items),
-        None => vec![Group {
-            value: None,
-            name: String::new(),
-            color: None,
-            items,
-        }],
-    };
+    let groups = view_groups(at.p, view, items);
     let status = at.p.fields.iter().find(|f| f.name == "Status");
     for group in &groups {
-        let title = if view.group.is_none() {
-            vec![strong(format!("Items  {}", group.items.len()))]
-        } else {
-            vec![group_chip(group), meta(format!("  {}", group.items.len()))]
-        };
-        page.box_top(title, Vec::new());
-        let mut header = vec![meta(" ".repeat(title_width + 2))];
-        header.push(meta(line.months()));
-        page.box_line(header, Vec::new(), 0);
-        page.box_rule();
-        if group.items.is_empty() {
-            empty_row(page, "No items");
-        }
-        for it in &group.items {
+        let title = group_title(group, view.group.is_none());
+        let header = vec![meta(" ".repeat(title_width + 2)), meta(line.months())];
+        group_box(page, (title, Vec::new()), header, group, |page, it| {
             let color = status.and_then(|f| option_color(f, it));
             let bar = line.bar(span(it), color);
-            roadmap_row(page, at, it, title_width, &bar, cx);
-        }
-        page.box_bottom();
+            item_row(page, at, it, title_width, bar, cx);
+        });
     }
 }
 
@@ -667,10 +661,7 @@ impl Timeline {
         let mut free = 0;
         let mut named = false;
         for (i, (c, year, m)) in starts.iter().enumerate() {
-            let name = MONTHS
-                .get(usize::try_from(m - 1).unwrap_or(0))
-                .copied()
-                .unwrap_or("");
+            let name = month_of(*m);
             let label = if !named || *m == 1 {
                 format!("{name} {year}")
             } else {
@@ -739,12 +730,7 @@ impl Timeline {
 
 /// `Oct 5 → 31`, `Oct 28 → Nov 3`, or one day's `Oct 5`.
 fn dates(start: i64, end: i64) -> String {
-    let name = |m: i64| {
-        MONTHS
-            .get(usize::try_from(m - 1).unwrap_or(0))
-            .copied()
-            .unwrap_or("")
-    };
+    let name = month_of;
     let (_, m1, d1) = crate::ui::time::civil(start);
     let (_, m2, d2) = crate::ui::time::civil(end);
     match (start == end, m1 == m2) {
@@ -754,9 +740,10 @@ fn dates(start: i64, end: i64) -> String {
     }
 }
 
-const MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
+/// "Oct" for a civil date's month 10.
+fn month_of(m: i64) -> &'static str {
+    usize::try_from(m).ok().and_then(month_abbr).unwrap_or("")
+}
 
 /// An item's color by `field`'s option: GitHub's name for it.
 fn option_color<'a>(field: &'a ProjectField, it: &ProjectItem) -> Option<&'a str> {
@@ -772,29 +759,36 @@ fn option_color<'a>(field: &'a ProjectField, it: &ProjectItem) -> Option<&'a str
         .map(|o| o.color.as_str())
 }
 
-/// A roadmap's row: the item's icon and title, then its bar.
-fn roadmap_row(
+/// A table's or roadmap's row: the item's icon and title (linked where
+/// it opens), then `tail` (its cells, its bar).
+fn item_row(
     page: &mut Page,
     at: &Spot<'_>,
     it: &ProjectItem,
     title_width: usize,
-    bar: &[Seg],
+    tail: Vec<Seg>,
     cx: PageCtx<'_>,
 ) {
     let (icon, role) = item_icon(it, cx.icons);
     let title = truncate(it.title(), title_width.saturating_sub(2));
     let rest = title_width.saturating_sub(width(&title) + 2) + 2;
-    let line = |page: &mut Page, title: Seg| {
-        let mut segs = vec![Seg::new(format!("{icon} "), role.clone()), title];
-        segs.push(Seg::new(" ".repeat(rest), Role::Body));
-        segs.extend(bar.iter().cloned());
+    maybe_item(page, item_link(at.project, at.view, it), |page, link| {
+        let mut segs = vec![
+            Seg::new(format!("{icon} "), role),
+            Seg::linked(title, title_role(link), link),
+            Seg::new(" ".repeat(rest), Role::Body),
+        ];
+        segs.extend(tail);
         page.box_line(segs, Vec::new(), 0);
-    };
-    match item_link(at.project, at.view, it) {
-        Some(target) => item(page, target, |page, link| {
-            line(page, Seg::linked(title.clone(), Role::Strong, link));
-        }),
-        None => line(page, meta(title.clone())),
+    });
+}
+
+/// An item's title: strong where it opens, else gray.
+fn title_role(link: Option<u32>) -> Role {
+    if link.is_some() {
+        Role::Strong
+    } else {
+        Role::Meta
     }
 }
 
@@ -812,14 +806,11 @@ fn row(
     title_width: usize,
     cx: PageCtx<'_>,
 ) {
-    let (icon, role) = item_icon(it, cx.icons);
-    let title = truncate(it.title(), title_width.saturating_sub(2));
-    let rest = title_width.saturating_sub(width(&title) + 2) + 2;
     let mut cells = Vec::new();
     for (field, w) in columns {
         let text = truncate(&cell_text(it, field), *w);
         let shown = pad(&text, w + 2);
-        cells.push(match &field.kind {
+        cells.extend(match &field.kind {
             FieldKind::SingleSelect(options) if !text.is_empty() => {
                 let color = (it.value(&field.id))
                     .and_then(|v| options.iter().find(|o| o.name == v.text()))
@@ -832,18 +823,7 @@ fn row(
             _ => vec![Seg::new(shown, Role::Body)],
         });
     }
-    let line = |page: &mut Page, title: Seg| {
-        let mut segs = vec![Seg::new(format!("{icon} "), role.clone()), title];
-        segs.push(Seg::new(" ".repeat(rest), Role::Body));
-        segs.extend(cells.iter().flatten().cloned());
-        page.box_line(segs, Vec::new(), 0);
-    };
-    match item_link(at.project, at.view, it) {
-        Some(target) => item(page, target, |page, link| {
-            line(page, Seg::linked(title.clone(), Role::Strong, link));
-        }),
-        None => line(page, meta(title.clone())),
-    }
+    item_row(page, at, it, title_width, cells, cx);
 }
 
 /// "Load more" while the view has more items, or how many GitHub didn't

@@ -292,7 +292,7 @@ pub fn pr_conversation(
     let place = timeline::Place {
         repo: &pr.repo,
         pr: Some(pr),
-        threads: &a.threads,
+        threads: timeline::by_review(&a.threads),
         icons,
     };
     timeline::entries(page, &talk, &place, &a.timeline, marks);

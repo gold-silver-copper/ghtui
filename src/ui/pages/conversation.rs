@@ -336,7 +336,7 @@ pub fn issue(
     let place = timeline::Place {
         repo: &d.repo,
         pr: None,
-        threads: &[],
+        threads: HashMap::new(),
         icons,
     };
     timeline::entries(page, &talk, &place, &d.timeline, marks);

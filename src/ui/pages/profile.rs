@@ -401,8 +401,7 @@ pub(super) fn thousands(n: u64) -> String {
 
 /// "Sep" for `2026-09-…`.
 pub(super) fn month_name(date: &str) -> Option<&'static str> {
-    let month: usize = date.get(5..7)?.parse().ok()?;
-    MONTHS.get(month.checked_sub(1)?).copied()
+    month_abbr(date.get(5..7)?.parse().ok()?)
 }
 
 /// The last year's contributions as GitHub draws them: a column per week,

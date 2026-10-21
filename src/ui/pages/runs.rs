@@ -244,7 +244,7 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
     }
     page.wrapped(facts, 0, Frame::None);
     page.blank();
-    let mut jobs: Vec<_> = run.jobs.iter().collect();
+    let mut jobs = run.jobs.clone();
     jobs.sort_by(|a, b| (a.outcome, &a.name).cmp(&(b.outcome, &b.name)));
     let title = counted("Jobs", &run.jobs);
     // A run just started (or re-run) has no jobs until GitHub queues them.
@@ -258,7 +258,7 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
     if failed.is_some() {
         page.selects = Some(page.items.len());
     }
-    list_box(page, title, Vec::new(), &Whole(&jobs), none, |page, job| {
+    list_box(page, title, Vec::new(), &jobs, none, |page, job| {
         let target = format!("{}/actions/runs/{}/job/{}", url::repo(repo), run.id, job.id);
         let took = took(
             job.started_at.as_ref(),
@@ -309,14 +309,14 @@ fn artifacts(page: &mut Page, list: &Capped<Artifact>, now: u64) {
 /// has ended, whichever comes first. The lines cut from a long log
 /// (`cut`) only count: each step's first number is how many of them it has.
 pub fn step_lines<'a>(job: &Job, cut: &'a str, log: &'a str) -> Vec<(u32, usize, Vec<&'a str>)> {
+    fn second(at: Option<&String>) -> Option<&str> {
+        at.map(|at| at.get(..19).unwrap_or(at))
+    }
     let mut out: Vec<(u32, usize, Vec<&str>)> = job
         .steps
         .iter()
         .map(|s| (s.number, 0, Vec::new()))
         .collect();
-    fn second(at: Option<&String>) -> Option<&str> {
-        at.map(|at| at.get(..19).unwrap_or(at))
-    }
     // Skipped steps log nothing.
     let ran: Vec<usize> = job
         .steps

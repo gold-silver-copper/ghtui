@@ -210,7 +210,7 @@ pub fn pr_reviewed(
     let place = timeline::Place {
         repo: &pr.repo,
         pr: Some(pr),
-        threads: &a.threads,
+        threads: timeline::by_review(&a.threads),
         icons: cx.icons,
     };
     // All of it: nothing folds here.
@@ -343,7 +343,8 @@ pub(super) fn open_threads(
             page.box_rule();
         }
         let first = thread.comments.first();
-        let row = |page: &mut Page, link: Option<u32>| {
+        let target = first.map(|c| c.url.clone()).filter(|u| !u.is_empty());
+        maybe_item(page, target, |page, link| {
             let line = if thread.file_level {
                 None
             } else {
@@ -375,11 +376,7 @@ pub(super) fn open_threads(
             page.box_line(segs, said, 0);
             let text = first.map(|c| first_line(&c.body, page.room(Frame::Body, 0)));
             body(page, vec![Seg::new(text.unwrap_or_default(), Role::Body)]);
-        };
-        match first.map(|c| c.url.clone()).filter(|u| !u.is_empty()) {
-            Some(url) => item(page, url, |page, link| row(page, Some(link))),
-            None => row(page, None),
-        }
+        });
     }
     page.box_bottom();
 }

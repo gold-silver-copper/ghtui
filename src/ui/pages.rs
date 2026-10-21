@@ -514,19 +514,13 @@ fn hanging(page: &mut Page, prefix: Seg, segs: Vec<Seg>, frame: Frame) {
     }
 }
 
-fn issue_icon(icons: Icons, state: Status) -> (String, Role) {
+fn issue_icon(icons: Icons, state: Status) -> (&'static str, Role) {
     let nerd = icons.nerd_font;
-    let pr = |s| icons.pr_state(s).into();
+    let pr = |s| icons.pr_state(s);
     match state {
-        Status::Issue(IssueState::Open) => {
-            (if nerd { "\u{f41b}" } else { "◉" }.into(), Role::Success)
-        }
-        Status::Issue(IssueState::Closed) => {
-            (if nerd { "\u{f41d}" } else { "✓" }.into(), Role::Accent)
-        }
-        Status::Issue(IssueState::NotPlanned) => {
-            (if nerd { "\u{f468}" } else { "⊘" }.into(), Role::Meta)
-        }
+        Status::Issue(IssueState::Open) => (if nerd { "\u{f41b}" } else { "◉" }, Role::Success),
+        Status::Issue(IssueState::Closed) => (if nerd { "\u{f41d}" } else { "✓" }, Role::Accent),
+        Status::Issue(IssueState::NotPlanned) => (if nerd { "\u{f468}" } else { "⊘" }, Role::Meta),
         Status::Pr(s @ PrState::Open) => (pr(s), Role::Success),
         Status::Pr(s @ PrState::Draft) => (pr(s), Role::Meta),
         Status::Pr(s @ PrState::Merged) => (pr(s), Role::Accent),
@@ -558,17 +552,17 @@ const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
+/// "Oct" for month 10.
+fn month_abbr(month: usize) -> Option<&'static str> {
+    MONTHS.get(month.checked_sub(1)?).copied()
+}
+
 /// `2026-10-01T…` → "Oct 1, 2026".
 fn day(iso: &str) -> String {
     let parts: Vec<&str> = iso.get(..10).unwrap_or(iso).split('-').collect();
     match parts.as_slice() {
         [y, m, d] => {
-            let month = m
-                .parse::<usize>()
-                .ok()
-                .and_then(|m| MONTHS.get(m.wrapping_sub(1)))
-                .copied()
-                .unwrap_or("?");
+            let month = m.parse().ok().and_then(month_abbr).unwrap_or("?");
             format!("{month} {}, {y}", d.trim_start_matches('0'))
         }
         _ => iso.to_owned(),
