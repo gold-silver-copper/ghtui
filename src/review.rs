@@ -494,8 +494,8 @@ pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcom
         dialog.sent.error = Some(match (&outcome.error, outcome.rejected.len()) {
             (Some(err), _) => err.clone(),
             (None, n) => format!(
-                "GitHub rejected {n} comment{}; they're marked in the diff. The review stays pending on GitHub until you submit again.",
-                if n == 1 { "" } else { "s" }
+                "GitHub rejected {n} {}; they're marked in the diff. The review stays pending on GitHub until you submit again.",
+                crate::ui::text::noun(n as u64, "comment")
             ),
         });
     }
@@ -1211,7 +1211,7 @@ impl Job for Submit {
 
     async fn run(&self, cx: &Cx) -> Result<SubmitOutcome, Failure> {
         let review = Review {
-            drafts: self.drafts.clone(),
+            drafts: &self.drafts,
             event: self.event,
             body: &self.body,
             seen: self.seen,
@@ -1237,7 +1237,7 @@ fn api_message(err: &ApiError) -> String {
 
 /// A review to submit.
 struct Review<'a> {
-    drafts: Vec<DraftComment>,
+    drafts: &'a [DraftComment],
     event: ReviewEvent,
     body: &'a str,
     /// The comments in your pending review on GitHub you were shown.
@@ -1256,7 +1256,7 @@ async fn submit_review(gh: &GitHub, pr: &PrRef, head: &str, review: Review<'_>) 
         Some(Box::new(crate::offline::queue::Review {
             pr: pr.clone(),
             head: head.to_owned(),
-            drafts: review.drafts.clone(),
+            drafts: review.drafts.to_vec(),
             event: review.event,
             body: review.body.to_owned(),
             seen: review.seen,
@@ -1292,7 +1292,7 @@ async fn submit_review(gh: &GitHub, pr: &PrRef, head: &str, review: Review<'_>) 
         Err(err) => return failed(outcome, &err, "Couldn't reach the PR"),
     };
     for draft in review.drafts {
-        match gh.add_review_thread(&review_id, &new_thread(&draft)).await {
+        match gh.add_review_thread(&review_id, &new_thread(draft)).await {
             Ok(_) => outcome.accepted.push(draft.id),
             Err(err) => outcome.rejected.push((draft.id, api_message(&err))),
         }
@@ -1321,7 +1321,7 @@ pub(crate) async fn send_review(
 ) -> crate::offline::queue::Sent {
     use crate::offline::queue::Sent;
     let review = Review {
-        drafts: queued.drafts.clone(),
+        drafts: &queued.drafts,
         event: queued.event,
         body: &queued.body,
         seen: queued.seen,

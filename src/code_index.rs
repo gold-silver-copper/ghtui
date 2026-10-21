@@ -518,11 +518,9 @@ fn choose(
     let mut files: Vec<TreeFile> = files.into_iter().filter(readable).collect();
     let eligible = files.len();
     // Nearest: the most leading folders in common with `near`.
-    let folders = |p: &str| p.rsplit_once('/').map_or("", |(dir, _)| dir).to_owned();
     let here = folders(near);
     let shared = |p: &str| {
-        let there = folders(p);
-        let pairs = here.split('/').zip(there.split('/'));
+        let pairs = here.split('/').zip(folders(p).split('/'));
         pairs.take_while(|(a, b)| a == b && !a.is_empty()).count()
     };
     files.sort_by_cached_key(|f| std::cmp::Reverse(shared(&f.path)));
@@ -542,6 +540,11 @@ fn choose(
         chosen.push(f);
     }
     (chosen, eligible, cut)
+}
+
+/// The folders `path` is in: `a/b` of `a/b/c.rs`.
+fn folders(path: &str) -> &str {
+    path.rsplit_once('/').map_or("", |(dir, _)| dir)
 }
 
 const MAGIC: &str = "ghtui code index 1";

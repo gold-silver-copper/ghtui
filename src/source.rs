@@ -267,7 +267,7 @@ impl Kept {
     }
 
     fn head(&self) -> Option<Oid> {
-        self.refs().branches.into_iter().next().map(|(_, oid)| oid)
+        (self.branches.iter()).find_map(|(_, oid)| Oid::parse(oid).ok())
     }
 }
 

@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crate::diff::FileDiff;
 use crate::git::blobs::BlobReader;
 use crate::git::credentials::Credentials;
-use crate::git::files::{ChangedFile, ZERO_OID, blobs, is_lockfile};
+use crate::git::files::{ChangedFile, blobs, is_lockfile};
 use crate::git::repo::{PrRefs, Repo};
 use crate::git::{GitError, Oid};
 use crate::lock;
@@ -320,7 +320,7 @@ async fn sides(
 
 async fn diff_file(reader: &BlobReader, file: &ChangedFile) -> FileDiff {
     if file.is_submodule() {
-        let side = |oid: &str| (oid != ZERO_OID).then(|| oid.to_owned());
+        let side = |oid: &Oid| (!oid.is_zero()).then(|| oid.to_string());
         return FileDiff::submodule(side(&file.old_oid), side(&file.new_oid));
     }
     let (old, new) = match sides(reader, file).await {
@@ -359,7 +359,7 @@ pub async fn since_review_hashes(
         tracing::warn!(%err, "prefetch for the earlier diff failed");
     }
     // Diffed a few at once, as the job does.
-    let files: Vec<ChangedFile> = files.into_iter().filter(|f| !f.is_submodule()).collect();
+    let files = files.into_iter().filter(|f| !f.is_submodule());
     let diffs = futures::stream::iter(files)
         .map(|file| async move {
             let (old, new) = sides(reader, &file).await?;
