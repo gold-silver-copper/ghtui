@@ -190,8 +190,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
             match by {
                 Some(Closer::Commit(oid)) => {
                     segs.push(meta(" in "));
-                    let target = url::commit(here, oid);
-                    segs.push(link_seg(page, short_sha(oid), target, Role::Link));
+                    segs.push(sha_seg(page, here, oid, Role::Link));
                 }
                 Some(Closer::Pr(pr)) => {
                     segs.push(meta(" in"));
@@ -209,12 +208,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
             icon = ("⑃", Role::Accent);
             segs.push(meta(" merged commit "));
             if let Some(oid) = commit {
-                segs.push(link_seg(
-                    page,
-                    short_sha(oid),
-                    url::commit(here, oid),
-                    Role::Link,
-                ));
+                segs.push(sha_seg(page, here, oid, Role::Link));
             }
             segs.push(meta(" into "));
             segs.push(chip(into, Bg::PrimaryContainer));
@@ -239,14 +233,8 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
             icon = ("◆", Role::Meta);
             segs.push(meta(" added a commit that references this "));
             let repo = repo.as_ref().unwrap_or(here);
-            let target = url::commit(repo, commit);
-            segs.push(link_seg(
-                page,
-                short_sha(commit),
-                target.clone(),
-                Role::Link,
-            ));
-            link = Some(Link::Url(target));
+            segs.push(sha_seg(page, repo, commit, Role::Link));
+            link = Some(Link::Url(url::commit(repo, commit)));
         }
         What::Labeled { .. } => {
             icon = ("◈", Role::Meta);
@@ -1033,8 +1021,7 @@ pub(super) fn relations_aside(page: &mut Page, icons: Icons, d: &IssueDetail) {
         page.wrapped(segs, 2, Frame::None);
     }
     for b in &d.branches {
-        let target = url::tree(&d.repo, b, "");
-        let branch = link_seg(page, b.clone(), target, Role::Link);
+        let branch = branch_seg(page, &d.repo, b, Role::Link);
         page.wrapped(vec![meta("⌥ "), branch], 2, Frame::None);
     }
     if let Some(parent) = &d.parent {
@@ -1246,7 +1233,7 @@ pub(super) fn pr_inline(page: &mut Page, icons: Icons, pr: &PrRef, d: &PrDetail,
     }
     inline(page, "Closes", closes);
     if let Some(oid) = &a.merge_commit {
-        let sha = link_seg(page, short_sha(oid), url::commit(&pr.repo, oid), Role::Link);
+        let sha = sha_seg(page, &pr.repo, oid, Role::Link);
         inline(page, "Merge commit", vec![sha]);
     }
 }
@@ -1289,9 +1276,8 @@ pub(super) fn relations_inline(page: &mut Page, icons: Icons, d: &IssueDetail) {
     }
     for b in &d.branches {
         sep(&mut dev, ", ");
-        let target = url::tree(&d.repo, b, "");
         dev.push(meta("⌥ "));
-        dev.push(link_seg(page, b.clone(), target, Role::Link));
+        dev.push(branch_seg(page, &d.repo, b, Role::Link));
     }
     inline(page, "Development", dev);
 }

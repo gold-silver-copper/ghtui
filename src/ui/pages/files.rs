@@ -130,12 +130,7 @@ pub fn blame(
                 let c = &r.commit;
                 let author = truncate(c.author.name(), author_w);
                 let mut gutter = vec![
-                    link_seg(
-                        page,
-                        short_sha(&c.oid),
-                        url::commit(repo, &c.oid),
-                        Role::Code,
-                    ),
+                    sha_seg(page, repo, &c.oid, Role::Code),
                     meta(format!(
                         " {author:<author_w$} {:>8}  ",
                         time::ago_iso(&c.date, now)

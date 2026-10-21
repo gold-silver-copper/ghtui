@@ -204,16 +204,10 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
     }
     let mut subline = vec![meta(format!("{} · ", run.event))];
     if let Some(branch) = &run.branch {
-        subline.push(link_seg(
-            page,
-            branch.clone(),
-            url::tree(repo, branch, ""),
-            Role::Code,
-        ));
+        subline.push(branch_seg(page, repo, branch, Role::Code));
         subline.push(meta(" · "));
     }
-    let sha = short_sha(&run.sha);
-    subline.push(link_seg(page, sha, url::commit(repo, &run.sha), Role::Code));
+    subline.push(sha_seg(page, repo, &run.sha, Role::Code));
     if let Some(actor) = &run.actor {
         subline.push(meta(" · "));
         subline.push(login_seg(page, actor, Role::Strong));
@@ -466,12 +460,8 @@ pub fn job(
     outcome_title(page, job.name.clone(), job.outcome);
     let mut subline = Vec::new();
     let run = url::run(repo, job.run_id);
-    subline.push(link_seg(
-        page,
-        format!("{} #{}", job.run.name, job.run.number),
-        run.clone(),
-        Role::Link,
-    ));
+    let name = format!("{} #{}", job.run.name, job.run.number);
+    subline.push(link_seg(page, name, run.clone(), Role::Link));
     if job.run.attempt > 1 {
         let of = format!(" · attempt {} of {}", job.attempt, job.run.attempt);
         subline.push(meta(of));
@@ -689,12 +679,8 @@ pub fn workflow(
             tag(&mut title, why.clone(), Bg::SecondaryContainer);
         }
         page.wrapped(title, 0, Frame::None);
-        let file = link_seg(
-            page,
-            wf.path.clone(),
-            url::blob(repo, "HEAD", &wf.path),
-            Role::Code,
-        );
+        let blob = url::blob(repo, "HEAD", &wf.path);
+        let file = link_seg(page, &wf.path, blob, Role::Code);
         page.wrapped(vec![file], 0, Frame::None);
         page.blank();
     }

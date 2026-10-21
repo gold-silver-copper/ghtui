@@ -54,17 +54,12 @@ fn reviewers(page: &mut Page, pr: &PrRef, d: &PrDetail, activity: Fetched<'_, Pr
         empty_row(page, "No reviews yet, and no one is asked for one.");
     }
     for l in latest {
-        let ((mark, role), what) = timeline::review_said(l.state);
         let target = match l.id {
             Some(id) => Link::Review(ReviewLink::Open { pr: pr.clone(), id }),
             None => Link::Url(url::user(&l.author)),
         };
         item(page, target, |page, link| {
-            let mut segs = vec![
-                Seg::new(format!("{mark}  "), role),
-                Seg::linked(l.author.clone(), Role::Link, link),
-                meta(format!(" {what}")),
-            ];
+            let mut segs = reviewed(l.state, &l.author, link);
             if timeline::stale(l, &d.head_oid) {
                 segs.push(meta(" · before the last push"));
             }
@@ -102,6 +97,16 @@ fn reviewers(page: &mut Page, pr: &PrRef, d: &PrDetail, activity: Fetched<'_, Pr
     page.box_bottom();
 }
 
+/// `✓ alice approved these changes`, the name following `link`.
+fn reviewed(state: ReviewState, author: &str, link: u32) -> Vec<Seg> {
+    let ((mark, role), what) = timeline::review_said(state);
+    vec![
+        Seg::new(format!("{mark}  "), role),
+        Seg::linked(author, Role::Link, link),
+        meta(format!(" {what}")),
+    ]
+}
+
 /// Every review, newest first: who, what they decided, when, on which
 /// commit, how many comments, and the start of the summary. Each opens
 /// its page.
@@ -126,12 +131,7 @@ fn all_reviews(page: &mut Page, pr: &PrRef, d: &PrDetail, glance: Glance<'_>, no
         let Some(id) = r.id else { continue };
         let link = Link::Review(ReviewLink::Open { pr: pr.clone(), id });
         item(page, link, |page, link| {
-            let ((mark, role), what) = timeline::review_said(r.state);
-            let mut segs = vec![
-                Seg::new(format!("{mark}  "), role),
-                Seg::linked(r.author.clone(), Role::Link, link),
-                meta(format!(" {what}")),
-            ];
+            let mut segs = reviewed(r.state, &r.author, link);
             if glance.new_reviews.contains(&id) {
                 tag(&mut segs, "New", Bg::TertiaryContainer);
             }

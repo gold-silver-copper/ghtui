@@ -212,16 +212,10 @@ pub fn deployments(
             ];
             let right = vec![meta(time::ago_iso(&d.created_at, now))];
             page.box_line(segs, right, 0);
-            let sha = short_sha(&d.oid);
-            let mut subline = vec![link_seg(page, sha, url::commit(repo, &d.oid), Role::Code)];
+            let mut subline = vec![sha_seg(page, repo, &d.oid, Role::Code)];
             if let Some(branch) = &d.branch {
                 subline.push(meta(" · "));
-                subline.push(link_seg(
-                    page,
-                    branch.clone(),
-                    url::tree(repo, branch, ""),
-                    Role::Code,
-                ));
+                subline.push(branch_seg(page, repo, branch, Role::Code));
             }
             if let Some(who) = &d.creator {
                 subline.push(meta(" · "));

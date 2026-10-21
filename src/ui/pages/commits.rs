@@ -164,8 +164,7 @@ pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now
             if i > 0 {
                 ids.push(meta(" + "));
             }
-            let short = short_sha(parent);
-            ids.push(link_seg(page, short, url::commit(repo, parent), Role::Code));
+            ids.push(sha_seg(page, repo, parent, Role::Code));
         }
         more_chips(&mut ids, &d.parents);
     }

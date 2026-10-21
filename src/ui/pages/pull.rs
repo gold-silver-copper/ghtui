@@ -248,8 +248,7 @@ pub fn pr_conversation(
             timeline::linked_aside(side, icons, &pr.repo, "Closes", &a.closing, none);
             if let Some(oid) = &a.merge_commit {
                 aside_heading(side, "Merge commit");
-                let target = url::commit(&pr.repo, oid);
-                let sha = link_seg(side, short_sha(oid), target, Role::Link);
+                let sha = sha_seg(side, &pr.repo, oid, Role::Link);
                 side.wrapped(vec![sha], 0, Frame::None);
             }
         }

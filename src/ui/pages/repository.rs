@@ -65,15 +65,9 @@ pub(super) fn about(page: &mut Page, repo: &RepoId, o: &RepoOverview, compact_la
     if !o.topics.is_empty() {
         let mut topics = Vec::new();
         for t in &o.topics {
-            let target = url::topic(&t.to_lowercase());
-            let topic = link_seg(
-                page,
-                format!(" {t} "),
-                target,
-                Role::Chip(Bg::PrimaryContainer),
-            );
-            topics.push(topic);
-            topics.push(space());
+            let (text, target) = (format!(" {t} "), url::topic(&t.to_lowercase()));
+            let topic = link_seg(page, text, target, Role::Chip(Bg::PrimaryContainer));
+            topics.extend([topic, space()]);
         }
         more_chips(&mut topics, &o.topics);
         page.blank();
@@ -141,20 +135,13 @@ pub(super) fn code_toolbar(
     ];
     if let Some((branches, tags)) = refs {
         let base = url::repo(repo);
-        segs.push(link_seg(
-            page,
-            format!("⎇ {}", plural(branches, "branch")),
-            format!("{base}/branches"),
-            Role::Meta,
-        ));
-        segs.push(Seg::new("  ", Role::Body));
-        segs.push(link_seg(
-            page,
-            format!("◇ {}", plural(tags, "tag")),
-            format!("{base}/tags"),
-            Role::Meta,
-        ));
-        segs.push(Seg::new("  ", Role::Body));
+        for (text, tab) in [
+            (format!("⎇ {}", plural(branches, "branch")), "branches"),
+            (format!("◇ {}", plural(tags, "tag")), "tags"),
+        ] {
+            segs.push(link_seg(page, text, format!("{base}/{tab}"), Role::Meta));
+            segs.push(Seg::new("  ", Role::Body));
+        }
     }
     if is_file {
         segs.extend(crumbs(page, repo, rev, path, true));
@@ -162,19 +149,14 @@ pub(super) fn code_toolbar(
         segs.extend(crumbs(page, repo, rev, path, false));
         segs.push(Seg::new("  ", Role::Body));
     }
-    let mut right = go_to_file(page, keys);
+    let find = go_to_file(page, keys);
+    let mut right = Vec::new();
     if commits > 0 {
-        right.insert(0, space());
-        right.insert(
-            0,
-            link_seg(
-                page,
-                format!("◷ {}", plural(commits, "commit")),
-                url::commits(repo, rev, path),
-                Role::Meta,
-            ),
-        );
+        let text = format!("◷ {}", plural(commits, "commit"));
+        let history = link_seg(page, text, url::commits(repo, rev, path), Role::Meta);
+        right.extend([history, space()]);
     }
+    right.extend(find);
     page.add(Frame::None, 0, segs, right);
 }
 
@@ -186,12 +168,8 @@ pub(super) fn crumbs(
     path: &str,
     last_is_file: bool,
 ) -> Vec<Seg> {
-    let mut segs = vec![link_seg(
-        page,
-        repo.name.clone(),
-        url::tree(repo, rev, ""),
-        Role::Link,
-    )];
+    let root = url::tree(repo, rev, "");
+    let mut segs = vec![link_seg(page, &repo.name, root, Role::Link)];
     let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
     for (i, part) in parts.iter().enumerate() {
         segs.push(meta(" / "));
@@ -201,13 +179,8 @@ pub(super) fn crumbs(
                 segs.push(meta(" /"));
             }
         } else {
-            let sub = parts.get(..=i).unwrap_or_default().join("/");
-            segs.push(link_seg(
-                page,
-                *part,
-                url::tree(repo, rev, &sub),
-                Role::Link,
-            ));
+            let sub = url::tree(repo, rev, &parts.get(..=i).unwrap_or_default().join("/"));
+            segs.push(link_seg(page, *part, sub, Role::Link));
         }
     }
     segs
@@ -317,12 +290,8 @@ pub fn repo_code(
     let title = match &o.last_commit {
         Some(c) => {
             let author = person_seg(page, &c.author, Role::Strong);
-            let headline = link_seg(
-                page,
-                c.headline.clone(),
-                url::commit(repo, &c.oid),
-                Role::Body,
-            );
+            let commit = url::commit(repo, &c.oid);
+            let headline = link_seg(page, &c.headline, commit, Role::Body);
             (
                 vec![author, Seg::new("  ", Role::Body), headline],
                 vec![meta(format!(
@@ -343,12 +312,8 @@ pub fn repo_code(
     };
     file_box(page, dir, title, cx);
     if let Some(Some(readme)) = readme.show(page, "the README") {
-        let name = link_seg(
-            page,
-            format!("☰ {}", readme.path),
-            url::blob(repo, &rev, &readme.path),
-            Role::Strong,
-        );
+        let file = url::blob(repo, &rev, &readme.path);
+        let name = link_seg(page, format!("☰ {}", readme.path), file, Role::Strong);
         page.box_top(vec![name], Vec::new());
         let base = LinkBase::new(repo, rev, &readme.path);
         markdown::render(page, &readme.text, Some(&base), Frame::Body);
@@ -368,6 +333,16 @@ pub fn repo_dir(page: &mut Page, dir: Listing<'_>, cx: PageCtx<'_>) {
         path.rsplit('/').next().unwrap_or(path).to_owned()
     };
     file_box(page, dir, (vec![strong(title)], Vec::new()), cx);
+}
+
+/// A commit's short ID, linked to it.
+pub(super) fn sha_seg(page: &mut Page, repo: &RepoId, oid: &str, role: Role) -> Seg {
+    link_seg(page, short_sha(oid), url::commit(repo, oid), role)
+}
+
+/// A branch, linked to its code.
+pub(super) fn branch_seg(page: &mut Page, repo: &RepoId, branch: &str, role: Role) -> Seg {
+    link_seg(page, branch, url::tree(repo, branch, ""), role)
 }
 
 pub(super) fn release_chips(segs: &mut Vec<Seg>, r: &Release) {
@@ -485,17 +460,12 @@ pub fn branches(
             let mut right = Vec::new();
             if let Some((number, state)) = b.pr {
                 let (icon, role) = issue_icon(icons, Status::Pr(state));
-                right.push(Seg::new(format!("{icon} "), role));
-                right.push(link_seg(
-                    page,
-                    format!("#{number}"),
-                    url::pull(&PrRef {
-                        repo: repo.clone(),
-                        number,
-                    }),
-                    Role::Link,
-                ));
-                right.push(meta("  "));
+                let pr = url::pull(&PrRef {
+                    repo: repo.clone(),
+                    number,
+                });
+                let pr = link_seg(page, format!("#{number}"), pr, Role::Link);
+                right.extend([Seg::new(format!("{icon} "), role), pr, meta("  ")]);
             }
             if let Some(date) = &b.date {
                 right.push(meta(time::ago_iso(date, now)));
@@ -503,8 +473,7 @@ pub fn branches(
             page.box_line(segs, right, 0);
             let mut subline = Vec::new();
             if let Some(oid) = &b.oid {
-                let sha = short_sha(oid);
-                subline.push(link_seg(page, sha, url::commit(repo, oid), Role::Code));
+                subline.push(sha_seg(page, repo, oid, Role::Code));
                 subline.push(meta(" "));
             }
             let what = [b.headline.as_deref(), b.author.as_ref().map(Person::name)];

@@ -247,12 +247,8 @@ fn dependency(page: &mut Page, repo: &RepoId, d: &crate::api::security::Dependen
                 number: *number,
             };
             let state = state.to_lowercase();
-            let link = link_seg(
-                page,
-                format!("#{number} {title}"),
-                url::pull(&pr),
-                Role::Link,
-            );
+            let (text, pr) = (format!("#{number} {title}"), url::pull(&pr));
+            let link = link_seg(page, text, pr, Role::Link);
             body(
                 page,
                 vec![
@@ -277,12 +273,8 @@ fn dependency(page: &mut Page, repo: &RepoId, d: &crate::api::security::Dependen
     }
     page.box_bottom();
     page.blank();
-    let mut ids = vec![link_seg(
-        page,
-        d.ghsa.clone(),
-        format!("{}/advisories/{}", url::base(), d.ghsa),
-        Role::Link,
-    )];
+    let advisory = format!("{}/advisories/{}", url::base(), d.ghsa);
+    let mut ids = vec![link_seg(page, &d.ghsa, advisory, Role::Link)];
     if let Some(cve) = &d.cve {
         ids.push(meta(format!(" · {cve}")));
     }

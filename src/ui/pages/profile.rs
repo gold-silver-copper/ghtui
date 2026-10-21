@@ -87,12 +87,8 @@ pub fn gist(page: &mut Page, g: &Gist, now: u64) {
     let first = g.files.first().map_or(g.id.as_str(), |f| f.name.as_str());
     let mut title = Vec::new();
     if let Some(owner) = &g.owner {
-        title.push(link_seg(
-            page,
-            owner.clone(),
-            format!("{}/{owner}", url::gists()),
-            Role::Link,
-        ));
+        let gists = format!("{}/{owner}", url::gists());
+        title.push(link_seg(page, owner, gists, Role::Link));
         title.push(meta(" / "));
     }
     title.push(Seg::new(first.to_owned(), Role::Title));
@@ -477,12 +473,7 @@ pub(super) fn contribution_activity(page: &mut Page, c: &Contributions) {
             let created = format!("◷ Created {} in {repos}", at_least(total, "commit", short));
             page.line(vec![Seg::new(created, Role::Body)]);
             for (repo, n) in m.commits.iter().take(5) {
-                let name = link_seg(
-                    page,
-                    repo.clone(),
-                    format!("{}/{repo}", url::base()),
-                    Role::Link,
-                );
+                let name = link_seg(page, repo, format!("{}/{repo}", url::base()), Role::Link);
                 page.line(vec![
                     meta("    "),
                     name,

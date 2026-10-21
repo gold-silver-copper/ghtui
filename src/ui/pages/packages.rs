@@ -79,12 +79,8 @@ pub fn package(
     let mut subline = vec![meta("By "), login_seg(page, &p.at.owner, Role::Link)];
     if let Some(repo) = &p.repo {
         subline.push(meta(" · from "));
-        subline.push(link_seg(
-            page,
-            repo.to_string(),
-            url::repo(repo),
-            Role::Link,
-        ));
+        let from = url::repo(repo);
+        subline.push(link_seg(page, repo.to_string(), from, Role::Link));
     }
     subline.push(meta(format!(" · {}", plural(p.versions, "version"))));
     page.wrapped(subline, 0, Frame::None);

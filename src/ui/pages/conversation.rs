@@ -276,6 +276,12 @@ pub(super) fn label_list(page: &mut Page, l: &Capped<Label>) {
     }
 }
 
+/// A conversation's title, then its number.
+fn numbered_title(page: &mut Page, title: &str, number: u64) {
+    let segs = vec![Seg::new(title, Role::Title), meta(format!("  #{number}"))];
+    page.wrapped(segs, 0, Frame::None);
+}
+
 pub fn issue(
     page: &mut Page,
     d: &IssueDetail,
@@ -294,14 +300,7 @@ pub fn issue(
         let earlier = d.timeline.left_out() > 0;
         people(a, "Participants", &participants, maybe_others(earlier), "");
     });
-    page.wrapped(
-        vec![
-            Seg::new(d.title.clone(), Role::Title),
-            meta(format!("  #{}", d.number)),
-        ],
-        0,
-        Frame::None,
-    );
+    numbered_title(page, &d.title, d.number);
     let author = login_seg(page, &d.author, Role::Strong);
     let mut segs = vec![
         state_chip(Status::Issue(d.state), icons),
@@ -414,14 +413,7 @@ pub fn discussion(
     unfolded: &HashSet<String>,
     cx: PageCtx<'_>,
 ) {
-    page.wrapped(
-        vec![
-            Seg::new(d.title.clone(), Role::Title),
-            meta(format!("  #{}", d.number)),
-        ],
-        0,
-        Frame::None,
-    );
+    numbered_title(page, &d.title, d.number);
     let mut segs = vec![chip(d.category.clone(), Bg::SecondaryContainer)];
     if d.answered {
         tag(&mut segs, "✓ Answered", Bg::SuccessContainer);

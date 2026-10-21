@@ -15,18 +15,9 @@ pub struct LabelKeys {
 /// `Labels · Milestones`, above an issue or pull request list, as
 /// GitHub's buttons beside its filter.
 pub fn labels_and_milestones(page: &mut Page, repo: &RepoId) {
-    let labels = link_seg(
-        page,
-        "Labels",
-        format!("{}/labels", url::repo(repo)),
-        Role::Link,
-    );
-    let milestones = link_seg(
-        page,
-        "Milestones",
-        format!("{}/milestones", url::repo(repo)),
-        Role::Link,
-    );
+    let base = url::repo(repo);
+    let labels = link_seg(page, "Labels", format!("{base}/labels"), Role::Link);
+    let milestones = link_seg(page, "Milestones", format!("{base}/milestones"), Role::Link);
     page.wrapped(vec![labels, meta(" · "), milestones], 0, Frame::None);
 }
 

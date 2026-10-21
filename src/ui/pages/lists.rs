@@ -278,12 +278,8 @@ pub fn issue_list(
         (text, Link::State(name.to_owned()), state == name)
     });
     let title = nav_strip(page, &Seg::new("   ", Role::Body), &Role::Meta, tabs);
-    let sort = link_seg(
-        page,
-        format!("Sort: {} ▾", sort_label(query)),
-        Link::Sort,
-        Role::Meta,
-    );
+    let sort = format!("Sort: {} ▾", sort_label(query));
+    let sort = link_seg(page, sort, Link::Sort, Role::Meta);
     let Some(r) = results.show_or(page, "the list", |page| {
         page.box_top(title.clone(), vec![sort.clone()]);
         skeleton(page);
