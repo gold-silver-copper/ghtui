@@ -109,18 +109,22 @@ pub fn compose_anchor(doc: &Doc, screen: &DiffScreen, target: &Target) -> Pos {
         Target::Review(Comment::File { .. }) => Pos { row: 0, ..cursor },
         Target::Review(Comment::Reply { .. } | Comment::Draft { .. }) | Target::Edit(_) => {
             let ann = doc.annotation_under(cursor, screen.half);
-            (cursor.row + 1..)
+            let end = doc.line_end(cursor);
+            (end.row + 1..)
                 .map(|row| Pos { row, ..cursor })
                 .take_while(|&p| {
                     matches!(doc.row(p), Some(Row::Thread(_))) && doc.annotation_at(p) == ann
                 })
                 .last()
-                .unwrap_or(cursor)
+                .unwrap_or(end)
         }
-        _ => screen
-            .selection
-            .filter(|s| doc.to_global(*s) > doc.to_global(cursor))
-            .unwrap_or(cursor),
+        // Under all of the line, wrapped.
+        _ => doc.line_end(
+            screen
+                .selection
+                .filter(|s| doc.to_global(*s) > doc.to_global(cursor))
+                .unwrap_or(cursor),
+        ),
     }
 }
 

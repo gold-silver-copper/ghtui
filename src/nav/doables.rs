@@ -76,6 +76,7 @@ pub(super) const DIFF_DOABLES: &[(&str, &[(Action, &str)])] = {
                 (A::TreeNarrower, ""),
                 (A::TreeWider, ""),
                 (A::ToggleSplit, ""),
+                (A::WrapLines, ""),
                 (A::IgnoreWhitespace, ""),
                 (A::BySyntax, ""),
                 (A::ExpandContext, ""),

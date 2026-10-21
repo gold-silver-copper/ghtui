@@ -146,6 +146,8 @@ pub struct DiffPrefs {
     pub ignore_whitespace: bool,
     /// Compare by syntax, where a file's language allows, not by lines.
     pub by_syntax: bool,
+    /// Long code lines go on in rows under them, rather than off the edge.
+    pub wrap: bool,
 }
 
 impl DiffPrefs {
@@ -171,6 +173,7 @@ impl DiffPrefs {
             split_override: None,
             ignore_whitespace: false,
             by_syntax: true,
+            wrap: false,
         }
     }
 }
@@ -251,6 +254,7 @@ impl DiffScreen {
             structural: self.prefs.by_syntax,
             // Thread cards start after the gutter; keep comments readable.
             wrap: lay.diff.width.saturating_sub(24).clamp(20, 100),
+            wrap_code: self.prefs.wrap.then_some(lay.diff.width),
         }
     }
 }
@@ -608,6 +612,19 @@ pub fn apply(
                 "Showing whitespace changes"
             });
         }
+        Action::WrapLines => {
+            screen.prefs.wrap = !screen.prefs.wrap;
+            screen.shift = 0;
+            notice.info(if screen.prefs.wrap {
+                "Long lines wrap"
+            } else {
+                "Long lines are cut at the edge"
+            });
+        }
+        Action::ScrollLeft | Action::ScrollRight if screen.prefs.wrap => {
+            notice.info("Long lines wrap: there's nothing to the side");
+            return Vec::new();
+        }
         Action::BySyntax => {
             screen.prefs.by_syntax = !screen.prefs.by_syntax;
             notice.info(if screen.prefs.by_syntax {
@@ -789,8 +806,8 @@ pub fn apply(
                 None => notice.info("No more folders that way"),
             }
         }
-        Action::Down => screen.cursor = state.doc.offset(screen.cursor, 1),
-        Action::Up => screen.cursor = state.doc.offset(screen.cursor, -1),
+        Action::Down => screen.cursor = state.doc.step(screen.cursor, 1),
+        Action::Up => screen.cursor = state.doc.step(screen.cursor, -1),
         // The view moves a page and the cursor with it, keeping its place
         // on screen.
         Action::PageDown | Action::PageUp => {
@@ -799,7 +816,7 @@ pub fn apply(
             } else {
                 -page
             };
-            screen.cursor = state.doc.offset(screen.cursor, by);
+            screen.cursor = state.doc.step(screen.cursor, by);
             screen.top = state.doc.offset(screen.top, by);
         }
         Action::Top => screen.cursor = Pos::default(),
@@ -1246,7 +1263,7 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
         }
     }
     let doc = &state.doc;
-    screen.cursor = doc.clamp(screen.cursor);
+    screen.cursor = doc.line_start(doc.clamp(screen.cursor));
     let height = usize::from(lay.diff.height).max(1);
     if std::mem::take(&mut screen.reveal) {
         reveal(screen, doc, height);
@@ -1264,8 +1281,11 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
     if top > upper {
         top = upper;
     }
-    if cursor >= top + height {
-        top = cursor + 1 - height;
+    // All of the cursor's line, wrapped, if it fits.
+    let rows = doc.line_end(screen.cursor).row - screen.cursor.row + 1;
+    let end = cursor + rows.min(height.saturating_sub(1)).max(1);
+    if end > top + height {
+        top = end - height;
     }
     screen.top = doc.to_pos(top);
 

@@ -149,7 +149,7 @@ fn the_whole_pr_after_a_commit_keeps_githubs_patches() {
     assert!(is_file_comment(&target), "after All: {target:?}");
 }
 
-/// Ignoring whitespace, comparing by syntax, split and the tree are the
+/// Ignoring whitespace, comparing by syntax, split, wrapping and the tree are the
 /// screen's choices; picking a commit doesn't undo them.
 #[test]
 fn choosing_a_commit_keeps_the_view_toggles() {
@@ -161,6 +161,7 @@ fn choosing_a_commit_keeps_the_view_toggles() {
         Action::BySyntax,
         Action::ToggleSplit,
         Action::ToggleTree,
+        Action::WrapLines,
     ] {
         act(&mut s, action);
     }
@@ -170,7 +171,8 @@ fn choosing_a_commit_keeps_the_view_toggles() {
             && !before.by_syntax
             && start.by_syntax
             && before.split_override.is_some()
-            && !before.tree_visible,
+            && !before.tree_visible
+            && before.wrap,
         "{before:?}"
     );
     let job = pick_commit(&mut s, &pr, "<Down><Down><Enter>");

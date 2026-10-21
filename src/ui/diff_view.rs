@@ -64,7 +64,7 @@ pub struct DiffView<'a> {
     pub keys: Keys<'a>,
     /// Visual line selection (anchor and cursor, either order).
     pub selection: Option<(Pos, Pos)>,
-    /// Columns code is scrolled left by.
+    /// Columns code is scrolled left by, when it doesn't wrap.
     pub shift: usize,
     /// The word cursor, by its column in the code of the cursor's line.
     pub word: Option<usize>,
@@ -102,7 +102,13 @@ impl Widget for DiffView<'_> {
 
 impl DiffView<'_> {
     fn render_row(&self, pos: Pos, area: Rect, buf: &mut Buffer) {
-        let Some(row) = self.doc.row(pos) else { return };
+        // A wrapped row draws more of its line's row.
+        let line_pos = self.doc.line_start(pos);
+        let part = pos.row - line_pos.row;
+        let Some(row) = self.doc.row(line_pos) else {
+            return;
+        };
+        let pos = line_pos;
         let Some(file) = self.doc.files.get(pos.file) else {
             return;
         };
@@ -146,21 +152,21 @@ impl DiffView<'_> {
                 ])
                 .render(area, buf);
             }
-            Row::Line(e) => self.line(pos, Some(e), None, cursor, area, buf),
+            Row::Line(e) => self.line(pos, part, Some(e), None, cursor, area, buf),
             Row::Split { left, right } => {
                 // Two halves with a column of context tint between them;
                 // the cursor is on one half.
                 fill(buf, area, theme, line_bg(DiffBg::Context, false));
                 let on = self.doc.half_at(pos, self.half);
                 let cursor = |side| cursor && on == Some(side);
-                let half = area.width.saturating_sub(1) / 2;
+                let (left_width, right_width) = split_widths(area.width);
                 let right_area = Rect {
-                    x: area.x + half + 1,
-                    width: area.width.saturating_sub(half + 1),
+                    x: area.x + left_width + 1,
+                    width: right_width,
                     ..area
                 };
                 let left_area = Rect {
-                    width: half,
+                    width: left_width,
                     ..area
                 };
                 let halves = [
@@ -168,7 +174,7 @@ impl DiffView<'_> {
                     (right, Side::Right, right_area),
                 ];
                 for (entry, side, area) in halves {
-                    self.line(pos, entry, Some(side), cursor(side), area, buf);
+                    self.line(pos, part, entry, Some(side), cursor(side), area, buf);
                 }
             }
             Row::Thread(t) => self.thread_row(file, t, cursor, area, buf),
@@ -205,6 +211,7 @@ impl DiffView<'_> {
                     fill(buf, area, theme, Bg::SelectedInactive);
                 }
             }
+            Row::Wrapped { .. } => {}
         }
     }
 
@@ -467,11 +474,14 @@ impl DiffView<'_> {
 
     /// Alignment entry `entry` of the row at `pos`: the row's marks (a
     /// split half's own), line numbers (both in unified view, `side`'s in
-    /// split view) and code. Both halves of a split row start alike, so
-    /// their code gets the same room.
+    /// split view) and code; screen line `part` of it when code wraps,
+    /// under blanks in their place. Both halves of a split row start
+    /// alike, so their code gets the same room.
+    #[expect(clippy::too_many_arguments, reason = "a line and where it's drawn")]
     fn line(
         &self,
         pos: Pos,
+        part: usize,
         entry: Option<u32>,
         side: Option<Side>,
         cursor: bool,
@@ -531,6 +541,11 @@ impl DiffView<'_> {
             theme.style(sign_fg, bg).add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(" ", theme.body(bg)));
+        if part > 0 {
+            for span in &mut spans {
+                span.content = Pad(text::width(&span.content)).to_string().into();
+            }
+        }
         // Unified shows one line per entry; a split half shows its own side.
         if let Some(at) = side.map_or(Some(line.shown()), |side| line.on(side)) {
             let room = code_room(file, area.width, side.is_some());
@@ -539,19 +554,25 @@ impl DiffView<'_> {
             let on = pos == self.doc.clamp(self.cursor) && side == self.doc.half_at(pos, self.half);
             let word = (self.word.filter(|_| on))
                 .and_then(|col| Some(text::word_at(&text::words(code), col)?.cols.clone()));
-            let cut = (room, self.shift);
+            let wraps = self.doc.opts().wrap_code.is_some();
+            let cut = if wraps {
+                Cut::Wrap(part)
+            } else {
+                Cut::Shift(self.shift)
+            };
             spans.extend(code_spans(
                 self.ctx,
                 code,
                 tokens,
                 diff_bg,
                 cursor,
-                cut,
+                (room, cut),
                 emphasis,
                 word.as_ref(),
             ));
+            let last = !wraps || code_rows(code, room) == part + 1;
             // Line endings only matter where they changed.
-            if text.crlf(at) && line.is_change() {
+            if last && text.crlf(at) && line.is_change() {
                 spans.push(Span::styled("␍", theme.meta(bg)));
             }
         }
@@ -834,6 +855,13 @@ fn line_bg(diff_bg: DiffBg, cursor: bool) -> Bg {
     }
 }
 
+/// The widths of a split row's halves, in a row `width` wide: a column
+/// between them.
+pub fn split_widths(width: u16) -> (u16, u16) {
+    let left = width.saturating_sub(1) / 2;
+    (left, width.saturating_sub(left + 1))
+}
+
 /// Columns code gets in a row (or a split half) `width` wide: what the
 /// marks, line numbers (one side's, if split), sign and a column for `…`
 /// leave.
@@ -864,9 +892,50 @@ impl std::fmt::Display for Pad {
     }
 }
 
+/// The most screen lines a wrapped line of code takes; the rest of it is
+/// cut, as minified code would fill screens.
+const MAX_WRAPPED: usize = 100;
+
+/// How code meets the edge of its room.
+#[derive(Debug, Clone, Copy)]
+enum Cut {
+    /// Scrolled left by so many columns and cut at the edge.
+    Shift(usize),
+    /// Wrapped: this screen line of it.
+    Wrap(usize),
+}
+
+/// A grapheme of code as drawn at column `col`: tabs expanded, hidden
+/// characters as a marker (see `text::is_hidden`).
+fn drawn(g: (&str, usize), col: usize) -> (&str, usize) {
+    match text::untab(g, col) {
+        (g, _) if g.contains(text::is_hidden) => ("�", 1),
+        drawn => drawn,
+    }
+}
+
+/// Screen lines `code` takes wrapped to `room` columns, as [`code_spans`]
+/// wraps it.
+pub fn code_rows(code: &str, room: usize) -> usize {
+    let (mut col, mut used, mut rows) = (0usize, 0usize, 1usize);
+    for g in text::graphemes(code) {
+        let (_, w) = drawn(g, col);
+        col += w;
+        if used > 0 && used + w > room {
+            if rows == MAX_WRAPPED {
+                break;
+            }
+            rows += 1;
+            used = 0;
+        }
+        used += w;
+    }
+    rows
+}
+
 /// Styled code, with tabs expanded and control characters made visible,
-/// cut to `room` columns after skipping `skip`, the columns of `word`
-/// shown as the word under the cursor.
+/// cut to `room` columns as `cut` says, the columns of `word` shown as the
+/// word under the cursor.
 #[expect(
     clippy::too_many_arguments,
     reason = "the code, its tokens and how it's drawn"
@@ -877,7 +946,7 @@ fn code_spans(
     tokens: &[TokenSpan],
     diff_bg: DiffBg,
     cursor: bool,
-    (room, skip): (usize, usize),
+    (room, cut): (usize, Cut),
     emphasis: &[(u32, u32)],
     word: Option<&Range<usize>>,
 ) -> Vec<Span<'static>> {
@@ -917,7 +986,7 @@ fn code_spans(
         segments.push((at, content.len(), None));
     }
     // Cut segments at emphasis boundaries.
-    let mut cut: Vec<(usize, usize, Option<TokenKind>, bool)> = Vec::new();
+    let mut pieces: Vec<(usize, usize, Option<TokenKind>, bool)> = Vec::new();
     let mut bounds: Vec<usize> = Vec::new();
     for (s, e, kind) in segments {
         bounds.clear();
@@ -935,14 +1004,16 @@ fn code_spans(
             let emph = emphasis
                 .iter()
                 .any(|(a, b)| (*a as usize) <= s && e <= (*b as usize));
-            cut.push((s, e, kind, emph));
+            pieces.push((s, e, kind, emph));
         }
     }
 
     let mut out = Vec::new();
-    // Columns of the line so far, and of them shown.
-    let (mut col, mut used) = (0usize, 0usize);
-    for (s, e, kind, emphasized) in cut {
+    // Columns of the line so far, and of them on this screen line; which
+    // screen line it's at.
+    let (mut col, mut used, mut at_line) = (0usize, 0usize, 0usize);
+    let mut done = false;
+    for (s, e, kind, emphasized) in pieces {
         let Some(slice) = content.get(s..e) else {
             continue;
         };
@@ -958,19 +1029,32 @@ fn code_spans(
         let (mut piece, mut lit) = (String::new(), false);
         let mut truncated = false;
         for g in text::graphemes(slice) {
-            let (g, w) = match text::untab(g, col) {
-                // Shown, never acted on: see `text::is_hidden`.
-                (g, _) if g.contains(text::is_hidden) => ("�", 1),
-                drawn => drawn,
-            };
+            let (g, w) = drawn(g, col);
             col += w;
-            // Scrolled off the left (a wide character half off, too).
-            if col - w < skip {
-                continue;
-            }
-            if used + w > room {
-                truncated = true;
-                break;
+            match cut {
+                // Scrolled off the left (a wide character half off, too).
+                Cut::Shift(skip) if col - w < skip => continue,
+                Cut::Shift(_) if used + w > room => {
+                    truncated = true;
+                    break;
+                }
+                Cut::Shift(_) => {}
+                Cut::Wrap(n) => {
+                    if used > 0 && used + w > room {
+                        if at_line == n {
+                            truncated = n + 1 == MAX_WRAPPED;
+                            done = true;
+                            break;
+                        }
+                        at_line += 1;
+                        used = 0;
+                    }
+                    // On an earlier screen line.
+                    if at_line < n {
+                        used += w;
+                        continue;
+                    }
+                }
             }
             let here = word.is_some_and(|word| word.contains(&(col - w)));
             if here != lit && !piece.is_empty() {
@@ -985,6 +1069,8 @@ fn code_spans(
         }
         if truncated {
             out.push(Span::styled("…", theme.meta(bg)));
+        }
+        if truncated || done {
             break;
         }
     }
@@ -1025,9 +1111,51 @@ mod tests {
             now: 0,
         };
         let line = "if a\u{202e} {\tb\u{200b}c";
-        let spans = code_spans(ctx, line, &[], DiffBg::Added, false, (80, 0), &[], None);
+        let spans = code_spans(
+            ctx,
+            line,
+            &[],
+            DiffBg::Added,
+            false,
+            (80, Cut::Shift(0)),
+            &[],
+            None,
+        );
         let shown: String = spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(shown, "if a� { b�c");
+    }
+
+    /// Wrapped, a long line's code goes on under it, all of it, with no
+    /// `…`; tabs are as wide as they are unwrapped.
+    #[test]
+    fn wrapped_code_shows_all_of_the_line() {
+        let theme = Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::TrueColor);
+        let ctx = Ctx {
+            theme: &theme,
+            icons: crate::ui::Icons::default(),
+            now: 0,
+        };
+        let line = format!("\t{}", "abcdefghij".repeat(5));
+        let shown: Vec<String> = (0..code_rows(&line, 20))
+            .map(|n| {
+                code_spans(
+                    ctx,
+                    &line,
+                    &[],
+                    DiffBg::Added,
+                    false,
+                    (20, Cut::Wrap(n)),
+                    &[],
+                    None,
+                )
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect()
+            })
+            .collect();
+        assert_eq!(shown.len(), 3, "{shown:?}");
+        assert!(shown.iter().all(|s| text::width(s) <= 20), "{shown:?}");
+        assert_eq!(shown.concat(), line.replace('\t', "    "));
     }
 
     /// In split view with whitespace ignored, a re-indented line is one

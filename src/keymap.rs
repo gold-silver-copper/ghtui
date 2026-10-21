@@ -299,6 +299,7 @@ actions! {
     UnfoldAll         "unfold_all"        []                       Diff   "Unfold every file";
     ToggleTree        "toggle_tree"       []                       Diff   "Show or hide the file tree";
     ToggleSplit       "toggle_split"      []                       Diff   "Split or unified view";
+    WrapLines         "wrap_lines"        []                       Diff   "Wrap long lines";
     IgnoreWhitespace  "ignore_whitespace" []                       Diff   "Ignore whitespace changes";
     BySyntax          "by_syntax"         []                       Diff   "Compare by syntax or by lines";
     FullFile          "full_file"         []                       Diff   "Show the whole file";
