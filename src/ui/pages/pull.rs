@@ -318,14 +318,8 @@ pub fn actions(
 ) {
     filter_field(page, query, cx.keys, "filter");
     let ignored = RunFilter::parse(query).ignored;
-    if !ignored.is_empty() {
-        let words = ignored.iter().map(|w| format!("“{w}”")).collect::<Vec<_>>();
-        let text = format!(
-            "Not filtered by {}: runs filter by workflow:, branch:, is:, event: and actor:",
-            words.join(", ")
-        );
-        say(page, text, Role::Meta);
-    }
+    let knows = "runs filter by workflow:, branch:, is:, event: and actor:";
+    ignored_note(page, &ignored, knows);
     page.blank();
     let empty = if query.is_empty() {
         "No runs yet."

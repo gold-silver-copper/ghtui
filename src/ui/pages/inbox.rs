@@ -10,14 +10,8 @@ pub fn notifications(page: &mut Page, query: &str, inbox: Fetched<'_, Inbox>, cx
     let PageCtx { icons, keys, now } = cx;
     filter_field(page, query, keys, "filter");
     let ignored = InboxFilter::parse(query).ignored;
-    if !ignored.is_empty() {
-        let words = ignored.iter().map(|w| format!("“{w}”")).collect::<Vec<_>>();
-        let text = format!(
-            "Not filtered by {}: notifications filter by is:unread, is:read, reason: and repo:",
-            words.join(", ")
-        );
-        say(page, text, Role::Meta);
-    }
+    let knows = "notifications filter by is:unread, is:read, reason: and repo:";
+    ignored_note(page, &ignored, knows);
     page.blank();
     let Some(inbox) = inbox.show(page, "your notifications") else {
         return;

@@ -50,21 +50,11 @@ pub(super) fn by_update(query: &str) -> bool {
         .any(|w| w.starts_with("sort:updated"))
 }
 
-/// An issue's or pull request's row; with `updated`, it says when it was
-/// last updated (the list's order) rather than opened.
+/// An issue's or pull request's row, with its repository when
+/// `show_repo`; with `updated`, it says when it was last updated (the
+/// list's order) rather than opened; with `review`, a pull request's
+/// opens its Files changed, to review it.
 pub(super) fn issue_row(
-    page: &mut Page,
-    i: &IssueSummary,
-    shown: (bool, bool),
-    icons: Icons,
-    now: u64,
-) {
-    issue_row_to(page, i, shown, icons, now, false);
-}
-
-/// An issue's or pull request's row; with `review`, a pull request's opens
-/// its Files changed, to review it.
-pub(super) fn issue_row_to(
     page: &mut Page,
     i: &IssueSummary,
     (show_repo, updated): (bool, bool),
@@ -293,7 +283,7 @@ pub fn issue_list(
     let empty = "No results matched your search.";
     let updated = by_update(query);
     list_box(page, title, vec![sort], r, empty, |page, i| {
-        issue_row(page, i, (false, updated), icons, now);
+        issue_row(page, i, (false, updated), icons, now, false);
     });
 }
 
@@ -335,7 +325,7 @@ pub fn search(
     match results {
         SearchResults::Repos(r) => box_rows(page, r, |page, r| repo_row(page, r, now, true)),
         SearchResults::Issues(r) => box_rows(page, r, |page, i| {
-            issue_row(page, i, (true, by_update(query)), icons, now);
+            issue_row(page, i, (true, by_update(query)), icons, now, false);
         }),
         SearchResults::Users(r) => box_rows(page, r, user_row),
         SearchResults::Discussions(r) => box_rows(page, r, |page, hit| {

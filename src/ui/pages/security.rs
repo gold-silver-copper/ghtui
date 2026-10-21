@@ -35,11 +35,7 @@ fn severity(a: &Alert) -> Option<Seg> {
                 "warning" => Bg::TertiaryContainer,
                 _ => Bg::SecondaryContainer,
             };
-            let mut name = level.clone();
-            if let Some(first) = name.get_mut(..1) {
-                first.make_ascii_uppercase();
-            }
-            Some(chip(name, bg))
+            Some(chip(capitalized(level), bg))
         }
         (None, None) => None,
     }
@@ -219,15 +215,8 @@ pub fn alert(page: &mut Page, repo: &RepoId, a: &Alert, cx: PageCtx<'_>) {
 fn dependency(page: &mut Page, repo: &RepoId, d: &crate::api::security::Dependency) {
     let title = vec![strong(format!("{} ({})", d.package, d.ecosystem))];
     page.box_top(title, Vec::new());
-    let mut facts = Vec::new();
-    if let Some(v) = &d.vulnerable {
-        facts.push(format!("Affected {v}"));
-    }
-    facts.push(format!(
-        "Patched {}",
-        d.patched.as_deref().unwrap_or("in no version yet")
-    ));
-    body(page, vec![Seg::new(facts.join(" · "), Role::Body)]);
+    let facts = affected(d.vulnerable.as_ref(), d.patched.as_deref());
+    body(page, vec![Seg::new(facts, Role::Body)]);
     let mut where_ = Vec::new();
     if !d.manifest.is_empty() {
         let target = url::blob(repo, "HEAD", &d.manifest);
@@ -304,13 +293,7 @@ fn dependency(page: &mut Page, repo: &RepoId, d: &crate::api::security::Dependen
         page.blank();
         markdown::render(page, &d.description, None, Frame::None);
     }
-    if !d.references.is_empty() {
-        aside_heading(page, "References");
-        for r in &d.references {
-            let link = link_seg(page, r.clone(), r.clone(), Role::Link);
-            page.wrapped(vec![link], 0, Frame::None);
-        }
-    }
+    references(page, &d.references);
 }
 
 fn code(page: &mut Page, repo: &RepoId, c: &crate::api::security::CodeAlert) {

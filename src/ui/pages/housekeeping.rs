@@ -37,7 +37,6 @@ pub fn labels_page(
     repo: &RepoId,
     list: Fetched<'_, Results<LabelInfo>>,
     keys: &LabelKeys,
-    _now: u64,
 ) {
     let new = button(page, "New label", Link::Form(Row::New));
     page.wrapped(

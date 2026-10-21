@@ -100,8 +100,6 @@ pub fn commit_history(
     commit_rows(page, repo, None, h, now);
 }
 
-/// A commit: its message, who and when, its parents, and a link to its
-/// files (`files` is that link's target).
 /// A pull request's commit: which of its commits it is, and links to the
 /// ones either side.
 pub struct PrCommitAt {
@@ -129,6 +127,8 @@ pub fn pr_commit_nav(page: &mut Page, at: &PrCommitAt) {
     page.blank();
 }
 
+/// A commit: its message, who and when, its parents, and a link to its
+/// files (`files` is that link's target).
 pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now: u64) {
     say(page, d.headline.clone(), Role::Title);
     if !d.body.is_empty() {

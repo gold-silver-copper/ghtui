@@ -100,7 +100,7 @@ pub fn home(page: &mut Page, sections: &[HomeSection<'_>], icons: Icons, now: u6
                 let review = search.query.contains("review-requested:");
                 section_box(page, title, &start, (i, &empty), |page, it| {
                     let shown = (true, by_update(search.query));
-                    issue_row_to(page, it, shown, icons, now, review);
+                    issue_row(page, it, shown, icons, now, review);
                 });
             }
             SearchResults::Repos(list) => {

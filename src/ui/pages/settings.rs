@@ -118,10 +118,7 @@ fn listed<T>(
 
 fn general(page: &mut Page, repo: &RepoId, g: &General, keys: SettingKeys<'_>) {
     page.box_top(vec![strong("General")], Vec::new());
-    let mut visibility = g.visibility.clone();
-    if let Some(first) = visibility.get_mut(..1) {
-        first.make_ascii_uppercase();
-    }
+    let visibility = capitalized(&g.visibility);
     for (name, value) in [
         ("Repository", repo.to_string()),
         ("Visibility", visibility),

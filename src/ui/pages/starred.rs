@@ -4,11 +4,6 @@
 use super::*;
 use crate::api::lists::{ListPage, StarList};
 
-/// A list's page, as a link.
-fn list_url(login: &str, list: &StarList) -> String {
-    url::star_list(login, &list.slug)
-}
-
 /// What a list is: its count, and whether it's private.
 fn about(list: &StarList) -> Vec<Seg> {
     let mut segs = vec![meta(format!("  {}", plural(list.count, "repository")))];
@@ -33,7 +28,7 @@ pub fn star_lists(page: &mut Page, login: &str, lists: Fetched<'_, Capped<StarLi
     }
     let title = counted("Lists", lists);
     list_box(page, title, Vec::new(), lists, "", |page, list| {
-        item(page, list_url(login, list), |page, link| {
+        item(page, url::star_list(login, &list.slug), |page, link| {
             let mut segs = vec![Seg::linked(list.name.clone(), Role::Link, link)];
             segs.extend(about(list));
             page.box_line(segs, Vec::new(), 0);

@@ -137,13 +137,7 @@ pub fn gist(page: &mut Page, g: &Gist, now: u64) {
                     markdown::highlighted_file(text, crate::diff::Language::from_path(&f.name));
                 let width = lines.len().to_string().len();
                 for (i, mut segs) in lines.into_iter().enumerate() {
-                    segs.insert(
-                        0,
-                        Seg::new(
-                            format!("{:>width$}  ", i + 1),
-                            Role::Syntax(Syntax::Comment),
-                        ),
-                    );
+                    segs.insert(0, line_number(i + 1, width));
                     page.push(PageLine {
                         segs,
                         frame: Frame::Body,
@@ -461,8 +455,6 @@ pub(super) fn contribution_graph(page: &mut Page, c: &Contributions) {
     page.line(legend);
 }
 
-/// What someone did, month by month: commits by repository, and the pull
-/// requests and issues they opened and reviewed.
 /// "20+ pull requests" when GitHub may have more than `n`.
 pub(super) fn at_least(n: u64, word: &str, short: bool) -> String {
     if short {
@@ -472,6 +464,8 @@ pub(super) fn at_least(n: u64, word: &str, short: bool) -> String {
     }
 }
 
+/// What someone did, month by month: commits by repository, and the pull
+/// requests and issues they opened and reviewed.
 pub(super) fn contribution_activity(page: &mut Page, c: &Contributions) {
     page.line(vec![strong("Contribution activity")]);
     if c.activity.is_empty() {

@@ -862,8 +862,6 @@ fn thread(page: &mut Page, place: &Place<'_>, t: &ReviewThread, marks: Marks<'_>
     });
 }
 
-/// The lines a thread is on, as GitHub kept them when it was started:
-/// the end of its diff hunk, up to four lines (or the lines it spans).
 /// Lines before a one-line thread's line, for context.
 const CONTEXT: u32 = 3;
 
@@ -917,6 +915,8 @@ fn git_lines(page: &mut Page, t: &ReviewThread, lines: &LinesAt<'_>) -> bool {
     true
 }
 
+/// The lines a thread is on, as GitHub kept them when it was started:
+/// the end of its diff hunk, up to four lines (or the lines it spans).
 fn hunk_lines(page: &mut Page, t: &ReviewThread) {
     let lines: Vec<&str> = (t.diff_hunk.lines())
         .filter(|l| !l.starts_with("@@"))

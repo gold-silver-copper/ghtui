@@ -240,6 +240,31 @@ fn changes(additions: u64, deletions: u64) -> [Seg; 3] {
     ]
 }
 
+/// A line's number, `width` wide, in a code line's gutter.
+fn line_number(n: usize, width: usize) -> Seg {
+    Seg::new(format!("{n:>width$}  "), Role::Syntax(Syntax::Comment))
+}
+
+/// A numbered line of code in a box, its first `fixed` segments kept
+/// in place; a `marked` one is lit, and the page opens at the first, on
+/// the item that comes next. Returns where it starts.
+fn code_line(page: &mut Page, segs: Vec<Seg>, marked: bool, fixed: u8) -> usize {
+    if marked && page.jump.is_none() {
+        page.jump = Some(page.lines.len());
+        page.selects = Some(page.items.len());
+    }
+    let start = page.lines.len();
+    page.push(PageLine {
+        segs,
+        frame: Frame::Body,
+        tone: if marked { Tone::Marked } else { Tone::Code },
+        fixed,
+        ..PageLine::default()
+    });
+    page.numbered.push(page.items.len());
+    start
+}
+
 /// Gray bars where rows are still loading, as GitHub draws them.
 fn skeleton(page: &mut Page) {
     let room = usize::from(page.room(Frame::Body, 0));
@@ -328,6 +353,48 @@ fn unique<'a>(names: impl IntoIterator<Item = &'a String>) -> Vec<String> {
         }
     }
     out
+}
+
+/// `word` with its first letter a capital.
+fn capitalized(word: &str) -> String {
+    let mut word = word.to_owned();
+    if let Some(first) = word.get_mut(..1) {
+        first.make_ascii_uppercase();
+    }
+    word
+}
+
+/// Words a filter doesn't know, said above its list: `Not filtered by
+/// “x”: {knows}`.
+fn ignored_note(page: &mut Page, ignored: &[String], knows: &str) {
+    if !ignored.is_empty() {
+        let words: Vec<String> = ignored.iter().map(|w| format!("“{w}”")).collect();
+        say(
+            page,
+            format!("Not filtered by {}: {knows}", words.join(", ")),
+            Role::Meta,
+        );
+    }
+}
+
+/// An advisory's references, a link each.
+fn references(page: &mut Page, refs: &[String]) {
+    if !refs.is_empty() {
+        aside_heading(page, "References");
+        for r in refs {
+            let link = link_seg(page, r.clone(), r.clone(), Role::Link);
+            page.wrapped(vec![link], 0, Frame::None);
+        }
+    }
+}
+
+/// `Affected < 1.2 · Patched 1.2`: the versions a vulnerability is in.
+fn affected(vulnerable: Option<&String>, patched: Option<&str>) -> String {
+    let patched = format!("Patched {}", patched.unwrap_or("in no version yet"));
+    match vulnerable {
+        Some(v) => format!("Affected {v} · {patched}"),
+        None => patched,
+    }
 }
 
 /// What a list in a box leaves out, said after its rows.

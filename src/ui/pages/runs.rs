@@ -652,11 +652,7 @@ pub fn job(
             if hit(text) {
                 page.marks.push(page.lines.len());
             }
-            let number = Seg::new(
-                format!("{:>width$}  ", i + 1),
-                Role::Syntax(Syntax::Comment),
-            );
-            let mut segs = vec![number];
+            let mut segs = vec![line_number(i + 1, width)];
             segs.extend(crate::ui::page::highlight(log_seg(text), &q));
             let start = page.lines.len();
             page.push(PageLine {

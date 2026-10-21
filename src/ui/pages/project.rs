@@ -88,15 +88,8 @@ pub fn advisory(page: &mut Page, a: &Advisory, now: u64) {
         |page, p| {
             let right = vec![meta(p.ecosystem.clone())];
             page.box_line(vec![strong(p.name.clone())], right, 0);
-            let mut facts = Vec::new();
-            if let Some(v) = &p.vulnerable {
-                facts.push(format!("Affected {v}"));
-            }
-            facts.push(format!(
-                "Patched {}",
-                p.patched.as_deref().unwrap_or("in no version yet")
-            ));
-            body(page, vec![meta(facts.join(" · "))]);
+            let facts = affected(p.vulnerable.as_ref(), p.patched.as_deref());
+            body(page, vec![meta(facts)]);
         },
     );
     if !a.description.trim().is_empty() {
@@ -111,12 +104,8 @@ pub fn advisory(page: &mut Page, a: &Advisory, now: u64) {
     }
     if !a.references.is_empty() {
         page.blank();
-        aside_heading(page, "References");
-        for r in &a.references {
-            let link = link_seg(page, r.clone(), r.clone(), Role::Link);
-            page.wrapped(vec![link], 0, Frame::None);
-        }
     }
+    references(page, &a.references);
 }
 
 /// A wiki's `[[Page]]` and `[[Text|Page]]` links as Markdown links.
@@ -353,7 +342,7 @@ pub fn milestone(page: &mut Page, repo: &RepoId, d: &MilestoneDetail, icons: Ico
     };
     // Most recently updated first.
     list_box(page, title, Vec::new(), r, empty, |page, i| {
-        issue_row(page, i, (false, true), icons, now);
+        issue_row(page, i, (false, true), icons, now, false);
     });
 }
 

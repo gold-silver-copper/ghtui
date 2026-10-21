@@ -876,7 +876,7 @@ pub fn build(b: Build<'_>, page: &mut Page, repo: &RepoId) {
         edit: b.state.first_key(Action::EditComment),
         delete: b.state.first_key(Action::DeleteComment),
     };
-    crate::ui::pages::labels_page(page, repo, list, &keys, b.cx.now);
+    crate::ui::pages::labels_page(page, repo, list, &keys);
 }
 
 /// Whether a form's data (but its repository's header) is in; else the

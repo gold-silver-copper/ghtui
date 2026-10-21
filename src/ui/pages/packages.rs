@@ -7,13 +7,7 @@ use crate::api::packages::{PackageDetail, PackageList, PackagesOf, install};
 fn visibility(v: &str) -> Option<Seg> {
     match v {
         "" | "public" => None,
-        v => {
-            let mut v = v.to_owned();
-            if let Some(first) = v.get_mut(..1) {
-                first.make_ascii_uppercase();
-            }
-            Some(chip(v, Bg::SecondaryContainer))
-        }
+        v => Some(chip(capitalized(v), Bg::SecondaryContainer)),
     }
 }
 
