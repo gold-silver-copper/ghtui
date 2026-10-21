@@ -326,12 +326,12 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
     }
     // The overview: pinned (or popular) repositories, then the rest.
     let (title, repos, show_owner) = if p.pinned.is_empty() {
-        let mut popular = p.repos.items.clone();
+        let mut popular: Vec<&RepoSummary> = p.repos.items.iter().collect();
         popular.sort_by_key(|r| std::cmp::Reverse(r.stars));
         popular.truncate(6);
         ("Popular repositories", popular, false)
     } else {
-        ("Pinned", p.pinned.clone(), true)
+        ("Pinned", p.pinned.iter().collect(), true)
     };
     let title = vec![strong(title)];
     list_box(

@@ -239,9 +239,7 @@ pub fn pr_conversation(
             }
             None => people(side, "Reviewers", &[], None, ""),
         }
-        let more = (d.assignees.left_out() > 0)
-            .then(|| left_out_text(d.assignees.left_out(), "more", "more"));
-        people(side, "Assignees", &d.assignees, more, "No one assigned");
+        assignees(side, &d.assignees);
         label_list(side, &d.labels);
         milestone_aside(side, &pr.repo, d.milestone.as_ref());
         timeline::projects_aside(side, projects);

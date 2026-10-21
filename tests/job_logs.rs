@@ -16,7 +16,7 @@ use std::io::Read;
 use std::path::PathBuf;
 
 use ghtui::api::browse::{Job, log};
-use ghtui::ui::pages::{log_seg, step_lines};
+use ghtui::ui::pages::{log_seg, step_lines, strip_escapes};
 
 fn dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/logs")
@@ -37,7 +37,7 @@ fn read_log(name: &str) -> String {
 }
 
 fn shown(line: &str) -> String {
-    let seg = log_seg(line);
+    let seg = log_seg(&strip_escapes(line));
     let text: String = seg.text().chars().take(90).collect();
     format!("{:?}: {text}", seg.role)
 }

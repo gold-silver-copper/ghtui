@@ -331,23 +331,7 @@ pub fn search(
         SearchResults::Discussions(r) => box_rows(page, r, |page, hit| {
             let d = &hit.summary;
             let target = format!("{}/discussions/{}", url::repo(&hit.repo), d.number);
-            item(page, target, |page, link| {
-                let mut segs = vec![Seg::linked(d.title.clone(), Role::Strong, link)];
-                if d.answered {
-                    tag(&mut segs, "✓ Answered", Bg::SuccessContainer);
-                }
-                body(page, segs);
-                let subline = format!(
-                    "{}#{} · {} · {} · {} · updated {}",
-                    hit.repo,
-                    d.number,
-                    d.category,
-                    d.author,
-                    plural(d.comments, "comment"),
-                    time::ago_iso(&d.updated_at, now)
-                );
-                body(page, vec![meta(subline)]);
-            });
+            discussion_row(page, target, (&hit.repo.to_string(), false), d, now);
         }),
         SearchResults::Commits(r) => box_rows(page, r, |page, hit| {
             let c = &hit.commit;

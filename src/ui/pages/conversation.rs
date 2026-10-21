@@ -108,17 +108,15 @@ impl Conversation<'_> {
             "" => "Hidden".to_owned(),
             r => format!("Hidden as {}", r.replace('_', "-").to_lowercase()),
         });
+        let reactions = c.editable.as_ref().map_or(&[][..], |e| &e.reactions);
+        let (author, at, text) = (&c.author, &c.created_at, &c.body);
         let (Some(hidden), Some(anchor)) = (hidden, anchor.clone()) else {
-            let reactions = c.editable.as_ref().map_or(&[][..], |e| &e.reactions);
-            let (author, at, body) = (&c.author, &c.created_at, &c.body);
-            self.said_at(page, anchor, author, verb, at, body, badge, reactions);
+            self.said_at(page, anchor, author, verb, at, text, badge, reactions);
             return;
         };
         let fold = Link::Review(ReviewLink::Fold(anchor.clone()));
         if self.unfolded.contains(&anchor) {
-            let reactions = c.editable.as_ref().map_or(&[][..], |e| &e.reactions);
-            let (author, at, body) = (&c.author, &c.created_at, &c.body);
-            self.said_at(page, Some(anchor), author, verb, at, body, badge, reactions);
+            self.said_at(page, Some(anchor), author, verb, at, text, badge, reactions);
             item(page, fold, |page, link| {
                 let segs = vec![
                     Seg::linked(format!("▾ {hidden}"), Role::Link, link),
@@ -176,18 +174,60 @@ pub(super) fn connector(page: &mut Page) {
 
 /// The comment box at the end of a conversation.
 pub(super) fn add_comment(page: &mut Page, keys: Keys<'_>) {
+    let press = format!(
+        "Press {} to write a comment (Markdown; ctrl-e for $EDITOR)",
+        keys.comment
+    );
+    comment_box(page, "Add a comment", press);
+}
+
+/// The box to write in at a conversation's end: `title`, and the key
+/// that opens it.
+fn comment_box(page: &mut Page, title: &str, press: String) {
     connector(page);
     item(page, Link::Comment, |page, link| {
-        page.box_top(
-            vec![Seg::linked("Add a comment", Role::Strong, link)],
-            Vec::new(),
-        );
-        let press = format!(
-            "Press {} to write a comment (Markdown; ctrl-e for $EDITOR)",
-            keys.comment
-        );
+        page.box_top(vec![Seg::linked(title, Role::Strong, link)], Vec::new());
         body(page, vec![Seg::linked(press, Role::Meta, link)]);
         page.box_bottom();
+    });
+}
+
+/// The sidebar's assignees.
+pub(super) fn assignees(side: &mut Page, list: &Capped<String>) {
+    let more = (list.left_out() > 0).then(|| left_out_text(list.left_out(), "more", "more"));
+    people(side, "Assignees", list, more, "No one assigned");
+}
+
+/// A discussion's row: its title, whether it's answered, and what it is;
+/// `place` goes before its number (a search's `o/r`), and a list shows
+/// its upvotes.
+pub(super) fn discussion_row(
+    page: &mut Page,
+    target: String,
+    (place, upvotes): (&str, bool),
+    d: &crate::api::browse::DiscussionSummary,
+    now: u64,
+) {
+    item(page, target, |page, link| {
+        let mut segs = vec![Seg::linked(d.title.clone(), Role::Strong, link)];
+        if d.answered {
+            tag(&mut segs, "✓ Answered", Bg::SuccessContainer);
+        }
+        body(page, segs);
+        let up = if upvotes {
+            format!(" · ▲ {}", d.upvotes)
+        } else {
+            String::new()
+        };
+        let subline = format!(
+            "{place}#{} · {} · {} · {}{up} · updated {}",
+            d.number,
+            d.category,
+            d.author,
+            plural(d.comments, "comment"),
+            time::ago_iso(&d.updated_at, now)
+        );
+        body(page, vec![meta(subline)]);
     });
 }
 
@@ -252,14 +292,7 @@ pub fn issue(
     let PageCtx { icons, keys, now } = cx;
     let participants = unique(std::iter::once(&d.author).chain(d.comments().map(|c| &c.author)));
     let aside = page.build_aside(|a| {
-        people(
-            a,
-            "Assignees",
-            &d.assignees,
-            (d.assignees.left_out() > 0)
-                .then(|| left_out_text(d.assignees.left_out(), "more", "more")),
-            "No one assigned",
-        );
+        assignees(a, &d.assignees);
         label_list(a, &d.labels);
         milestone_aside(a, &d.repo, d.milestone.as_ref());
         timeline::relations_aside(a, icons, d);
@@ -375,25 +408,7 @@ pub fn discussions(
         Vec::new(),
         r,
         "No discussions yet.",
-        |page, d| {
-            item(page, format!("{base}/{}", d.number), |page, link| {
-                let mut segs = vec![Seg::linked(d.title.clone(), Role::Strong, link)];
-                if d.answered {
-                    tag(&mut segs, "✓ Answered", Bg::SuccessContainer);
-                }
-                body(page, segs);
-                let subline = format!(
-                    "#{} · {} · {} · {} · ▲ {} · updated {}",
-                    d.number,
-                    d.category,
-                    d.author,
-                    plural(d.comments, "comment"),
-                    d.upvotes,
-                    time::ago_iso(&d.updated_at, now)
-                );
-                body(page, vec![meta(subline)]);
-            });
-        },
+        |page, d| discussion_row(page, format!("{base}/{}", d.number), ("", true), d, now),
     );
 }
 
@@ -505,23 +520,17 @@ pub fn discussion(
     }
     more_here(page, &d.comments, "comment", "comments");
     // Where to write: an answer, in a category that takes them.
-    connector(page);
     let (title, what) = if d.answerable {
         ("Write an answer", "an answer")
     } else {
         ("Add a comment", "a comment")
     };
-    item(page, Link::Comment, |page, link| {
-        page.box_top(vec![Seg::linked(title, Role::Strong, link)], Vec::new());
-        let keys = cx.keys;
-        let mut press = format!(
-            "Press {} to write {what}, or on a comment to reply in its thread",
-            keys.comment
-        );
-        if d.locked.is_some() {
-            press.push_str(" (it's locked: only those with write access can)");
-        }
-        body(page, vec![Seg::linked(press, Role::Meta, link)]);
-        page.box_bottom();
-    });
+    let mut press = format!(
+        "Press {} to write {what}, or on a comment to reply in its thread",
+        cx.keys.comment
+    );
+    if d.locked.is_some() {
+        press.push_str(" (it's locked: only those with write access can)");
+    }
+    comment_box(page, title, press);
 }

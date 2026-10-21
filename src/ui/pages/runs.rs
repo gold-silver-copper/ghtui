@@ -371,7 +371,7 @@ pub fn step_lines<'a>(job: &Job, cut: &'a str, log: &'a str) -> Vec<(u32, usize,
 }
 
 /// `text` without terminal escape sequences (colors, mostly).
-pub(super) fn strip_escapes(text: &str) -> String {
+pub fn strip_escapes(text: &str) -> String {
     let mut out = String::new();
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
