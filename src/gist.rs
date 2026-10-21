@@ -583,8 +583,7 @@ impl Job for Create {
             files: named(&form).unwrap_or_default(),
             description: form.description,
         };
-        crate::follow::expect(state, page.clone(), shown);
-        state.replace(page, true, None)
+        crate::follow::replace(state, page, shown)
     }
 }
 
@@ -643,8 +642,7 @@ impl Job for Delete {
             return Cmds::new();
         }
         let page = Route::Gists(gists::Gists(owner.clone()));
-        crate::follow::expect(state, page.clone(), Expected::GistGone(owner, id));
-        state.replace(page, true, None)
+        crate::follow::replace(state, page, Expected::GistGone(owner, id))
     }
 }
 

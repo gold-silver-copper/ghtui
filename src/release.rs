@@ -857,8 +857,7 @@ impl Job for Save {
                 if state.route() != Some(route) {
                     return Cmds::new();
                 }
-                crate::follow::expect(state, page.clone(), what);
-                state.replace(page, true, None)
+                crate::follow::replace(state, page, what)
             }
             Err(why) => {
                 let why = format!("GitHub didn't save the release: {why}");
@@ -895,8 +894,7 @@ impl Job for Delete {
         if state.route() == Some(&route) {
             let list = Route::Releases(releases::Releases(repo.clone()));
             let gone = Expected::ReleaseGone(repo.clone(), tag.to_owned());
-            crate::follow::expect(state, list.clone(), gone);
-            cmds = state.replace(list, true, None);
+            cmds = crate::follow::replace(state, list, gone);
         }
         if !tagged {
             return cmds;

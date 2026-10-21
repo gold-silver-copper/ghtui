@@ -343,8 +343,7 @@ impl Job for DeleteList {
                     login: d.login,
                     slug: d.slug,
                 };
-                crate::follow::expect(state, stars.clone(), gone);
-                state.replace(stars, true, None)
+                crate::follow::replace(state, stars, gone)
             }
             Err(why) => crate::forms::say(state, refused("delete the list", &why)),
         }

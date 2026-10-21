@@ -65,6 +65,13 @@ pub fn expect(state: &mut State, route: Route, what: impl Expectation) {
     });
 }
 
+/// Opens `route` in place of the page on screen, fetched again, to wait
+/// there for GitHub to show `what`.
+pub fn replace(state: &mut State, route: Route, what: impl Expectation) -> Cmds {
+    expect(state, route.clone(), what);
+    state.replace(route, true, None)
+}
+
 /// What the page on screen waits for GitHub to show, if anything.
 fn following(state: &State) -> Option<&Following> {
     (state.following.as_ref()).filter(|f| state.route() == Some(&f.route))
