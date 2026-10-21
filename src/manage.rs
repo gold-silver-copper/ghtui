@@ -658,7 +658,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
                 LockReason::Resolved,
                 LockReason::Spam,
             ] {
-                let said = crate::api::manage::lock_said(reason);
+                let said = reason.said();
                 let label = format!("Lock as {said}");
                 if fuzzy_score(q, &label).is_some() {
                     rows.push(crate::picker::entry(label, "", Some(lock(Some(reason)))));
@@ -1566,7 +1566,7 @@ pub fn done(m: &Manage) -> String {
             ..
         } => format!(
             "Locked as {}: only collaborators can comment",
-            crate::api::manage::lock_said(*reason)
+            reason.said()
         ),
         Manage::Lock { .. } => "Locked: only collaborators can comment".into(),
         Manage::Unlock { .. } => "Unlocked".into(),

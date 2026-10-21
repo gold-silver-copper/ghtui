@@ -152,7 +152,7 @@ impl Conversation<'_> {
 /// "Locked as off-topic".
 pub(super) fn locked_said(locked: crate::api::manage::Locked) -> String {
     match locked.reason {
-        Some(reason) => format!("Locked as {}", crate::api::manage::lock_said(reason)),
+        Some(reason) => format!("Locked as {}", reason.said()),
         None => "Locked".to_owned(),
     }
 }

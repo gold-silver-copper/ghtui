@@ -10,57 +10,22 @@ use crate::api::client::{ApiError, GitHub};
 use crate::api::model::{Capped, NodeId, RepoId, count};
 use crate::api::queries::{NumberVariables, NumberVariablesFields, fragments, nodes};
 
-/// One of GitHub's eight reactions, in the order GitHub shows them.
-#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ReactionContent {
-    ThumbsUp,
-    ThumbsDown,
-    Laugh,
-    Hooray,
-    Confused,
-    Heart,
-    Rocket,
-    Eyes,
-}
-
-impl ReactionContent {
-    pub const ALL: [Self; 8] = [
-        Self::ThumbsUp,
-        Self::ThumbsDown,
-        Self::Laugh,
-        Self::Hooray,
-        Self::Confused,
-        Self::Heart,
-        Self::Rocket,
-        Self::Eyes,
-    ];
-
-    pub fn emoji(self) -> &'static str {
-        match self {
-            Self::ThumbsUp => "👍",
-            Self::ThumbsDown => "👎",
-            Self::Laugh => "😄",
-            Self::Hooray => "🎉",
-            Self::Confused => "😕",
-            Self::Heart => "❤",
-            Self::Rocket => "🚀",
-            Self::Eyes => "👀",
-        }
+words! {
+    /// One of GitHub's eight reactions, in the order GitHub shows them.
+    #[derive(cynic::Enum, Hash)]
+    pub enum ReactionContent {
+        pub fn emoji,
+        /// Its name, as GitHub's reaction picker labels it.
+        pub fn label,
     }
-
-    /// Its name, as GitHub's reaction picker labels it.
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::ThumbsUp => "+1",
-            Self::ThumbsDown => "-1",
-            Self::Laugh => "Laugh",
-            Self::Hooray => "Hooray",
-            Self::Confused => "Confused",
-            Self::Heart => "Heart",
-            Self::Rocket => "Rocket",
-            Self::Eyes => "Eyes",
-        }
-    }
+    ThumbsUp   "👍" "+1";
+    ThumbsDown "👎" "-1";
+    Laugh      "😄" "Laugh";
+    Hooray     "🎉" "Hooray";
+    Confused   "😕" "Confused";
+    Heart      "❤"  "Heart";
+    Rocket     "🚀" "Rocket";
+    Eyes       "👀" "Eyes";
 }
 
 /// How many reacted with one reaction, and whether you're one of them.

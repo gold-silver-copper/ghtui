@@ -1,6 +1,9 @@
 //! `ghtui`: a keyboard-driven terminal client for GitHub. The binary runs
 //! [`main`]; the library is there so fuzz targets can reach its parts.
 
+#[macro_use]
+mod words;
+
 // The parts that know nothing of the app: GitHub, diffs, git, storage,
 // the theme and drawing.
 pub mod api;

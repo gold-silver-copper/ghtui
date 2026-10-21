@@ -7,41 +7,18 @@ use crate::api::insights::{
     Activity, Counted, Counter, Dependencies, Popular, Traffic, WEEK, YEAR_WEEKS,
 };
 
-/// Insights' tabs, as GitHub's sidebar lists them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum InsightsTab {
-    Contributors,
-    Commits,
-    Traffic,
-    Dependencies,
-}
-
-impl InsightsTab {
-    pub const ALL: [InsightsTab; 4] = [
-        InsightsTab::Contributors,
-        InsightsTab::Commits,
-        InsightsTab::Traffic,
-        InsightsTab::Dependencies,
-    ];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            InsightsTab::Contributors => "Contributors",
-            InsightsTab::Commits => "Commit activity",
-            InsightsTab::Traffic => "Traffic",
-            InsightsTab::Dependencies => "Dependency graph",
-        }
+words! {
+    /// Insights' tabs, as GitHub's sidebar lists them.
+    #[derive(Hash)]
+    pub enum InsightsTab {
+        pub fn name,
+        /// Its path under the repository.
+        pub fn path,
     }
-
-    /// Its path under the repository.
-    pub fn path(self) -> &'static str {
-        match self {
-            InsightsTab::Contributors => "graphs/contributors",
-            InsightsTab::Commits => "graphs/commit-activity",
-            InsightsTab::Traffic => "graphs/traffic",
-            InsightsTab::Dependencies => "network/dependencies",
-        }
-    }
+    Contributors "Contributors"     "graphs/contributors";
+    Commits      "Commit activity"  "graphs/commit-activity";
+    Traffic      "Traffic"          "graphs/traffic";
+    Dependencies "Dependency graph" "network/dependencies";
 }
 
 /// The columns a chart of weeks takes at most.

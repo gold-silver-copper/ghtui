@@ -3832,7 +3832,8 @@ impl wire_discussions::Detail {
                 reason: self.active_lock_reason,
             }),
             closed: (self.closed).then(|| {
-                crate::api::manage::DiscussionReason::from_wire(self.state_reason.as_deref())
+                (self.state_reason.as_deref())
+                    .and_then(crate::api::manage::DiscussionReason::from_wire)
             }),
             can_close: self.viewer_can_close,
             can_reopen: self.viewer_can_reopen,

@@ -77,29 +77,19 @@ pub struct MadeMilestone {
 
 // ---- branches and tags ---------------------------------------------------------------
 
-/// Whether a branch is a tag's or a branch's, for its ref's name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum RefKind {
-    Branch,
-    Tag,
+words! {
+    /// Whether a branch is a tag's or a branch's, for its ref's name.
+    #[derive(Hash)]
+    pub enum RefKind {
+        /// Its refs' prefix below `refs/`.
+        pub fn prefix,
+        pub fn noun,
+    }
+    Branch "heads" "branch";
+    Tag    "tags"  "tag";
 }
 
 impl RefKind {
-    /// Its refs' prefix below `refs/`.
-    pub fn prefix(self) -> &'static str {
-        match self {
-            RefKind::Branch => "heads",
-            RefKind::Tag => "tags",
-        }
-    }
-
-    pub fn noun(self) -> &'static str {
-        match self {
-            RefKind::Branch => "branch",
-            RefKind::Tag => "tag",
-        }
-    }
-
     /// `refs/heads/name`.
     pub fn full(self, name: &str) -> String {
         format!("refs/{}/{name}", self.prefix())

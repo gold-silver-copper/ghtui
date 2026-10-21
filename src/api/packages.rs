@@ -10,55 +10,22 @@ use crate::api::browse::Results;
 use crate::api::client::{Answer, ApiError, GitHub};
 use crate::api::model::RepoId;
 
-/// A kind of package, as GitHub's API names them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Kind {
-    Container,
-    Npm,
-    Maven,
-    Rubygems,
-    Nuget,
+words! {
+    /// A kind of package, as GitHub's API names them.
+    #[derive(Hash, Serialize, Deserialize)]
+    pub enum Kind {
+        /// As GitHub's API and URLs say it (`container`).
+        pub fn slug -> pub fn from_slug,
+        /// As a person says it.
+        pub fn name,
+    }
+    Container "container" "Container";
+    Npm       "npm"       "npm";
+    Maven     "maven"     "Maven";
+    Rubygems  "rubygems"  "RubyGems";
+    Nuget     "nuget"     "NuGet";
     /// Docker's old registry (`docker.pkg.github.com`).
-    Docker,
-}
-
-impl Kind {
-    pub const ALL: [Kind; 6] = [
-        Kind::Container,
-        Kind::Npm,
-        Kind::Maven,
-        Kind::Rubygems,
-        Kind::Nuget,
-        Kind::Docker,
-    ];
-
-    /// As GitHub's API and URLs say it (`container`).
-    pub fn slug(self) -> &'static str {
-        match self {
-            Kind::Container => "container",
-            Kind::Npm => "npm",
-            Kind::Maven => "maven",
-            Kind::Rubygems => "rubygems",
-            Kind::Nuget => "nuget",
-            Kind::Docker => "docker",
-        }
-    }
-
-    pub fn from_slug(slug: &str) -> Option<Kind> {
-        Kind::ALL.into_iter().find(|k| k.slug() == slug)
-    }
-
-    /// As a person says it.
-    pub fn name(self) -> &'static str {
-        match self {
-            Kind::Container => "Container",
-            Kind::Npm => "npm",
-            Kind::Maven => "Maven",
-            Kind::Rubygems => "RubyGems",
-            Kind::Nuget => "NuGet",
-            Kind::Docker => "Docker",
-        }
-    }
+    Docker    "docker"    "Docker";
 }
 
 /// Whose packages.

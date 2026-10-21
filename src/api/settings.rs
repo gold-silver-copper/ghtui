@@ -165,38 +165,13 @@ pub struct Ruleset {
     pub org: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Enforcement {
-    Active,
-    Disabled,
+words! {
+    #[derive(Serialize, Deserialize)]
+    pub enum Enforcement { pub fn word -> fn from_word, pub fn label }
+    Active   "active"   "Active";
+    Disabled "disabled" "Disabled";
     /// Evaluate: it reports, without enforcing (Enterprise).
-    Evaluate,
-}
-
-impl Enforcement {
-    pub fn word(self) -> &'static str {
-        match self {
-            Enforcement::Active => "active",
-            Enforcement::Disabled => "disabled",
-            Enforcement::Evaluate => "evaluate",
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Enforcement::Active => "Active",
-            Enforcement::Disabled => "Disabled",
-            Enforcement::Evaluate => "Evaluate",
-        }
-    }
-
-    fn parse(word: &str) -> Self {
-        match word {
-            "active" => Enforcement::Active,
-            "evaluate" => Enforcement::Evaluate,
-            _ => Enforcement::Disabled,
-        }
-    }
+    Evaluate "evaluate" "Evaluate";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -238,57 +213,24 @@ pub struct Invitation {
     pub expired: bool,
 }
 
-/// A repository role GitHub gives.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Permission {
-    Read,
-    Triage,
-    Write,
-    Maintain,
-    Admin,
+words! {
+    /// A repository role GitHub gives.
+    #[derive(Hash, Serialize, Deserialize)]
+    pub enum Permission {
+        pub fn name,
+        /// What it lets someone do, in GitHub's words.
+        pub fn about,
+        /// The word REST takes for it.
+        fn wire,
+    }
+    Read     "Read"     "read and clone; open and comment on issues and pull requests" "pull";
+    Triage   "Triage"   "read, and manage issues and pull requests"                    "triage";
+    Write    "Write"    "read, clone and push"                                         "push";
+    Maintain "Maintain" "push, and manage the repository without its settings"         "maintain";
+    Admin    "Admin"    "everything, settings and deleting it included"                "admin";
 }
 
 impl Permission {
-    pub const ALL: [Permission; 5] = [
-        Permission::Read,
-        Permission::Triage,
-        Permission::Write,
-        Permission::Maintain,
-        Permission::Admin,
-    ];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Permission::Read => "Read",
-            Permission::Triage => "Triage",
-            Permission::Write => "Write",
-            Permission::Maintain => "Maintain",
-            Permission::Admin => "Admin",
-        }
-    }
-
-    /// What it lets someone do, in GitHub's words.
-    pub fn about(self) -> &'static str {
-        match self {
-            Permission::Read => "read and clone; open and comment on issues and pull requests",
-            Permission::Triage => "read, and manage issues and pull requests",
-            Permission::Write => "read, clone and push",
-            Permission::Maintain => "push, and manage the repository without its settings",
-            Permission::Admin => "everything, settings and deleting it included",
-        }
-    }
-
-    /// The word REST takes for it.
-    fn wire(self) -> &'static str {
-        match self {
-            Permission::Read => "pull",
-            Permission::Triage => "triage",
-            Permission::Write => "push",
-            Permission::Maintain => "maintain",
-            Permission::Admin => "admin",
-        }
-    }
-
     /// From REST's words: a role's name (`write`) or a permission's
     /// (`push`).
     pub fn parse(word: &str) -> Option<Self> {
@@ -975,7 +917,7 @@ mod wire {
             id: r.id,
             name: r.name,
             target: r.target.unwrap_or_else(|| "branch".into()),
-            enforcement: Enforcement::parse(&r.enforcement),
+            enforcement: Enforcement::from_word(&r.enforcement).unwrap_or(Enforcement::Disabled),
             org: Some(r.source).filter(|s| theirs && !s.is_empty()),
         }
     }

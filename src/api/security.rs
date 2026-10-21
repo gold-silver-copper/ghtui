@@ -13,74 +13,31 @@ use crate::api::browse::{Results, Severity};
 use crate::api::client::{Answer, ApiError, GitHub};
 use crate::api::model::RepoId;
 
-/// A kind of alert, as the Security tab lists them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum AlertKind {
-    Dependabot,
-    CodeScanning,
-    SecretScanning,
+words! {
+    /// A kind of alert, as the Security tab lists them.
+    #[derive(Hash, Serialize, Deserialize)]
+    pub enum AlertKind {
+        /// Its part of GitHub's paths, on the website and in the API.
+        pub fn slug -> pub fn from_slug,
+        /// `Dependabot`, as the tab's menu names it.
+        pub fn name,
+        /// `Dependabot alerts`; also the fine-grained token permission it
+        /// needs, as GitHub names it.
+        pub fn alerts,
+        /// The query parameter its website's list keeps its filter in.
+        pub fn query_param,
+        /// Mid-sentence.
+        fn said,
+    }
+    Dependabot     "dependabot"      "Dependabot"      "Dependabot alerts"      "q"     "Dependabot";
+    CodeScanning   "code-scanning"   "Code scanning"   "Code scanning alerts"   "query" "code scanning";
+    SecretScanning "secret-scanning" "Secret scanning" "Secret scanning alerts" "query" "secret scanning";
 }
 
 impl AlertKind {
-    pub const ALL: [AlertKind; 3] = [
-        AlertKind::Dependabot,
-        AlertKind::CodeScanning,
-        AlertKind::SecretScanning,
-    ];
-
-    /// Its part of GitHub's paths, on the website and in the API.
-    pub fn slug(self) -> &'static str {
-        match self {
-            AlertKind::Dependabot => "dependabot",
-            AlertKind::CodeScanning => "code-scanning",
-            AlertKind::SecretScanning => "secret-scanning",
-        }
-    }
-
-    pub fn from_slug(slug: &str) -> Option<AlertKind> {
-        Self::ALL.into_iter().find(|k| k.slug() == slug)
-    }
-
     /// An alert of this kind, mid-sentence: `code scanning alert #3`.
     pub fn alert(self, number: u64) -> String {
-        let kind = match self {
-            AlertKind::Dependabot => "Dependabot",
-            AlertKind::CodeScanning => "code scanning",
-            AlertKind::SecretScanning => "secret scanning",
-        };
-        format!("{kind} alert #{number}")
-    }
-
-    /// `Dependabot`, as the tab's menu names it.
-    pub fn name(self) -> &'static str {
-        match self {
-            AlertKind::Dependabot => "Dependabot",
-            AlertKind::CodeScanning => "Code scanning",
-            AlertKind::SecretScanning => "Secret scanning",
-        }
-    }
-
-    /// `Dependabot alerts`.
-    pub fn alerts(self) -> &'static str {
-        match self {
-            AlertKind::Dependabot => "Dependabot alerts",
-            AlertKind::CodeScanning => "Code scanning alerts",
-            AlertKind::SecretScanning => "Secret scanning alerts",
-        }
-    }
-
-    /// The query parameter its website's list keeps its filter in.
-    pub fn query_param(self) -> &'static str {
-        match self {
-            AlertKind::Dependabot => "q",
-            AlertKind::CodeScanning | AlertKind::SecretScanning => "query",
-        }
-    }
-
-    /// The fine-grained token permission it needs, as GitHub names it.
-    pub fn permission(self) -> &'static str {
-        // Code scanning's is called "Code scanning alerts".
-        self.alerts()
+        format!("{} alert #{number}", self.said())
     }
 
     /// Whole filters its list takes, each with what it finds: the search
@@ -167,41 +124,22 @@ pub struct AlertRef {
     pub number: u64,
 }
 
-/// Where an alert stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AlertState {
-    Open,
-    Dismissed,
+words! {
+    /// Where an alert stands.
+    #[derive(Serialize, Deserialize)]
+    pub enum AlertState { fn wire -> fn from_wire, pub fn label }
+    Open          "open"           "Open";
+    Dismissed     "dismissed"      "Dismissed";
     /// Dependabot dismissed it itself (a development dependency, say).
-    AutoDismissed,
-    Fixed,
+    AutoDismissed "auto_dismissed" "Auto-dismissed";
+    Fixed         "fixed"          "Fixed";
     /// A secret's: someone said what became of it.
-    Resolved,
+    Resolved      "resolved"       "Closed";
 }
 
 impl AlertState {
-    fn parse(s: &str) -> AlertState {
-        match s {
-            "dismissed" => AlertState::Dismissed,
-            "auto_dismissed" => AlertState::AutoDismissed,
-            "fixed" => AlertState::Fixed,
-            "resolved" => AlertState::Resolved,
-            _ => AlertState::Open,
-        }
-    }
-
     pub fn is_open(self) -> bool {
         self == AlertState::Open
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            AlertState::Open => "Open",
-            AlertState::Dismissed => "Dismissed",
-            AlertState::AutoDismissed => "Auto-dismissed",
-            AlertState::Fixed => "Fixed",
-            AlertState::Resolved => "Closed",
-        }
     }
 }
 
@@ -480,10 +418,10 @@ pub fn refusal(
             .and_then(|p| p.split(',').next())
             .and_then(|p| p.split_once('='))
             .map_or_else(|| "read".to_owned(), |(_, level)| level.trim().to_owned());
+        // The permission is named as the alerts are.
         return Some(Refusal::Denied(format!(
-            "{} take the {}: {named} permission, which your token lacks: give it that permission on GitHub, under Settings › Developer settings",
-            kind.alerts(),
-            kind.permission()
+            "{0} take the {0}: {named} permission, which your token lacks: give it that permission on GitHub, under Settings › Developer settings",
+            kind.alerts()
         )));
     }
     // GitHub hides secrets from everyone but admins as if they weren't
@@ -857,7 +795,7 @@ mod wire {
 
     impl Wire {
         fn into_alert(self, kind: AlertKind) -> Alert {
-            let state = AlertState::parse(&self.state);
+            let state = AlertState::from_wire(&self.state).unwrap_or(AlertState::Open);
             let closing = match state {
                 AlertState::Dismissed | AlertState::AutoDismissed => Some(Closing {
                     by: self.dismissed_by.map(|u| u.login),

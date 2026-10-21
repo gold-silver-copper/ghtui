@@ -400,12 +400,17 @@ pub enum WireAssignee {
     Other,
 }
 
-#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum LockReason {
-    OffTopic,
-    Resolved,
-    Spam,
-    TooHeated,
+words! {
+    #[derive(cynic::Enum, Hash)]
+    pub enum LockReason {
+        pub(crate) fn wire,
+        /// "off-topic", "too heated".
+        pub fn said,
+    }
+    OffTopic  "OFF_TOPIC"  "off-topic";
+    Resolved  "RESOLVED"   "resolved";
+    Spam      "SPAM"       "spam";
+    TooHeated "TOO_HEATED" "too heated";
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -1056,7 +1061,7 @@ macro_rules! shared_events {
                 Some(event(e.actor, e.created_at, what))
             }
             $ty::LockedEvent(e) => {
-                let reason = e.lock_reason.map(|r| crate::api::manage::lock_said(r).to_owned());
+                let reason = e.lock_reason.map(|r| r.said().to_owned());
                 Some(event(e.actor, e.created_at, What::Locked { reason }))
             }
             $ty::UnlockedEvent(e) => Some(event(e.actor, e.created_at, What::Unlocked)),
