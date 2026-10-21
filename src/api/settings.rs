@@ -540,7 +540,7 @@ impl GitHub {
     }
 
     async fn protection_rules(&self, repo: &RepoId) -> Result<Branches, ApiError> {
-        let vars = json!({ "owner": repo.owner, "name": repo.name });
+        let vars = json!(repo);
         let rulesets = format!("/repos/{repo}/rulesets?per_page={PER_PAGE}");
         let (found, rulesets) = tokio::join!(
             self.graphql_json(raw::PROTECTION_RULES, vars, repo, "/repository"),

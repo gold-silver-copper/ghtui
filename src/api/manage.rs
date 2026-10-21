@@ -327,7 +327,7 @@ impl GitHub {
                 (query, json!({ "id": issue, "by": by }))
             }
             Manage::LinkBranch { issue, repo, name } => {
-                let vars = json!({ "owner": repo.owner, "name": repo.name });
+                let vars = json!(repo);
                 let oid: String = (self.graphql_json(
                     raw::DEFAULT_BRANCH_OID,
                     vars,
@@ -447,13 +447,8 @@ impl GitHub {
             number: u64,
             title: String,
         }
-        let found: crate::api::browse::wire::Counted<Issue> = (self.graphql_json(
-            raw::OPEN_ISSUES,
-            json!({ "owner": repo.owner, "name": repo.name }),
-            repo,
-            "/repository/issues",
-        ))
-        .await?;
+        let found: crate::api::browse::wire::Counted<Issue> =
+            (self.graphql_json(raw::OPEN_ISSUES, json!(repo), repo, "/repository/issues")).await?;
         Ok(found.into_capped(|i| Some((i.number, i.title))))
     }
 
@@ -475,13 +470,8 @@ impl GitHub {
             description: Option<String>,
             is_answerable: bool,
         }
-        let found: Wire = (self.graphql_json(
-            raw::DISCUSSION_FORMS,
-            json!({ "owner": repo.owner, "name": repo.name }),
-            repo,
-            "/repository",
-        ))
-        .await?;
+        let found: Wire =
+            (self.graphql_json(raw::DISCUSSION_FORMS, json!(repo), repo, "/repository")).await?;
         let files = crate::api::create::TextFiles::files(found.templates);
         let form = |slug: &str| {
             (files.iter())

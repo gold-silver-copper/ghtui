@@ -242,7 +242,7 @@ impl GitHub {
     /// A repository's manifests and their dependencies, as its dependency
     /// graph has them: 20 manifests, the first 100 dependencies of each.
     pub async fn dependencies(&self, repo: &RepoId) -> Result<Dependencies, ApiError> {
-        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name });
+        let vars = serde_json::json!(repo);
         let found: wire::Manifests = self
             .graphql_preview(
                 crate::api::raw::DEPENDENCY_GRAPH,

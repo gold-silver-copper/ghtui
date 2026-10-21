@@ -109,7 +109,7 @@ impl GitHub {
 
     /// Your lists, and which of them have `repo`.
     pub async fn my_lists(&self, repo: &RepoId) -> Result<MyLists, ApiError> {
-        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name });
+        let vars = serde_json::json!(repo);
         let found: wire::Mine = self
             .graphql_data(crate::api::raw::MY_LISTS, vars, true)
             .await?;
