@@ -147,13 +147,7 @@ fn colour(text: &str) -> Option<String> {
 }
 
 /// The colour picker's rows: a colour typed, then GitHub's.
-pub(super) fn colour_rows(
-    route: &Route,
-    q: &str,
-) -> Vec<(
-    crate::ui::overlays::PaletteItem,
-    Option<crate::picker::Choice>,
-)> {
+pub(super) fn colour_rows(route: &Route, q: &str) -> crate::picker::Rows {
     let set = |c: &str| setting(route, Field::Colour, c);
     let mut rows = Vec::new();
     if !q.is_empty() {
@@ -321,7 +315,7 @@ impl Job for Save {
 
 /// The form's page.
 pub(super) fn build(state: &State, page: &mut Page, route: &Route) {
-    let Route::Housekeeping(FormOf::Label { repo, name }) = route else {
+    let Route::Housekeeping(of @ FormOf::Label { repo, name }) = route else {
         return;
     };
     let f = form(state, route);
@@ -350,19 +344,12 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route) {
         boxes: Vec::new(),
         after: Vec::new(),
         write: "",
-        button: super::button(&route_of(route), &f),
+        button: super::button(of, &f),
         save_key: &save_key,
-        why_not: super::problem(state, route, &route_of(route)),
+        why_not: super::problem(state, route, of),
         error: state.forms.sent(route).error.as_deref(),
     };
     crate::ui::pages::write_form(page, &view);
-}
-
-fn route_of(route: &Route) -> FormOf {
-    match route {
-        Route::Housekeeping(of) => of.clone(),
-        _ => FormOf::NewRepo,
-    }
 }
 
 #[cfg(test)]

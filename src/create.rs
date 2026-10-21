@@ -430,7 +430,7 @@ fn head_spec(repo: &RepoId, head: &str, local: Option<&Branch>) -> String {
 
 /// Why the form's head can't be proposed yet, if it can't: it isn't
 /// chosen, isn't on GitHub as it is here, or brings nothing.
-fn head_problem(state: &State, repo: &RepoId, form: &Form) -> Result<HeadState, String> {
+fn head_problem<'a>(state: &'a State, repo: &RepoId, form: &Form) -> Result<&'a HeadState, String> {
     let push = state.first_key(Action::PushBranch);
     let (Some(base), Some(head)) = (&form.base, &form.head) else {
         return Err("Choose the branch with the changes: Enter on “Compare”".into());
@@ -464,7 +464,7 @@ fn head_problem(state: &State, repo: &RepoId, form: &Form) -> Result<HeadState, 
             "{head} has nothing {base} doesn't: there's nothing to merge"
         ));
     }
-    Ok(hs.clone())
+    Ok(hs)
 }
 
 /// Asks whether to open the pull request as a draft.
@@ -960,9 +960,8 @@ fn offers(state: &State, out: &mut Vec<Doable>) {
     let why = match (pr, refused(state, repo, pr)) {
         (_, Some(why)) => Some(why),
         (true, None) => head_problem(state, repo, &form).err(),
-        (false, None) => templates::split(&form.text)
-            .0
-            .is_empty()
+        (false, None) => (form.text.lines().next())
+            .is_none_or(|l| l.trim().is_empty())
             .then(|| "it needs a title".to_owned()),
     };
     let label = if pr {

@@ -35,14 +35,34 @@ async fn ensure(repo: &Repo, sha: &str) -> Result<(), String> {
         &repo.remote,
         sha,
     ];
-    repo.git(&args, &[], None)
-        .await
-        .map(drop)
-        .map_err(|e| format!("Couldn't fetch {} from GitHub: {e}", short(sha)))
+    repo.git(&args, &[], None).await.map(drop).map_err(|e| {
+        let sha = crate::ui::text::short_sha(sha);
+        format!("Couldn't fetch {sha} from GitHub: {e}")
+    })
 }
 
-fn short(sha: &str) -> &str {
-    sha.get(..7).unwrap_or(sha)
+/// Pushes to GitHub, quietly: `args` after the remote.
+async fn push(repo: &Repo, args: &[&str]) -> Result<(), GitError> {
+    let args = [&["push", "--quiet", repo.remote.as_str()], args].concat();
+    repo.git(&args, &[], None).await.map(drop)
+}
+
+/// Why GitHub refused a push.
+fn push_refused(err: &GitError) -> String {
+    format!("GitHub refused the push: {}", refused(err))
+}
+
+/// Whether GitHub has the branch or tag `full` (`refs/heads/…`).
+async fn remote_has(repo: &Repo, kind: RefKind, full: &str) -> Result<bool, String> {
+    let all = match kind {
+        RefKind::Branch => "branches",
+        RefKind::Tag => "tags",
+    };
+    let there = (repo
+        .git(&["ls-remote", &repo.remote, full], &[], None)
+        .await)
+        .map_err(|e| format!("Couldn't ask GitHub for its {all}: {e}"))?;
+    Ok(there.lines().any(|l| l.ends_with(&format!("\t{full}"))))
 }
 
 /// What git said when GitHub refused a push, in its own words.
@@ -78,18 +98,11 @@ pub async fn push_new_ref(
     let full = kind.full(name);
     // A push to a ref that's there already would move it: make sure it
     // isn't.
-    let there = repo
-        .git(&["ls-remote", &repo.remote, &full], &[], None)
-        .await
-        .map_err(|e| format!("Couldn't ask GitHub for its {}es: {e}", kind.noun()))?;
-    if there.lines().any(|l| l.ends_with(&format!("\t{full}"))) {
+    if remote_has(&repo, kind, &full).await? {
         return Err(format!("GitHub has a {} named {name} already", kind.noun()));
     }
     let spec = format!("{sha}:{full}");
-    repo.git(&["push", "--quiet", &repo.remote, &spec], &[], None)
-        .await
-        .map(drop)
-        .map_err(|e| format!("GitHub refused the push: {}", refused(&e)))
+    push(&repo, &[&spec]).await.map_err(|e| push_refused(&e))
 }
 
 /// Deletes branch or tag `name` on GitHub with `git push --delete`; the
@@ -102,14 +115,7 @@ pub async fn push_delete(
 ) -> Result<(), String> {
     let repo = open(top, remote).await?;
     let full = kind.full(name);
-    repo.git(
-        &["push", "--quiet", "--delete", &repo.remote, &full],
-        &[],
-        None,
-    )
-    .await
-    .map(drop)
-    .map_err(|e| format!("GitHub refused the push: {}", refused(&e)))
+    (push(&repo, &["--delete", &full]).await).map_err(|e| push_refused(&e))
 }
 
 /// Files to commit on a branch from your clone.
@@ -141,11 +147,7 @@ pub async fn commit(top: &Path, remote: &str, c: &Commit) -> Result<String, Stri
         let parent = match &c.from {
             Some(from) => {
                 let full = RefKind::Branch.full(&c.branch);
-                let there = (repo
-                    .git(&["ls-remote", &repo.remote, &full], &[], None)
-                    .await)
-                    .map_err(|e| format!("Couldn't ask GitHub for its branches: {e}"))?;
-                if !there.trim().is_empty() {
+                if remote_has(&repo, RefKind::Branch, &full).await? {
                     return Err(format!(
                         "GitHub has a branch named {} already: choose another name",
                         c.branch
@@ -171,13 +173,10 @@ pub async fn commit(top: &Path, remote: &str, c: &Commit) -> Result<String, Stri
             .await
             .map_err(|e| format!("Couldn't make the commit: {e}"))?;
         let spec = format!("{made}:{}", RefKind::Branch.full(&c.branch));
-        match repo
-            .git(&["push", "--quiet", &repo.remote, &spec], &[], None)
-            .await
-        {
-            Ok(_) => return Ok(made),
+        match push(&repo, &[&spec]).await {
+            Ok(()) => return Ok(made),
             Err(err) if attempt == 0 && c.from.is_none() && commit::moved_on(&err) => {}
-            Err(err) => return Err(format!("GitHub refused the push: {}", refused(&err))),
+            Err(err) => return Err(push_refused(&err)),
         }
     }
     Err(format!(

@@ -65,6 +65,7 @@ const LOADING: &str = "It's still loading";
 
 // ---- what a key does --------------------------------------------------------------
 
+/// A confirmation of one change.
 fn ask(
     action: Action,
     at: (&RepoId, SettingsPage),
@@ -72,24 +73,9 @@ fn ask(
     facts: Vec<(String, bool)>,
     choice: (&str, SettingsChange),
 ) -> Step {
-    Step::Ask(asking(action, at, title, facts, choice))
-}
-
-/// A confirmation of one change.
-fn asking(
-    action: Action,
-    at: (&RepoId, SettingsPage),
-    title: String,
-    facts: Vec<(String, bool)>,
-    choice: (&str, SettingsChange),
-) -> Box<crate::forms::Ask> {
-    Box::new(crate::act::confirm(
-        action,
-        Subject::Settings(at.0.clone(), at.1),
-        title,
-        facts,
-        vec![(choice.0.to_owned(), Change::Settings(choice.1))],
-    ))
+    let about = Subject::Settings(at.0.clone(), at.1);
+    let change = Change::Settings(choice.1);
+    crate::act::ask_one(action, about, title, facts, choice.0, change)
 }
 
 fn elsewhere(action: Action) -> String {
@@ -582,14 +568,7 @@ pub fn build(
     data: crate::ui::Fetched<'_, Settings>,
     now: u64,
 ) {
-    let keys = [
-        Action::AddSetting,
-        Action::EditSetting,
-        Action::DeleteSetting,
-        Action::ToggleSetting,
-        Action::Redeliver,
-    ]
-    .map(|a| state.first_key(a));
+    let keys = ACTIONS.map(|a| state.first_key(a));
     let [add, edit, delete, toggle, redeliver] = &keys;
     let keys = SettingKeys {
         add,
@@ -1149,14 +1128,6 @@ impl Pick {
     }
 }
 
-/// Whether `s` can be a GitHub login.
-fn is_login(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= 39
-        && !s.starts_with('-')
-        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-}
-
 pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Step>)> {
     match pick {
         Pick::Invite { repo } => {
@@ -1164,7 +1135,7 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Step>)> {
             if login.is_empty() {
                 return vec![(crate::picker::item("Type their GitHub login", ""), None)];
             }
-            if !is_login(login) {
+            if !crate::route::valid_login(login) {
                 return vec![(
                     crate::picker::item(format!("“{login}” isn't a GitHub login"), ""),
                     None,
@@ -1242,8 +1213,8 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Step>)> {
                         },
                     ),
                 };
-                let confirm = asking(Action::EditSetting, at, title, facts, (choice, change));
-                (row, Some(Step::Ask(confirm)))
+                let confirm = ask(Action::EditSetting, at, title, facts, (choice, change));
+                (row, Some(confirm))
             })
             .collect(),
         Pick::Archive { repo, archived } => {
@@ -1282,7 +1253,7 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Step>)> {
                 repo: repo.clone(),
                 archived: *archived,
             };
-            let confirm = asking(
+            let confirm = ask(
                 Action::ToggleSetting,
                 at,
                 format!("{verb} {name}?"),
@@ -1291,7 +1262,7 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Step>)> {
             );
             vec![(
                 crate::picker::item(format!("{verb} {name}"), "asks once more"),
-                Some(Step::Ask(confirm)),
+                Some(confirm),
             )]
         }
     }
@@ -1400,25 +1371,28 @@ fn same_rule(shown: &RuleForm, form: &RuleForm) -> bool {
 
 // ---- what changes say ------------------------------------------------------------
 
-pub fn doing(c: &SettingsChange) -> &'static str {
+/// What it's doing while GitHub answers, and what it is, for "GitHub refused …".
+pub fn said(c: &SettingsChange) -> (&'static str, &'static str) {
     use SettingsChange as C;
     match c {
-        C::CreateRule { .. } => "Creating the rule",
-        C::UpdateRule { .. } => "Saving the rule",
-        C::DeleteRule { .. } => "Deleting the rule",
-        C::SetRuleset { .. } => "Changing the ruleset",
-        C::SetCollaborator { invite: true, .. } => "Inviting them",
-        C::SetCollaborator { .. } | C::SetInvitation { .. } => "Changing their role",
-        C::RemoveCollaborator { .. } => "Removing them",
-        C::CancelInvitation { .. } => "Cancelling the invitation",
-        C::CreateHook { .. } => "Adding the webhook",
-        C::UpdateHook { .. } => "Saving the webhook",
-        C::DeleteHook { .. } => "Deleting the webhook",
-        C::Redeliver { .. } => "Redelivering",
-        C::AddKey { .. } => "Adding the key",
-        C::DeleteKey { .. } => "Deleting the key",
-        C::Archive { archived: true, .. } => "Archiving the repository",
-        C::Archive { .. } => "Unarchiving the repository",
+        C::CreateRule { .. } => ("Creating the rule", "the new rule"),
+        C::UpdateRule { .. } => ("Saving the rule", "the rule's change"),
+        C::DeleteRule { .. } => ("Deleting the rule", "deleting the rule"),
+        C::SetRuleset { .. } => ("Changing the ruleset", "changing the ruleset"),
+        C::SetCollaborator { invite: true, .. } => ("Inviting them", "the invitation"),
+        C::SetCollaborator { .. } | C::SetInvitation { .. } => {
+            ("Changing their role", "the new role")
+        }
+        C::RemoveCollaborator { .. } => ("Removing them", "removing them"),
+        C::CancelInvitation { .. } => ("Cancelling the invitation", "cancelling the invitation"),
+        C::CreateHook { .. } => ("Adding the webhook", "the new webhook"),
+        C::UpdateHook { .. } => ("Saving the webhook", "the webhook's change"),
+        C::DeleteHook { .. } => ("Deleting the webhook", "deleting the webhook"),
+        C::Redeliver { .. } => ("Redelivering", "the redelivery"),
+        C::AddKey { .. } => ("Adding the key", "the new key"),
+        C::DeleteKey { .. } => ("Deleting the key", "deleting the key"),
+        C::Archive { archived: true, .. } => ("Archiving the repository", "archiving it"),
+        C::Archive { .. } => ("Unarchiving the repository", "unarchiving it"),
     }
 }
 
@@ -1456,28 +1430,6 @@ pub fn done(c: &SettingsChange) -> String {
             repo,
         } => format!("Archived {repo}: it's read-only"),
         C::Archive { repo, .. } => format!("Unarchived {repo}"),
-    }
-}
-
-pub fn what(c: &SettingsChange) -> &'static str {
-    use SettingsChange as C;
-    match c {
-        C::CreateRule { .. } => "the new rule",
-        C::UpdateRule { .. } => "the rule's change",
-        C::DeleteRule { .. } => "deleting the rule",
-        C::SetRuleset { .. } => "changing the ruleset",
-        C::SetCollaborator { invite: true, .. } => "the invitation",
-        C::SetCollaborator { .. } | C::SetInvitation { .. } => "the new role",
-        C::RemoveCollaborator { .. } => "removing them",
-        C::CancelInvitation { .. } => "cancelling the invitation",
-        C::CreateHook { .. } => "the new webhook",
-        C::UpdateHook { .. } => "the webhook's change",
-        C::DeleteHook { .. } => "deleting the webhook",
-        C::Redeliver { .. } => "the redelivery",
-        C::AddKey { .. } => "the new key",
-        C::DeleteKey { .. } => "deleting the key",
-        C::Archive { archived: true, .. } => "archiving it",
-        C::Archive { .. } => "unarchiving it",
     }
 }
 

@@ -35,18 +35,17 @@ fn milestone_url(repo: &RepoId, number: u64) -> String {
 
 /// The milestone on screen: its own page's, or the one selected in the
 /// list.
-fn picked(state: &State) -> Option<MilestoneInfo> {
+fn picked(state: &State) -> Option<&MilestoneInfo> {
     match state.route()? {
         Route::Issues(issues::Milestone { repo, number }) => state
             .picked::<MilestoneDetail>(&DataKey::Milestone(repo.clone(), *number))
-            .map(|d| d.info.clone()),
+            .map(|d| &d.info),
         Route::Issues(issues::Milestones { repo, closed }) => {
             let list =
                 state.picked::<MilestoneList>(&DataKey::Milestones(repo.clone(), *closed))?;
             selected(state, &list.results.items, |m| {
                 milestone_url(repo, m.number)
             })
-            .cloned()
         }
         _ => None,
     }
@@ -69,10 +68,10 @@ pub(super) fn open(state: &mut State, repo: &RepoId, number: Option<u64>) -> Vec
 
 #[must_use]
 pub(super) fn edit(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
-    let Some(m) = picked(state) else {
+    let Some(number) = picked(state).map(|m| m.number) else {
         return state.just_say("Select a milestone first");
     };
-    open(state, repo, Some(m.number))
+    open(state, repo, Some(number))
 }
 
 /// Fills the form from the milestone once it's loaded; a new one starts
@@ -113,36 +112,17 @@ pub(super) fn follow(
 
 /// Whether `date` is a day of the calendar, written `YYYY-MM-DD`.
 fn valid_date(date: &str) -> bool {
-    let parts: Vec<&str> = date.split('-').collect();
-    let [y, m, d] = parts.as_slice() else {
-        return false;
-    };
-    let digits = |s: &str, n: usize| s.len() == n && s.chars().all(|c| c.is_ascii_digit());
-    if !(digits(y, 4) && digits(m, 2) && digits(d, 2)) {
-        return false;
-    }
-    let (Ok(y), Ok(m), Ok(d)) = (y.parse::<u32>(), m.parse::<u32>(), d.parse::<u32>()) else {
-        return false;
-    };
-    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let days = match m {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if leap => 29,
-        2 => 28,
-        _ => return false,
-    };
-    (1..=days).contains(&d)
+    // A day the calendar hasn't (February 30th) reads back as another.
+    date.len() == 10
+        && date.starts_with(|c: char| c.is_ascii_digit())
+        && crate::ui::time::day_of(date).is_some_and(|day| {
+            let (y, m, d) = crate::ui::time::civil(day);
+            format!("{y:04}-{m:02}-{d:02}") == date
+        })
 }
 
 /// The due date picker's rows: the date typed, or none.
-pub(super) fn due_rows(
-    route: &Route,
-    q: &str,
-) -> Vec<(
-    crate::ui::overlays::PaletteItem,
-    Option<crate::picker::Choice>,
-)> {
+pub(super) fn due_rows(route: &Route, q: &str) -> crate::picker::Rows {
     let set = |d: &str| setting(route, Field::Due, d);
     let mut rows = Vec::new();
     if !q.is_empty() {
@@ -207,12 +187,13 @@ pub(super) fn toggle(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
     let Some(m) = picked(state) else {
         return state.just_say("Select a milestone first");
     };
-    let verb = if m.closed { "Reopening" } else { "Closing" };
+    let (number, closed) = (m.number, m.closed);
+    let verb = if closed { "Reopening" } else { "Closing" };
     state.info(format!("{verb} {}…", m.title));
     work::start(Save {
         repo: repo.clone(),
-        number: Some(m.number),
-        write: MilestoneWrite::Close(!m.closed),
+        number: Some(number),
+        write: MilestoneWrite::Close(!closed),
     })
 }
 
@@ -232,9 +213,10 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
         n => format!("Its {n} issues and pull requests stay, without a milestone"),
     };
     let subject = Subject::Milestone(repo.clone(), m.number);
+    let title = format!("Delete the milestone {}?", m.title);
     ask(
         state,
-        format!("Delete the milestone {}?", m.title),
+        title,
         vec![(on, false), ("It can't be brought back".into(), true)],
         vec![("Delete milestone".into(), super::Answer::Delete(subject))],
     );

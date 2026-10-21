@@ -54,6 +54,19 @@ pub fn confirm(
     Ask::new(About::Act(action, about), title, facts, answers(choices))
 }
 
+/// Asking first about the one way to make a change.
+pub fn ask_one(
+    action: Action,
+    about: Subject,
+    title: String,
+    facts: Vec<(String, bool)>,
+    label: &str,
+    change: Change,
+) -> Step {
+    let choices = vec![(label.to_owned(), change)];
+    Step::Ask(Box::new(confirm(action, about, title, facts, choices)))
+}
+
 /// Ways to make a change, as a question's answers.
 fn answers(choices: Vec<(String, Change)>) -> Vec<(String, Answer)> {
     (choices.into_iter())
@@ -249,6 +262,15 @@ pub enum Subject {
 }
 
 impl Subject {
+    /// What's on screen: a page about one thing, or a pull request's
+    /// files.
+    pub(crate) fn on_screen(state: &State) -> Option<Self> {
+        match state.screen() {
+            Screen::Diff(d) => d.of.pr().cloned().map(Subject::Pr),
+            Screen::Page(p) => Subject::of(&p.route),
+        }
+    }
+
     /// The subject of a page about one thing.
     fn of(route: &Route) -> Option<Self> {
         Some(match route {
@@ -383,17 +405,29 @@ pub(crate) fn subject(state: &State, action: Action) -> Option<Subject> {
         });
         return query.map(|query| Subject::Inbox { query });
     }
-    match state.screen() {
-        Screen::Diff(d) => d.of.pr().map(|pr| Subject::Pr(pr.clone())),
-        Screen::Page(p) => Subject::of(&p.route).or_else(|| {
-            let url = p.selected_link()?.url()?;
-            match crate::route::Dest::from_url(url).target {
-                crate::route::Target::Page(route) => Subject::of(&route),
-                crate::route::Target::Files(of) => of.pr().cloned().map(Subject::Pr),
-                crate::route::Target::External(_) => None,
-            }
-        }),
-    }
+    Subject::on_screen(state).or_else(|| {
+        let Screen::Page(p) = state.screen() else {
+            return None;
+        };
+        let url = p.selected_link()?.url()?;
+        match crate::route::Dest::from_url(url).target {
+            crate::route::Target::Page(route) => Subject::of(&route),
+            crate::route::Target::Files(of) => of.pr().cloned().map(Subject::Pr),
+            crate::route::Target::External(_) => None,
+        }
+    })
+}
+
+/// The issue `number` in `repo`, loaded.
+pub(crate) fn issue<'a>(
+    state: &'a State,
+    repo: &RepoId,
+    number: u64,
+) -> Option<&'a crate::api::browse::IssueDetail> {
+    let key = DataKey::Issue(repo.clone(), number);
+    state
+        .picked::<Option<Box<crate::api::browse::IssueDetail>>>(&key)?
+        .as_deref()
 }
 
 /// The selected notification's thread: the inbox's rows are its
@@ -1023,9 +1057,7 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
             })
         }
         (Change::CloseIssue { .. } | Change::ReopenIssue { .. }, Subject::Issue(repo, number)) => {
-            let key = DataKey::Issue(repo.clone(), *number);
-            let issue = state.picked::<Option<Box<crate::api::browse::IssueDetail>>>(&key);
-            let Some(Some(issue)) = issue else {
+            let Some(issue) = issue(state, repo, *number) else {
                 return Shown::No;
             };
             let open = issue.state == IssueState::Open;
@@ -1144,41 +1176,65 @@ fn notifies(change: &Change) -> bool {
 
 /// What a change is doing while GitHub answers: "Merging".
 pub(crate) fn doing(change: &Change) -> std::borrow::Cow<'static, str> {
-    let doing = match change {
-        Change::Comment { .. } | Change::CommitComment { .. } | Change::Reply { .. } => "Posting",
-        Change::Star { starred: true, .. } => "Starring",
-        Change::Star { .. } => "Unstarring",
-        Change::Merge { .. } => "Merging",
-        Change::EnableAutoMerge { .. } => "Enabling auto-merge",
-        Change::DisableAutoMerge { .. } => "Disabling auto-merge",
-        Change::Enqueue { .. } => "Adding it to the merge queue",
-        Change::Dequeue { .. } => "Removing it from the merge queue",
-        Change::SetPrOpen { open: true, .. } | Change::ReopenIssue { .. } => "Reopening",
-        Change::SetPrOpen { .. } | Change::CloseIssue { .. } => "Closing",
-        Change::ReadyForReview { .. } => "Marking it ready for review",
-        Change::UpdateBranch { .. } => "Updating the branch",
-        Change::Rerun { .. } | Change::RerunJob { .. } => "Asking GitHub to re-run it",
-        Change::CancelRun { .. } => "Cancelling the run",
-        Change::MarkRead { .. } => "Marking it read",
-        Change::MarkDone { .. } => "Marking it done",
-        Change::MarkAllRead { .. } | Change::MarkEach { done: false, .. } => "Marking them read",
-        Change::MarkEach { .. } => "Marking them done",
-        Change::Edit(edit) => crate::edit::doing(edit),
-        Change::Discussion(d) => crate::discuss::doing(d),
+    match change {
         Change::SetProjectField { said, value, .. } => {
             let doing = if value.is_some() {
                 "Setting"
             } else {
                 "Clearing"
             };
-            return format!("{doing} {said}").into();
+            format!("{doing} {said}").into()
         }
-        Change::Alert(c) => crate::security::doing(c),
-        Change::Project(c) => crate::projects::doing(c),
-        Change::Manage(m) => crate::manage::doing(m),
-        Change::Settings(c) => crate::settings::doing(c),
-    };
-    doing.into()
+        _ => said(change).0.into(),
+    }
+}
+
+/// What a change is doing while GitHub answers ("Merging"), and what it
+/// is, for "GitHub refused …" ("the merge").
+fn said(change: &Change) -> (&'static str, &'static str) {
+    match change {
+        Change::Comment { .. } | Change::CommitComment { .. } => ("Posting", "the comment"),
+        Change::Reply { .. } => ("Posting", "the reply"),
+        Change::Star { starred: true, .. } => ("Starring", "the star"),
+        Change::Star { .. } => ("Unstarring", "removing the star"),
+        Change::Merge { .. } => ("Merging", "the merge"),
+        Change::EnableAutoMerge { .. } => ("Enabling auto-merge", "enabling auto-merge"),
+        Change::DisableAutoMerge { .. } => ("Disabling auto-merge", "disabling auto-merge"),
+        Change::Enqueue { .. } => (
+            "Adding it to the merge queue",
+            "adding it to the merge queue",
+        ),
+        Change::Dequeue { .. } => (
+            "Removing it from the merge queue",
+            "removing it from the merge queue",
+        ),
+        Change::SetPrOpen { open: true, .. } | Change::ReopenIssue { .. } => {
+            ("Reopening", "reopening it")
+        }
+        Change::SetPrOpen { .. } | Change::CloseIssue { .. } => ("Closing", "closing it"),
+        Change::ReadyForReview { .. } => {
+            ("Marking it ready for review", "marking it ready for review")
+        }
+        Change::UpdateBranch { .. } => ("Updating the branch", "updating the branch"),
+        Change::Rerun { .. } | Change::RerunJob { .. } => {
+            ("Asking GitHub to re-run it", "the re-run")
+        }
+        Change::CancelRun { .. } => ("Cancelling the run", "cancelling the run"),
+        Change::MarkRead { .. } => ("Marking it read", "marking it read"),
+        Change::MarkDone { .. } => ("Marking it done", "marking it done"),
+        Change::MarkAllRead { .. } | Change::MarkEach { done: false, .. } => {
+            ("Marking them read", "marking them read")
+        }
+        Change::MarkEach { .. } => ("Marking them done", "marking them done"),
+        // Its progress names the field ([`doing`]).
+        Change::SetProjectField { .. } => ("Setting the field", "setting the field"),
+        Change::Edit(edit) => crate::edit::said(edit),
+        Change::Discussion(d) => (crate::discuss::doing(d), crate::discuss::what(d)),
+        Change::Alert(c) => (crate::security::doing(c), crate::security::what(c)),
+        Change::Project(c) => (crate::projects::doing(c), crate::projects::what(c)),
+        Change::Manage(m) => crate::manage::said(m),
+        Change::Settings(c) => crate::settings::said(c),
+    }
 }
 
 /// What a change did, once GitHub said so.
@@ -1269,34 +1325,7 @@ pub fn needs(change: &Change) -> &'static str {
 /// Why a change failed, in GitHub's words, and the permission it needs
 /// when GitHub says the token lacks one.
 fn failure(change: &Change, err: &Failure) -> String {
-    let what = match change {
-        Change::Comment { .. } | Change::CommitComment { .. } => "the comment",
-        Change::Reply { .. } => "the reply",
-        Change::Star { starred: true, .. } => "the star",
-        Change::Star { .. } => "removing the star",
-        Change::Merge { .. } => "the merge",
-        Change::EnableAutoMerge { .. } => "enabling auto-merge",
-        Change::DisableAutoMerge { .. } => "disabling auto-merge",
-        Change::Enqueue { .. } => "adding it to the merge queue",
-        Change::Dequeue { .. } => "removing it from the merge queue",
-        Change::SetPrOpen { open: true, .. } | Change::ReopenIssue { .. } => "reopening it",
-        Change::SetPrOpen { .. } | Change::CloseIssue { .. } => "closing it",
-        Change::ReadyForReview { .. } => "marking it ready for review",
-        Change::UpdateBranch { .. } => "updating the branch",
-        Change::Rerun { .. } | Change::RerunJob { .. } => "the re-run",
-        Change::CancelRun { .. } => "cancelling the run",
-        Change::MarkRead { .. } => "marking it read",
-        Change::MarkDone { .. } => "marking it done",
-        Change::MarkAllRead { .. } | Change::MarkEach { done: false, .. } => "marking them read",
-        Change::MarkEach { .. } => "marking them done",
-        Change::Edit(edit) => crate::edit::what(edit),
-        Change::Discussion(d) => crate::discuss::what(d),
-        Change::SetProjectField { .. } => "setting the field",
-        Change::Alert(c) => crate::security::what(c),
-        Change::Project(c) => crate::projects::what(c),
-        Change::Manage(m) => crate::manage::what(m),
-        Change::Settings(c) => crate::settings::what(c),
-    };
+    let what = said(change).1;
     let reason = err.to_string();
     // GitHub refuses with 403 for other reasons too ("already running"),
     // so only its words say it's a permission.

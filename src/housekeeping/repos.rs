@@ -51,10 +51,11 @@ pub(super) fn open_fork(state: &mut State) -> Vec<Cmd> {
     super::open(state, FormOf::Fork(repo))
 }
 
-/// Fills the fork's form once GitHub says who you are: your account, the
-/// repository's name, its default branch only.
+/// Fills the form once GitHub says who you are: your account, and a
+/// fork's the repository's name (its default branch only); a new
+/// repository's name is asked for then.
 #[must_use]
-pub(super) fn follow_fork(state: &mut State, route: &Route, repo: &RepoId) -> Vec<Cmd> {
+pub(super) fn follow(state: &mut State, route: &Route, fork: Option<&RepoId>) -> Vec<Cmd> {
     if form(state, route).started {
         return Vec::new();
     }
@@ -64,25 +65,10 @@ pub(super) fn follow_fork(state: &mut State, route: &Route, repo: &RepoId) -> Ve
     let f = form_mut(state, route);
     f.started = true;
     f.set(Field::Owner, viewer);
-    f.set(Field::Name, repo.name.clone());
-    Vec::new()
-}
-
-/// Fills the new repository's form once GitHub says who you are; then
-/// its name is asked for.
-#[must_use]
-pub(super) fn follow_new(state: &mut State, route: &Route) -> Vec<Cmd> {
-    if form(state, route).started {
-        return Vec::new();
-    }
-    let Some(viewer) = owners(state).map(|o| o.viewer.clone()) else {
-        return Vec::new();
-    };
-    let f = form_mut(state, route);
-    f.started = true;
-    f.set(Field::Owner, viewer);
-    if state.overlay.is_none() {
-        return super::open_field(state, route, Field::Name);
+    match fork {
+        Some(repo) => f.set(Field::Name, repo.name.clone()),
+        None if state.overlay.is_none() => return super::open_field(state, route, Field::Name),
+        None => {}
     }
     Vec::new()
 }
@@ -133,14 +119,7 @@ pub(super) fn fork_problem(state: &State, repo: &RepoId, f: &Form) -> Option<Str
 }
 
 /// The owner picker's rows: you, then your organizations.
-pub(super) fn owner_rows(
-    state: &State,
-    route: &Route,
-    q: &str,
-) -> Vec<(
-    crate::ui::overlays::PaletteItem,
-    Option<crate::picker::Choice>,
-)> {
+pub(super) fn owner_rows(state: &State, route: &Route, q: &str) -> crate::picker::Rows {
     let Some(o) = owners(state) else {
         return vec![item("Asking GitHub who you are…", "", None)];
     };
@@ -195,10 +174,7 @@ pub(super) fn template_rows(
     route: &Route,
     field: Field,
     q: &str,
-) -> Vec<(
-    crate::ui::overlays::PaletteItem,
-    Option<crate::picker::Choice>,
-)> {
+) -> crate::picker::Rows {
     let set = |value: &str| setting(route, field, value);
     let Some(t) = state.picked::<Templates>(&DataKey::Templates) else {
         return vec![item("Loading GitHub's templates…", "", None)];
