@@ -281,30 +281,19 @@ actions! {
 
 impl Action {
     /// `alt-1`…`alt-9`, in order.
-    pub const OPEN_TABS: [Action; 9] = [
-        Action::OpenTab1,
-        Action::OpenTab2,
-        Action::OpenTab3,
-        Action::OpenTab4,
-        Action::OpenTab5,
-        Action::OpenTab6,
-        Action::OpenTab7,
-        Action::OpenTab8,
-        Action::OpenTab9,
-    ];
+    pub const OPEN_TABS: [Action; 9] = {
+        use Action::*;
+        [
+            OpenTab1, OpenTab2, OpenTab3, OpenTab4, OpenTab5, OpenTab6, OpenTab7, OpenTab8,
+            OpenTab9,
+        ]
+    };
 
     /// The page's tabs 1…9, in order.
-    pub const PAGE_TABS: [Action; 9] = [
-        Action::Tab1,
-        Action::Tab2,
-        Action::Tab3,
-        Action::Tab4,
-        Action::Tab5,
-        Action::Tab6,
-        Action::Tab7,
-        Action::Tab8,
-        Action::Tab9,
-    ];
+    pub const PAGE_TABS: [Action; 9] = {
+        use Action::*;
+        [Tab1, Tab2, Tab3, Tab4, Tab5, Tab6, Tab7, Tab8, Tab9]
+    };
 
     pub fn from_name(name: &str) -> Option<Action> {
         Action::ALL.iter().copied().find(|a| a.name() == name)

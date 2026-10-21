@@ -237,15 +237,13 @@ impl DiffScreen {
         *self = Self::new(self.of.clone(), self.prefs);
     }
 
-    /// The view options this screen wants at `content` size, beside
-    /// `tree`.
-    pub fn options(&self, content: Rect, tree: &[TreeRow]) -> ViewOptions {
-        let lay = layout(content, &self.prefs, tree);
+    /// The view options this screen wants in a diff pane `width` wide.
+    pub fn options(&self, Rect { width, .. }: Rect) -> ViewOptions {
         ViewOptions {
             split: self
                 .prefs
                 .split_override
-                .unwrap_or(lay.diff.width >= SPLIT_MIN_WIDTH),
+                .unwrap_or(width >= SPLIT_MIN_WIDTH),
             whitespace: if self.prefs.ignore_whitespace {
                 Whitespace::Ignore
             } else {
@@ -253,8 +251,8 @@ impl DiffScreen {
             },
             structural: self.prefs.by_syntax,
             // Thread cards start after the gutter; keep comments readable.
-            wrap: lay.diff.width.saturating_sub(24).clamp(20, 100),
-            wrap_code: self.prefs.wrap.then_some(lay.diff.width),
+            wrap: width.saturating_sub(24).clamp(20, 100),
+            wrap_code: self.prefs.wrap.then_some(width),
         }
     }
 }
@@ -599,7 +597,7 @@ pub fn apply(
             }
         }
         Action::ToggleSplit => {
-            screen.prefs.split_override = Some(!screen.options(content, &state.tree).split);
+            screen.prefs.split_override = Some(!screen.options(lay.diff).split);
         }
         Action::IgnoreWhitespace => flip(
             &mut screen.prefs.ignore_whitespace,
@@ -1229,7 +1227,7 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
     if lay.tree.is_none() {
         screen.focus = Pane::Diff;
     }
-    let opts = screen.options(content, &state.tree);
+    let opts = screen.options(lay.diff);
     if state.doc.opts() != opts {
         preserving_position(screen, state, |d| d.doc.set_options(opts));
     }

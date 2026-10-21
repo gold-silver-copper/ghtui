@@ -64,6 +64,12 @@ impl ChangedFile {
     }
 }
 
+/// The blobs the diffs of `files` need, to prefetch.
+pub fn blobs<'a>(files: impl IntoIterator<Item = &'a ChangedFile>) -> Vec<String> {
+    let oids = files.into_iter().flat_map(ChangedFile::blob_oids);
+    oids.map(str::to_owned).collect()
+}
+
 /// Parses `git diff --raw -z --no-abbrev` output.
 pub fn parse_raw(out: &str) -> Result<Vec<ChangedFile>, GitError> {
     let bad = |what: &str| GitError::Parse(format!("diff --raw: {what}"));
@@ -79,7 +85,7 @@ pub fn parse_raw(out: &str) -> Result<Vec<ChangedFile>, GitError> {
             return Err(bad(header));
         };
         let mode = |m: &str| u32::from_str_radix(m, 8).map_err(|_| bad(m));
-        let (letter, score) = status.split_at(1);
+        let (letter, score) = status.split_at_checked(1).ok_or_else(|| bad(header))?;
         let similarity = score.parse::<u8>().ok();
         let first = fields.next().ok_or_else(|| bad("missing path"))?.to_owned();
         let mut target = || {
