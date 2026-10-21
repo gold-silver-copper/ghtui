@@ -6,10 +6,10 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 
-use crate::git::repo::Repo;
-use crate::git::{GitError, Oid, piped, stdout};
+use crate::git::repo::{Repo, run_with_stdin};
+use crate::git::{GitError, Oid, checked, piped, stdout};
 
 /// A file in a commit's tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,18 +140,8 @@ pub async fn tree_of(repo: &Repo, files: &[(&str, &str)], scratch: &Path) -> Res
     let mut cmd = repo.cmd();
     cmd.env("GIT_INDEX_FILE", scratch)
         .env("GIT_NO_LAZY_FETCH", "1")
-        .args(["update-index", "--index-info"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = cmd.spawn()?;
-    let mut stdin = piped(child.stdin.take(), "stdin")?;
-    let writer = tokio::spawn(async move {
-        let _ = stdin.write_all(input.as_bytes()).await;
-    });
-    let output = child.wait_with_output().await?;
-    let _ = writer.await;
-    stdout(&output, "update-index --index-info")?;
+        .args(["update-index", "--index-info"]);
+    run_with_stdin(cmd, "update-index --index-info", input).await?;
     let mut cmd = repo.cmd();
     cmd.env("GIT_INDEX_FILE", scratch)
         .env("GIT_NO_LAZY_FETCH", "1")
@@ -208,11 +198,8 @@ pub async fn grep_word(
     }
     let output = child.wait_with_output().await?;
     // 1: no line matched.
-    if !output.status.success() && output.status.code() != Some(1) {
-        return Err(GitError::Failed {
-            args: "grep".to_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        });
+    if output.status.code() != Some(1) {
+        checked(&output, "grep")?;
     }
     Ok(found)
 }

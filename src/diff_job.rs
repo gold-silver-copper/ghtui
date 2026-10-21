@@ -258,7 +258,7 @@ async fn run_inner(
                     .iter()
                     .enumerate()
                     .filter(|(i, _)| pick(*i))
-                    .flat_map(|(_, f)| f.blob_oids().map(str::to_owned).collect::<Vec<_>>())
+                    .flat_map(|(_, f)| f.blob_oids().map(str::to_owned))
                     .collect()
             };
             for (stage, batch) in [(1u8, oids(&|i| first.contains(&i))), (2, oids(&|_| true))] {
@@ -370,7 +370,7 @@ pub async fn since_review_hashes(
     let files = repo.changed_files(&merge_base, old_head).await?;
     let oids: Vec<String> = files
         .iter()
-        .flat_map(|f| f.blob_oids().map(str::to_owned).collect::<Vec<_>>())
+        .flat_map(|f| f.blob_oids().map(str::to_owned))
         .collect();
     if let Err(err) = repo.prefetch(&oids).await {
         tracing::warn!(%err, "prefetch for the earlier diff failed");

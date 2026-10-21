@@ -219,18 +219,32 @@ pub(crate) mod fixture {
 
 /// What `git <what>` printed, or its complaint if it failed.
 pub(crate) fn stdout(output: &std::process::Output, what: &str) -> Result<String, GitError> {
+    checked(output, what).map(|out| String::from_utf8_lossy(out).into_owned())
+}
+
+/// What `git <what>` printed, as bytes, or its complaint if it failed.
+pub(crate) fn checked<'o>(
+    output: &'o std::process::Output,
+    what: &str,
+) -> Result<&'o [u8], GitError> {
     if !output.status.success() {
         return Err(GitError::Failed {
             args: what.to_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
         });
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    Ok(&output.stdout)
 }
 
+/// The installed git's version, asked once: it can't change while ghtui
+/// runs. A failure isn't kept, so it's asked again.
 pub async fn version() -> Result<Version, GitError> {
-    let out = run(None, &["--version"]).await?;
-    parse_version(&out).ok_or(GitError::Version(out.trim().to_owned()))
+    static VERSION: tokio::sync::OnceCell<Version> = tokio::sync::OnceCell::const_new();
+    let ask = || async {
+        let out = run(None, &["--version"]).await?;
+        parse_version(&out).ok_or(GitError::Version(out.trim().to_owned()))
+    };
+    VERSION.get_or_try_init(ask).await.copied()
 }
 
 /// Parses `git version 2.51.0` (also `2.39.3 (Apple Git-146)`, `2.45.windows.1`).
