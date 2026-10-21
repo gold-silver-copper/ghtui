@@ -107,11 +107,7 @@ fn a_repository_is_put_in_a_list_and_followed() {
     let cmds = act(&mut s, Action::Lists);
     assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
     crate::fixtures::served(&mut s, &cmds);
-    let Some(Overlay::Picker(p)) = &s.overlay else {
-        panic!("no picker");
-    };
-    let labels: Vec<String> = s.picker_rows(p).into_iter().map(|(r, _)| r.label).collect();
-    assert_eq!(labels, ["✓ Terminal tools", "  To read"]);
+    assert_eq!(picked_labels(&s), ["✓ Terminal tools", "  To read"]);
     let sent = press(&mut s, "read<Enter>");
     let work = crate::site::lists::SetLists {
         repo: ghtui(),
@@ -147,9 +143,7 @@ fn a_packages_version_is_deleted_after_asking() {
     let mut s = package();
     press(&mut s, "/sha256:3a7b<Enter>");
     press(&mut s, "D");
-    let Some(Overlay::Ask(ask)) = &s.overlay else {
-        panic!("no question");
-    };
+    let ask = overlay!(s, Ask);
     assert_eq!(ask.title, "Delete version sha256:3a7b55e1 of ghtui?");
     let sent = press(&mut s, "<Enter>");
     let delete = crate::site::packages::DeleteVersion {

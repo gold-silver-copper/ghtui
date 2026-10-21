@@ -18,14 +18,14 @@ fn next_ask(s: &mut State) -> (Vec<Ask<Probe>>, u64) {
     }
 }
 
-fn answer_with(s: &mut State, answers: Vec<(Probe, Result<Polled, ApiError>)>) -> Vec<Cmd> {
+fn answer_with(s: &mut State, answers: Vec<(Probe, Result<Polled, ApiError>)>) -> Cmds {
     let what = s.page_watch.as_ref().expect("a watch").what.clone();
     update(s, Msg::Watched(what, answers))
 }
 
 /// The fixture's issue as REST has it, with `comments` comments.
 fn rest_issue(comments: u64) -> String {
-    let issue = crate::fixtures::issue();
+    let issue = fixtures::issue();
     serde_json::json!({
         "title": issue.title,
         "body": issue.body,
@@ -68,10 +68,7 @@ fn an_issue_is_watched_and_another_authors_comment_is_new() {
         (Probe::Issue(ghtui(), 14), changed("\"i1\"", &rest_issue(1))),
         (comments.clone(), changed("\"c1\"", "[]")),
     ];
-    assert_eq!(
-        crate::fixtures::asked(&answer_with(&mut s, first)),
-        Vec::new()
-    );
+    assert_eq!(fixtures::asked(&answer_with(&mut s, first)), Vec::new());
 
     let (asks, wait) = next_ask(&mut s);
     assert!(wait > crate::live::FIRST_MS);
@@ -81,11 +78,11 @@ fn an_issue_is_watched_and_another_authors_comment_is_new() {
         (comments, Ok(Polled::Same)),
     ];
     assert_eq!(
-        crate::fixtures::asked(&answer_with(&mut s, came)),
+        fixtures::asked(&answer_with(&mut s, came)),
         std::slice::from_ref(&key)
     );
 
-    let mut issue = crate::fixtures::issue();
+    let mut issue = fixtures::issue();
     let comment = |id, author: &str| crate::api::browse::Comment {
         id: Some(id),
         author: author.into(),
@@ -127,7 +124,7 @@ fn a_first_answer_newer_than_the_issue_is_fetched() {
         (Probe::Issue(ghtui(), 14), changed("\"i1\"", &rest_issue(2))),
         (comments, changed("\"c1\"", "[]")),
     ];
-    assert_eq!(crate::fixtures::asked(&answer_with(&mut s, first)), [key]);
+    assert_eq!(fixtures::asked(&answer_with(&mut s, first)), [key]);
 }
 
 /// A running job's page follows the job: it asks after the job, stays on
@@ -136,7 +133,7 @@ fn a_first_answer_newer_than_the_issue_is_fetched() {
 #[test]
 fn a_running_job_is_followed_to_its_end() {
     let mut s = with_job(None);
-    let (done, log) = crate::fixtures::job();
+    let (done, log) = fixtures::job();
     let mut running = done.clone();
     running.outcome = CheckOutcome::Pending;
     running.run.outcome = CheckOutcome::Pending;
@@ -173,7 +170,7 @@ fn a_running_job_is_followed_to_its_end() {
         &mut s,
         vec![(asks[0].probe.clone(), changed("\"j\"", &body.to_string()))],
     );
-    let keys = crate::fixtures::asked(&cmds);
+    let keys = fixtures::asked(&cmds);
     assert!(keys.contains(&DataKey::Job(ghtui(), 2)), "{keys:?}");
     assert!(keys.contains(&DataKey::JobLog(ghtui(), 2)), "{keys:?}");
 
@@ -198,7 +195,7 @@ fn new_runs_on_the_actions_tab_are_said() {
     let mut s = at(with_repo(), Route::actions(ghtui()));
     let query = String::new();
     let key = DataKey::Runs(ghtui(), query.clone());
-    let (_, runs) = crate::fixtures::workflow_runs();
+    let (_, runs) = fixtures::workflow_runs();
     let (asks, _) = next_ask(&mut s);
     assert_eq!(asks[0].probe, Probe::Runs(ghtui(), query));
     let wire = serde_json::json!({ "total_count": 1, "workflow_runs": [{
@@ -211,7 +208,7 @@ fn new_runs_on_the_actions_tab_are_said() {
         &mut s,
         vec![(asks[0].probe.clone(), changed("\"r\"", &wire.to_string()))],
     );
-    assert_eq!(crate::fixtures::asked(&cmds), std::slice::from_ref(&key));
+    assert_eq!(fixtures::asked(&cmds), std::slice::from_ref(&key));
     let mut more = runs;
     let mut new = more.items[0].clone();
     (new.id, new.actor) = (999, Some("monalisa".into()));

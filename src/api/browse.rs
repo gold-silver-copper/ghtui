@@ -14,8 +14,8 @@ use crate::api::model::{
     count, labels,
 };
 use crate::api::queries::{
-    Actor, CommentCount, CommitCount, DateTime, FollowCount, FollowingCount, GitObjectId,
-    IssueCount, LabelConnection, NumberVariablesFields, PageInfo, PrCount, RefCount,
+    Actor, CommentCount, CommitCount, CommitOid, DateTime, FollowCount, FollowingCount,
+    GitObjectId, IssueCount, LabelConnection, NumberVariablesFields, PageInfo, PrCount, RefCount,
     RepositoryName, StatusState, Uri, UserCount, fragments, nodes,
 };
 use crate::api::timeline;
@@ -708,7 +708,7 @@ fragments! {
     counted:
     Topics = "RepositoryTopicConnection" => RepoTopic,
     Assignees = "UserConnection" => UserLogin,
-    CommitParents = "CommitConnection" => ParentCommit,
+    CommitParents = "CommitConnection" => CommitOid,
     OrgLogins = "OrganizationConnection" => OrgLogin,
     MemberList = "OrganizationMemberConnection" => UserLogin,
     RepoList = "RepositoryConnection" => RepoCard,
@@ -889,10 +889,32 @@ pub struct GitActor {
     pub user: Option<UserLogin>,
 }
 
+// Objects by the one field asked of them.
+fragments! {
+    login: String;
+    UserLogin = "User",
+    BotLogin = "Bot",
+    OrgLogin = "Organization",
+}
+fragments! {
+    name: String;
+    RefName = "Ref",
+    AppName = "App",
+    WorkflowName = "Workflow",
+    TypeName = "IssueType",
+}
+fragments! {
+    number: i32;
+    PrNumber = "PullRequest",
+    IssueNumber = "Issue",
+}
+// Its `org/slug`.
+fragments! { combined_slug: String; TeamSlug = "Team" }
+
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "User")]
-pub struct UserLogin {
-    pub login: String,
+#[cynic(graphql_type = "PullRequestCommit")]
+pub struct PrCommitNode {
+    pub commit: CommitCard,
 }
 
 #[derive(cynic::InlineFragments, Debug)]
@@ -984,11 +1006,7 @@ pub struct StateCountsQuery {
     pub closed: SearchCount,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "SearchResultItemConnection")]
-pub struct SearchCount {
-    pub issue_count: i32,
-}
+fragments! { issue_count: i32; SearchCount = "SearchResultItemConnection" }
 
 /// A filtered issue or pull request list's open and closed counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1091,12 +1109,6 @@ pub enum IssueOrPr {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequest")]
-pub struct PrNumber {
-    pub number: i32,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Issue")]
 pub struct IssueFull {
     pub id: cynic::Id,
@@ -1127,7 +1139,7 @@ pub struct IssueFull {
     pub blocked_by: timeline::Issues,
     #[arguments(first: 20)]
     pub blocking: timeline::Issues,
-    pub issue_type: Option<timeline::TypeName>,
+    pub issue_type: Option<TypeName>,
     pub repository: RepoAccess,
     pub locked: bool,
     pub active_lock_reason: Option<timeline::LockReason>,
@@ -1203,25 +1215,6 @@ pub enum RequestedReviewer {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Bot")]
-pub struct BotLogin {
-    pub login: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Team")]
-pub struct TeamSlug {
-    /// `org/slug`.
-    pub combined_slug: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestCommit")]
-pub struct PrCommitNode {
-    pub commit: CommitCard,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Commit")]
 pub struct CommitCard {
     pub oid: GitObjectId,
@@ -1259,12 +1252,6 @@ pub struct WireCommit {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Commit")]
-pub struct ParentCommit {
-    pub oid: GitObjectId,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "GitSignature")]
 pub struct WireSignature {
     pub is_valid: bool,
@@ -1292,14 +1279,6 @@ pub enum HistoryObject {
 pub struct HistoryCommit {
     #[arguments(first: 30, after: $after, path: $path)]
     pub history: CommitHistory,
-}
-
-impl CommitHistory {
-    pub(crate) fn into_results(self) -> Results<CommitInfo> {
-        Results::from_page(self.total_count, self.page_info, self.nodes, |c| {
-            Some(c.into_info())
-        })
-    }
 }
 
 // ---- checks --------------------------------------------------------------------------
@@ -1410,21 +1389,9 @@ pub struct WireSuite {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "App")]
-pub struct AppName {
-    pub name: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "WorkflowRun")]
 pub struct WireWorkflowRun {
     pub workflow: WorkflowName,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Workflow")]
-pub struct WorkflowName {
-    pub name: String,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -1491,15 +1458,7 @@ impl CheckOutcome {
 
 /// A page of a commit's rollup contexts; a commit with no rollup has none.
 pub(crate) fn rollup_contexts(rollup: Option<WireRollup>) -> Results<RollupContext> {
-    rollup
-        .map(|r| r.contexts.into_results())
-        .unwrap_or_default()
-}
-
-impl RollupContexts {
-    pub(crate) fn into_results(self) -> Results<RollupContext> {
-        Results::from_page(self.total_count, self.page_info, self.nodes, Some)
-    }
+    rollup.map_or_else(Results::default, |r| r.contexts.filter_results(Some))
 }
 
 /// A commit's checks from its rollup's contexts, the newest run of each.
@@ -1571,7 +1530,7 @@ mod tests {
             ]
         }))
         .unwrap();
-        let tags = tags.into_results();
+        let tags = tags.filter_results(TagRef::into_info);
         let got: Vec<(&str, Option<&str>)> = tags
             .items
             .iter()
@@ -1740,7 +1699,7 @@ mod tests {
             "nodes": [run("a", "  "), run("b", "Built")]
         }))
         .unwrap();
-        let fetched = contexts.into_results();
+        let fetched = contexts.filter_results(Some);
         let checks = checks("abc".into(), Capped::new(fetched.items, fetched.total));
         assert_eq!((checks.items.len(), checks.items.total()), (2, 5));
         assert_eq!(checks.items[0].summary, None);
@@ -1980,13 +1939,14 @@ mod tests {
 impl WireCheckRun {
     fn into_item(self) -> CheckItem {
         let outcome = CheckOutcome::of(Some(self.status), self.conclusion);
-        let suite = self.check_suite;
-        let group = suite
-            .as_ref()
-            .and_then(|s| s.workflow_run.as_ref())
-            .map(|w| w.workflow.name.clone())
-            .or_else(|| suite.and_then(|s| s.app).map(|a| a.name))
-            .unwrap_or_else(|| "Checks".into());
+        let group = match self.check_suite {
+            Some(WireSuite {
+                workflow_run: Some(run),
+                ..
+            }) => run.workflow.name,
+            Some(WireSuite { app: Some(app), .. }) => app.name,
+            _ => "Checks".into(),
+        };
         CheckItem {
             name: self.name,
             group,
@@ -1997,7 +1957,7 @@ impl WireCheckRun {
             url: self.details_url.map(|u| u.0),
             annotations: (self.annotations)
                 .map(|a| {
-                    let a = a.into_capped();
+                    let a = a.into_capped(crate::api::workflows::Annotation::from);
                     let total = a.total();
                     Capped::new(crate::api::workflows::sorted(a.items), total)
                 })
@@ -2391,11 +2351,7 @@ pub(crate) mod wire {
         }
     }
 
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct RepoName {
-        pub name_with_owner: String,
-    }
+    pub use crate::api::queries::{PageInfo, RepositoryName as RepoName};
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -2438,13 +2394,6 @@ pub(crate) mod wire {
         }
     }
 
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct PageInfo {
-        pub has_next_page: bool,
-        pub end_cursor: Option<String>,
-    }
-
     /// A page of a connection, and how many there are in all (a search's
     /// count of discussions included).
     #[derive(Deserialize)]
@@ -2464,14 +2413,10 @@ pub(crate) mod wire {
 
         /// The page as results, the nodes `item` makes nothing of left out.
         pub fn filter_results<U>(self, item: impl FnMut(T) -> Option<U>) -> Results<U> {
-            let PageInfo {
-                has_next_page,
-                end_cursor,
-            } = self.page_info;
             Results {
                 total: self.total_count,
                 items: self.nodes.into_iter().flatten().filter_map(item).collect(),
-                next: end_cursor.filter(|_| has_next_page),
+                next: self.page_info.next(),
             }
         }
     }
@@ -3849,12 +3794,6 @@ pub struct WireSocial {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Organization")]
-pub struct OrgLogin {
-    pub login: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "ContributionsCollection")]
 pub struct WireContributions {
     pub contribution_calendar: WireCalendar,
@@ -4170,17 +4109,6 @@ pub struct RepoForks {
     pub forks: PagedRepos,
 }
 
-impl PagedRepos {
-    pub(crate) fn into_results(self) -> Results<RepoSummary> {
-        Results::from_page(
-            self.total_count,
-            self.page_info,
-            self.nodes,
-            RepoCard::into_summary,
-        )
-    }
-}
-
 #[derive(cynic::Enum, Debug, Clone, Copy)]
 pub enum RepositoryOrderField {
     CreatedAt,
@@ -4254,17 +4182,6 @@ pub struct StarredQuery {
 pub struct UserStarred {
     #[arguments(first: 30, after: $after, orderBy: { field: STARRED_AT, direction: DESC })]
     pub starred_repositories: PagedStars,
-}
-
-impl PagedStars {
-    pub(crate) fn into_results(self) -> Results<RepoSummary> {
-        Results::from_page(
-            self.total_count,
-            self.page_info,
-            self.nodes,
-            RepoCard::into_summary,
-        )
-    }
 }
 
 // ---- releases and tags ---------------------------------------------------------------------
@@ -4369,7 +4286,7 @@ pub enum TaggedObject {
 }
 
 impl WireRelease {
-    fn into_release(self) -> Release {
+    pub(crate) fn into_release(self) -> Release {
         Release {
             id: self.database_id.and_then(|id| u64::try_from(id).ok()),
             name: self
@@ -4383,16 +4300,8 @@ impl WireRelease {
             latest: self.is_latest,
             author: self.author.map(|a| a.login),
             notes: None,
-            assets: Vec::new().into(),
+            assets: Capped::default(),
         }
-    }
-}
-
-impl ReleaseList {
-    pub(crate) fn into_results(self) -> Results<Release> {
-        Results::from_page(self.total_count, self.page_info, self.nodes, |r| {
-            Some(r.into_release())
-        })
     }
 }
 
@@ -4400,37 +4309,33 @@ impl WireReleaseFull {
     pub(crate) fn into_release(self) -> Release {
         Release {
             notes: self.description.filter(|d| !d.trim().is_empty()),
-            assets: Capped::from_nodes(
-                self.release_assets.total_count,
-                self.release_assets.nodes,
-                |a| Asset {
-                    name: a.name,
-                    size: count(a.size),
-                    downloads: count(a.download_count),
-                    url: a.download_url.0,
-                },
-            ),
+            assets: self.release_assets.into_capped(|a| Asset {
+                name: a.name,
+                size: count(a.size),
+                downloads: count(a.download_count),
+                url: a.download_url.0,
+            }),
             ..self.card.into_release()
         }
     }
 }
 
-impl TagRefs {
-    pub(crate) fn into_results(self) -> Results<TagInfo> {
-        Results::from_page(self.total_count, self.page_info, self.nodes, |r| {
-            let commit = match r.target {
-                Some(TagTarget::Commit(c)) => Some(c),
-                Some(TagTarget::Tag(t)) => match t.target {
-                    TaggedObject::Commit(c) => Some(c),
-                    TaggedObject::Other => None,
-                },
-                _ => None,
-            };
-            Some(TagInfo {
-                name: r.name,
-                oid: commit.as_ref().map(|c| c.oid.0.clone()),
-                date: commit.map(|c| c.committed_date.0),
-            })
+impl TagRef {
+    /// The tag and its commit, through an annotated tag's object.
+    pub(crate) fn into_info(self) -> Option<TagInfo> {
+        let commit = match self.target {
+            Some(
+                TagTarget::Commit(c)
+                | TagTarget::Tag(AnnotatedTag {
+                    target: TaggedObject::Commit(c),
+                }),
+            ) => Some(c),
+            _ => None,
+        };
+        Some(TagInfo {
+            name: self.name,
+            oid: commit.as_ref().map(|c| c.oid.0.clone()),
+            date: commit.map(|c| c.committed_date.0),
         })
     }
 }
@@ -4472,7 +4377,7 @@ impl WireCommit {
             authored_at: self.authored_date.0,
             committer,
             committed_at: self.committed_date.0,
-            parents: Capped::from_nodes(self.parents.total_count, self.parents.nodes, |p| p.oid.0),
+            parents: self.parents.into_capped(|p| p.oid.0),
             additions: count(self.additions),
             deletions: count(self.deletions),
             changed_files: self.changed_files_if_available.map(count),
@@ -4558,11 +4463,7 @@ impl RepoFull {
             license: self
                 .license_info
                 .map(|l| l.spdx_id.filter(|s| s != "NOASSERTION").unwrap_or(l.name)),
-            topics: Capped::from_nodes(
-                self.repository_topics.total_count,
-                self.repository_topics.nodes,
-                |t| t.topic.name,
-            ),
+            topics: self.repository_topics.into_capped(|t| t.topic.name),
             default_branch,
             last_commit,
             commits,
@@ -4586,37 +4487,37 @@ impl RepoFull {
 
 impl BrowseItem {
     pub(crate) fn into_issue(self) -> Option<IssueSummary> {
-        match self {
-            BrowseItem::Issue(i) => Some(IssueSummary {
-                repo: RepoId::parse(&i.repository.name_with_owner)?,
-                number: count(i.number),
-                title: i.title,
-                kind: IssueKind::Issue(issue_state(i.state, i.state_reason)),
-                author: author(i.author),
-                updated_at: i.updated_at.0,
-                comments: count(i.comments.total_count),
-                labels: labels(i.labels),
-                created_at: i.created_at.0,
-            }),
-            BrowseItem::PullRequest(p) => Some(IssueSummary {
-                repo: RepoId::parse(&p.repository.name_with_owner)?,
-                number: count(p.number),
-                title: p.title,
-                kind: IssueKind::Pr {
+        macro_rules! summary {
+            ($i:ident, $kind:expr) => {
+                IssueSummary {
+                    repo: RepoId::parse(&$i.repository.name_with_owner)?,
+                    number: count($i.number),
+                    kind: $kind,
+                    title: $i.title,
+                    author: author($i.author),
+                    updated_at: $i.updated_at.0,
+                    comments: count($i.comments.total_count),
+                    labels: labels($i.labels),
+                    created_at: $i.created_at.0,
+                }
+            };
+        }
+        Some(match self {
+            BrowseItem::Issue(i) => {
+                summary!(i, IssueKind::Issue(issue_state(i.state, i.state_reason)))
+            }
+            BrowseItem::PullRequest(p) => summary!(
+                p,
+                IssueKind::Pr {
                     id: p.id.into(),
                     state: p.status.into(),
                     review: p.review_decision,
                     approvals: timeline::approvals(p.latest_opinionated_reviews),
                     checks: None,
-                },
-                author: author(p.author),
-                updated_at: p.updated_at.0,
-                comments: count(p.comments.total_count),
-                labels: labels(p.labels),
-                created_at: p.created_at.0,
-            }),
-            _ => None,
-        }
+                }
+            ),
+            _ => return None,
+        })
     }
 
     pub(crate) fn into_user(self) -> Option<UserSummary> {
@@ -4649,9 +4550,7 @@ impl IssueFull {
             author: author(self.author),
             created_at: self.created_at.0,
             labels: labels(self.labels),
-            assignees: Capped::from_nodes(self.assignees.total_count, self.assignees.nodes, |u| {
-                u.login
-            }),
+            assignees: self.assignees.into_capped(|u| u.login),
             milestone: self.milestone.map(MilestoneRef::from_wire),
             timeline: timeline::issue_timeline(self.timeline_items),
             comment_count: count(self.comments.total_count),
@@ -4722,9 +4621,7 @@ impl WirePrActivity {
             id: self.id.into(),
             timeline: timeline::pr_timeline(self.timeline_items, self.pending_review),
             comment_count: count(self.comments.total_count),
-            commits: Capped::from_nodes(self.commits.total_count, self.commits.nodes, |n| {
-                n.commit.into_info()
-            }),
+            commits: self.commits.into_capped(|n| n.commit.into_info()),
             requested: timeline::requested(self.review_requests),
             latest: timeline::latest(self.latest_reviews),
             closing: (self.closing_issues_references)
@@ -4777,11 +4674,7 @@ impl ProfileQuery {
                 socials: nodes(u.social_accounts.nodes)
                     .map(|s| (s.display_name, s.url.0))
                     .collect(),
-                orgs: Capped::from_nodes(u.organizations.total_count, u.organizations.nodes, |o| {
-                    o.login
-                }),
-                verified: false,
-                people: Capped::default(),
+                orgs: u.organizations.into_capped(|o| o.login),
                 contributions: Some(u.contributions_collection.into_contributions()),
                 login: u.login,
                 name: u.name.filter(|n| !n.is_empty()),
@@ -4791,10 +4684,10 @@ impl ProfileQuery {
                 website: u.website_url.map(|w| w.0).filter(|w| !w.is_empty()),
                 followers: Some(count(u.followers.total_count)),
                 following: Some(count(u.following.total_count)),
-                is_org: false,
                 pinned: pinned(u.pinned_items),
                 repos: repo_list(u.repositories),
                 star_count: count(u.starred_repositories.total_count),
+                ..Profile::default()
             });
         }
         let o = self.organization?;
@@ -4802,27 +4695,15 @@ impl ProfileQuery {
             login: o.login,
             name: o.name.filter(|n| !n.is_empty()),
             bio: o.description.filter(|b| !b.trim().is_empty()),
-            company: None,
             location: o.location.filter(|l| !l.is_empty()),
             website: o.website_url.map(|w| w.0).filter(|w| !w.is_empty()),
-            followers: None,
-            following: None,
             is_org: true,
             pinned: pinned(o.pinned_items),
             repos: repo_list(o.repositories),
-            star_count: 0,
             readme: readme_text(self.org_readme.and_then(|r| r.object)),
-            status: None,
-            pronouns: None,
-            socials: Vec::new(),
-            orgs: Vec::new().into(),
             verified: o.is_verified,
-            people: Capped::from_nodes(
-                o.members_with_role.total_count,
-                o.members_with_role.nodes,
-                |u| u.login,
-            ),
-            contributions: None,
+            people: o.members_with_role.into_capped(|u| u.login),
+            ..Profile::default()
         })
     }
 }

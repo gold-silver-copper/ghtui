@@ -6,7 +6,7 @@ fn composer(s: &State) -> &Compose {
 }
 
 /// A comment box open on a line of o/r#7, with a thread alice wrote.
-fn composing() -> (State, PrRef, Vec<Cmd>) {
+fn composing() -> (State, PrRef, Cmds) {
     let (mut s, pr) = diff_state(120);
     let thread = thread("t", Some(1), false, false);
     diff_msg(&mut s, &pr, DiffMsg::ThreadsLoaded(Ok(vec![thread])));
@@ -122,7 +122,7 @@ fn a_saved_reply_goes_in_at_the_cursor() {
     press(&mut s, "Hi. ");
     let cmds = press(&mut s, "<C-g>");
     let key = DataKey::SavedReplies;
-    assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
+    assert!(fixtures::asks(&cmds, &key), "{cmds:?}");
     saved_replies(
         &mut s,
         Ok(vec![

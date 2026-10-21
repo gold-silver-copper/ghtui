@@ -24,23 +24,23 @@ use crate::compose::Target;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::route::Route;
-use crate::state::{Cmd, Overlay, State};
+use crate::state::{Cmds, Overlay, State};
 use crate::ui::form::Row;
 use crate::ui::page::Link;
 
 /// What a kind of form does, on its pages ([`crate::route::Family::form`]).
 pub struct Kind {
     /// `c`, or Enter on part `part` of its text: the composer on it.
-    pub compose: fn(&mut State, usize) -> Vec<Cmd>,
+    pub compose: fn(&mut State, usize) -> Cmds,
     /// Enter on one of its rows.
-    pub row: fn(&mut State, &Row) -> Vec<Cmd>,
+    pub row: fn(&mut State, &Row) -> Cmds,
     /// What was chosen in a row's picker, set.
-    pub fill: fn(&mut State, &Route, &Row, String) -> Vec<Cmd>,
+    pub fill: fn(&mut State, &Route, &Row, String) -> Cmds,
     /// `,s`, ctrl-s or its button: makes it, saves it, or asks first.
-    pub submit: fn(&mut State) -> Vec<Cmd>,
+    pub submit: fn(&mut State) -> Cmds,
     /// Brings it up to date with what's arrived: filled in from GitHub's
     /// data once, and the like.
-    pub follow: fn(&mut State) -> Vec<Cmd>,
+    pub follow: fn(&mut State) -> Cmds,
     /// The menu's rows on its page.
     pub offers: fn(&State, &mut Vec<Doable>),
 }
@@ -64,8 +64,7 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
 };
 
 /// `,s` or ctrl-s on a form's page.
-#[must_use]
-pub fn submit(state: &mut State) -> Vec<Cmd> {
+pub fn submit(state: &mut State) -> Cmds {
     let Some(kind) = here(state) else {
         return state.just_say("That makes or saves a form, on its page");
     };
@@ -77,10 +76,9 @@ pub fn submit(state: &mut State) -> Vec<Cmd> {
 
 /// `c` on a form's page: the composer on the text selected (the first,
 /// when it's a row of another).
-#[must_use]
-pub fn compose_here(state: &mut State) -> Vec<Cmd> {
+pub fn compose_here(state: &mut State) -> Cmds {
     let Some(kind) = here(state) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let selected = match state.screen() {
         crate::state::Screen::Page(p) => p.selected_link(),
@@ -94,14 +92,13 @@ pub fn compose_here(state: &mut State) -> Vec<Cmd> {
 }
 
 /// Enter on one of a form's rows.
-#[must_use]
-pub fn row(state: &mut State, row: &Row) -> Vec<Cmd> {
+pub fn row(state: &mut State, row: &Row) -> Cmds {
     match (row, here(state)) {
         (Row::New, _) => crate::state::apply(state, Action::NewHere),
         (Row::Text(part), Some(kind)) => (kind.compose)(state, *part),
         (Row::Save, Some(_)) => submit(state),
         (_, Some(kind)) => (kind.row)(state, row),
-        (_, None) => Vec::new(),
+        (_, None) => Cmds::new(),
     }
 }
 
@@ -128,10 +125,9 @@ pub(crate) fn filling(route: &Route, row: Row, value: impl Into<String>) -> crat
 }
 
 /// Sets the form at `route`'s `row` to what was chosen in its picker.
-#[must_use]
-pub fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Vec<Cmd> {
+pub fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Cmds {
     let Some(kind) = route.family().form() else {
-        return Vec::new();
+        return Cmds::new();
     };
     state.forms.sent_mut(route).error = None;
     (kind.fill)(state, route, row, value)
@@ -139,9 +135,8 @@ pub fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Vec<C
 
 /// After GitHub's data arrives, or a form's page opens: brings the form
 /// on screen up to date.
-#[must_use]
-pub fn follow(state: &mut State) -> Vec<Cmd> {
-    here(state).map_or_else(Vec::new, |kind| (kind.follow)(state))
+pub fn follow(state: &mut State) -> Cmds {
+    here(state).map_or_else(Cmds::new, |kind| (kind.follow)(state))
 }
 
 /// The menu's rows for the form on screen.
@@ -348,11 +343,10 @@ impl Text {
     }
 
     /// ctrl-s: keeps what's written, and saves the form on screen.
-    #[must_use]
-    pub fn save_form(&self, state: &mut State, written: String) -> Vec<Cmd> {
+    pub fn save_form(&self, state: &mut State, written: String) -> Cmds {
         self.keep(state, written);
         if state.route() != Some(&self.route) {
-            return Vec::new();
+            return Cmds::new();
         }
         crate::state::apply(state, Action::Create)
     }
@@ -364,19 +358,18 @@ pub(crate) const TITLE: &[CursorMove] = &[CursorMove::Top, CursorMove::End];
 
 /// Opens the composer on part `part` of the form at `route`, with what's
 /// written there, moved by `cursor` to where writing starts.
-#[must_use]
 pub(crate) fn compose<F: Fields + Default>(
     state: &mut State,
     route: &Route,
     part: usize,
     cursor: &[CursorMove],
-) -> Vec<Cmd> {
+) -> Cmds {
     if state.forms.sent(route).sending {
         return state.just_say("It's being sent");
     }
     // Its box on the page makes way.
     let Some(text) = state.forms.edit::<F>(route).text(part).cloned() else {
-        return Vec::new();
+        return Cmds::new();
     };
     let target = Target::Form(Text {
         route: route.clone(),
@@ -417,13 +410,12 @@ impl Overlay {
 /// Says `text` where it'll be seen: in what sent it when that's open
 /// (the composer, a question, the review's dialog), else in the status
 /// bar; and does nothing else.
-#[must_use]
-pub(crate) fn say(state: &mut State, text: String) -> Vec<Cmd> {
+pub(crate) fn say(state: &mut State, text: String) -> Cmds {
     match state.overlay.as_mut().and_then(Overlay::sent_mut) {
         Some(sent) => sent.fail(text),
         None => state.error(text),
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// Marks what sent something (the composer, a question, the review's
@@ -442,8 +434,7 @@ pub(crate) fn form_sending(state: &mut State, route: &Route) {
 
 /// GitHub refused what the form at `route` sent: the form says why, as
 /// does what sent it (else the status bar).
-#[must_use]
-pub(crate) fn failed(state: &mut State, route: &Route, why: String) -> Vec<Cmd> {
+pub(crate) fn failed(state: &mut State, route: &Route, why: String) -> Cmds {
     if state.forms.map.contains_key(route) {
         state.forms.sent_mut(route).fail(why.clone());
     }
@@ -587,16 +578,16 @@ pub(crate) fn ask(
     title: String,
     facts: Vec<(String, bool)>,
     choices: Vec<(String, Answer)>,
-) {
+) -> Cmds {
     let ask = Ask::new(About::Form(route), title, facts, choices);
     state.overlay = Some(Overlay::Ask(Box::new(ask)));
+    Cmds::new()
 }
 
 /// Keys in the question: choose, go ahead, or cancel.
-#[must_use]
-pub fn on_ask_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
+pub fn on_ask_key(state: &mut State, key: KeyEvent) -> Cmds {
     let Some(Overlay::Ask(ask)) = &mut state.overlay else {
-        return Vec::new();
+        return Cmds::new();
     };
     let n = ask.choices.len().max(1);
     match key.code {
@@ -608,24 +599,23 @@ pub fn on_ask_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         }
         KeyCode::Enter => {
             let Some((_, answer)) = ask.choices.get(ask.selected).cloned() else {
-                return Vec::new();
+                return Cmds::new();
             };
             return match (ask.about.clone(), answer) {
                 (About::Act(_, about), Answer::Change(change)) => {
                     crate::act::confirmed(state, change, about)
                 }
                 (About::Form(route), answer) => answered(state, &route, answer),
-                (About::Act(..), _) => Vec::new(),
+                (About::Act(..), _) => Cmds::new(),
             };
         }
         _ => {}
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// The question about `route` was answered.
-#[must_use]
-fn answered(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
+fn answered(state: &mut State, route: &Route, answer: Answer) -> Cmds {
     match answer {
         Answer::Push => crate::create::answer(state, route, None),
         Answer::CreatePr { draft } => crate::create::answer(state, route, Some(draft)),
@@ -637,13 +627,13 @@ fn answered(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
             if let Route::Releases(crate::route::releases::Release { tag, .. }) = route {
                 state.info(format!("Kept the tag {tag}"));
             }
-            Vec::new()
+            Cmds::new()
         }
         Answer::DeleteAsset(name) => crate::release::assets::delete(state, &name),
         Answer::Gist { public } => crate::gist::create(state, route, public),
         Answer::DeleteGist => crate::gist::delete(state, route),
         Answer::Site(a) => crate::site::answer(state, route, a),
         Answer::Housekeeping(a) => crate::housekeeping::answer(state, route, a),
-        Answer::Change(_) => Vec::new(),
+        Answer::Change(_) => Cmds::new(),
     }
 }

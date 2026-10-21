@@ -78,9 +78,7 @@ impl Family for Page {
                 of: of.clone(),
                 category: None,
             }),
-            (Discussions { .. }, DiscussionsOf::Repo(repo)) => {
-                Route::Code(super::code::Repo(repo.clone()))
-            }
+            (Discussions { .. }, DiscussionsOf::Repo(repo)) => Route::code(repo.clone()),
             (Discussions { .. }, DiscussionsOf::Org(org)) => Route::user(org),
         })
     }

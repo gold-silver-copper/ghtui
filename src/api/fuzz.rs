@@ -65,11 +65,15 @@ pub fn decode(shape: u8, json: &[u8]) {
             b::WireContributions,
             b::WireContributions::into_contributions
         ),
-        18 => model!(b::PagedRepos, b::PagedRepos::into_results),
-        19 => model!(b::PagedStars, b::PagedStars::into_results),
-        20 => model!(b::ReleaseList, b::ReleaseList::into_results),
+        18 => model!(b::PagedRepos, |v: b::PagedRepos| v
+            .filter_results(b::RepoCard::into_summary)),
+        19 => model!(b::PagedStars, |v: b::PagedStars| v
+            .filter_results(b::RepoCard::into_summary)),
+        20 => model!(b::ReleaseList, |v: b::ReleaseList| v
+            .filter_results(|r| Some(r.into_release()))),
         21 => model!(b::WireReleaseFull, b::WireReleaseFull::into_release),
-        22 => model!(b::TagRefs, b::TagRefs::into_results),
+        22 => model!(b::TagRefs, |v: b::TagRefs| v
+            .filter_results(b::TagRef::into_info)),
         23 => model!(b::WireCommit, b::WireCommit::into_detail),
         24 => model!(b::RepoFull, |v: b::RepoFull| v.into_overview()),
         25 => model!(b::BrowseItem, b::BrowseItem::into_issue),
@@ -82,7 +86,8 @@ pub fn decode(shape: u8, json: &[u8]) {
             |(job, run): (b::rest_actions::Job, b::rest_actions::Run)| job
                 .into_job(run.into_job_run(None))
         ),
-        31 => model!(b::CommitHistory, b::CommitHistory::into_results),
+        31 => model!(b::CommitHistory, |v: b::CommitHistory| v
+            .filter_results(|c| Some(c.into_info()))),
         _ => model!(
             wire::Connection<b::wire_branches::Branch>,
             |v: wire::Connection<b::wire_branches::Branch>| v

@@ -13,25 +13,20 @@ use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::{Kind, fuzzy_score};
 use crate::route::{Route, issues, pulls};
-use crate::state::{Cmd, State};
-use crate::ui::overlays::PaletteItem;
+use crate::state::{Cmds, State};
 
 use super::{At, On, Pick};
 
 /// The issue or pull request on screen, and where its projects are
 /// loaded.
 pub fn here(state: &State) -> Option<(Subject, DataKey)> {
-    match state.route()? {
-        Route::Issues(issues::Issue { repo, number }) => Some((
-            Subject::Issue(repo.clone(), *number),
-            DataKey::InProjects(repo.clone(), *number),
-        )),
-        Route::Pulls(pulls::Pr { pr, .. }) => Some((
-            Subject::Pr(pr.clone()),
-            DataKey::InProjects(pr.repo.clone(), pr.number),
-        )),
-        _ => None,
-    }
+    let subject = match state.route()? {
+        Route::Issues(issues::Issue { repo, number }) => Subject::Issue(repo.clone(), *number),
+        Route::Pulls(pulls::Pr { pr, .. }) => Subject::Pr(pr.clone()),
+        _ => return None,
+    };
+    let key = key(&subject)?;
+    Some((subject, key))
 }
 
 /// Where `subject`'s projects are loaded.
@@ -99,8 +94,7 @@ pub fn doable(state: &State) -> Option<Doable> {
 
 /// `,f` on an issue or pull request: its field to set, in the one
 /// project it's in, or first which project.
-#[must_use]
-pub fn act(state: &mut State) -> Vec<Cmd> {
+pub fn act(state: &mut State) -> Cmds {
     let (subject, projects) = match changeable(state) {
         Ok(found) => found,
         Err(why) => {
@@ -128,14 +122,11 @@ pub fn project_rows(state: &State, subject: &Subject, q: &str) -> crate::picker:
         .filter(|p| fuzzy_score(q, &p.title).is_some())
         .map(|p| {
             let hint = if p.can_update {
-                p.status().unwrap_or_default().to_owned()
+                p.status().unwrap_or_default()
             } else {
-                "you can't change it".to_owned()
+                "you can't change it"
             };
-            let item = PaletteItem {
-                label: p.title.clone(),
-                hint,
-            };
+            let item = crate::picker::item(p.title.clone(), hint);
             let at = At {
                 on: On::Sidebar(subject.clone(), p.id.clone()),
                 item: p.item.clone(),
@@ -148,9 +139,7 @@ pub fn project_rows(state: &State, subject: &Subject, q: &str) -> crate::picker:
 /// What following a change to `about`'s fields fetches again: its
 /// projects, which its sidebar shows.
 pub fn polls(change: &Change, about: &Subject) -> Option<DataKey> {
-    matches!(change, Change::SetProjectField { .. })
-        .then(|| key(about))
-        .flatten()
+    matches!(change, Change::SetProjectField { .. }).then(|| key(about))?
 }
 
 /// Whether `about`'s sidebar shows the field set (or cleared).

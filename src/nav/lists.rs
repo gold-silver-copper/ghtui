@@ -45,14 +45,13 @@ pub(super) fn list_query(state: &State) -> Option<(Route, String)> {
     Some((route.clone(), route.family().query()?.to_owned()))
 }
 
-#[must_use]
-pub(super) fn set_list_state(state: &mut State, which: &str) -> Vec<Cmd> {
+pub(super) fn set_list_state(state: &mut State, which: &str) -> Cmds {
     let Some((route, query)) = list_query(state) else {
-        return Vec::new();
+        return Cmds::new();
     };
     match route.family().with_query(with_state(&query, which)) {
         Some(r) if r != route => state.replace(r, true, None),
-        _ => Vec::new(),
+        _ => Cmds::new(),
     }
 }
 
@@ -72,8 +71,7 @@ pub(super) fn plain_search(route: &Route) -> Option<&'static str> {
     }
 }
 
-#[must_use]
-pub(super) fn cycle_state(state: &mut State) -> Vec<Cmd> {
+pub(super) fn cycle_state(state: &mut State) -> Cmds {
     if let Some(what) = state.route().and_then(plain_search) {
         return state.just_say(format!("{what} aren't open or closed"));
     }
@@ -89,8 +87,7 @@ pub(super) fn cycle_state(state: &mut State) -> Vec<Cmd> {
     set_list_state(state, next_list_state(&route, &query))
 }
 
-#[must_use]
-pub(super) fn cycle_sort(state: &mut State) -> Vec<Cmd> {
+pub(super) fn cycle_sort(state: &mut State) -> Cmds {
     // A profile's repositories sort by GraphQL order, not a search word.
     if let Some(Route::People(people::User {
         login,
@@ -127,7 +124,7 @@ pub(super) fn cycle_sort(state: &mut State) -> Vec<Cmd> {
         .position(|(_, l)| *l == current)
         .unwrap_or(0);
     let Some(&(next, label)) = pages::SORTS.iter().cycle().nth(i + 1) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let mut words: Vec<&str> = query
         .split_whitespace()
@@ -140,7 +137,7 @@ pub(super) fn cycle_sort(state: &mut State) -> Vec<Cmd> {
     state.info(format!("Sorted: {label}"));
     match route.family().with_query(words.join(" ")) {
         Some(r) => state.replace(r, true, None),
-        None => Vec::new(),
+        None => Cmds::new(),
     }
 }
 

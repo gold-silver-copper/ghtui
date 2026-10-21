@@ -224,8 +224,8 @@ fn footer(
     hints: &[(&str, &str)],
 ) {
     let spans = match (busy, error) {
-        (Some(busy), _) => vec![Span::styled(busy.to_owned(), theme.meta(SHEET))],
-        (None, Some(error)) => vec![Span::styled(error.to_owned(), theme.error(SHEET))],
+        (Some(busy), _) => vec![Span::styled(busy, theme.meta(SHEET))],
+        (None, Some(error)) => vec![Span::styled(error, theme.error(SHEET))],
         (None, None) => key_hints(theme, SHEET, hints),
     };
     Line::from(fit_spans(&spans, area.width)).render(area, buf);
@@ -269,23 +269,18 @@ impl Widget for SubmitSheet<'_> {
         say(&pending, theme.meta(SHEET), row(y), buf);
         // What's on GitHub is published too, wherever it was written.
         let on_github = match self.on_github {
-            None => Span::styled(
-                "Checking GitHub for your pending review…",
-                theme.meta(SHEET),
-            ),
-            Some(0) => Span::raw(""),
-            Some(n) => Span::styled(
-                if n == 1 {
-                    "Your pending review on GitHub holds 1 comment: it's published too.".to_owned()
-                } else {
-                    format!(
-                        "Your pending review on GitHub holds {n} comments: they're published too."
-                    )
-                },
-                theme.error(SHEET),
-            ),
+            None => "Checking GitHub for your pending review…".to_owned(),
+            Some(0) => String::new(),
+            Some(1) => "Your pending review on GitHub holds 1 comment: it's published too.".into(),
+            Some(n) => {
+                format!("Your pending review on GitHub holds {n} comments: they're published too.")
+            }
         };
-        Line::from(fit_spans(&[on_github], inner.width)).render(row(y.saturating_add(1)), buf);
+        let style = match self.on_github {
+            None => theme.meta(SHEET),
+            Some(_) => theme.error(SHEET),
+        };
+        say(&on_github, style, row(y.saturating_add(1)), buf);
         y = y.saturating_add(2);
 
         let events = [
@@ -378,7 +373,7 @@ impl Widget for ConfirmSheet<'_> {
                 height: error_rows,
                 ..inner
             };
-            ratatui::widgets::Paragraph::new(error.to_owned())
+            ratatui::widgets::Paragraph::new(error)
                 .style(theme.error(SHEET))
                 .wrap(ratatui::widgets::Wrap { trim: true })
                 .render(area, buf);

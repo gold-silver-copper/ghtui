@@ -99,10 +99,13 @@ impl PageScreen {
         // The item still there starting nearest the top, if nearer than
         // the page's top, keeps its place on screen.
         let off = |it: &Item| it.start.abs_diff(self.scroll);
-        let mut near: Vec<_> = old.items.iter().enumerate().collect();
+        let mut near: Vec<_> = (old.items.iter().enumerate())
+            .filter(|&(_, it)| off(it) < self.scroll)
+            .collect();
         near.sort_by_key(|&(_, it)| off(it));
-        let mut kept = near.into_iter().filter(|&(_, it)| off(it) < self.scroll);
-        let moved = kept.find_map(|(i, it)| Some((it, self.page.items.get(find(i)?)?)));
+        let moved = near
+            .into_iter()
+            .find_map(|(i, it)| Some((it, self.page.items.get(find(i)?)?)));
         if let Some((it, now)) = moved {
             self.scroll = (self.scroll + now.start).saturating_sub(it.start);
         }

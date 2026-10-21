@@ -40,18 +40,14 @@ impl Value {
     /// Names given either way GitHub takes them: a list, or one string of
     /// names between commas.
     pub fn names(&self) -> Vec<String> {
-        let names: Vec<String> = match self {
-            Value::Text(text) => text.split(',').map(str::to_owned).collect(),
-            Value::List(items) => items
-                .iter()
-                .filter_map(Value::text)
-                .map(str::to_owned)
-                .collect(),
+        let names: Vec<&str> = match self {
+            Value::Text(text) => text.split(',').collect(),
+            Value::List(items) => items.iter().filter_map(Value::text).collect(),
             _ => Vec::new(),
         };
-        (names.into_iter())
-            .map(|n| n.trim().to_owned())
+        (names.into_iter().map(str::trim))
             .filter(|n| !n.is_empty())
+            .map(str::to_owned)
             .collect()
     }
 

@@ -89,7 +89,7 @@ impl Family for Page {
     fn up(&self, _: &State) -> Option<Route> {
         let repo = self.repo_id().clone();
         Some(match self {
-            Issues { .. } | Milestones { .. } => Route::Code(super::code::Repo(repo)),
+            Issues { .. } | Milestones { .. } => Route::code(repo),
             Milestone { .. } => Route::Issues(Milestones {
                 repo,
                 closed: false,
@@ -238,7 +238,10 @@ pub(super) fn list(
     is_pr: bool,
 ) {
     let is = if is_pr { "pr" } else { "issue" };
-    let header = DataKey::Repo(repo.clone());
+    #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
+    let overview = b
+        .get::<RepoOverview>(&DataKey::Repo(repo.clone()))
+        .ready_unchecked();
     // A filtered list counts what the filter finds, as GitHub's does;
     // until it's counted, no counts show.
     #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
@@ -246,7 +249,7 @@ pub(super) fn list(
         Some(q) => (b.get::<StateCounts>(&DataKey::StateCounts(q)))
             .ready_unchecked()
             .map(|c| (c.open, c.closed)),
-        None => (b.get::<RepoOverview>(&header)).ready_unchecked().map(|o| {
+        None => overview.map(|o| {
             if is_pr {
                 (o.open_prs, o.closed_prs)
             } else {
@@ -261,8 +264,6 @@ pub(super) fn list(
             _ => None,
         });
     // Pinned issues, above the list, as on GitHub.
-    #[expect(clippy::disallowed_methods, reason = "extra: shown once loaded")]
-    let overview = b.get::<RepoOverview>(&header).ready_unchecked();
     if let Some(o) = overview.filter(|_| !is_pr) {
         pages::pinned_issues(page, repo, &o.pinned_issues, b.cx.icons);
     }

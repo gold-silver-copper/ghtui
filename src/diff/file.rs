@@ -220,16 +220,16 @@ impl FileDiff {
         let new = Text::new(new.unwrap_or_default());
         let lines = align(&old, &new, Algorithm::Histogram, Whitespace::Exact);
         let (additions, deletions) = counts(&lines);
-        let changed = additions + deletions > 0;
+        // Only highlight and compare by syntax files with changes to show.
+        let rich = rich && additions + deletions > 0;
         // A plain diff only reads exact blocks, and an ignoring alignment
         // equal to the exact one would derive the same everything.
-        let ignoring = (changed && rich)
+        let ignoring = rich
             .then(|| align(&old, &new, Algorithm::Histogram, Whitespace::Ignore))
             .filter(|l| *l != lines);
-        // Only highlight and compare by syntax files with changes to show.
-        let lang = Language::from_path(path).filter(|_| changed && rich);
+        let lang = Language::from_path(path).filter(|_| rich);
         let trees = lang.map(|lang| (parse(lang, &old), parse(lang, &new)));
-        let (local_ranges, old_spans, new_spans, scopes) = if changed && rich {
+        let (local_ranges, old_spans, new_spans, scopes) = if rich {
             let ranges = Commentable::local(&old, &new).ranges;
             let new_tree = trees.as_ref().and_then(|t| t.1.as_ref());
             let scopes = scope::scopes_in(lang, new_tree, &new);
@@ -237,7 +237,7 @@ impl FileDiff {
         } else {
             Default::default()
         };
-        let matching = (changed && rich).then(|| match &trees {
+        let matching = rich.then(|| match &trees {
             None => Err(Fallback::NoGrammar),
             Some((Some(a), Some(b))) => structure::compare((a, &old), (b, &new)),
             Some(_) if old.source.len().max(new.source.len()) > MAX_HIGHLIGHT_BYTES => {

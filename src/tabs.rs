@@ -11,7 +11,7 @@ use crate::ui::text::short_sha;
 
 use crate::diff_screen::{DiffOf, DiffPrefs, DiffScreen};
 use crate::nav::PageScreen;
-use crate::state::{Cmd, Screen, Screens, State};
+use crate::state::{Cmds, Screen, Screens, State};
 
 /// An open tab off screen: its history as it was left.
 pub struct Tab {
@@ -27,11 +27,6 @@ impl Tab {
             forward: Vec::new(),
             parked: Vec::new(),
         }
-    }
-
-    /// What the tab strip calls it.
-    pub fn title(&self) -> String {
-        title(self.screens.last())
     }
 }
 
@@ -84,13 +79,19 @@ impl State {
 
     /// Every open tab's title, in order.
     pub fn tab_titles(&self) -> Vec<String> {
-        let current = title(self.screens.last());
-        let before = self.before.iter().map(Tab::title);
-        let after = self.after.iter().map(Tab::title);
-        before
-            .chain(std::iter::once(current))
-            .chain(after)
-            .collect()
+        self.each_tab(title)
+    }
+
+    /// The route on screen in each tab, in order, for reopening them.
+    pub fn tab_urls(&self) -> Vec<String> {
+        self.each_tab(url)
+    }
+
+    /// `f` of the screen each tab shows, in order.
+    fn each_tab<T>(&self, f: fn(&Screen) -> T) -> Vec<T> {
+        let before = self.before.iter().map(|t| f(t.screens.last()));
+        let after = self.after.iter().map(|t| f(t.screens.last()));
+        (before.chain([f(self.screens.last())]).chain(after)).collect()
     }
 
     /// Puts `next` on screen, handing back the history it replaces.
@@ -104,8 +105,7 @@ impl State {
 
     /// Opens `dest` in a new tab after this one, at its anchor. Pages in
     /// the browser just open there.
-    #[must_use]
-    pub fn open_tab(&mut self, Dest { target, anchor }: Dest) -> Vec<Cmd> {
+    pub fn open_tab(&mut self, Dest { target, anchor }: Dest) -> Cmds {
         let (first, mut cmds) = match target {
             Target::Page(route) => {
                 let route = self.followed(route);
@@ -115,13 +115,24 @@ impl State {
             Target::Files(of) => {
                 let mut screen = DiffScreen::new(of, DiffPrefs::fit(self.size.0));
                 screen.anchor = anchor;
-                (Screen::Diff(Box::new(screen)), Vec::new())
+                (Screen::Diff(Box::new(screen)), Cmds::new())
             }
             Target::External(_) => return self.go(target.into()),
         };
+        self.push_tab(first);
+        cmds.extend(self.opened_tab());
+        cmds
+    }
+
+    /// Puts `first` on screen in a new tab after this one.
+    fn push_tab(&mut self, first: Screen) {
         let left = self.swap_in(Tab::new(first));
         self.before.push(left);
-        cmds.extend(self.load_visible(false));
+    }
+
+    /// A new tab is on screen: it loads, and says where it is.
+    fn opened_tab(&mut self) -> Cmds {
+        let cmds = self.load_visible(false);
         let n = self.tab_count();
         self.info(format!("Opened in tab {} of {n}", self.active_tab() + 1));
         cmds
@@ -130,8 +141,7 @@ impl State {
     /// `T`: what's selected in a new tab. A page's selected link, the file
     /// the tree has selected, a diff's pull request or commit; with
     /// nothing selected, this page again.
-    #[must_use]
-    pub fn open_in_tab(&mut self) -> Vec<Cmd> {
+    pub fn open_in_tab(&mut self) -> Cmds {
         let dest = match self.screen() {
             Screen::Page(p) => match p.selected_link() {
                 Some(Link::Url(url)) => Dest::from_url(url),
@@ -157,25 +167,18 @@ impl State {
         };
         // The file the tree has selected: the same diff, at that file.
         if let Some(screen) = from_tree {
-            let left = self.swap_in(Tab::new(Screen::Diff(screen)));
-            self.before.push(left);
+            self.push_tab(Screen::Diff(screen));
             if let Screen::Diff(d) = self.screen_mut() {
                 d.focus = crate::diff_screen::Pane::Diff;
             }
-            self.info(format!(
-                "Opened in tab {} of {}",
-                self.active_tab() + 1,
-                self.tab_count()
-            ));
-            return self.load_visible(false);
+            return self.opened_tab();
         }
         self.open_tab(dest)
     }
 
     /// Goes to tab `i` (from 0), showing what it had and refreshing what's
     /// stale, as going back does.
-    #[must_use]
-    pub fn switch_to_tab(&mut self, i: usize) -> Vec<Cmd> {
+    pub fn switch_to_tab(&mut self, i: usize) -> Cmds {
         if i >= self.tab_count() {
             return self.just_say(format!("No tab {} open", i + 1));
         }
@@ -188,8 +191,7 @@ impl State {
 
     /// What the command line asked for: on screen, or with tabs reopened,
     /// in a new tab after them.
-    #[must_use]
-    pub fn start_at(&mut self, dest: Dest) -> Vec<Cmd> {
+    pub fn start_at(&mut self, dest: Dest) -> Cmds {
         if self.tab_count() == 1 {
             return self.go(dest);
         }
@@ -216,8 +218,7 @@ impl State {
     }
 
     /// `]` and `[`: the next or previous open tab, wrapping around.
-    #[must_use]
-    pub fn step_open_tab(&mut self, forward: bool) -> Vec<Cmd> {
+    pub fn step_open_tab(&mut self, forward: bool) -> Cmds {
         let n = self.tab_count();
         if n == 1 {
             let open = self.first_key(crate::keymap::Action::OpenInTab);
@@ -233,8 +234,7 @@ impl State {
     }
 
     /// Closes the tab on screen, showing the next (or else the previous).
-    #[must_use]
-    pub fn close_tab(&mut self) -> Vec<Cmd> {
+    pub fn close_tab(&mut self) -> Cmds {
         let next = if self.after.is_empty() {
             self.before.pop()
         } else {
@@ -247,16 +247,6 @@ impl State {
         drop(self.swap_in(next));
         self.overlay = None;
         self.load_visible(false)
-    }
-
-    /// The route on screen in each tab, in order, for reopening them.
-    pub fn tab_urls(&self) -> Vec<String> {
-        let before = self.before.iter().map(|t| url(t.screens.last()));
-        let after = self.after.iter().map(|t| url(t.screens.last()));
-        before
-            .chain(std::iter::once(url(self.screens.last())))
-            .chain(after)
-            .collect()
     }
 
     /// Reopens tabs saved by [`State::tab_urls`]: the first replaces the

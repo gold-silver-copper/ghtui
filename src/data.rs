@@ -230,7 +230,7 @@ impl DataKey {
 
     /// Where its data is kept in the cache, if it is.
     fn cache_id(&self) -> Option<String> {
-        let key = serde_json::to_string(self).ok().filter(|_| self.kept())?;
+        let key = self.kept().then(|| serde_json::to_string(self).ok())??;
         Some(format!("data:{key}"))
     }
 }
@@ -263,14 +263,7 @@ macro_rules! data {
         }
 
         $($(
-            impl Picked for $picked {
-                fn pick(data: &Data) -> Option<&Self> {
-                    match data {
-                        Data::$variant(x) => Some(std::borrow::Borrow::borrow(x)),
-                        _ => None,
-                    }
-                }
-            }
+            data!(@pick $variant $picked);
 
             impl From<$picked> for Data {
                 fn from(x: $picked) -> Self {
@@ -279,16 +272,7 @@ macro_rules! data {
             }
         )?)*
 
-        $($(
-            impl Picked for $unsized {
-                fn pick(data: &Data) -> Option<&Self> {
-                    match data {
-                        Data::$variant(x) => Some(std::borrow::Borrow::borrow(x)),
-                        _ => None,
-                    }
-                }
-            }
-        )?)*
+        $($(data!(@pick $variant $unsized);)?)*
 
         impl Data {
             /// Where a paged list's next page starts, if there's more.
@@ -308,6 +292,16 @@ macro_rules! data {
                         }
                     )?)?)*
                     _ => {}
+                }
+            }
+        }
+    };
+    (@pick $variant:ident $kind:ty) => {
+        impl Picked for $kind {
+            fn pick(data: &Data) -> Option<&Self> {
+                match data {
+                    Data::$variant(x) => Some(std::borrow::Borrow::borrow(x)),
+                    _ => None,
                 }
             }
         }

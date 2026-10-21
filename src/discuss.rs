@@ -19,7 +19,7 @@ use crate::data::DataKey;
 use crate::edit::Choosing;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::state::{Cmd, Screen, State};
+use crate::state::{Cmds, Screen, State};
 use crate::ui::page::Link;
 
 /// The actions a discussion's page takes as its own.
@@ -75,8 +75,7 @@ impl Writing {
 }
 
 /// Sends what the composer wrote.
-#[must_use]
-pub fn send(w: &Writing, body: String) -> Vec<Cmd> {
+pub fn send(w: &Writing, body: String) -> Cmds {
     let change = match &w.writes {
         Writes::Comment {
             discussion,
@@ -93,10 +92,7 @@ pub fn send(w: &Writing, body: String) -> Vec<Cmd> {
         },
     };
     let about = Subject::Discussion(w.of.clone(), w.number);
-    vec![crate::act::send(
-        Change::Discussion(change),
-        By::Edit(about),
-    )]
+    crate::act::send(Change::Discussion(change), By::Edit(about)).into()
 }
 
 /// The discussion on screen, as loaded, and the comment selected.
@@ -128,7 +124,6 @@ fn here(state: &State) -> Option<Here<'_>> {
     })
 }
 
-/// Whether `action` is the discussion's on screen to do.
 /// What discussions add: their own actions on a discussion's pages.
 pub const FEATURE: crate::features::Feature = crate::features::Feature {
     takes,
@@ -137,6 +132,7 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
     ..crate::features::Feature::NONE
 };
 
+/// Whether `action` is the discussion's on screen to do.
 fn takes(state: &State, action: Action) -> bool {
     ACTIONS.contains(&action) && here(state).is_some()
 }
@@ -369,8 +365,7 @@ fn plan(state: &State, h: &Here<'_>, action: Action) -> Result<Step, String> {
 }
 
 /// Runs one of [`ACTIONS`] on the discussion on screen.
-#[must_use]
-pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
+pub fn act(state: &mut State, action: Action) -> Cmds {
     let Some(h) = here(state) else {
         return state.just_say(action.not_here());
     };

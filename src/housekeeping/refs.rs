@@ -16,7 +16,7 @@ use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
 use crate::picker::Choice;
-use crate::state::{Cmd, State};
+use crate::state::{Cmds, State};
 use crate::work::{self, Cx, Failure, Job};
 
 /// A branch's or tag's change: made at a commit, or deleted, with git in
@@ -57,8 +57,7 @@ fn picked(state: &State, kind: RefKind) -> Option<(String, Option<&BranchInfo>)>
 }
 
 /// `,o` on the branches or tags: its name first.
-#[must_use]
-pub(super) fn start(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec<Cmd> {
+pub(super) fn start(state: &mut State, repo: &RepoId, kind: RefKind) -> Cmds {
     if let Some(why) = refused(state, repo, what(kind)) {
         return state.just_say(why);
     }
@@ -173,8 +172,7 @@ pub(super) fn in_clone(c: &Clone) -> String {
 
 /// `,D` on the branches or tags: refused for the default branch and one
 /// GitHub's rules protect; else asked.
-#[must_use]
-pub(super) fn ask_delete(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec<Cmd> {
+pub(super) fn ask_delete(state: &mut State, repo: &RepoId, kind: RefKind) -> Cmds {
     if let Some(why) = refused(state, repo, what(kind)) {
         return state.just_say(why);
     }
@@ -260,20 +258,18 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId, kind: RefKind) -> Vec
         title,
         facts,
         vec![(format!("Delete {}", kind.noun()), delete)],
-    );
-    Vec::new()
+    )
 }
 
 /// Once GitHub says whether the branch asked about is protected: its
 /// deletion is asked about, if it's still the one selected.
-#[must_use]
-pub(crate) fn follow(state: &mut State) -> Vec<Cmd> {
+pub(crate) fn follow(state: &mut State) -> Cmds {
     let Some((repo, name)) = state.housekeeping.deleting.clone() else {
-        return Vec::new();
+        return Cmds::new();
     };
     let key = DataKey::BranchRules(repo.clone(), name.clone());
     if state.answer::<BranchRules>(&key).is_none() {
-        return Vec::new();
+        return Cmds::new();
     }
     state.housekeeping.deleting = None;
     let still = state.route() == Some(&Route::Code(code::Branches(repo.clone())))
@@ -282,19 +278,18 @@ pub(crate) fn follow(state: &mut State) -> Vec<Cmd> {
     if still {
         return ask_delete(state, &repo, RefKind::Branch);
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// Makes or deletes it: with git in your clone when there's one, else
 /// with GitHub's API.
-#[must_use]
 pub(super) fn send(
     state: &mut State,
     repo: RepoId,
     kind: RefKind,
     name: String,
     from: Option<String>,
-) -> Vec<Cmd> {
+) -> Cmds {
     let clone = state.clone_of(&repo).flatten().cloned();
     let write = match from {
         Some(from) => RefWrite::Create(from),
@@ -353,15 +348,14 @@ impl Job for Save {
     }
 
     /// GitHub's answer: the list follows it until it shows the change.
-    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
-        let work = self;
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
         let Save {
             repo,
             kind,
             name,
             write,
             ..
-        } = work;
+        } = self;
         if let Err(why) = result {
             return crate::forms::say(state, why.to_string());
         }
@@ -379,7 +373,7 @@ impl Job for Save {
             kind.noun()
         ));
         if state.route() != Some(&page) {
-            return Vec::new();
+            return Cmds::new();
         }
         expect(state, page.clone(), Expected::Ref(repo, kind, name, there));
         state.ensure_route(&page, true)

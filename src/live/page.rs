@@ -22,7 +22,7 @@ use crate::api::model::RepoId;
 use crate::api::{ApiError, Polled};
 use crate::data::DataKey;
 use crate::discuss::same_text;
-use crate::state::{Api, Cmd, Screen, State};
+use crate::state::{Api, Cmd, Cmds, Screen, State};
 use crate::ui::text::noun;
 
 use super::{Ask, MOST_MS, Pace};
@@ -84,23 +84,22 @@ pub enum Probe {
 impl Probe {
     /// Where a REST probe asks; `None` for one asked another way.
     pub fn path(&self) -> Option<String> {
-        let repo = |r: &RepoId| format!("/repos/{}/{}", r.owner, r.name);
         let run = |r: &RepoId, run: u64, attempt: Option<u64>| {
-            let base = format!("{}/actions/runs/{run}", repo(r));
+            let base = format!("/repos/{r}/actions/runs/{run}");
             match attempt {
                 Some(n) => format!("{base}/attempts/{n}"),
                 None => base,
             }
         };
         Some(match self {
-            Probe::Job(r, job) => format!("{}/actions/jobs/{job}", repo(r)),
+            Probe::Job(r, job) => format!("/repos/{r}/actions/jobs/{job}"),
             Probe::Run(r, id, attempt) => run(r, *id, *attempt),
             Probe::RunJobs(r, id, attempt) => {
                 format!("{}/jobs?per_page=100", run(r, *id, *attempt))
             }
-            Probe::Issue(r, n) => format!("{}/issues/{n}", repo(r)),
+            Probe::Issue(r, n) => format!("/repos/{r}/issues/{n}"),
             Probe::IssueComments(r, n, since) => {
-                format!("{}/issues/{n}/comments?since={since}&per_page=100", repo(r))
+                format!("/repos/{r}/issues/{n}/comments?since={since}&per_page=100")
             }
             Probe::Runs(..) | Probe::Discussion(..) => return None,
         })
@@ -256,8 +255,7 @@ impl PageWatch {
 
 /// Watches the page on screen, and schedules the next ask about it.
 /// Leaving a page forgets what was new on it.
-#[must_use]
-pub fn schedule(state: &mut State) -> Vec<Cmd> {
+pub fn schedule(state: &mut State) -> Cmds {
     let here = watched(state);
     if state.page_watch.as_ref().map(|w| &w.what) != here.as_ref() {
         // A job that ended stays followed until you leave it.
@@ -279,7 +277,7 @@ pub fn schedule(state: &mut State) -> Vec<Cmd> {
     let live = matches!(state.page_watch.as_ref(), Some(w) if watched_now(state, &w.what));
     match state.page_watch.as_mut() {
         Some(w) if live => w.pace.due(focused).into_iter().collect(),
-        _ => Vec::new(),
+        _ => Cmds::new(),
     }
 }
 
@@ -296,13 +294,12 @@ pub fn refocus(state: &mut State) {
 }
 
 /// Time to ask about the watched page, if the timer is still its.
-#[must_use]
-pub fn on_timer(state: &mut State, id: u64) -> Vec<Cmd> {
+pub fn on_timer(state: &mut State, id: u64) -> Cmds {
     let Some(what) = (state.page_watch.as_ref())
         .filter(|w| w.pace.is(id))
         .map(|w| w.what.clone())
     else {
-        return Vec::new();
+        return Cmds::new();
     };
     // A discussion is asked about in the repository it's in.
     let discussion_repo = match &what {
@@ -319,17 +316,13 @@ pub fn on_timer(state: &mut State, id: u64) -> Vec<Cmd> {
         _ => None,
     };
     let Some(w) = state.page_watch.as_mut() else {
-        return Vec::new();
+        return Cmds::new();
     };
     let probes = match &what {
         // A job that ended in a run still going: the run's end shows on it.
-        Watched::Job { repo, job } => match run_going {
-            Some(run) => vec![
-                Probe::Job(repo.clone(), *job),
-                Probe::Run(repo.clone(), run, None),
-            ],
-            None => vec![Probe::Job(repo.clone(), *job)],
-        },
+        Watched::Job { repo, job } => std::iter::once(Probe::Job(repo.clone(), *job))
+            .chain(run_going.map(|run| Probe::Run(repo.clone(), run, None)))
+            .collect(),
         Watched::Run { repo, run, attempt } => vec![
             Probe::Run(repo.clone(), *run, *attempt),
             Probe::RunJobs(repo.clone(), *run, *attempt),
@@ -344,12 +337,12 @@ pub fn on_timer(state: &mut State, id: u64) -> Vec<Cmd> {
             // Not loaded yet: asked about next time.
             None => {
                 w.pace.idle();
-                return Vec::new();
+                return Cmds::new();
             }
         },
     };
     let asks: Vec<Ask<Probe>> = probes.into_iter().map(|p| w.pace.ask(p)).collect();
-    vec![Cmd::Api(Api::Watch { what, asks })]
+    Cmd::Api(Api::Watch { what, asks }).into()
 }
 
 /// Asks GitHub one probe's question, with the ETag of its last answer.
@@ -369,14 +362,13 @@ pub async fn ask(gh: &crate::api::GitHub, ask: &Ask<Probe>) -> Result<Polled, Ap
 }
 
 /// GitHub's answers about a watched page: what changed is fetched again.
-#[must_use]
 pub fn on_watched(
     state: &mut State,
     what: &Watched,
     answers: Vec<(Probe, Result<Polled, ApiError>)>,
-) -> Vec<Cmd> {
+) -> Cmds {
     let Some(w) = state.page_watch.as_mut().filter(|w| w.what == *what) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let mut fresh = Vec::new();
     for (probe, answer) in answers {
@@ -413,7 +405,7 @@ pub fn on_watched(
             .settle(any, if running { RUNNING_MS } else { MOST_MS });
     }
     if !any {
-        return Vec::new();
+        return Cmds::new();
     }
     // More pages loaded would go: say so instead.
     if extended {
@@ -626,10 +618,7 @@ mod wire {
     use crate::api::browse::IssueDetail;
     use crate::api::model::IssueState;
 
-    #[derive(Deserialize)]
-    pub struct Name {
-        pub name: String,
-    }
+    pub use crate::api::browse::wire::{Count, Name};
 
     #[derive(Deserialize)]
     pub struct Login {
@@ -658,22 +647,22 @@ mod wire {
                 (_, Some("not_planned" | "duplicate")) => IssueState::NotPlanned,
                 _ => IssueState::Closed,
             };
-            let mut labels: Vec<&str> = self.labels.iter().map(|l| l.name.as_str()).collect();
-            let mut shown_labels: Vec<&str> =
-                shown.labels.iter().map(|l| l.name.as_str()).collect();
-            labels.sort_unstable();
-            shown_labels.sort_unstable();
-            let mut people: Vec<&str> = self.assignees.iter().map(|a| a.login.as_str()).collect();
-            let mut shown_people: Vec<&str> = shown.assignees.iter().map(String::as_str).collect();
-            people.sort_unstable();
-            shown_people.sort_unstable();
+            let labels = sorted(self.labels.iter().map(|l| l.name.as_str()));
+            let people = sorted(self.assignees.iter().map(|a| a.login.as_str()));
             self.title != shown.title
                 || !crate::discuss::same_text(&shown.body, self.body.as_deref().unwrap_or_default())
                 || state != shown.state
                 || self.comments != shown.comment_count
-                || labels != shown_labels
-                || people != shown_people
+                || labels != sorted(shown.labels.iter().map(|l| l.name.as_str()))
+                || people != sorted(shown.assignees.iter().map(String::as_str))
         }
+    }
+
+    /// Names in order, to compare as sets.
+    fn sorted<'a>(names: impl Iterator<Item = &'a str>) -> Vec<&'a str> {
+        let mut names: Vec<&str> = names.collect();
+        names.sort_unstable();
+        names
     }
 
     /// An issue's comment, as REST has it.
@@ -689,11 +678,5 @@ mod wire {
         pub title: String,
         pub body: String,
         pub comments: Count,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Count {
-        pub total_count: u64,
     }
 }

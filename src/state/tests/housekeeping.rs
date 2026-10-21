@@ -312,7 +312,7 @@ fn a_repository_is_forked_and_opened() {
     };
     fixtures::done(&mut s, fork, Ok(made));
     let fork = crate::api::model::RepoId::new("octocat", "ghtui");
-    assert_eq!(s.route(), Some(&Route::Code(code::Repo(fork))));
+    assert_eq!(s.route(), Some(&Route::code(fork)));
     assert!(s.busy().is_some_and(|b| b.contains("make the repository")));
 }
 
@@ -361,7 +361,7 @@ fn a_new_repository_is_made_and_cloning_offered() {
     };
     fixtures::done(&mut s, make, Ok(made));
     let repo = crate::api::model::RepoId::new("ghtui-org", "tools");
-    assert_eq!(s.route(), Some(&Route::Code(code::Repo(repo))));
+    assert_eq!(s.route(), Some(&Route::code(repo)));
     assert_eq!(overlay!(s, Ask).title, "Clone ghtui-org/tools?");
     let cmds = press(&mut s, "<Enter>");
     assert_eq!(
@@ -408,7 +408,7 @@ fn a_file_is_edited_and_committed_on_a_new_branch() {
     let file = DataKey::FileLook(ghtui(), "main".into(), "src/main.rs".into());
     assert!(fixtures::asks(&cmds, &file), "{cmds:?}");
     read(&mut s);
-    let c = crate::fixtures::composer(&mut s);
+    let c = fixtures::composer(&mut s);
     assert!(c.text().contains("Says hello."));
     c.input.insert_str("// Edited.\n");
     press(&mut s, "<Esc>");
@@ -466,7 +466,7 @@ fn a_file_changed_meanwhile_keeps_your_text() {
         change: FileChange::Edit,
     });
     read(&mut s);
-    let c = crate::fixtures::composer(&mut s);
+    let c = fixtures::composer(&mut s);
     c.input.insert_str("Mine. ");
     press(&mut s, "<C-s>");
     let cmds = press(&mut s, "<Enter>");
@@ -550,7 +550,7 @@ fn a_file_form_opened_from_a_page_reads_the_file() {
 }
 
 /// GitHub's src/main.rs on main, read for its form.
-fn read(s: &mut State) -> Vec<Cmd> {
+fn read(s: &mut State) -> Cmds {
     let file = DataKey::FileLook(ghtui(), "main".into(), "src/main.rs".into());
     fixtures::fetched(s, file, Data::from(look()))
 }

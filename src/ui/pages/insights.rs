@@ -79,6 +79,12 @@ fn bar_room(page: &Page, used: usize) -> usize {
         .min(60)
 }
 
+/// A box's row: `label`, then a bar of `n` of `max` at most `room` wide.
+fn bar_row(page: &mut Page, label: String, n: u64, max: u64, room: usize) {
+    let bar = Seg::new(bar(n, max, room), Role::Accent);
+    body(page, vec![Seg::new(label, Role::Body), bar]);
+}
+
 /// Contributors: commits over time, then each author's, most first.
 pub fn contributors(page: &mut Page, repo: &RepoId, a: &Activity) {
     let since = month(a.start);
@@ -144,11 +150,7 @@ pub fn contributors(page: &mut Page, repo: &RepoId, a: &Activity) {
             page,
             author.login.as_deref().map(url::user),
             |page, link| {
-                let role = if link.is_some() {
-                    Role::Link
-                } else {
-                    Role::Strong
-                };
+                let role = link.map_or(Role::Strong, |_| Role::Link);
                 segs.extend([Seg::linked(name, role, link), Seg::new(pad, Role::Body)]);
                 segs.extend([commits, line]);
                 body(page, segs);
@@ -191,13 +193,7 @@ pub fn commit_activity(page: &mut Page, a: &Activity) {
         .zip(a.weekdays)
     {
         let n = u64::from(n);
-        body(
-            page,
-            vec![
-                Seg::new(format!("{day}  {:>6}  ", compact(n)), Role::Body),
-                Seg::new(bar(n, max, room), Role::Accent),
-            ],
-        );
+        bar_row(page, format!("{day}  {:>6}  ", compact(n)), n, max, room);
     }
     page.box_bottom();
     // The weeks with commits, newest first, as numbers.
@@ -211,12 +207,12 @@ pub fn commit_activity(page: &mut Page, a: &Activity) {
         any = true;
         let at = start + i as u64 * WEEK;
         let n = u64::from(n);
-        body(
+        bar_row(
             page,
-            vec![
-                Seg::new(format!("{:<13} {:>6}  ", date(at), compact(n)), Role::Body),
-                Seg::new(bar(n, max, room), Role::Accent),
-            ],
+            format!("{:<13} {:>6}  ", date(at), compact(n)),
+            n,
+            max,
+            room,
         );
     }
     if !any {
@@ -239,21 +235,13 @@ fn traffic_box(page: &mut Page, what: &str, people: &str, c: &Counted) {
     let max = c.days.iter().map(|d| d.1).max().unwrap_or(0);
     let room = bar_room(page, 35);
     for (day, count, uniques) in &c.days {
-        body(
-            page,
-            vec![
-                Seg::new(
-                    format!(
-                        "{:<13} {:>5} · {:>4} unique  ",
-                        super::day(day),
-                        compact(*count),
-                        compact(*uniques)
-                    ),
-                    Role::Body,
-                ),
-                Seg::new(bar(*count, max, room), Role::Accent),
-            ],
+        let label = format!(
+            "{:<13} {:>5} · {:>4} unique  ",
+            super::day(day),
+            compact(*count),
+            compact(*uniques)
         );
+        bar_row(page, label, *count, max, room);
     }
     page.box_bottom();
     page.blank();
@@ -359,11 +347,7 @@ pub fn dependencies(page: &mut Page, d: &Dependencies) {
                 meta(format!("{gap}{}", dep.manager.to_lowercase())),
             ];
             maybe_item(page, dep.repo.as_ref().map(url::repo), |page, link| {
-                let role = if link.is_some() {
-                    Role::Link
-                } else {
-                    Role::Strong
-                };
+                let role = link.map_or(Role::Strong, |_| Role::Link);
                 let mut segs = vec![Seg::linked(name, role, link)];
                 segs.extend(rest);
                 body(page, segs);

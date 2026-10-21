@@ -192,11 +192,16 @@ pub(crate) fn dice<T: Ord>(x: &[T], y: &[T]) -> f64 {
 
 /// Dice coefficient over character bigrams of the trimmed lines.
 pub(crate) fn similarity(a: &str, b: &str) -> f64 {
-    let (x, y) = (bigrams(a), bigrams(b));
+    similar((a, &bigrams(a)), (b, &bigrams(b)))
+}
+
+/// [`similarity`] of two lines and their [`bigrams`]; lines too short to
+/// have any are alike only when equal.
+fn similar((a, x): (&str, &[(char, char)]), (b, y): (&str, &[(char, char)])) -> f64 {
     if x.is_empty() || y.is_empty() {
-        return if a.trim() == b.trim() { 1.0 } else { 0.0 };
+        return f64::from(u8::from(a.trim() == b.trim()));
     }
-    dice(&x, &y)
+    dice(x, y)
 }
 
 /// The in-order pairing of `n` old and `m` new items with the greatest
@@ -286,24 +291,23 @@ pub(crate) fn greedy_pairing<E>(
 /// with the greatest total similarity, lines too unlike anything left
 /// unpaired. Big blocks pair each removed line with its best match ahead.
 fn pair_lines(old: &[&str], new: &[&str]) -> Vec<(usize, usize)> {
-    let like = |s: f64| Ok::<_, std::convert::Infallible>(Some(s).filter(|s| *s >= MIN_SIMILARITY));
-    let pick = |i: usize, j: usize| (old.get(i).copied(), new.get(j).copied());
+    let like =
+        |s: Option<f64>| Ok::<_, std::convert::Infallible>(s.filter(|s| *s >= MIN_SIMILARITY));
+    let pick = |i: usize, j: usize| Some((*old.get(i)?, *new.get(j)?));
     let Ok(pairs) = if old.len() > MAX_ALIGNED || new.len() > MAX_ALIGNED {
-        greedy_pairing(old.len(), new.len(), |i, j| match pick(i, j) {
-            (Some(a), Some(b)) => like(similarity(a, b)),
-            _ => Ok(None),
+        greedy_pairing(old.len(), new.len(), |i, j| {
+            like(pick(i, j).map(|(a, b)| similarity(a, b)))
         })
     } else {
         let [old_grams, new_grams] =
             [old, new].map(|side| side.iter().map(|l| bigrams(l)).collect::<Vec<_>>());
         best_pairing(old.len(), new.len(), |i, j| {
-            match (old_grams.get(i), new_grams.get(j)) {
-                (Some(x), Some(y)) if !x.is_empty() && !y.is_empty() => like(dice(x, y)),
-                _ => match pick(i, j) {
-                    (Some(a), Some(b)) => like(similarity(a, b)),
-                    _ => Ok(None),
-                },
-            }
+            let grams = old_grams.get(i).zip(new_grams.get(j));
+            like(
+                pick(i, j)
+                    .zip(grams)
+                    .map(|((a, b), (x, y))| similar((a, x), (b, y))),
+            )
         })
     };
     pairs

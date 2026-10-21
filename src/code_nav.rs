@@ -20,7 +20,7 @@ use crate::diff::scope::{self, Scope};
 use crate::diff::text::Text;
 use crate::git::index::grep_word;
 use crate::picker::{Choice, Kind};
-use crate::state::{Cmd, Git, Screen, State};
+use crate::state::{Cmd, Cmds, Git, Screen, State};
 use crate::ui::overlays::PaletteItem;
 use crate::ui::text;
 
@@ -251,17 +251,16 @@ fn name_here(state: &mut State, word: Option<String>) -> Option<String> {
 }
 
 /// Asks the repository, once the revision on screen is known.
-fn ask(state: &mut State, here: &Here, want: Want) -> Vec<Cmd> {
+fn ask(state: &mut State, here: &Here, want: Want) -> Cmds {
     match here.ask(want) {
-        Some(ask) => vec![Cmd::Git(Git::Code(ask))],
+        Some(ask) => Cmd::Git(Git::Code(ask)).into(),
         None => state.just_say("The diff's head commit isn't known yet"),
     }
 }
 
 /// `gO`: the symbols of the file on screen, to go to one. The
 /// repository's index starts building, for what comes next.
-#[must_use]
-pub fn symbols(state: &mut State) -> Vec<Cmd> {
+pub fn symbols(state: &mut State) -> Cmds {
     match here(state, true) {
         Ok(here) if here.scopes.is_empty() => state.info(no_symbols(&here.path)),
         Ok(here) => {
@@ -275,12 +274,11 @@ pub fn symbols(state: &mut State) -> Vec<Cmd> {
         }
         Err(why) => state.info(why),
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// `gS`: the symbols of the whole repository, at the revision on screen.
-#[must_use]
-pub fn repo_symbols(state: &mut State) -> Vec<Cmd> {
+pub fn repo_symbols(state: &mut State) -> Cmds {
     match here(state, false) {
         Ok(here) => ask(state, &here, Want::Symbols),
         Err(why) => state.just_say(why),
@@ -289,14 +287,13 @@ pub fn repo_symbols(state: &mut State) -> Vec<Cmd> {
 
 /// `gR`: where the word under the cursor is used in the repository, at
 /// the revision on screen.
-#[must_use]
-pub fn references(state: &mut State) -> Vec<Cmd> {
+pub fn references(state: &mut State) -> Cmds {
     let here = match here(state, false) {
         Ok(here) => here,
         Err(why) => return state.just_say(why),
     };
     let Some(word) = name_here(state, here.word.clone()) else {
-        return Vec::new();
+        return Cmds::new();
     };
     state.info(format!("Looking for “{word}” in {}", here.repo));
     ask(state, &here, Want::References(word))
@@ -304,8 +301,7 @@ pub fn references(state: &mut State) -> Vec<Cmd> {
 
 /// Goes to line `line` of the file on screen. In the diff, a line the
 /// hunks don't show shows the whole file.
-#[must_use]
-pub fn go_to_line(state: &mut State, line: u32) -> Vec<Cmd> {
+pub fn go_to_line(state: &mut State, line: u32) -> Cmds {
     let Some((screen, diff)) = state.diff_parts() else {
         return crate::nav::go_to_line(state, line as usize);
     };
@@ -329,19 +325,18 @@ pub fn go_to_line(state: &mut State, line: u32) -> Vec<Cmd> {
         }
         None => state.info(format!("There's no line {line} here")),
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// `gd`: the definition of the word under the cursor. One in this file
 /// is gone to (several are offered); else the repository is asked.
-#[must_use]
-pub fn definition(state: &mut State) -> Vec<Cmd> {
+pub fn definition(state: &mut State) -> Cmds {
     let here = match here(state, true) {
         Ok(here) => here,
         Err(why) => return state.just_say(why),
     };
     let Some(word) = name_here(state, here.word.clone()) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let defines = |s: &&Scope| s.defines.as_deref() == Some(word.as_str());
     let local: Vec<Scope> = here.scopes.iter().filter(defines).cloned().collect();
@@ -385,17 +380,16 @@ fn land_on(state: &mut State, name: &str) {
 /// The repository's answer to `ask`: one definition opens, several
 /// places are offered. It's dropped once the file it was asked from
 /// isn't on screen.
-#[must_use]
-pub fn answered(state: &mut State, ask: &Ask, answer: Result<Answer, String>) -> Vec<Cmd> {
+pub fn answered(state: &mut State, ask: &Ask, answer: Result<Answer, String>) -> Cmds {
     let still = here(state, false).is_ok_and(|h| h.repo == ask.repo && h.path == ask.path);
     if !still {
-        return Vec::new();
+        return Cmds::new();
     }
     let answer = match answer {
         Ok(answer) => answer,
         Err(why) => {
             state.error(why);
-            return Vec::new();
+            return Cmds::new();
         }
     };
     let open = |p: &Place| {
@@ -411,7 +405,7 @@ pub fn answered(state: &mut State, ask: &Ask, answer: Result<Answer, String>) ->
         Choice::Go(Target::Page(route).into())
     };
     let title = match &ask.want {
-        Want::Index => return Vec::new(),
+        Want::Index => return Cmds::new(),
         Want::Definition(word) => format!("Definitions of “{word}”"),
         Want::Symbols => "Symbols in the repository".to_owned(),
         Want::References(word) => format!("Where “{word}” is used"),
@@ -427,9 +421,9 @@ pub fn answered(state: &mut State, ask: &Ask, answer: Result<Answer, String>) ->
                 Choice::Line(line) => go_to_line(state, line),
                 Choice::Go(dest) => match dest.target {
                     Target::Page(route) => state.push(route),
-                    _ => Vec::new(),
+                    _ => Cmds::new(),
                 },
-                _ => Vec::new(),
+                _ => Cmds::new(),
             };
             land_on(state, word);
             cmds

@@ -31,11 +31,9 @@ fn comment_links_scroll_to_the_comment() {
     let comment = "https://github.com/cli/cli/discussions/14603#discussioncomment-18765100";
     let _ = s.follow(&crate::ui::page::Link::Url(comment.into()));
     let of = crate::api::browse::DiscussionsOf::Repo(RepoId::new("cli", "cli"));
-    let detail = Data::from(crate::fixtures::discussion());
+    let detail = Data::from(fixtures::discussion());
     fetched(&mut s, DataKey::Discussion(of, 14603), detail);
-    let Screen::Page(p) = s.screen() else {
-        panic!()
-    };
+    let p = page(&s);
     let line = p.page().anchors["discussioncomment-18765100"];
     assert!(
         p.scroll > 0 && p.scroll <= line && line < p.scroll + 10,
@@ -51,11 +49,9 @@ fn comment_links_scroll_to_the_comment() {
         ghtui()
     );
     let _ = s.follow(&crate::ui::page::Link::Url(url));
-    let issue = Data::Issue(Some(Box::new(crate::fixtures::issue())));
+    let issue = Data::Issue(Some(Box::new(fixtures::issue())));
     fetched(&mut s, DataKey::Issue(ghtui(), 14), issue);
-    let Screen::Page(p) = s.screen() else {
-        panic!()
-    };
+    let p = page(&s);
     assert!(p.page().anchors.contains_key("issuecomment-1000001"));
     assert!(p.scroll > 0);
 }
@@ -74,7 +70,7 @@ fn a_comment_link_follows_its_comment_when_the_issue_refreshes() {
         );
         let _ = s.follow(&crate::ui::page::Link::Url(url));
         let key = DataKey::Issue(ghtui(), 14);
-        let cached = Data::Issue(Some(Box::new(crate::fixtures::issue())));
+        let cached = Data::Issue(Some(Box::new(fixtures::issue())));
         let _ = update(&mut s, Msg::fetched_at(key.clone(), Ok(cached), Some(0)));
         moved(&mut s);
         let shown = |s: &State| {
@@ -88,7 +84,7 @@ fn a_comment_link_follows_its_comment_when_the_issue_refreshes() {
             )
         };
         let at = shown(&s);
-        let mut issue = crate::fixtures::issue();
+        let mut issue = fixtures::issue();
         issue.body.push_str(&"\n\nMore.".repeat(20));
         fetched(&mut s, key, Data::Issue(Some(Box::new(issue))));
         (
@@ -147,16 +143,12 @@ fn the_mouse_follows_links_switches_tabs_and_scrolls() {
     let _ = state.back();
     // Tabs.
     let lay = state.layout();
-    let tabs: Vec<_> = state.chrome().tabs.into_iter().map(|(t, _)| t).collect();
-    let rects = crate::ui::chrome::tab_layout(lay.tabs.unwrap(), &tabs, state.chrome().active);
+    let rects = nav::tabs_of(&state.chrome(), lay.tabs.unwrap());
     let _ = click(&mut state, rects[2].x + 1, rects[2].y);
     assert!(matches!(route(&state), Route::Pulls(pulls::Pulls { .. })));
     // The header's search field.
     let field = crate::ui::chrome::header_layout(lay.header, &[], &[]).search;
-    let chrome = state.chrome();
-    let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
-    let right: Vec<_> = chrome.right.iter().map(|(t, _)| t.clone()).collect();
-    let field2 = crate::ui::chrome::header_layout(lay.header, &crumbs, &right).search;
+    let field2 = nav::header_of(&state.chrome(), lay.header).search;
     assert_eq!(field.y, field2.y);
     let _ = click(&mut state, field2.x + 1, field2.y);
     assert!(matches!(state.overlay, Some(Overlay::Search(_))));
@@ -212,19 +204,14 @@ fn the_header_counts_the_unread_and_opens_the_inbox() {
     assert!(header(&state).contains(&"● 50+ unread".to_owned()));
 
     // Clicked.
-    let lay = state.layout();
-    let chrome = state.chrome();
-    let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
-    let rects = crate::ui::chrome::header_layout(lay.header, &crumbs, &header(&state)).right;
+    let rects = nav::header_of(&state.chrome(), state.layout().header).right;
     let _ = click(&mut state, rects[0].x + 1, rects[0].y);
     assert_eq!(route(&state), inbox);
 
     // Followed by its letters.
     let _ = state.back();
     press(&mut state, "i");
-    let Some(Overlay::Hints(hints)) = &state.overlay else {
-        panic!("no hints");
-    };
+    let hints = overlay!(state, Hints);
     let label = (hints.labels.iter())
         .find(|h| (h.x, h.y) == (rects[0].x, rects[0].y))
         .map(|h| h.label.clone())
@@ -301,9 +288,7 @@ fn pages_link_to_milestones_branches_and_tags() {
     let issue = super::sized(with_issue(), 160, 40);
     assert!(routes(&issue).contains(&milestone("gold-silver-copper/ghtui")));
     let pr = super::sized(with_pr(), 160, 40);
-    let Screen::Page(p) = pr.screen() else {
-        panic!("not a page");
-    };
+    let p = page(&pr);
     let Route::Pulls(pulls::Pr { pr: pr_ref, .. }) = &p.route else {
         panic!("not a pull request");
     };
@@ -322,9 +307,7 @@ fn pages_link_to_milestones_branches_and_tags() {
 fn github_links_stay_in_ghtui() {
     let mut leaving = Vec::new();
     for (name, s) in pages() {
-        let Screen::Page(p) = s.screen() else {
-            panic!("{name} isn't a page");
-        };
+        let p = page(&s);
         let tabs = s.chrome().tabs.into_iter().map(|(_, t)| t);
         let links = p.page().links.iter().filter_map(|l| l.url());
         let targets = links.map(|u| Dest::from_url(u).target).chain(tabs);

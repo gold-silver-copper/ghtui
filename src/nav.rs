@@ -29,7 +29,7 @@ use crate::diff_screen::{self, Pane};
 use crate::keymap::Action;
 use crate::picker::{fuzzy_score, move_in_list};
 use crate::route::{self, Dest, Route, Target};
-use crate::state::{Api, Cmd, Overlay, Remote, Screen, State, apply};
+use crate::state::{Api, Cmd, Cmds, Overlay, Remote, Screen, State, apply};
 
 /// Rows `j`/`k` scroll when there's no row to move to nearby.
 const STEP: isize = 3;
@@ -63,3 +63,16 @@ pub use mouse::*;
 pub use screen::*;
 pub use search::*;
 pub use write::*;
+
+/// Where `chrome`'s header parts are in `area`.
+pub(crate) fn header_of(chrome: &crate::chrome::Chrome, area: Rect) -> chrome::HeaderLayout {
+    let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
+    let right: Vec<_> = chrome.right.iter().map(|(t, _)| t.clone()).collect();
+    chrome::header_layout(area, &crumbs, &right)
+}
+
+/// Where `chrome`'s page tabs are in their `bar`.
+pub(crate) fn tabs_of(chrome: &crate::chrome::Chrome, bar: Rect) -> Vec<Rect> {
+    let tabs: Vec<_> = chrome.tabs.iter().map(|(t, _)| t.clone()).collect();
+    chrome::tab_layout(bar, &tabs, chrome.active)
+}

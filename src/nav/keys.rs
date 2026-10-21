@@ -5,11 +5,10 @@ use crate::route::{code, runs};
 
 /// Actions on a page screen. Those that don't work on pages say where
 /// they do.
-#[must_use]
-pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
+pub fn page_action(state: &mut State, action: Action) -> Cmds {
     let height = state.page_height();
     let Screen::Page(p) = state.screen_mut() else {
-        return Vec::new();
+        return Cmds::new();
     };
     let page = height.saturating_sub(2).max(1).cast_signed();
     match action {
@@ -246,7 +245,7 @@ pub fn page_action(state: &mut State, action: Action) -> Vec<Cmd> {
         },
         _ => state.info(action.not_here()),
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// Columns `h`/`l` scroll code sideways.
@@ -266,15 +265,14 @@ pub(super) fn max_scroll(p: &PageScreen, height: usize) -> usize {
 
 /// Line `n` of a file (in the diff, of the file the cursor is in), else
 /// row `n`.
-#[must_use]
-pub fn go_to_line(state: &mut State, n: usize) -> Vec<Cmd> {
+pub fn go_to_line(state: &mut State, n: usize) -> Cmds {
     let height = state.page_height();
     // In the diff: that line of the file the cursor is in.
     if let Some((screen, diff)) = state.diff_parts() {
         // In its file tree, that row.
         if screen.focus == Pane::Tree {
             crate::diff_screen::select_tree_row(screen, diff, n.saturating_sub(1));
-            return Vec::new();
+            return Cmds::new();
         }
         let line = u32::try_from(n).unwrap_or(u32::MAX);
         let line = crate::diff::anchor::LinePos {
@@ -285,10 +283,10 @@ pub fn go_to_line(state: &mut State, n: usize) -> Vec<Cmd> {
             Some(pos) => screen.cursor = pos,
             None => state.info(format!("There's no line {n} here")),
         }
-        return Vec::new();
+        return Cmds::new();
     }
     let Screen::Page(p) = state.screen_mut() else {
-        return Vec::new();
+        return Cmds::new();
     };
     let item = match p.page.numbered.get(n.saturating_sub(1)) {
         Some(&item) => Some(item),
@@ -308,13 +306,12 @@ pub fn go_to_line(state: &mut State, n: usize) -> Vec<Cmd> {
         }
         None => state.info(format!("There's no line {n} here")),
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// The link under the cursor (a web address in the word under it,
 /// else the selected row's), in the browser.
-#[must_use]
-pub fn open_link(state: &mut State) -> Vec<Cmd> {
+pub fn open_link(state: &mut State) -> Cmds {
     match state.link_under_cursor() {
         Some(url) => state.go(Target::External(url).into()),
         None => state.just_say("No link under the cursor"),
@@ -323,16 +320,15 @@ pub fn open_link(state: &mut State) -> Vec<Cmd> {
 
 /// Esc on a page: ends a search on it or a selection of lines; with
 /// neither, goes back.
-#[must_use]
-pub fn cancel(state: &mut State) -> Vec<Cmd> {
+pub fn cancel(state: &mut State) -> Cmds {
     if let Screen::Page(p) = state.screen_mut() {
         if p.range.take().is_some() {
             state.info("Selection cleared");
-            return Vec::new();
+            return Cmds::new();
         }
         if p.find.is_some() {
             find(state, "", true);
-            return Vec::new();
+            return Cmds::new();
         }
     }
     state.back()

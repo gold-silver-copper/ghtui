@@ -314,53 +314,39 @@ impl State {
             pr,
         });
         c.tab("◷", "Commit", None, commit);
-        c.tab(
-            "✓",
-            "Checks",
-            None,
-            Route::Code(code::CommitChecks {
-                repo: repo.clone(),
-                oid,
-            }),
-        );
+        let checks = code::CommitChecks {
+            repo: repo.clone(),
+            oid,
+        };
+        c.tab("✓", "Checks", None, Route::Code(checks));
         // A short SHA or a ref has files once its full ID is known.
         if let Ok(oid) = Oid::parse(full) {
-            let files = detail.and_then(|d| d.changed_files);
-            c.tab(
-                "±",
-                "Files changed",
-                files,
-                Target::Files(DiffOf::Commit(repo, oid)),
+            let (files, diff) = (
+                detail.and_then(|d| d.changed_files),
+                DiffOf::Commit(repo, oid),
             );
+            c.tab("±", "Files changed", files, Target::Files(diff));
         }
     }
 
     fn repo_tabs(&self, repo: &RepoId, c: &mut Chrome) {
         let o = self.overview(repo);
         let r = || repo.clone();
-        c.tab("<>", "Code", None, Route::Code(code::Repo(r())));
+        c.tab("<>", "Code", None, Route::code(r()));
         if o.is_none_or(|o| o.has_issues) {
             let issues = issues::Issues {
                 repo: r(),
                 query: OPEN.into(),
             };
-            c.tab(
-                "◉",
-                "Issues",
-                o.map(|o| o.open_issues),
-                Route::Issues(issues),
-            );
+            let open = o.map(|o| o.open_issues);
+            c.tab("◉", "Issues", open, Route::Issues(issues));
         }
         let pulls = pulls::Pulls {
             repo: r(),
             query: OPEN.into(),
         };
-        c.tab(
-            "⇄",
-            "Pull requests",
-            o.map(|o| o.open_prs),
-            Route::Pulls(pulls),
-        );
+        let open = o.map(|o| o.open_prs);
+        c.tab("⇄", "Pull requests", open, Route::Pulls(pulls));
         if o.is_some_and(|o| o.has_discussions) {
             let of = DiscussionsOf::Repo(r());
             let route = Route::Discussions(discussions::Discussions { of, category: None });
@@ -370,15 +356,11 @@ impl State {
         let projects = projects::Projects(ProjectsOf::Repo(r()));
         c.tab("▥", "Projects", None, Route::Projects(projects));
         if o.is_some_and(|o| o.has_wiki) {
-            c.tab(
-                "▤",
-                "Wiki",
-                None,
-                Route::Wiki(wiki::Wiki {
-                    repo: r(),
-                    page: None,
-                }),
-            );
+            let wiki = wiki::Wiki {
+                repo: r(),
+                page: None,
+            };
+            c.tab("▤", "Wiki", None, Route::Wiki(wiki));
         }
         let advisories = security::Advisories(Some(r()));
         c.tab("⛨", "Security", None, Route::Security(advisories));
@@ -388,12 +370,8 @@ impl State {
         // GitHub shows the Settings tab only to admins.
         if o.is_some_and(|o| o.can_admin) {
             let page = crate::api::settings::SettingsPage::General;
-            c.tab(
-                "⚙",
-                "Settings",
-                None,
-                Route::Settings(settings::Page { repo: r(), page }),
-            );
+            let settings = settings::Page { repo: r(), page };
+            c.tab("⚙", "Settings", None, Route::Settings(settings));
         }
     }
 
@@ -406,21 +384,13 @@ impl State {
                 tab,
             })
         };
-        c.tab(
-            "◌",
-            "Conversation",
-            activity.map(|a| a.comment_count),
-            Route::pr(pr.clone()),
-        );
+        let comments = activity.map(|a| a.comment_count);
+        c.tab("◌", "Conversation", comments, Route::pr(pr.clone()));
         let commits = activity.map(|a| a.commits.total());
         c.tab("◷", "Commits", commits, tab(PrTab::Commits));
         c.tab("✓", "Checks", None, tab(PrTab::Checks));
-        c.tab(
-            "±",
-            "Files changed",
-            files,
-            Target::Files(DiffOf::Pr(pr.clone())),
-        );
+        let diff = Target::Files(DiffOf::Pr(pr.clone()));
+        c.tab("±", "Files changed", files, diff);
         c.tab("◎", "Review", None, tab(PrTab::Review));
     }
 
@@ -502,21 +472,14 @@ pub(crate) fn compare_tabs(
         let files = comparison
             .filter(|cmp| !cmp.files_capped)
             .map(|cmp| cmp.files);
-        c.tab(
-            "±",
-            "Files changed",
-            files,
-            Target::Files(DiffOf::Range(repo.clone(), from, to)),
-        );
+        let diff = Target::Files(DiffOf::Range(repo.clone(), from, to));
+        c.tab("±", "Files changed", files, diff);
     }
 }
 
 pub(crate) fn repo_crumbs(repo: &RepoId, c: &mut Chrome) {
     c.crumb(&repo.owner, Some(Target::Page(Route::user(&repo.owner))));
-    c.crumb(
-        &repo.name,
-        Some(Target::Page(Route::Code(code::Repo(repo.clone())))),
-    );
+    c.crumb(&repo.name, Some(Target::Page(Route::code(repo.clone()))));
 }
 
 impl Chrome {

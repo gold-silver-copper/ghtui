@@ -16,7 +16,7 @@ fn failed(state: &mut State, key: DataKey) {
 #[test]
 fn a_failed_readme_says_why_under_the_files() {
     let mut state = state();
-    let _ = state.push(Route::Code(code::Repo(ghtui())));
+    let _ = state.push(Route::code(ghtui()));
     let overview = Data::from(fixtures::overview());
     fetched(&mut state, DataKey::Repo(ghtui()), overview);
     failed(&mut state, DataKey::Readme(ghtui()));
@@ -32,10 +32,10 @@ fn a_failed_readme_says_why_under_the_files() {
 #[test]
 fn a_loading_conversation_stays_on_the_timeline() {
     let mut state = with_home();
-    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let pr = pr();
     let route = Route::pr(pr.clone());
     let _ = state.push(route.clone());
-    crate::fixtures::pr_fetched(&mut state, &pr, Ok(pr_detail()));
+    fixtures::pr_fetched(&mut state, &pr, Ok(pr_detail()));
     let lines: Vec<String> = (state.build_page(&route, 100, NOW).lines.iter())
         .map(crate::ui::page::PageLine::text)
         .collect();
@@ -147,7 +147,7 @@ fn every_route_says_why_when_its_needs_fail() {
                 let result = if &key == failing {
                     err()
                 } else {
-                    Ok(crate::fixtures::sample(&key))
+                    Ok(fixtures::sample(&key))
                 };
                 update(&mut state, Msg::fetched(key, result));
             }

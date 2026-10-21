@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use crate::api::model::PrRef;
 use crate::data::DataKey;
 use crate::diff_screen::{DiffOf, RangeView};
-use crate::state::{Cmd, Git, Screen, State};
+use crate::state::{Cmd, Cmds, Git, Screen, State};
 use crate::ui::page::{Link, ReviewLink};
 use crate::ui::pages::{LinesAt, Marks, PrTab};
 use crate::ui::text::short_sha;
@@ -57,10 +57,9 @@ const MOST_LINES: usize = 40;
 /// The files at their commits that the threads of `pr`'s conversation
 /// are on, read from the clone where they aren't yet (where there's no
 /// clone, or git can't, the threads show GitHub's diff hunks).
-#[must_use]
-pub fn want_lines(state: &mut State, pr: &PrRef) -> Vec<Cmd> {
+pub fn want_lines(state: &mut State, pr: &PrRef) -> Cmds {
     let Some(activity) = state.activity(pr) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let mut keys: Vec<DataKey> = Vec::new();
     for t in activity.threads.iter().filter(|t| !t.file_level) {
@@ -129,12 +128,11 @@ pub fn describe(link: &ReviewLink) -> &'static str {
     }
 }
 
-#[must_use]
-pub fn follow(state: &mut State, link: &ReviewLink) -> Vec<Cmd> {
+pub fn follow(state: &mut State, link: &ReviewLink) -> Cmds {
     match link {
         ReviewLink::Fold(anchor) => {
             toggle(state, anchor, None);
-            Vec::new()
+            Cmds::new()
         }
         ReviewLink::Open { pr, id } => state.push(Route::Pulls(pulls::Pr {
             pr: pr.clone(),
@@ -164,7 +162,7 @@ fn toggle(state: &mut State, anchor: &str, open: Option<bool>) {
 /// Folding on a page: the review the selection is in, folded or
 /// unfolded. `None` where there's none (the action then says so).
 #[must_use]
-pub fn fold_key(state: &mut State) -> Option<Vec<Cmd>> {
+pub fn fold_key(state: &mut State) -> Option<Cmds> {
     let Screen::Page(p) = state.screen() else {
         return None;
     };
@@ -187,12 +185,12 @@ pub fn fold_key(state: &mut State) -> Option<Vec<Cmd>> {
     }
     let anchor = anchor.clone();
     toggle(state, &anchor, None);
-    Some(Vec::new())
+    Some(Cmds::new())
 }
 
 /// The pull request's diff as a review saw it: from where its branch
 /// left the base to the review's commit, from git.
-fn as_reviewed(state: &mut State, pr: &PrRef, commit: &str) -> Vec<Cmd> {
+fn as_reviewed(state: &mut State, pr: &PrRef, commit: &str) -> Cmds {
     let range = RangeView {
         label: format!("as reviewed at {}", short_sha(commit)),
         // Empty: from the merge base with the PR's base (`diff_job`).
@@ -205,7 +203,7 @@ fn as_reviewed(state: &mut State, pr: &PrRef, commit: &str) -> Vec<Cmd> {
 /// What changed in the pull request since a review's commit: its whole
 /// diff, with what was there at that commit marked as seen, as "since your
 /// last review" does.
-fn since(state: &mut State, pr: &PrRef, commit: &str) -> Vec<Cmd> {
+fn since(state: &mut State, pr: &PrRef, commit: &str) -> Cmds {
     open_range(state, pr, None, Some(commit.to_owned()))
 }
 
@@ -216,7 +214,7 @@ fn open_range(
     pr: &PrRef,
     range: Option<RangeView>,
     since: Option<String>,
-) -> Vec<Cmd> {
+) -> Cmds {
     let mut cmds = state.open_diff(DiffOf::Pr(pr.clone()), None);
     let Some(base) = state.pr_base(pr) else {
         state.info("Loading the pull request first");

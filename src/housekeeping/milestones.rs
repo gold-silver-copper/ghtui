@@ -15,7 +15,7 @@ use super::{
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
-use crate::state::{Cmd, State};
+use crate::state::{Cmds, State};
 use crate::work::{self, Cx, Failure, Job};
 
 /// A milestone's change: a new one's (no number), or one's.
@@ -52,8 +52,7 @@ fn picked(state: &State) -> Option<&MilestoneInfo> {
 }
 
 /// `,o` or `,e`: the milestone's form.
-#[must_use]
-pub(super) fn open(state: &mut State, repo: &RepoId, number: Option<u64>) -> Vec<Cmd> {
+pub(super) fn open(state: &mut State, repo: &RepoId, number: Option<u64>) -> Cmds {
     if let Some(why) = refused(state, repo, WHAT) {
         return state.just_say(why);
     }
@@ -66,8 +65,7 @@ pub(super) fn open(state: &mut State, repo: &RepoId, number: Option<u64>) -> Vec
     )
 }
 
-#[must_use]
-pub(super) fn edit(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
+pub(super) fn edit(state: &mut State, repo: &RepoId) -> Cmds {
     let Some(number) = picked(state).map(|m| m.number) else {
         return state.just_say("Select a milestone first");
     };
@@ -76,25 +74,18 @@ pub(super) fn edit(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
 
 /// Fills the form from the milestone once it's loaded; a new one starts
 /// with its title.
-#[must_use]
-pub(super) fn follow(
-    state: &mut State,
-    route: &Route,
-    repo: &RepoId,
-    number: Option<u64>,
-) -> Vec<Cmd> {
+pub(super) fn follow(state: &mut State, route: &Route, repo: &RepoId, number: Option<u64>) -> Cmds {
     if form(state, route).started {
-        return Vec::new();
+        return Cmds::new();
     }
-    let info = match number {
-        Some(n) => {
-            let key = DataKey::Milestone(repo.clone(), n);
-            let Some(d) = state.picked::<MilestoneDetail>(&key) else {
-                return Vec::new();
-            };
-            Some(d.info.clone())
-        }
-        None => None,
+    let find = |n| {
+        let key = DataKey::Milestone(repo.clone(), n);
+        Some(state.picked::<MilestoneDetail>(&key)?.info.clone())
+    };
+    // An edited milestone's form waits for it.
+    let info = match number.map(find) {
+        Some(None) => return Cmds::new(),
+        info => info.flatten(),
     };
     let f = form_mut(state, route);
     f.started = true;
@@ -107,7 +98,7 @@ pub(super) fn follow(
     if number.is_none() && state.overlay.is_none() {
         return super::open_field(state, route, Field::Title);
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// Whether `date` is a day of the calendar, written `YYYY-MM-DD`.
@@ -153,21 +144,13 @@ pub(super) fn change(f: &Form) -> Result<MilestoneChange, String> {
     })
 }
 
-#[must_use]
-pub(super) fn submit(
-    state: &mut State,
-    route: &Route,
-    repo: &RepoId,
-    number: Option<u64>,
-) -> Vec<Cmd> {
+pub(super) fn submit(state: &mut State, route: &Route, repo: &RepoId, number: Option<u64>) -> Cmds {
     if let Some(why) = refused(state, repo, WHAT) {
         return crate::forms::say(state, why);
     }
     let change = match change(&form(state, route)) {
         Ok(c) => c,
-        Err(why) => {
-            return crate::forms::say(state, why);
-        }
+        Err(why) => return crate::forms::say(state, why),
     };
     crate::forms::form_sending(state, route);
     state.info(format!("Saving the milestone {}…", change.title));
@@ -179,8 +162,7 @@ pub(super) fn submit(
 }
 
 /// `,x`: closes the milestone, or reopens it. GitHub doesn't ask.
-#[must_use]
-pub(super) fn toggle(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
+pub(super) fn toggle(state: &mut State, repo: &RepoId) -> Cmds {
     if let Some(why) = refused(state, repo, WHAT) {
         return state.just_say(why);
     }
@@ -198,8 +180,7 @@ pub(super) fn toggle(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
 }
 
 /// `,D`: asks first, as GitHub does.
-#[must_use]
-pub(super) fn ask_delete(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
+pub(super) fn ask_delete(state: &mut State, repo: &RepoId) -> Cmds {
     if let Some(why) = refused(state, repo, WHAT) {
         return state.just_say(why);
     }
@@ -219,12 +200,10 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
         title,
         vec![(on, false), ("It can't be brought back".into(), true)],
         vec![("Delete milestone".into(), super::Answer::Delete(subject))],
-    );
-    Vec::new()
+    )
 }
 
-#[must_use]
-pub(super) fn delete(state: &mut State, repo: RepoId, number: u64) -> Vec<Cmd> {
+pub(super) fn delete(state: &mut State, repo: RepoId, number: u64) -> Cmds {
     crate::forms::sending(state);
     work::start(Save {
         repo,
@@ -258,13 +237,12 @@ impl Job for Save {
 
     /// GitHub's answer: back on the list or the milestone's page, which
     /// follows GitHub until it shows the change.
-    fn done(self, state: &mut State, result: Result<Option<u64>, Failure>) -> Vec<Cmd> {
-        let work = self;
+    fn done(self, state: &mut State, result: Result<Option<u64>, Failure>) -> Cmds {
         let Save {
             repo,
             number,
             write,
-        } = work;
+        } = self;
         let form = Route::Housekeeping(FormOf::Milestone {
             repo: repo.clone(),
             number,
@@ -272,11 +250,11 @@ impl Job for Save {
         let made = number.is_none();
         let number = match result {
             Ok(Some(n)) => n,
-            Ok(None) => return Vec::new(),
+            Ok(None) => return Cmds::new(),
             Err(why) => {
                 if matches!(write, MilestoneWrite::Close(_)) {
                     state.error(why.to_string());
-                    return Vec::new();
+                    return Cmds::new();
                 }
                 return crate::forms::failed(state, &form, why.to_string());
             }
@@ -286,7 +264,7 @@ impl Job for Save {
             crate::forms::close_sender(state, route);
         }
         state.forms.take::<Form>(&form);
-        let mut cmds = Vec::new();
+        let mut cmds = Cmds::new();
         if state.route() == Some(&form) {
             cmds.extend(state.back());
             state.forward.clear();

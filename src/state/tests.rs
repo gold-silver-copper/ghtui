@@ -1,6 +1,11 @@
 //! Behaviour through `update`: keys pressed, data delivered, and the
 //! commands, pages and status line that follow. No I/O and no runtime.
 
+#![allow(
+    unused_must_use,
+    reason = "tests drive the state, and check only the commands they care about"
+)]
+
 use super::*;
 use crate::api::browse::{IssueKind, IssueState, PrState, SearchKind, SearchResults, Status};
 use crate::api::change::Change;
@@ -50,7 +55,7 @@ fn with_prs(n: u64) -> State {
 }
 
 /// Runs an action that has no default key (it's in the menu).
-pub(super) fn act(state: &mut State, action: Action) -> Vec<Cmd> {
+pub(super) fn act(state: &mut State, action: Action) -> Cmds {
     let mut cmds = apply(state, action);
     state.sync_page();
     cmds.extend(state.settle_diff());
@@ -62,6 +67,31 @@ fn page(state: &State) -> &PageScreen {
         Screen::Page(p) => p,
         Screen::Diff(_) => panic!("not on a page"),
     }
+}
+
+/// The selected line of a file, and the word under the cursor.
+fn word_here(s: &State) -> (Option<u32>, Option<String>) {
+    let p = page(s);
+    let word = (p.word_cursor()).map(|(_, code, w)| code.get(w.bytes).unwrap().to_owned());
+    (p.selected.and_then(|i| p.line_of(i)), word)
+}
+
+fn on_diff(state: &State) -> &DiffScreen {
+    match state.screen() {
+        Screen::Diff(d) => d,
+        Screen::Page(_) => panic!("not on the diff"),
+    }
+}
+
+/// The open picker's rows: each one's label and hint.
+fn picked(state: &State) -> Vec<(String, String)> {
+    let rows = state.picker_rows(overlay!(state, Picker));
+    (rows.into_iter()).map(|(r, _)| (r.label, r.hint)).collect()
+}
+
+/// The open picker's rows' labels.
+fn picked_labels(state: &State) -> Vec<String> {
+    picked(state).into_iter().map(|(label, _)| label).collect()
 }
 
 fn route(state: &State) -> Route {
@@ -76,7 +106,7 @@ fn selected_text(state: &State) -> String {
 }
 
 /// Fires the watch's next timer: what that sends, and how long it waited.
-fn next_watch(s: &mut State) -> (Vec<Cmd>, u64) {
+fn next_watch(s: &mut State) -> (Cmds, u64) {
     let timer = timers(s).into_iter().find_map(|cmd| match cmd {
         Cmd::Timer(Timer::Watch(id), ms) => Some((id, ms)),
         _ => None,
@@ -98,9 +128,14 @@ fn fetch(key: DataKey) -> Cmd {
     Cmd::Api(Api::Fetch { key, cached: true })
 }
 
+/// Asking for `key`'s next page, after `after`.
+fn more(key: &DataKey, after: &str) -> Cmd {
+    let (key, after) = (key.clone(), after.to_owned());
+    Cmd::Api(Api::FetchMore { key, after })
+}
+
 /// Commands other than saving visits.
-#[must_use]
-fn fetches(cmds: Vec<Cmd>) -> Vec<Cmd> {
+fn fetches(cmds: Cmds) -> Cmds {
     cmds.into_iter()
         .filter(|c| !matches!(c, Cmd::Api(Api::SaveVisits(_))))
         .collect()
@@ -120,8 +155,7 @@ fn blob(rev: &str, path: &str) -> Route {
     Route::blob(ghtui(), rev.to_owned(), path.to_owned())
 }
 
-#[must_use]
-fn click(state: &mut State, x: u16, y: u16) -> Vec<Cmd> {
+fn click(state: &mut State, x: u16, y: u16) -> Cmds {
     update(
         state,
         Msg::Mouse(MouseEvent {

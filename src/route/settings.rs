@@ -39,7 +39,7 @@ impl Family for Page {
                 repo,
                 page: SettingsPage::Hooks,
             }),
-            _ => Route::Code(super::code::Repo(repo)),
+            _ => Route::code(repo),
         })
     }
 

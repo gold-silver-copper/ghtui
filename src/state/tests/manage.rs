@@ -43,7 +43,7 @@ fn pick(s: &State) -> &Pick {
 }
 
 /// Runs the menu's row that `filter` finds.
-fn from_menu(s: &mut State, filter: &str) -> Vec<Cmd> {
+fn from_menu(s: &mut State, filter: &str) -> Cmds {
     press(s, "<Space>/");
     for c in filter.chars() {
         press(s, &c.to_string());
@@ -469,7 +469,7 @@ fn a_new_discussion_starts_from_its_categorys_form() {
     };
     fixtures::fetched(&mut s, key, Data::from(found));
     press(&mut s, "<Enter>");
-    let c = crate::fixtures::composer(&mut s);
+    let c = fixtures::composer(&mut s);
     let text = c.text();
     assert!(text.starts_with("[Idea]"), "{text}");
     assert!(text.contains("### What would it do"), "{text}");

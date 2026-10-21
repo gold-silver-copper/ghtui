@@ -216,10 +216,6 @@ impl State {
         }
     }
 
-    pub fn page_loading(&self, route: &Route) -> bool {
-        self.fetches(route).any(|r| r.loading)
-    }
-
     /// The first key that runs `action` here, as people write it.
     pub fn first_key(&self, action: Action) -> String {
         self.key_here(action)

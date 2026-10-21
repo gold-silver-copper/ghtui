@@ -195,19 +195,12 @@ impl GitHub {
     /// A repository's views, clones, referrers and popular paths. GitHub
     /// shows them only to people who can push to it.
     pub async fn traffic(&self, repo: &RepoId) -> Result<Traffic, ApiError> {
-        let base = format!("/repos/{repo}/traffic");
-        let paths = [
-            format!("{base}/views"),
-            format!("{base}/clones"),
-            format!("{base}/popular/referrers"),
-            format!("{base}/popular/paths"),
-        ];
-        let [views, clones, referrers, paths] = &paths;
+        let part = |of| self.traffic_part(format!("/repos/{repo}/traffic/{of}"));
         let (views, clones, referrers, paths) = tokio::join!(
-            self.traffic_part(views),
-            self.traffic_part(clones),
-            self.traffic_part(referrers),
-            self.traffic_part(paths),
+            part("views"),
+            part("clones"),
+            part("popular/referrers"),
+            part("popular/paths"),
         );
         let views: wire::Counted = serde_json::from_str(&views?)?;
         let clones: wire::Counted = serde_json::from_str(&clones?)?;
@@ -237,9 +230,9 @@ impl GitHub {
     }
 
     /// One of the traffic's answers, or what GitHub's refusal means.
-    async fn traffic_part(&self, path: &str) -> Result<String, ApiError> {
+    async fn traffic_part(&self, path: String) -> Result<String, ApiError> {
         let what = path.trim_start_matches("/repos/");
-        let answer = self.rest_refusable(path, what, |status, message, _| {
+        let answer = self.rest_refusable(&path, what, |status, message, _| {
             (status == 403).then(|| traffic_refusal(message))
         });
         let answer = answer.await?.map_err(ApiError::Denied)?;

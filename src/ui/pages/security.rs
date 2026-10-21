@@ -5,6 +5,7 @@ use super::*;
 use crate::api::security::{
     Alert, AlertKind, AlertList, AlertState, Detail, SecretLocation, Update,
 };
+use std::fmt::Write as _;
 
 /// The Security tab's own menu, as GitHub's sidebar: advisories, then
 /// each kind of alert; `on` is the one shown (`None`: advisories).
@@ -67,22 +68,22 @@ fn row_meta(a: &Alert, now: u64) -> String {
     let mut subline = format!("#{}", a.number);
     match &a.detail {
         Detail::Dependency(d) => {
-            subline.push_str(&format!(" · {} ({})", d.package, d.ecosystem));
+            let _ = write!(subline, " · {} ({})", d.package, d.ecosystem);
             if !d.manifest.is_empty() {
-                subline.push_str(&format!(" · {}", d.manifest));
+                let _ = write!(subline, " · {}", d.manifest);
             }
         }
         Detail::Code(c) => {
             if let (Some(path), Some((line, _))) = (&c.path, c.lines) {
-                subline.push_str(&format!(" · {path}:{line}"));
+                let _ = write!(subline, " · {path}:{line}");
             }
             if !c.tool.is_empty() {
-                subline.push_str(&format!(" · {}", c.tool));
+                let _ = write!(subline, " · {}", c.tool);
             }
         }
         Detail::Secret(s) => {
             if let Some(SecretLocation::File { path, lines, .. }) = s.locations.first() {
-                subline.push_str(&format!(" · {path}:{}", lines.0));
+                let _ = write!(subline, " · {path}:{}", lines.0);
             }
         }
     }
@@ -95,7 +96,7 @@ fn row_meta(a: &Alert, now: u64) -> String {
         (None, None) => Some(format!("opened {}", time::ago_iso(&a.created_at, now))),
     };
     if let Some(when) = when {
-        subline.push_str(&format!(" · {when}"));
+        let _ = write!(subline, " · {when}");
     }
     subline
 }
@@ -124,13 +125,10 @@ pub fn alerts(
     };
     let ignored = crate::api::security::filter(kind, query).ignored;
     if !ignored.is_empty() {
+        let (alerts, ignored) = (kind.alerts().to_lowercase(), ignored.join(" "));
         say(
             page,
-            format!(
-                "Not a filter of {}: {}",
-                kind.alerts().to_lowercase(),
-                ignored.join(" ")
-            ),
+            format!("Not a filter of {alerts}: {ignored}"),
             Role::Meta,
         );
         page.blank();
@@ -183,7 +181,7 @@ pub fn alert(page: &mut Page, repo: &RepoId, a: &Alert, cx: PageCtx<'_>) {
         time::ago_iso(&a.created_at, now)
     );
     if let Some(at) = &a.fixed_at {
-        subline.push_str(&format!(" · fixed {}", time::ago_iso(at, now)));
+        let _ = write!(subline, " · fixed {}", time::ago_iso(at, now));
     }
     segs.push(meta(subline));
     page.wrapped(segs, 0, Frame::None);
@@ -246,28 +244,14 @@ fn dependency(page: &mut Page, repo: &RepoId, d: &crate::api::security::Dependen
                 number: *number,
             };
             let state = state.to_lowercase();
-            let link = link_seg(
-                page,
-                format!("#{number} {title}"),
-                url::pull(&pr),
-                Role::Link,
-            );
-            body(
-                page,
-                vec![
-                    meta("Dependabot's pull request "),
-                    link,
-                    meta(format!(" · {state}")),
-                ],
-            );
+            let (text, pr) = (format!("#{number} {title}"), url::pull(&pr));
+            let link = link_seg(page, text, pr, Role::Link);
+            let state = meta(format!(" · {state}"));
+            body(page, vec![meta("Dependabot's pull request "), link, state]);
         }
         Some(Update::Failed { title, body: why }) => {
-            body(
-                page,
-                vec![meta(format!(
-                    "Dependabot couldn't open a pull request: {title}"
-                ))],
-            );
+            let why_not = format!("Dependabot couldn't open a pull request: {title}");
+            body(page, vec![meta(why_not)]);
             if let Some(first) = why.lines().find(|l| !l.trim().is_empty()) {
                 body(page, vec![meta(first.trim().to_owned())]);
             }
@@ -276,12 +260,8 @@ fn dependency(page: &mut Page, repo: &RepoId, d: &crate::api::security::Dependen
     }
     page.box_bottom();
     page.blank();
-    let mut ids = vec![link_seg(
-        page,
-        d.ghsa.clone(),
-        format!("{}/advisories/{}", url::base(), d.ghsa),
-        Role::Link,
-    )];
+    let advisory = format!("{}/advisories/{}", url::base(), d.ghsa);
+    let mut ids = vec![link_seg(page, &d.ghsa, advisory, Role::Link)];
     if let Some(cve) = &d.cve {
         ids.push(meta(format!(" · {cve}")));
     }

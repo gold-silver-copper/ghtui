@@ -14,7 +14,7 @@ use crate::theme::{Bg, DiffBg, Fg, Syntax};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::Span;
 use ratatui::widgets::Widget;
 
 use std::borrow::Cow;
@@ -444,8 +444,7 @@ impl Page {
             indent,
             right,
             frame,
-            tone: Tone::Plain,
-            fixed: 0,
+            ..PageLine::default()
         });
     }
 
@@ -1000,10 +999,10 @@ pub struct HintLabel {
 
 /// Letter hints over the links they follow, in `area`.
 pub fn draw_hints(theme: &crate::theme::Theme, hints: &[HintLabel], area: Rect, buf: &mut Buffer) {
+    let style = theme
+        .fill(Bg::TertiaryContainer)
+        .add_modifier(Modifier::BOLD);
     for hint in hints {
-        let style = theme
-            .fill(Bg::TertiaryContainer)
-            .add_modifier(Modifier::BOLD);
         // Just before the link (over the space, padding or icon there),
         // so the link's own text stays readable.
         let width = cols(text::width(&hint.label));
@@ -1012,7 +1011,7 @@ pub fn draw_hints(theme: &crate::theme::Theme, hints: &[HintLabel], area: Rect, 
             .checked_sub(width)
             .filter(|x| *x >= area.x)
             .unwrap_or(hint.x);
-        Span::styled(hint.label.clone(), style).render(
+        Span::styled(hint.label.as_str(), style).render(
             Rect {
                 x,
                 y: hint.y,
@@ -1158,8 +1157,9 @@ impl PageView<'_> {
         // Borders.
         let border = theme.separator(PAGE_BG);
         let rule = |buf: &mut Buffer, left: &str, right: &str| {
-            let middle = "─".repeat(usize::from(width.saturating_sub(2)));
-            put(buf, x, y, &format!("{left}{middle}{right}"), border);
+            let middle = std::iter::repeat_n("─", usize::from(width.saturating_sub(2)));
+            let rule: String = std::iter::once(left).chain(middle).chain([right]).collect();
+            put(buf, x, y, &rule, border);
         };
         match line.frame {
             Frame::None => {}
@@ -1204,7 +1204,7 @@ impl PageView<'_> {
                 Role::Match if current => theme.fill(Bg::Primary),
                 _ => role_style(theme, &seg.role, inner_bg),
             };
-            Line::from(Span::styled(shown, style)).render(row(sx, w), buf);
+            Span::styled(shown, style).render(row(sx, w), buf);
         }
     }
 

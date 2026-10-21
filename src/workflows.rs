@@ -14,7 +14,7 @@ use crate::data::DataKey;
 use crate::forms::filling;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::state::{Cmd, State};
+use crate::state::{Cmds, State};
 use crate::ui::form::Row;
 use crate::ui::page::Page;
 use crate::ui::pages::{self, DispatchView};
@@ -60,7 +60,7 @@ impl Job for SaveArtifact {
         Ok(saved.await?)
     }
 
-    fn done(self, state: &mut State, result: Result<u64, Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<u64, Failure>) -> Cmds {
         let (name, path) = (self.name, self.path.display());
         match result {
             Ok(size) => {
@@ -69,7 +69,7 @@ impl Job for SaveArtifact {
             }
             Err(err) => state.error(format!("Couldn't save {name} to {path}: {err}")),
         }
-        Vec::new()
+        Cmds::new()
     }
 }
 
@@ -151,7 +151,8 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> crate::picker::Rows {
             rows
         }
         Pick::Input(name) => {
-            let input = inputs_here(state).and_then(|i| i.into_iter().find(|i| i.name == *name));
+            let input =
+                (inputs_of(state).ok()).and_then(|i| i.into_iter().find(|i| i.name == *name));
             let (Some(input), Some(route)) = (input, here(state).map(form_route)) else {
                 return note("The form isn't on screen".into());
             };
@@ -180,35 +181,34 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> crate::picker::Rows {
 }
 
 /// The branch, or an input, chosen.
-fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Vec<Cmd> {
+fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Cmds {
     let form = state.forms.edit::<Form>(route);
     match row {
         Row::Ref => {
             form.git_ref = Some(value);
             // Its inputs are read from the file on that branch.
-            blob_need(state).map_or_else(Vec::new, |need| state.ensure(need, false))
+            blob_need(state).map_or_else(Cmds::new, |need| state.ensure(need, false))
         }
         Row::Input(name) => {
             form.values.insert(name.clone(), value);
-            Vec::new()
+            Cmds::new()
         }
-        _ => Vec::new(),
+        _ => Cmds::new(),
     }
 }
 
 /// What the form that runs a workflow by hand does.
 pub const FORM: crate::forms::Kind = crate::forms::Kind {
-    compose: |_, _| Vec::new(),
+    compose: |_, _| Cmds::new(),
     row: on_row,
     fill,
     submit: run,
-    follow: |_| Vec::new(),
+    follow: |_| Cmds::new(),
     offers: |_, _| {},
 };
 
 /// Enter on one of the form's rows.
-#[must_use]
-fn on_row(state: &mut State, row: &Row) -> Vec<Cmd> {
+fn on_row(state: &mut State, row: &Row) -> Cmds {
     match row {
         Row::Ref => {
             let repo = here(state).map(|(r, _)| r);
@@ -221,15 +221,14 @@ fn on_row(state: &mut State, row: &Row) -> Vec<Cmd> {
         Row::Input(name) => {
             state.open_picker(crate::picker::Kind::Workflows(Pick::Input(name.clone())))
         }
-        _ => Vec::new(),
+        _ => Cmds::new(),
     }
 }
 
 /// Asks where to save artifact `id` of the run on screen.
-#[must_use]
-pub fn save(state: &mut State, id: u64, name: &str) -> Vec<Cmd> {
+pub fn save(state: &mut State, id: u64, name: &str) -> Cmds {
     let Some(Route::Runs(runs::WorkflowRun { repo, run, attempt })) = state.route().cloned() else {
-        return Vec::new();
+        return Cmds::new();
     };
     let key = DataKey::Run(repo.clone(), run, attempt);
     let expired = (state.picked::<WorkflowRun>(&key))
@@ -282,24 +281,26 @@ pub(crate) fn workflow_path(file: &str) -> String {
     format!(".github/workflows/{file}")
 }
 
+/// The form on screen, and the branch chosen on it, if one is.
+fn chosen(state: &State) -> Option<(RepoId, String, Option<String>)> {
+    let (repo, file) = here(state)?;
+    let form = state
+        .forms
+        .get::<Form>(&form_route((repo.clone(), file.clone())));
+    let git_ref = form.and_then(|f| f.git_ref.clone());
+    Some((repo, file, git_ref))
+}
+
 /// The branch the form on screen runs on: chosen, or the default.
 fn form_ref(state: &State) -> Option<String> {
-    let (repo, file) = here(state)?;
-    let chosen = state.forms.get::<Form>(&form_route((repo.clone(), file)));
-    chosen
-        .and_then(|f| f.git_ref.clone())
-        .or_else(|| state.overview(&repo)?.default_branch.clone())
+    let (repo, _, git_ref) = chosen(state)?;
+    git_ref.or_else(|| state.overview(&repo)?.default_branch.clone())
 }
 
 /// The workflow file on the form's branch.
 fn blob_need(state: &State) -> Option<DataKey> {
-    let (repo, file) = here(state)?;
-    let chosen = state
-        .forms
-        .get::<Form>(&form_route((repo.clone(), file.clone())));
-    let git_ref = chosen
-        .and_then(|f| f.git_ref.clone())
-        .unwrap_or_else(|| "HEAD".into());
+    let (repo, file, git_ref) = chosen(state)?;
+    let git_ref = git_ref.unwrap_or_else(|| "HEAD".into());
     Some(DataKey::Blob(repo, git_ref, workflow_path(&file)))
 }
 
@@ -319,10 +320,6 @@ fn inputs_of(state: &State) -> Result<Vec<Input>, String> {
     dispatch_inputs(text).ok_or_else(|| {
         "This workflow can't be run by hand: its file has no workflow_dispatch trigger".into()
     })
-}
-
-fn inputs_here(state: &State) -> Option<Vec<Input>> {
-    inputs_of(state).ok()
 }
 
 /// What the form page needs: the workflow (its name) and its file.
@@ -369,8 +366,7 @@ fn refused(state: &State, repo: &RepoId, file: &str) -> Option<String> {
 }
 
 /// `,E`: from a workflow's page or a run's, the form; on the form, runs it.
-#[must_use]
-pub fn action(state: &mut State) -> Vec<Cmd> {
+pub fn action(state: &mut State) -> Cmds {
     if here(state).is_some() {
         return run(state);
     }
@@ -385,10 +381,9 @@ pub fn action(state: &mut State) -> Vec<Cmd> {
 }
 
 /// Runs the form's workflow, if it can.
-#[must_use]
-fn run(state: &mut State) -> Vec<Cmd> {
+fn run(state: &mut State) -> Cmds {
     let Some((repo, file)) = here(state) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let route = form_route((repo.clone(), file.clone()));
     let why = refused(state, &repo, &file)
@@ -422,7 +417,7 @@ fn run(state: &mut State) -> Vec<Cmd> {
     {
         let why = format!("{} is required", missing.0.name);
         state.forms.sent_mut(&route).fail(why);
-        return Vec::new();
+        return Cmds::new();
     }
     state.forms.sent_mut(&route).start();
     work::start(Dispatch {
@@ -443,7 +438,7 @@ impl Job for Dispatch {
     }
 
     /// A new run is followed from the form; elsewhere it's said.
-    fn done(self, state: &mut State, result: Result<Option<u64>, Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<Option<u64>, Failure>) -> Cmds {
         let Dispatch { repo, file, .. } = self;
         let route = form_route((repo.clone(), file.clone()));
         let on_form = state.route() == Some(&route);
@@ -516,8 +511,10 @@ pub fn checks_loaded(state: &mut State, pr: &crate::api::model::PrRef) {
         return;
     };
     let list: Vec<(String, crate::api::workflows::Annotation)> = (checks.items.iter())
-        .flat_map(|c| c.annotations.iter().map(|a| (c.name.clone(), a.clone())))
-        .filter(|(_, a)| a.path.is_some())
+        .flat_map(|c| {
+            let placed = c.annotations.iter().filter(|a| a.path.is_some());
+            placed.map(|a| (c.name.clone(), a.clone()))
+        })
         .collect();
     let of = crate::diff_screen::DiffOf::Pr(pr.clone());
     if let Some(diff) = state.diffs.get_mut(&of)

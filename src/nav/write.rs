@@ -3,8 +3,7 @@
 use super::*;
 use crate::route::{code, discussions, issues, pulls};
 
-#[must_use]
-pub fn star(state: &mut State) -> Vec<Cmd> {
+pub fn star(state: &mut State) -> Cmds {
     let Some(repo) = state.route().and_then(Route::repo).cloned() else {
         return state.just_say("Open a repository to star it");
     };
@@ -14,7 +13,7 @@ pub fn star(state: &mut State) -> Vec<Cmd> {
     let (id, starred) = (overview.id.clone(), !overview.starred);
     set_starred(state, &repo, starred);
     let star = Change::Star { repo, id, starred };
-    vec![crate::act::send(star, crate::act::By::Star)]
+    crate::act::send(star, crate::act::By::Star).into()
 }
 
 /// Shows a repository as starred or not (optimistically, before GitHub
@@ -35,10 +34,9 @@ pub fn set_starred(state: &mut State, repo: &RepoId, starred: bool) {
 }
 
 /// `>`: a reply quoting the selected comment, under it.
-#[must_use]
-pub(super) fn quote_reply(state: &mut State) -> Vec<Cmd> {
+pub(super) fn quote_reply(state: &mut State) -> Cmds {
     let Screen::Page(p) = state.screen() else {
-        return Vec::new();
+        return Cmds::new();
     };
     match p.selected_link().cloned() {
         Some(Link::Quote { author, body, at }) => {
@@ -56,8 +54,7 @@ pub(super) fn quote_reply(state: &mut State) -> Vec<Cmd> {
 
 /// Opens the composer on the issue or pull request on screen, starting
 /// with `text` (quoting the comment made `quoting`).
-#[must_use]
-pub(super) fn comment_with(state: &mut State, text: &str, quoting: Option<String>) -> Vec<Cmd> {
+pub(super) fn comment_with(state: &mut State, text: &str, quoting: Option<String>) -> Cmds {
     let target = match state.route() {
         Some(Route::Issues(issues::Issue { repo, number })) => {
             let key = DataKey::Issue(repo.clone(), *number);

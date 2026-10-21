@@ -6,7 +6,7 @@
 use crate::schema::schema;
 use serde::{Deserialize, Serialize};
 
-use crate::api::change::mutations;
+use crate::api::change::{IdVariablesFields, mutations};
 use crate::api::client::{ApiError, GitHub};
 use crate::api::model::{Capped, NodeId, RepoId, count};
 use crate::api::queries::{NumberVariables, NumberVariablesFields, fragments, nodes};
@@ -190,14 +190,11 @@ impl GitHub {
                     Written::Review => self.run::<UpdateReview, _>(vars).await,
                 }
             }
-            Edit::Delete { of, id } => {
-                let vars = EditIdVariables { id: id.gql() };
-                match of {
-                    Written::ReviewComment => self.run::<DeleteReviewComment, _>(vars).await,
-                    Written::Review => self.run::<DeleteReview, _>(vars).await,
-                    _ => self.run::<DeleteIssueComment, _>(vars).await,
-                }
-            }
+            Edit::Delete { of, id } => match of {
+                Written::ReviewComment => self.run_on::<DeleteReviewComment>(id).await,
+                Written::Review => self.run_on::<DeleteReview>(id).await,
+                _ => self.run_on::<DeleteIssueComment>(id).await,
+            },
             Edit::Title { pr, id, title } => {
                 let vars = TitleVariables {
                     id: id.gql(),
@@ -318,9 +315,7 @@ impl GitHub {
             let op = TeamsQuery::build(TeamsVariables { org: org.clone() });
             let teams = self.find(op, &org, |q| {
                 let t = q.organization?.teams;
-                Some(Capped::from_nodes(t.total_count, t.nodes, |t| {
-                    named(t.id, t.combined_slug)
-                }))
+                Some(Capped::from_nodes(t.total_count, t.nodes, Named::from))
             });
             sidebar.teams = Some(teams.await.map_err(|err| err.to_string()));
         }
@@ -357,11 +352,9 @@ pub(crate) fn reactions(groups: Option<Vec<WireReactionGroup>>) -> Vec<Reaction>
 
 // ---- the sidebar --------------------------------------------------------------
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "NumberVariables")]
-pub struct SidebarQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<SidebarRepo>,
+fragments! {
+    root "Query" repository(owner, name);
+    SidebarQuery("NumberVariables") => SidebarRepo,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -413,15 +406,9 @@ pub struct SidebarPr {
 #[derive(cynic::InlineFragments, Debug)]
 #[cynic(graphql_type = "RepositoryOwner")]
 pub enum SidebarOwner {
-    Organization(OrgLogin),
+    Organization(crate::api::browse::OrgLogin),
     #[cynic(fallback)]
     Other,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Organization")]
-pub struct OrgLogin {
-    pub login: String,
 }
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -453,40 +440,34 @@ fragments! {
     RequestNames = "ReviewRequestConnection" => RequestNamed,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Label")]
-pub struct LabelNamed {
-    pub id: cynic::Id,
-    pub name: String,
+/// Node IDs and the names they go by, each a [`Named`].
+macro_rules! named {
+    ($($name:ident = $graphql:literal.$field:ident),* $(,)?) => {$(
+        #[derive(cynic::QueryFragment, Debug)]
+        #[cynic(graphql_type = $graphql)]
+        pub struct $name {
+            pub id: cynic::Id,
+            pub $field: String,
+        }
+
+        impl From<$name> for Named {
+            fn from(n: $name) -> Named {
+                Named {
+                    id: n.id.into(),
+                    name: n.$field,
+                }
+            }
+        }
+    )*};
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "User")]
-pub struct UserNamed {
-    pub id: cynic::Id,
-    pub login: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Bot")]
-pub struct BotNamed {
-    pub id: cynic::Id,
-    pub login: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Milestone")]
-pub struct MilestoneNamed {
-    pub id: cynic::Id,
-    pub title: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Team")]
-pub struct TeamNamed {
-    pub id: cynic::Id,
-    /// `org/slug`.
-    pub combined_slug: String,
+named! {
+    LabelNamed = "Label".name,
+    UserNamed = "User".login,
+    BotNamed = "Bot".login,
+    MilestoneNamed = "Milestone".title,
+    // `org/slug`.
+    TeamNamed = "Team".combined_slug,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -505,21 +486,14 @@ pub enum RequestedNamed {
     Other,
 }
 
-fn named(id: cynic::Id, name: String) -> Named {
-    Named {
-        id: id.into(),
-        name,
-    }
-}
-
 fn label_names(list: Option<LabelNames>) -> Capped<Named> {
     list.map_or_else(Capped::default, |l| {
-        Capped::from_nodes(l.total_count, l.nodes, |l| named(l.id, l.name))
+        Capped::from_nodes(l.total_count, l.nodes, Named::from)
     })
 }
 
 fn user_names(list: UserNames) -> Capped<Named> {
-    Capped::from_nodes(list.total_count, list.nodes, |u| named(u.id, u.login))
+    Capped::from_nodes(list.total_count, list.nodes, Named::from)
 }
 
 impl SidebarRepo {
@@ -543,9 +517,9 @@ impl SidebarRepo {
             for asked in nodes(r.nodes).filter_map(|r| r.requested_reviewer) {
                 shown += 1;
                 match asked {
-                    RequestedNamed::User(u) => requested.users.push(named(u.id, u.login)),
-                    RequestedNamed::Bot(b) => requested.bots.push(named(b.id, b.login)),
-                    RequestedNamed::Team(t) => requested.teams.push(named(t.id, t.combined_slug)),
+                    RequestedNamed::User(u) => requested.users.push(u.into()),
+                    RequestedNamed::Bot(b) => requested.bots.push(b.into()),
+                    RequestedNamed::Team(t) => requested.teams.push(t.into()),
                     // One GitHub's types don't cover (an enterprise team).
                     RequestedNamed::Other => shown -= 1,
                 }
@@ -559,13 +533,13 @@ impl SidebarRepo {
         let sidebar = Sidebar {
             labels: label_names(labels),
             assignees: user_names(assignees),
-            milestone: milestone.map(|m| named(m.id, m.title)),
+            milestone: milestone.map(Named::from),
             requested,
             author,
             all_labels: label_names(self.labels),
             users: user_names(self.assignable_users),
             milestones: self.milestones.map_or_else(Capped::default, |m| {
-                Capped::from_nodes(m.total_count, m.nodes, |m| named(m.id, m.title))
+                Capped::from_nodes(m.total_count, m.nodes, Named::from)
             }),
             teams: None,
         };
@@ -593,11 +567,6 @@ fragments! {
     AddAssigneesPayload = "AddAssigneesToAssignablePayload",
     RemoveAssigneesPayload = "RemoveAssigneesFromAssignablePayload",
     RequestReviewsPayload = "RequestReviewsPayload",
-}
-
-#[derive(cynic::QueryVariables, Debug)]
-pub struct EditIdVariables {
-    pub id: cynic::Id,
 }
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -652,12 +621,12 @@ mutations! {
     UpdatePrBody("BodyVariables") update_pull_request: UpdatePrPayload { pullRequestId: $id, body: $body }
     UpdateIssueComment("BodyVariables") update_issue_comment: UpdateIssueCommentPayload { id: $id, body: $body }
     UpdateReviewComment("BodyVariables") update_pull_request_review_comment: UpdateReviewCommentPayload { pullRequestReviewCommentId: $id, body: $body }
-    DeleteIssueComment("EditIdVariables") delete_issue_comment: DeleteIssueCommentPayload { id: $id }
-    DeleteReviewComment("EditIdVariables") delete_pull_request_review_comment: DeleteReviewCommentPayload { id: $id }
+    DeleteIssueComment("IdVariables") delete_issue_comment: DeleteIssueCommentPayload { id: $id }
+    DeleteReviewComment("IdVariables") delete_pull_request_review_comment: DeleteReviewCommentPayload { id: $id }
     /// A review's summary.
     UpdateReview("BodyVariables") update_pull_request_review: UpdateReviewPayload { pullRequestReviewId: $id, body: $body }
     /// Your pending review, thrown away with its comments.
-    DeleteReview("EditIdVariables") delete_pull_request_review: DeleteReviewPayload { pullRequestReviewId: $id }
+    DeleteReview("IdVariables") delete_pull_request_review: DeleteReviewPayload { pullRequestReviewId: $id }
     UpdateIssueTitle("TitleVariables") update_issue: UpdateIssuePayload { id: $id, title: $title }
     UpdatePrTitle("TitleVariables") update_pull_request: UpdatePrPayload { pullRequestId: $id, title: $title }
     AddReaction("ReactVariables") add_reaction: AddReactionPayload { subjectId: $subject, content: $content }

@@ -24,7 +24,7 @@ use crate::act::{Step, Subject};
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::state::{Cmd, Screen, State};
+use crate::state::{Cmds, Screen, State};
 use crate::ui::page::{Link, Page};
 
 /// The actions this module takes as its own.
@@ -430,8 +430,7 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
 };
 
 /// Runs one of [`ACTIONS`].
-#[must_use]
-pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
+pub fn act(state: &mut State, action: Action) -> Cmds {
     crate::act::take(state, plan(state, action))
 }
 
@@ -507,8 +506,7 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
 }
 
 /// Following one of the page's rows.
-#[must_use]
-pub fn follow_link(state: &mut State, link: &SettingLink) -> Vec<Cmd> {
+pub fn follow_link(state: &mut State, link: &SettingLink) -> Cmds {
     match link {
         SettingLink::Add => act(state, Action::AddSetting),
         SettingLink::Rule(_) => act(state, Action::EditSetting),
@@ -521,7 +519,7 @@ pub fn follow_link(state: &mut State, link: &SettingLink) -> Vec<Cmd> {
                 repo,
                 page: SettingsPage::Hook(*id),
             })),
-            None => Vec::new(),
+            None => Cmds::new(),
         },
         SettingLink::Ruleset(_) | SettingLink::Delivery(_) | SettingLink::Key(_) => {
             let (action, what) = match link {
@@ -1037,8 +1035,7 @@ fn confirm(form: &Form, text: &str) -> Result<crate::forms::Ask, String> {
 }
 
 /// ctrl-s in the composer: asks about what the form changes.
-#[must_use]
-pub fn submit(state: &mut State, form: &Form, text: &str) -> Vec<Cmd> {
+pub fn submit(state: &mut State, form: &Form, text: &str) -> Cmds {
     match confirm(form, text) {
         Err(why) => crate::forms::say(state, why),
         Ok(mut confirm) => {
@@ -1051,20 +1048,16 @@ pub fn submit(state: &mut State, form: &Form, text: &str) -> Vec<Cmd> {
 
 /// After GitHub took a change: a webhook deleted from its own page goes
 /// back to the list.
-#[must_use]
-pub fn after(state: &mut State, change: &Change) -> Vec<Cmd> {
-    let Change::Settings(c) = change else {
-        return Vec::new();
-    };
-    let SettingsChange::DeleteHook { repo, id, .. } = c else {
-        return Vec::new();
+pub fn after(state: &mut State, change: &Change) -> Cmds {
+    let Change::Settings(SettingsChange::DeleteHook { repo, id, .. }) = change else {
+        return Cmds::new();
     };
     let on_it = Route::Settings(settings::Page {
         repo: repo.clone(),
         page: SettingsPage::Hook(*id),
     });
     if state.route() != Some(&on_it) {
-        return Vec::new();
+        return Cmds::new();
     }
     let list = Route::Settings(settings::Page {
         repo: repo.clone(),

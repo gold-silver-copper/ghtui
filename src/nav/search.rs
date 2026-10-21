@@ -1,7 +1,7 @@
 //! The search box, with its suggestions.
 
 use super::*;
-use crate::route::{code, people, runs, search, security};
+use crate::route::{people, runs, search, security};
 use std::borrow::Cow;
 
 pub struct SearchBox {
@@ -47,8 +47,7 @@ pub fn new_input(theme: &Theme, bg: Bg) -> TextArea<'static> {
 impl State {
     /// The header's search box: searching GitHub (`github`), or the
     /// page's own search: a list's filter, a job's log.
-    #[must_use]
-    pub fn open_search(&mut self, github: bool) -> Vec<Cmd> {
+    pub fn open_search(&mut self, github: bool) -> Cmds {
         let filter_query = match self.route() {
             _ if github => None,
             Some(Route::Runs(runs::Job { query, .. })) => Some(query.clone()),
@@ -81,7 +80,7 @@ impl State {
             filter: filter_query.is_some(),
             selected: 0,
         })));
-        Vec::new()
+        Cmds::new()
     }
 
     /// Where the search box is typed into: the page's own filter field
@@ -108,10 +107,7 @@ impl State {
 
     /// The header's search field.
     pub fn header_search(&self) -> Rect {
-        let chrome = self.chrome();
-        let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
-        let right: Vec<_> = chrome.right.iter().map(|(t, _)| t.clone()).collect();
-        chrome::header_layout(self.layout().header, &crumbs, &right).search
+        header_of(&self.chrome(), self.layout().header).search
     }
 
     /// "→ o/r#5 go to", for what's typed when it's a place or ends in a
@@ -269,7 +265,7 @@ impl State {
             }
             for r in live {
                 let detail = format!("☆ {}", pages::compact(r.stars));
-                let pick = Pick::Go(Target::Page(Route::Code(code::Repo(r.repo.clone()))).into());
+                let pick = Pick::Go(Target::Page(Route::code(r.repo.clone())).into());
                 out.push(suggestion("▤", r.repo.to_string(), &detail, "", pick));
             }
         }
@@ -353,10 +349,9 @@ pub(super) fn heading(text: &str) -> (SuggestRow, Option<Pick>) {
     (SuggestRow::Heading(text.to_owned()), None)
 }
 
-#[must_use]
-pub fn on_search_box_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
+pub fn on_search_box_key(state: &mut State, key: KeyEvent) -> Cmds {
     let Some(Overlay::Search(sb)) = &state.overlay else {
-        return Vec::new();
+        return Cmds::new();
     };
     let picks: Vec<Pick> = state
         .suggestions(sb)
@@ -364,20 +359,20 @@ pub fn on_search_box_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         .filter_map(|(_, p)| p)
         .collect();
     let Some(Overlay::Search(sb)) = &mut state.overlay else {
-        return Vec::new();
+        return Cmds::new();
     };
     if move_in_list(key, &mut sb.selected, picks.len()) {
-        return Vec::new();
+        return Cmds::new();
     }
     match key.code {
         KeyCode::Esc => {
             state.overlay = None;
-            Vec::new()
+            Cmds::new()
         }
         KeyCode::Enter => {
             let pick = picks.into_iter().nth(sb.selected);
             state.overlay = None;
-            pick.map_or_else(Vec::new, |p| choose(state, p))
+            pick.map_or_else(Cmds::new, |p| choose(state, p))
         }
         _ => {
             type_into(&mut sb.input, key);
@@ -388,25 +383,23 @@ pub fn on_search_box_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 
 /// After the search box's text changed: its suggestions start over, and
 /// GitHub is asked for some once typing pauses.
-#[must_use]
-pub fn search_box_changed(sb: &mut SearchBox) -> Vec<Cmd> {
+pub fn search_box_changed(sb: &mut SearchBox) -> Cmds {
     sb.selected = 0;
     let q = sb.query();
     if !sb.filter && q.chars().count() >= 2 && link_in(&q, None).is_none() {
-        vec![Cmd::SuggestLater(q)]
+        Cmd::SuggestLater(q).into()
     } else {
-        Vec::new()
+        Cmds::new()
     }
 }
 
-#[must_use]
-pub(super) fn choose(state: &mut State, pick: Pick) -> Vec<Cmd> {
+pub(super) fn choose(state: &mut State, pick: Pick) -> Cmds {
     match pick {
         Pick::Go(dest) => state.go(dest),
         Pick::Search(kind, query) => state.push(Route::Search(search::Search { kind, query })),
         Pick::Filter(query) if matches!(state.route(), Some(Route::Runs(runs::Job { .. }))) => {
             search_log(state, &query);
-            Vec::new()
+            Cmds::new()
         }
         Pick::Filter(query) => match state
             .route()

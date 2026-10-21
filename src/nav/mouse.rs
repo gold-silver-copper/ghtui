@@ -3,14 +3,13 @@
 use super::*;
 use crate::route::app;
 
-#[must_use]
-pub fn on_mouse(state: &mut State, ev: MouseEvent) -> Vec<Cmd> {
+pub fn on_mouse(state: &mut State, ev: MouseEvent) -> Cmds {
     let (x, y) = (ev.column, ev.row);
     match ev.kind {
         MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
             let down = ev.kind == MouseEventKind::ScrollDown;
             if state.overlay.is_some() {
-                return Vec::new();
+                return Cmds::new();
             }
             let height = state.page_height();
             match state.screen_mut() {
@@ -19,22 +18,21 @@ pub fn on_mouse(state: &mut State, ev: MouseEvent) -> Vec<Cmd> {
                 }
                 Screen::Diff(_) => {
                     let action = if down { Action::Down } else { Action::Up };
-                    let mut cmds = Vec::new();
+                    let mut cmds = Cmds::new();
                     for _ in 0..3 {
                         cmds.extend(apply(state, action));
                     }
                     return cmds;
                 }
             }
-            Vec::new()
+            Cmds::new()
         }
         MouseEventKind::Down(button) => click(state, x, y, button),
-        _ => Vec::new(),
+        _ => Cmds::new(),
     }
 }
 
-#[must_use]
-pub(super) fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> Vec<Cmd> {
+pub(super) fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> Cmds {
     let inside = |r: Rect| r.contains((x, y).into());
     // Overlays first: a click outside closes them.
     match &state.overlay {
@@ -49,12 +47,12 @@ pub(super) fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> V
             };
             let screen = Rect::new(0, 0, state.size.0, state.size.1);
             if inside(field) {
-                return Vec::new();
+                return Cmds::new();
             }
             if inside(panel.area(screen)) {
                 let pick = panel.row_at(screen, y).and_then(|r| picks.get(r));
                 let Some(Some(pick)) = pick.cloned() else {
-                    return Vec::new();
+                    return Cmds::new();
                 };
                 state.overlay = None;
                 return choose(state, pick);
@@ -64,21 +62,19 @@ pub(super) fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> V
             if inside(state.header_search()) {
                 return state.open_search(true);
             }
-            return Vec::new();
+            return Cmds::new();
         }
-        Some(Overlay::Compose(_) | Overlay::Submit(_)) => return Vec::new(),
+        Some(Overlay::Compose(_) | Overlay::Submit(_)) => return Cmds::new(),
         Some(_) => {
             state.overlay = None;
-            return Vec::new();
+            return Cmds::new();
         }
         None => {}
     }
     let lay = state.layout();
     let chrome = state.chrome();
     if inside(lay.header) {
-        let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
-        let right: Vec<_> = chrome.right.iter().map(|(t, _)| t.clone()).collect();
-        let h = chrome::header_layout(lay.header, &crumbs, &right);
+        let h = header_of(&chrome, lay.header);
         if inside(h.search) {
             return state.open_search(true);
         }
@@ -96,30 +92,31 @@ pub(super) fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> V
             .map(|(_, t)| t.clone());
         return crumb
             .or(right)
-            .map_or_else(Vec::new, |target| state.go(target.into()));
+            .map_or_else(Cmds::new, |target| state.go(target.into()));
     }
     if let Some(tabs) = lay.tabs
         && inside(tabs)
     {
-        let tab_list: Vec<_> = chrome.tabs.iter().map(|(t, _)| t.clone()).collect();
-        let rects = chrome::tab_layout(tabs, &tab_list, chrome.active);
-        return match rects.iter().position(|r| x >= r.x && x < r.right()) {
+        return match tabs_of(&chrome, tabs)
+            .iter()
+            .position(|r| x >= r.x && x < r.right())
+        {
             Some(i) => switch_tab(state, i + 1),
-            None => Vec::new(),
+            None => Cmds::new(),
         };
     }
     let content = lay.content;
     if let Some((screen, diff)) = state.diff_parts() {
         crate::diff_screen::click(screen, diff, content, x, y);
-        return Vec::new();
+        return Cmds::new();
     }
     let area = state.page_area();
     let height = state.page_height();
     let Screen::Page(p) = state.screen_mut() else {
-        return Vec::new();
+        return Cmds::new();
     };
     if !inside(area) {
-        return Vec::new();
+        return Cmds::new();
     }
     p.fresh = false;
     let hit = page::hit(&p.page, area, p.scroll, x, y);
@@ -127,7 +124,7 @@ pub(super) fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> V
     if button == MouseButton::Right {
         p.selected = item.or(p.selected);
         open_menu(state);
-        return Vec::new();
+        return Cmds::new();
     }
     if let Some(link) = hit.link.and_then(|l| p.page.target(l)) {
         let link = link.clone();
@@ -138,14 +135,14 @@ pub(super) fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> V
         // A second click on a row opens it.
         Some(i) if p.selected == Some(i) => {
             let link = p.selected_link().cloned();
-            link.map_or_else(Vec::new, |l| state.follow(&l))
+            link.map_or_else(Cmds::new, |l| state.follow(&l))
         }
         Some(i) => {
             p.selected = Some(i);
             reveal(p, i, height);
-            Vec::new()
+            Cmds::new()
         }
-        None => Vec::new(),
+        None => Cmds::new(),
     }
 }
 

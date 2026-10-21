@@ -48,8 +48,7 @@ pub fn find(state: &mut State, query: &str, forward: bool) {
 
 /// Searches the word under the cursor as `/` would, as a whole word,
 /// going to its next match below the cursor's line.
-#[must_use]
-pub fn search_word(state: &mut State) -> Vec<Cmd> {
+pub fn search_word(state: &mut State) -> Cmds {
     if let Some((screen, diff)) = state.diff_parts() {
         let code = diff.doc.code_at(screen.cursor, screen.half).unwrap_or("");
         let words = text::words(code);
@@ -63,10 +62,10 @@ pub fn search_word(state: &mut State) -> Vec<Cmd> {
             }
             None => state.info("No word under the cursor: this row has no code"),
         }
-        return Vec::new();
+        return Cmds::new();
     }
     let Screen::Page(p) = state.screen_mut() else {
-        return Vec::new();
+        return Cmds::new();
     };
     let Some(word) = p.word_text().map(|w| text::whole_word(&w)) else {
         let down = state.first_key(Action::Down);
@@ -86,7 +85,7 @@ pub fn search_word(state: &mut State) -> Vec<Cmd> {
         state.sync_page();
     }
     let Screen::Page(p) = state.screen_mut() else {
-        return Vec::new();
+        return Cmds::new();
     };
     // From the cursor's line, around to the other end.
     let line = (p.selected.and_then(|i| p.page.items.get(i))).map_or(0, |it| it.start);
@@ -95,7 +94,7 @@ pub fn search_word(state: &mut State) -> Vec<Cmd> {
     if let Some((n, of)) = next.and_then(|n| go_to_mark(p, n)) {
         state.info(format!("Match {n} of {of}"));
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// Goes to the next (or previous) search match on the page: which

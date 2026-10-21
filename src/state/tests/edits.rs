@@ -41,7 +41,7 @@ fn a_comment_is_edited_in_place_and_followed() {
         fixtures::asked(&opened) == [DataKey::Mentionable(ghtui())] && opened.len() == 1,
         "{opened:?}"
     );
-    let c = crate::fixtures::composer(&mut s);
+    let c = fixtures::composer(&mut s);
     assert_eq!(c.text(), "Agreed. 120 columns, centered?");
     let screen = screen_text(&s);
     let editor = screen
@@ -109,7 +109,7 @@ fn edits_are_offered_only_where_github_allows_them() {
     press(&mut s, "D");
     says(&s, "Select a comment first");
     press(&mut s, "e");
-    let c = crate::fixtures::composer(&mut s);
+    let c = fixtures::composer(&mut s);
     assert!(c.text().starts_with("On a 200-column terminal"));
 
     // Elsewhere, they say where they work.
@@ -125,9 +125,7 @@ fn deleting_a_comment_asks_first() {
     let mut s = issue_with(|_| {});
     on_hubot(&mut s);
     assert!(press(&mut s, "D").is_empty());
-    let Some(Overlay::Ask(c)) = &s.overlay else {
-        panic!("D asks first")
-    };
+    let c = overlay!(s, Ask);
     assert!(c.title.starts_with("Delete hubot's comment"), "{}", c.title);
     // Data arriving doesn't close or change it.
     issue_shows(&mut s, |_| {});
@@ -196,10 +194,7 @@ fn reacting_toggles_yours() {
         p.selected = None;
     }
     press(&mut s, "+");
-    let rows: Vec<String> = match &s.overlay {
-        Some(Overlay::Picker(p)) => s.picker_rows(p).into_iter().map(|(r, _)| r.label).collect(),
-        _ => panic!("+ opens the reactions"),
-    };
+    let rows = picked_labels(&s);
     assert_eq!(rows.len(), 8);
     assert!(
         rows[3].starts_with('✓') && rows[3].contains("Hooray"),
@@ -238,7 +233,7 @@ fn the_labels_picker_lists_whats_set_first() {
     let mut s = issue_with(|_| {});
     let cmds = act(&mut s, Action::EditLabels);
     let key = DataKey::Sidebar(ghtui(), 14);
-    assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
+    assert!(fixtures::asks(&cmds, &key), "{cmds:?}");
     fixtures::served(&mut s, &cmds);
     press(&mut s, "<Down><Down><Enter><Up><Enter>");
     let screen = screen_text(&s);
@@ -301,10 +296,7 @@ fn reviewers_include_teams() {
     let mut s = with_pr();
     let cmds = act(&mut s, Action::RequestReviews);
     fixtures::served(&mut s, &cmds);
-    let rows: Vec<String> = match &s.overlay {
-        Some(Overlay::Picker(p)) => s.picker_rows(p).into_iter().map(|(r, _)| r.label).collect(),
-        _ => panic!("asking for reviews opens the reviewers"),
-    };
+    let rows = picked_labels(&s);
     // Who's asked, then the rest; never the author (octocat).
     let names = [
         "✓ defunkt",

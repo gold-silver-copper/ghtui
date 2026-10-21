@@ -28,17 +28,17 @@ async fn ensure(repo: &Repo, sha: &str) -> Result<(), String> {
     if have.is_ok() {
         return Ok(());
     }
-    let args = [
-        "fetch",
-        "--no-tags",
-        "--no-write-fetch-head",
-        &repo.remote,
-        sha,
-    ];
-    repo.git(&args, &[], None).await.map(drop).map_err(|e| {
+    fetch(repo, sha).await.map_err(|e| {
         let sha = crate::ui::text::short_sha(sha);
         format!("Couldn't fetch {sha} from GitHub: {e}")
     })
+}
+
+/// Fetches `spec` from GitHub, without its tags.
+async fn fetch(repo: &Repo, spec: &str) -> Result<(), GitError> {
+    let args = ["fetch", "--no-tags", "--no-write-fetch-head"];
+    let args = [args.as_slice(), &[repo.remote.as_str(), spec]].concat();
+    repo.git(&args, &[], None).await.map(drop)
 }
 
 /// Pushes to GitHub, quietly: `args` after the remote.
@@ -62,7 +62,8 @@ async fn remote_has(repo: &Repo, kind: RefKind, full: &str) -> Result<bool, Stri
         .git(&["ls-remote", &repo.remote, full], &[], None)
         .await)
         .map_err(|e| format!("Couldn't ask GitHub for its {all}: {e}"))?;
-    Ok(there.lines().any(|l| l.ends_with(&format!("\t{full}"))))
+    let named = |l: &str| l.strip_suffix(full).is_some_and(|l| l.ends_with('\t'));
+    Ok(there.lines().any(named))
 }
 
 /// What git said when GitHub refused a push, in its own words.
@@ -188,16 +189,7 @@ pub async fn commit(top: &Path, remote: &str, c: &Commit) -> Result<String, Stri
 /// GitHub's tip of `branch`, fetched.
 async fn tip(repo: &Repo, branch: &str) -> Result<String, String> {
     let spec = format!("+{}:{TIP}", RefKind::Branch.full(branch));
-    let args = [
-        "fetch",
-        "--no-tags",
-        "--no-write-fetch-head",
-        &repo.remote,
-        &spec,
-    ];
-    repo.git(&args, &[], None)
-        .await
-        .map_err(|e| format!("Couldn't fetch {branch} from GitHub: {e}"))?;
+    (fetch(repo, &spec).await).map_err(|e| format!("Couldn't fetch {branch} from GitHub: {e}"))?;
     let out = repo.git(&["rev-parse", TIP], &[], None).await;
     out.map(|o| o.trim().to_owned())
         .map_err(|e| format!("Couldn't read {branch}: {e}"))

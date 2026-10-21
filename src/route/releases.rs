@@ -67,7 +67,7 @@ impl Family for Page {
     fn up(&self, _: &State) -> Option<Route> {
         let repo = self.repo_id().clone();
         Some(match self {
-            Releases(_) => Route::Code(super::code::Repo(repo)),
+            Releases(_) => Route::code(repo),
             Release { .. } | NewRelease(_) => Route::Releases(Releases(repo)),
             EditRelease { tag, .. } => Route::Releases(Release {
                 repo,

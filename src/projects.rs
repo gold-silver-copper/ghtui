@@ -27,7 +27,7 @@ use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::{Choice, Kind, Rows, entry, fuzzy_score};
-use crate::state::{Cmd, Screen, State};
+use crate::state::{Cmds, Screen, State};
 
 /// A project's own actions.
 const ACTIONS: &[Action] = &[
@@ -75,7 +75,7 @@ pub struct Drafting {
 impl Drafting {
     /// Sends what the composer wrote: the title on the first line, then
     /// the body.
-    pub fn send(&self, text: &str) -> Result<Vec<Cmd>, String> {
+    pub fn send(&self, text: &str) -> Result<Cmds, String> {
         let (title, body) = text.split_once('\n').unwrap_or((text, ""));
         let (title, body) = (title.trim().to_owned(), body.trim().to_owned());
         if title.is_empty() {
@@ -94,10 +94,7 @@ impl Drafting {
             },
         };
         let about = Subject::Project(self.project.clone(), self.view);
-        Ok(vec![crate::act::send(
-            Change::Project(change),
-            By::Edit(about),
-        )])
+        Ok(crate::act::send(Change::Project(change), By::Edit(about)).into())
     }
 }
 
@@ -395,8 +392,7 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
 }
 
 /// Runs one of [`ACTIONS`], or an edit, on a project's page.
-#[must_use]
-pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
+pub fn act(state: &mut State, action: Action) -> Cmds {
     let Some(h) = here(state) else {
         if action == Action::SetField && sidebar::here(state).is_some() {
             return sidebar::act(state);
@@ -412,12 +408,12 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
     match (action, item) {
         (Action::PrevColumn | Action::NextColumn, _) => {
             column_step(state, action == Action::NextColumn);
-            Vec::new()
+            Cmds::new()
         }
         (Action::AddItem, _) => state.open_picker(Kind::Project(Pick::Add(project, view))),
         (Action::ArchiveItem, Some(id)) => {
             let Some(it) = h.item else {
-                return Vec::new();
+                return Cmds::new();
             };
             let archived = !it.archived;
             let change = Change::Project(ProjectChange::Archive {
@@ -428,7 +424,7 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
             let about = Subject::Project(project, view);
             if !archived {
                 state.info("Restoring it…");
-                return vec![crate::act::send(change, By::Act(about))];
+                return crate::act::send(change, By::Act(about)).into();
             }
             // GitHub asks first.
             let title = crate::ui::text::truncate(it.title(), 50);
@@ -443,11 +439,11 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
             let choices = vec![("Archive".into(), change)];
             let confirm = crate::act::confirm(action, about, title, facts, choices);
             state.overlay = Some(crate::state::Overlay::Ask(Box::new(confirm)));
-            Vec::new()
+            Cmds::new()
         }
         (Action::EditComment | Action::EditTitle, _) => {
             let Ok(d) = draft(state, &h) else {
-                return Vec::new();
+                return Cmds::new();
             };
             let text = format!("{}\n\n{}", d.title, d.body);
             let drafting = Drafting {
@@ -459,21 +455,19 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
             };
             state.compose(compose::Target::ProjectDraft(drafting), &text)
         }
-        (Action::MoveItem, Some(item)) => {
-            let at = At {
-                on: On::View(project, view),
-                item,
-            };
-            state.open_picker(Kind::Project(Pick::Column(at)))
-        }
         (_, Some(item)) => {
             let at = At {
                 on: On::View(project, view),
                 item,
             };
-            state.open_picker(Kind::Project(Pick::Field(at)))
+            let pick = if action == Action::MoveItem {
+                Pick::Column(at)
+            } else {
+                Pick::Field(at)
+            };
+            state.open_picker(Kind::Project(pick))
         }
-        (_, None) => Vec::new(),
+        (_, None) => Cmds::new(),
     }
 }
 
@@ -665,12 +659,7 @@ fn adding(state: &State, project: &ProjectRef, view: Option<u64>, q: &str) -> Ro
         _ => None,
     });
     if let Some((repo, number)) = named {
-        let here = p.loaded().find(|it| match &it.content {
-            ItemContent::Issue(l, _) | ItemContent::Pr(l, _) => {
-                l.repo == repo && l.number == number
-            }
-            _ => false,
-        });
+        let here = p.loaded().find(|it| is_item(it, &repo, number));
         let label = format!("Add {repo}#{number}");
         match here {
             Some(it) if it.archived => {
@@ -706,6 +695,12 @@ fn adding(state: &State, project: &ProjectRef, view: Option<u64>, q: &str) -> Ro
     rows
 }
 
+/// Whether project item `it` is issue or pull request `number` of `repo`.
+fn is_item(it: &ProjectItem, repo: &crate::api::model::RepoId, number: u64) -> bool {
+    matches!(&it.content, ItemContent::Issue(l, _) | ItemContent::Pr(l, _)
+        if l.repo == *repo && l.number == number)
+}
+
 /// The row a typed value makes: setting it, or why it can't be.
 fn typed(
     field: &ProjectField,
@@ -714,11 +709,7 @@ fn typed(
 ) -> (PaletteItem, Option<Choice>) {
     let row = |label: String, chosen: Option<Choice>| {
         let hint = if chosen.is_some() { "↵" } else { "" };
-        let item = PaletteItem {
-            label,
-            hint: hint.to_owned(),
-        };
-        (item, chosen)
+        entry(label, hint, chosen)
     };
     let value = match &field.kind {
         _ if q.is_empty() => return row(format!("Type the {}", field.name), None),
@@ -777,13 +768,7 @@ pub fn shows(state: &State, change: &Change, project: &ProjectRef, view: Option<
             }
         }
         Change::Project(ProjectChange::Add { repo, number, .. }) => {
-            unseen
-                || p.loaded().any(|it| match &it.content {
-                    ItemContent::Issue(l, _) | ItemContent::Pr(l, _) => {
-                        l.repo == *repo && l.number == *number
-                    }
-                    _ => false,
-                })
+            unseen || p.loaded().any(|it| is_item(it, repo, *number))
         }
         Change::Project(ProjectChange::AddDraft { title, .. }) => {
             unseen

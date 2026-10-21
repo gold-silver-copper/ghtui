@@ -1,14 +1,14 @@
 //! Home.
 
 use super::*;
-use crate::route::{app, code, search};
+use crate::route::{app, search};
 
 /// `]` and `[` go from section to section, either way: back from a
 /// section's first row is the section before, not the one it's in.
 #[test]
 fn sections_go_both_ways() {
     let mut state = with_prs(2);
-    crate::fixtures::section(&mut state, 0, mine(2, 2));
+    fixtures::section(&mut state, 0, mine(2, 2));
     press(&mut state, "<Home>");
     let first = page(&state).selected;
     press(&mut state, "]");
@@ -33,7 +33,7 @@ fn home_selects_the_first_row_and_opens_it() {
     assert_eq!(
         cmds,
         vec![
-            crate::fixtures::fetch_pr(&pr),
+            fixtures::fetch_pr(&pr),
             fetch(DataKey::InProjects(pr.repo.clone(), pr.number)),
             fetch(DataKey::PrActivity(pr.clone()))
         ]
@@ -41,12 +41,12 @@ fn home_selects_the_first_row_and_opens_it() {
     assert_eq!(route(&state), Route::pr(pr.clone()));
     assert_eq!(state.busy().as_deref(), Some("Loading"));
 
-    crate::fixtures::pr_fetched(&mut state, &pr, Err(ApiError::Network("down".into())));
+    fixtures::pr_fetched(&mut state, &pr, Err(ApiError::Network("down".into())));
     let text = page_text(&state);
     assert!(text.contains("network error: down"), "{text}");
     assert_eq!(
         press(&mut state, "r"),
-        vec![crate::fixtures::fetch_pr(&pr)],
+        vec![fixtures::fetch_pr(&pr)],
         "the activity is still loading"
     );
 
@@ -72,7 +72,7 @@ fn home_selects_the_first_row_and_opens_it() {
 #[test]
 fn a_section_opens_the_rest_of_its_list() {
     let mut state = state();
-    crate::fixtures::section(&mut state, 1, mine(30, 31));
+    fixtures::section(&mut state, 1, mine(30, 31));
     state.home[1].search.as_mut().unwrap().rows = 5;
     state.shown_gen += 1;
     state.sync_page();
@@ -182,17 +182,17 @@ fn home_stays_fresh_only_on_screen() {
         std::sync::atomic::Ordering::Relaxed,
     );
     assert!(update(&mut state, Msg::Timer(Timer::Home)).is_empty());
-    crate::fixtures::section(&mut state, 1, mine(1, 1));
+    fixtures::section(&mut state, 1, mine(1, 1));
     NOW.store(
         1000 + 2 * crate::home::FRESH_SECS,
         std::sync::atomic::Ordering::Relaxed,
     );
     let cmds = update(&mut state, Msg::Timer(Timer::Home));
     assert_eq!(cmds.len(), 1, "{cmds:?}");
-    assert!(crate::fixtures::asks(&cmds, &mine_key(&state)), "{cmds:?}");
+    assert!(fixtures::asks(&cmds, &mine_key(&state)), "{cmds:?}");
     // Away from Home, its timer does nothing and isn't set again.
     let _ = state.push(Route::user("octocat"));
-    crate::fixtures::section(&mut state, 1, mine(1, 1));
+    fixtures::section(&mut state, 1, mine(1, 1));
     NOW.store(
         1000 + 4 * crate::home::FRESH_SECS,
         std::sync::atomic::Ordering::Relaxed,
@@ -201,7 +201,7 @@ fn home_stays_fresh_only_on_screen() {
     assert!(!timers(&mut state).contains(&home));
     // Back home, what's old is fetched again.
     let cmds = state.back();
-    assert!(crate::fixtures::asks(&cmds, &mine_key(&state)), "{cmds:?}");
+    assert!(fixtures::asks(&cmds, &mine_key(&state)), "{cmds:?}");
 }
 
 /// Home's sections from the disk cache are from an earlier session:
@@ -213,7 +213,7 @@ fn going_back_home_fetches_cached_sections() {
     let (value, fetched_at) = (Data::from(mine(1, 1)), 0);
     let cached = Remote::cached(Some(crate::store::Cached { value, fetched_at }));
     state.data.insert(key.clone(), cached);
-    let _ = state.start_at(Target::Page(Route::Code(code::Repo(ghtui()))).into());
+    let _ = state.start_at(Target::Page(Route::code(ghtui())).into());
     let cmds = state.back();
-    assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
+    assert!(fixtures::asks(&cmds, &key), "{cmds:?}");
 }

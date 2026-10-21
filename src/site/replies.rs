@@ -8,7 +8,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::api::model::Capped;
 use crate::api::replies::SavedReply;
 use crate::data::Picked;
-use crate::state::{Cmd, Overlay, Remote, State};
+use crate::state::{Cmds, Overlay, Remote, State};
 
 use crate::data::DataKey;
 
@@ -89,7 +89,7 @@ pub fn shown(state: &State) -> Option<(Vec<String>, usize)> {
 
 /// A key in the composer: `ctrl-g` opens the list (or closes it); while
 /// it's open, keys are the list's. `None` for the composer's own keys.
-pub fn on_key(state: &mut State, key: KeyEvent) -> Option<Vec<Cmd>> {
+pub fn on_key(state: &mut State, key: KeyEvent) -> Option<Cmds> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let open = matches!(&state.overlay, Some(Overlay::Compose(c)) if c.saved.is_some());
     if key.code == KeyCode::Char('g') && ctrl {
@@ -101,7 +101,7 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Option<Vec<Cmd>> {
         }
         // Asked anew each time it opens: they may have changed on GitHub.
         return Some(if open {
-            Vec::new()
+            Cmds::new()
         } else {
             state.ensure(DataKey::SavedReplies, true)
         });
@@ -121,7 +121,7 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Option<Vec<Cmd>> {
     };
     let choosing = c.saved.as_mut()?;
     if crate::picker::move_in_list(key, &mut choosing.selected, count) {
-        return Some(Vec::new());
+        return Some(Cmds::new());
     }
     match key.code {
         KeyCode::Esc => c.saved = None,
@@ -142,5 +142,5 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Option<Vec<Cmd>> {
         }
         _ => {}
     }
-    Some(Vec::new())
+    Some(Cmds::new())
 }

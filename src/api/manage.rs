@@ -274,14 +274,8 @@ impl GitHub {
                 json!({ "id": subject.as_str(), "reason": reason.map(LockReason::wire) }),
             ),
             Manage::Unlock { subject } => (raw::UNLOCK, json!({ "id": subject.as_str() })),
-            Manage::Pin { issue, on } => (
-                if *on {
-                    raw::PIN_ISSUE
-                } else {
-                    raw::UNPIN_ISSUE
-                },
-                json!({ "id": issue.as_str() }),
-            ),
+            Manage::Pin { issue, on: true } => (raw::PIN_ISSUE, json!({ "id": issue.as_str() })),
+            Manage::Pin { issue, .. } => (raw::UNPIN_ISSUE, json!({ "id": issue.as_str() })),
             Manage::Hide { comment, reason } => (
                 raw::HIDE_COMMENT,
                 json!({ "id": comment.as_str(), "reason": reason.wire() }),

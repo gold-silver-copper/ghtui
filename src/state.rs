@@ -145,6 +145,79 @@ pub enum DiffMsg {
     CommitsListed(Result<Vec<crate::git::repo::Commit>, Failure>),
 }
 
+/// Commands for the runtime. Dropping them loses their effects, so every
+/// function that returns them must have them used.
+#[must_use]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Cmds(Vec<Cmd>);
+
+impl Cmds {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl std::ops::Deref for Cmds {
+    type Target = Vec<Cmd>;
+    fn deref(&self) -> &Vec<Cmd> {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Cmds {
+    fn deref_mut(&mut self) -> &mut Vec<Cmd> {
+        &mut self.0
+    }
+}
+
+impl From<Vec<Cmd>> for Cmds {
+    fn from(cmds: Vec<Cmd>) -> Self {
+        Self(cmds)
+    }
+}
+
+impl From<Cmd> for Cmds {
+    fn from(cmd: Cmd) -> Self {
+        Self(vec![cmd])
+    }
+}
+
+impl FromIterator<Cmd> for Cmds {
+    fn from_iter<I: IntoIterator<Item = Cmd>>(iter: I) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
+impl IntoIterator for Cmds {
+    type Item = Cmd;
+    type IntoIter = std::vec::IntoIter<Cmd>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a Cmds {
+    type Item = &'a Cmd;
+    type IntoIter = std::slice::Iter<'a, Cmd>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+#[cfg(test)]
+impl PartialEq<Vec<Cmd>> for Cmds {
+    fn eq(&self, other: &Vec<Cmd>) -> bool {
+        self.0 == *other
+    }
+}
+
+#[cfg(test)]
+impl<const N: usize> PartialEq<[Cmd; N]> for Cmds {
+    fn eq(&self, other: &[Cmd; N]) -> bool {
+        self.0 == *other
+    }
+}
+
 /// What `update` asks the runtime to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cmd {
@@ -492,10 +565,9 @@ impl State {
 
     /// Says `text` in the status bar, and does nothing else: why an
     /// action can't go ahead, mostly.
-    #[must_use]
-    pub fn just_say(&mut self, text: impl Into<String>) -> Vec<Cmd> {
+    pub fn just_say(&mut self, text: impl Into<String>) -> Cmds {
         self.info(text);
-        Vec::new()
+        Cmds::new()
     }
 
     /// Says what went wrong, in the status bar (and the messages list).
@@ -549,8 +621,7 @@ impl State {
 impl State {
     /// Rebuilds the page if its data changed and keeps the page (or the
     /// diff) in bounds.
-    #[must_use]
-    pub fn settle(&mut self) -> Vec<Cmd> {
+    pub fn settle(&mut self) -> Cmds {
         let mut cmds = self.settle_ref();
         self.sync_page();
         cmds.extend(self.settle_diff());
@@ -559,13 +630,12 @@ impl State {
 
     /// Opens the page an unsplit one ([`code::Unsplit`]) is, once where its ref
     /// ends is known.
-    #[must_use]
-    fn settle_ref(&mut self) -> Vec<Cmd> {
+    fn settle_ref(&mut self) -> Cmds {
         let Screen::Page(p) = self.screen() else {
-            return Vec::new();
+            return Cmds::new();
         };
         let Some(route) = self.split(&p.route, None) else {
-            return Vec::new();
+            return Cmds::new();
         };
         let anchor = p.anchor.clone();
         self.replace(route, false, anchor)

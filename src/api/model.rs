@@ -36,10 +36,7 @@ impl<T> Capped<T> {
         list: Option<Vec<Option<N>>>,
         f: impl FnMut(N) -> T,
     ) -> Self {
-        Self::new(
-            nodes(list).map(f).collect(),
-            u64::try_from(total).unwrap_or_default(),
-        )
+        Self::new(nodes(list).map(f).collect(), count(total))
     }
 
     /// Each item made another by `f`, of the same total.
@@ -645,7 +642,7 @@ pub(crate) fn author(actor: Option<q::Actor>) -> String {
 
 pub(crate) fn labels(labels: Option<q::LabelConnection>) -> Capped<Label> {
     labels.map_or_else(Capped::default, |l| {
-        Capped::from_nodes(l.total_count, l.nodes, |l| Label {
+        l.into_capped(|l| Label {
             name: l.name,
             color: l.color,
         })
@@ -705,9 +702,7 @@ impl PrDetail {
             }),
             labels: labels(pr.labels),
             milestone: pr.milestone.map(MilestoneRef::from_wire),
-            assignees: Capped::from_nodes(pr.assignees.total_count, pr.assignees.nodes, |u| {
-                u.login
-            }),
+            assignees: pr.assignees.into_capped(|u| u.login),
             editable: Editable {
                 id: pr.id.into(),
                 can_update: pr.viewer_can_update,

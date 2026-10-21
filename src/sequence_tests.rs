@@ -10,6 +10,11 @@
 //! gh-dash's history is full of these: crashes on empty or missing data,
 //! duplicate rows after a quick refresh, the wrong row acted on.
 
+#![allow(
+    unused_must_use,
+    reason = "tests drive the state, and check only the commands they care about"
+)]
+
 use crate::route::{Route, code, search};
 use std::collections::{HashMap, HashSet};
 
@@ -40,7 +45,7 @@ fn routes() -> [Route; 3] {
             query: "repo:o/r".into(),
         }),
         Route::Code(code::Branches(repo())),
-        Route::Code(code::Repo(repo())),
+        Route::code(repo()),
     ]
 }
 
@@ -146,42 +151,13 @@ enum Event {
     Fail(usize),
 }
 
-const KEYS: &[&str] = &[
-    "j",
-    "k",
-    "g",
-    "G",
-    "<Enter>",
-    "<Esc>",
-    "<Tab>",
-    "<S-Tab>",
-    "<C-d>",
-    "<C-u>",
-    "]",
-    "[",
-    "1",
-    "2",
-    "3",
-    "/",
-    "n",
-    "?",
-    "<BS>",
-    "x",
-    "y",
-    "<Down>",
-    "<Up>",
-    "<PageDown>",
-    "h",
-    "l",
-    "T",
-    "<C-w>",
-    "<Right>",
-    "<Left>",
-];
+/// Keys pressed, space-separated.
+const KEYS: &str = "j k g G <Enter> <Esc> <Tab> <S-Tab> <C-d> <C-u> ] [ 1 2 3 / n ? <BS> x y \
+    <Down> <Up> <PageDown> h l T <C-w> <Right> <Left>";
 
 fn event() -> impl Strategy<Value = Event> {
     prop_oneof![
-        4 => proptest::sample::select(KEYS).prop_map(Event::Keys),
+        4 => proptest::sample::select(KEYS.split(' ').collect::<Vec<_>>()).prop_map(Event::Keys),
         1 => prop_oneof![
             Just((1u16, 1u16)),
             Just((20, 5)),

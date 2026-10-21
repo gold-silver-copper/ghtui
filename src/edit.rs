@@ -17,10 +17,11 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::act::{By, Step, Subject, issue};
 use crate::compose;
 use crate::data::DataKey;
+use crate::discuss::same_text;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::{self, Choice};
-use crate::state::{Api, Cmd, Overlay, Remote, Screen, State};
+use crate::state::{Api, Cmd, Cmds, Overlay, Remote, Screen, State};
 use crate::ui::annotations::{AnnotationKey, ThreadRowKind};
 use crate::ui::diff_doc::{Pos, Row};
 use crate::ui::overlays::PaletteItem;
@@ -56,6 +57,16 @@ pub enum Field {
     Labels,
     Assignees,
     Reviewers,
+}
+
+impl Field {
+    fn name(self) -> &'static str {
+        match self {
+            Field::Labels => "Labels",
+            Field::Assignees => "Assignees",
+            Field::Reviewers => "Reviewers",
+        }
+    }
 }
 
 /// What a picker is choosing.
@@ -98,18 +109,7 @@ pub enum Pick {
 impl Choosing {
     pub fn title(&self) -> &'static str {
         match self {
-            Choosing::Many {
-                field: Field::Labels,
-                ..
-            } => "Labels",
-            Choosing::Many {
-                field: Field::Assignees,
-                ..
-            } => "Assignees",
-            Choosing::Many {
-                field: Field::Reviewers,
-                ..
-            } => "Reviewers",
+            Choosing::Many { field, .. } => field.name(),
             Choosing::Milestone { .. } => "Milestone",
             Choosing::React { .. } => "React",
             Choosing::Title { .. } => "Edit the title",
@@ -473,8 +473,7 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
 };
 
 /// Runs one of [`ACTIONS`] on what's on screen.
-#[must_use]
-pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
+pub fn act(state: &mut State, action: Action) -> Cmds {
     let planned = plan(state, action).and_then(|step| crate::act::settled(state).map(|()| step));
     crate::act::take(state, planned)
 }
@@ -511,9 +510,9 @@ pub fn doables(state: &State) -> Vec<Doable> {
                 Action::DeleteComment if what != "the description" => format!("Delete {what}"),
                 Action::React => format!("React to {what}"),
                 Action::EditTitle => "Edit the title".into(),
-                Action::EditLabels => "Labels".into(),
-                Action::EditAssignees => "Assignees".into(),
-                Action::RequestReviews => "Reviewers".into(),
+                Action::EditLabels => Field::Labels.name().into(),
+                Action::EditAssignees => Field::Assignees.name().into(),
+                Action::RequestReviews => Field::Reviewers.name().into(),
                 Action::EditMilestone => "Milestone".into(),
                 _ => action.description().into(),
             };
@@ -714,8 +713,7 @@ fn more(rows: &mut Rows, left_out: u64, one: &str, many: &str) {
 
 /// Keys in an edit's picker: up and down are the picker's; ↵ picks (or,
 /// in a list of many, checks or unchecks); ctrl-s applies what's checked.
-#[must_use]
-pub fn on_picker_key(state: &mut State, key: KeyEvent, rows: Rows) -> Vec<Cmd> {
+pub fn on_picker_key(state: &mut State, key: KeyEvent, rows: Rows) -> Cmds {
     // What's set now: where checking starts.
     let set: Option<BTreeSet<String>> = match &state.overlay {
         Some(Overlay::Picker(p)) => match &p.kind {
@@ -733,10 +731,10 @@ pub fn on_picker_key(state: &mut State, key: KeyEvent, rows: Rows) -> Vec<Cmd> {
         _ => None,
     };
     let Some(Overlay::Picker(p)) = &mut state.overlay else {
-        return Vec::new();
+        return Cmds::new();
     };
     let picker::Kind::Edit(c) = &mut p.kind else {
-        return Vec::new();
+        return Cmds::new();
     };
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
@@ -744,14 +742,14 @@ pub fn on_picker_key(state: &mut State, key: KeyEvent, rows: Rows) -> Vec<Cmd> {
         KeyCode::Char('s') if ctrl => return apply(state),
         KeyCode::Enter => {
             let Some((_, Some(Choice::Edit(pick)))) = rows.into_iter().nth(p.selected) else {
-                return Vec::new();
+                return Cmds::new();
             };
             if let (Pick::Toggle(name), Choosing::Many { chosen, .. }) = (&pick, c) {
                 let chosen = chosen.get_or_insert_with(|| set.unwrap_or_default());
                 if !chosen.remove(name) {
                     chosen.insert(name.clone());
                 }
-                return Vec::new();
+                return Cmds::new();
             }
             return send_pick(state, pick);
         }
@@ -761,7 +759,7 @@ pub fn on_picker_key(state: &mut State, key: KeyEvent, rows: Rows) -> Vec<Cmd> {
         }
         _ => {}
     }
-    Vec::new()
+    Cmds::new()
 }
 
 fn names(list: &[&Named]) -> BTreeSet<String> {
@@ -778,13 +776,12 @@ fn node(state: &State, about: &Subject) -> Option<NodeId> {
 }
 
 /// Sends what a picker's row picks, closing the picker.
-#[must_use]
-fn send_pick(state: &mut State, pick: Pick) -> Vec<Cmd> {
+fn send_pick(state: &mut State, pick: Pick) -> Cmds {
     let Some(Overlay::Picker(p)) = &state.overlay else {
-        return Vec::new();
+        return Cmds::new();
     };
     let picker::Kind::Edit(c) = &p.kind else {
-        return Vec::new();
+        return Cmds::new();
     };
     let edit = match (pick, c) {
         (Pick::React(content), Choosing::React { about, target, .. }) => Some((
@@ -805,7 +802,7 @@ fn send_pick(state: &mut State, pick: Pick) -> Vec<Cmd> {
         )),
         (Pick::Milestone(name), Choosing::Milestone { about }) => {
             let Ok(s) = sidebar(state, c) else {
-                return Vec::new();
+                return Cmds::new();
             };
             if s.milestone.as_ref().map(|m| &m.name) == name.as_ref() {
                 state.overlay = None;
@@ -825,24 +822,22 @@ fn send_pick(state: &mut State, pick: Pick) -> Vec<Cmd> {
         _ => None,
     };
     let Some((about, edit)) = edit else {
-        return Vec::new();
+        return Cmds::new();
     };
     send(state, about, edit)
 }
 
 /// Sends `edit`, closing the picker and saying what's happening.
-#[must_use]
-fn send(state: &mut State, about: Subject, edit: Edit) -> Vec<Cmd> {
+fn send(state: &mut State, about: Subject, edit: Edit) -> Cmds {
     state.overlay = None;
     state.info(format!("{}…", said(&edit).0));
-    vec![crate::act::send(Change::Edit(edit), By::Edit(about))]
+    crate::act::send(Change::Edit(edit), By::Edit(about)).into()
 }
 
 /// ctrl-s in a picker of many: sends what changed from what's set.
-#[must_use]
-fn apply(state: &mut State) -> Vec<Cmd> {
+fn apply(state: &mut State) -> Cmds {
     let Some(Overlay::Picker(p)) = &state.overlay else {
-        return Vec::new();
+        return Cmds::new();
     };
     let picker::Kind::Edit(
         c @ Choosing::Many {
@@ -852,10 +847,10 @@ fn apply(state: &mut State) -> Vec<Cmd> {
         },
     ) = &p.kind
     else {
-        return Vec::new();
+        return Cmds::new();
     };
     let (Ok(s), Some(subject)) = (sidebar(state, c), node(state, about)) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let (set, options) = field_names(s, *field);
     let was = names(&set);
@@ -937,11 +932,6 @@ fn written<'a>(state: &'a State, about: &Subject) -> Option<Vec<(&'a Editable, &
     )
 }
 
-/// The same text, but for line endings and the ends' whitespace.
-fn same(a: &str, b: &str) -> bool {
-    a.replace("\r\n", "\n").trim() == b.replace("\r\n", "\n").trim()
-}
-
 /// Whether the names in `list` have every one of `want` and none of
 /// `gone`.
 fn has(list: &[String], want: &[Named], gone: &[Named]) -> bool {
@@ -975,7 +965,7 @@ pub fn shown(state: &State, edit: &Edit, about: &Subject) -> bool {
             ..
         } => true,
         Edit::Body { id, body, .. } => match find(id) {
-            Some(Some((_, now))) => same(now, body),
+            Some(Some((_, now))) => same_text(now, body),
             Some(None) => true,
             None => false,
         },
@@ -989,7 +979,7 @@ pub fn shown(state: &State, edit: &Edit, about: &Subject) -> bool {
             Some(None) => true,
             None => false,
         },
-        Edit::Title { title: new, .. } => same(title, new),
+        Edit::Title { title: new, .. } => same_text(title, new),
         Edit::Labels { add, remove, .. } => {
             let names: Vec<String> = labels.iter().map(|l| l.name.clone()).collect();
             has(&names, add, remove)

@@ -55,9 +55,8 @@ impl State {
 }
 
 /// `y`: the selection's link, or the page's.
-#[must_use]
-pub fn copy_link(state: &mut State) -> Vec<Cmd> {
+pub fn copy_link(state: &mut State) -> Cmds {
     let url = state.here_url();
     state.info(format!("Copied {url}"));
-    vec![Cmd::Copy(url)]
+    Cmd::Copy(url).into()
 }

@@ -14,7 +14,7 @@ use crate::api::change::Change;
 use crate::api::model::{NodeId, RepoId};
 use crate::forms::{Sent, say};
 use crate::review::{Comment, EditPurpose, Preview};
-use crate::state::{Cmd, Overlay, State};
+use crate::state::{Cmd, Cmds, Overlay, State};
 use crate::theme::{Bg, Theme};
 use crate::ui::text::short_sha;
 
@@ -150,13 +150,12 @@ pub(crate) fn editor(theme: &Theme, text: &str) -> TextArea<'static> {
     input
 }
 
-#[must_use]
-pub(crate) fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
+pub(crate) fn on_key(state: &mut State, key: KeyEvent) -> Cmds {
     let Some(Overlay::Compose(compose)) = &mut state.overlay else {
-        return Vec::new();
+        return Cmds::new();
     };
     if compose.sent.sending {
-        return Vec::new();
+        return Cmds::new();
     }
     if let Some(cmds) = crate::site::replies::on_key(state, key) {
         return cmds;
@@ -165,7 +164,7 @@ pub(crate) fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         return cmds;
     }
     let Some(Overlay::Compose(compose)) = &mut state.overlay else {
-        return Vec::new();
+        return Cmds::new();
     };
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
@@ -181,10 +180,11 @@ pub(crate) fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             }
         }
         KeyCode::Char('e') if ctrl => {
-            return vec![Cmd::Edit {
+            return Cmd::Edit {
                 purpose: EditPurpose::Compose,
                 text: compose.text(),
-            }];
+            }
+            .into();
         }
         KeyCode::Char('s') if ctrl => return save(state),
         _ => {
@@ -194,7 +194,7 @@ pub(crate) fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             compose.input.input(key);
         }
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// Whether `key` may throw away the text typed in the composer or the
@@ -220,10 +220,9 @@ pub(crate) fn may_discard(state: &mut State, key: &'static str, verb: &str) -> b
 }
 
 /// `ctrl-s` in the composer: the text goes where its target says.
-#[must_use]
-pub(crate) fn save(state: &mut State) -> Vec<Cmd> {
+pub(crate) fn save(state: &mut State) -> Cmds {
     let Some(Overlay::Compose(compose)) = &state.overlay else {
-        return Vec::new();
+        return Cmds::new();
     };
     let (target, body) = (compose.target.clone(), compose.text());
     match target {
@@ -268,7 +267,7 @@ pub(crate) fn save(state: &mut State) -> Vec<Cmd> {
 }
 
 /// Sends `change`, the composer waiting for GitHub's answer.
-fn posted(state: &mut State, change: Change, by: By) -> Vec<Cmd> {
+fn posted(state: &mut State, change: Change, by: By) -> Cmds {
     crate::forms::sending(state);
-    vec![crate::act::send(change, by)]
+    crate::act::send(change, by).into()
 }

@@ -16,12 +16,8 @@ pub mod structure;
 pub mod text;
 
 pub use file::{Alignment, CONTEXT, Content, FileDiff, TextDiff, counts};
-pub use highlight::{Language, Span, TokenKind, highlight};
-pub use hunks::{
-    Algorithm, DiffLine, Hunk, Whitespace, align, diff_lines, hunks, segments, segments_by,
-    side_counts,
-};
-pub use structure::Fallback;
+pub use highlight::{Language, Span, TokenKind};
+pub use hunks::{DiffLine, Whitespace, hunks, segments_by};
 pub use text::{Text, is_binary};
 
 /// `n` as a `u32`, saturating. Offsets and counts are `u32`, and [`Text`]

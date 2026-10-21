@@ -22,14 +22,13 @@ impl Visit {
 }
 
 impl State {
-    #[must_use]
-    pub(crate) fn record_visit(&mut self, route: &Route) -> Vec<Cmd> {
+    pub(crate) fn record_visit(&mut self, route: &Route) -> Cmds {
         // An unsplit page is recorded as the page it turns out to be.
         if matches!(
             route,
             Route::App(app::Home) | Route::Code(code::Unsplit { .. })
         ) {
-            return Vec::new();
+            return Cmds::new();
         }
         let url = route.url();
         let now = (self.clock)();
@@ -50,18 +49,16 @@ impl State {
             self.visits.sort_by_key(|v| std::cmp::Reverse(v.score(now)));
             self.visits.truncate(VISITS);
         }
-        vec![Cmd::Api(Api::SaveVisits(self.visits.clone()))]
+        Cmd::Api(Api::SaveVisits(self.visits.clone())).into()
     }
 
     /// Navigates to a page, keeping the current one in history.
-    #[must_use]
-    pub fn push(&mut self, route: Route) -> Vec<Cmd> {
+    pub fn push(&mut self, route: Route) -> Cmds {
         self.go(Target::Page(route).into())
     }
 
     /// Replaces the page on screen (switching tabs, changing a filter).
-    #[must_use]
-    pub fn replace(&mut self, route: Route, force: bool, anchor: Option<String>) -> Vec<Cmd> {
+    pub fn replace(&mut self, route: Route, force: bool, anchor: Option<String>) -> Cmds {
         match self.screen_mut() {
             Screen::Page(p) => **p = PageScreen::new(route.clone(), anchor),
             Screen::Diff(_) => return self.push(route),
@@ -71,8 +68,7 @@ impl State {
         cmds
     }
 
-    #[must_use]
-    pub fn back(&mut self) -> Vec<Cmd> {
+    pub fn back(&mut self) -> Cmds {
         if let Some(screen) = self.screens.pop() {
             self.forward.push(screen);
             return self.load_visible(false);
@@ -80,8 +76,7 @@ impl State {
         self.just_say("This is the first page")
     }
 
-    #[must_use]
-    pub fn go_forward(&mut self) -> Vec<Cmd> {
+    pub fn go_forward(&mut self) -> Cmds {
         match self.forward.pop() {
             Some(screen) => {
                 self.screens.push(screen);
@@ -93,8 +88,7 @@ impl State {
 
     /// Follows a link, going once it's loaded to what its `#fragment`
     /// names: a comment, a file in a diff, a review comment's thread.
-    #[must_use]
-    pub fn go(&mut self, Dest { target, anchor }: Dest) -> Vec<Cmd> {
+    pub fn go(&mut self, Dest { target, anchor }: Dest) -> Cmds {
         match target {
             Target::Page(route) => {
                 let route = self.followed(route);
@@ -113,15 +107,14 @@ impl State {
             }
             Target::External(url) => {
                 self.info(format!("Opened {url} in the browser"));
-                vec![Cmd::OpenUrl(url)]
+                Cmd::OpenUrl(url).into()
             }
         }
     }
 
     /// Follows a link on the page on screen: a URL, or one of the page's
     /// actions.
-    #[must_use]
-    pub fn follow(&mut self, link: &Link) -> Vec<Cmd> {
+    pub fn follow(&mut self, link: &Link) -> Cmds {
         match link {
             Link::Url(url) => self.go(Dest::from_url(url)),
             Link::More => self.load_more(),
@@ -152,23 +145,21 @@ impl State {
         }
     }
 
-    #[must_use]
-    pub(super) fn load_more(&mut self) -> Vec<Cmd> {
+    pub(super) fn load_more(&mut self) -> Cmds {
         let Some(key) = self.route().and_then(|r| r.family().paged()) else {
-            return Vec::new();
+            return Cmds::new();
         };
         let after = self.data.get_mut(&key).and_then(Remote::ask_more);
-        after.map_or_else(Vec::new, |after| {
-            vec![Cmd::Api(Api::FetchMore { key, after })]
+        after.map_or_else(Cmds::new, |after| {
+            Cmd::Api(Api::FetchMore { key, after }).into()
         })
     }
 }
 
 /// Goes to the page above this one.
-#[must_use]
-pub fn up_level(state: &mut State) -> Vec<Cmd> {
+pub fn up_level(state: &mut State) -> Cmds {
     let Some(route) = state.route().cloned() else {
-        return Vec::new();
+        return Cmds::new();
     };
     match route.family().up(state) {
         Some(parent) => state.push(parent),
@@ -177,8 +168,7 @@ pub fn up_level(state: &mut State) -> Vec<Cmd> {
 }
 
 /// Switches to the chrome's tab `n` (1-based).
-#[must_use]
-pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
+pub fn switch_tab(state: &mut State, n: usize) -> Cmds {
     let chrome = state.chrome();
     let Some((tab, target)) = n.checked_sub(1).and_then(|i| chrome.tabs.get(i)).cloned() else {
         return state.just_say(format!("No tab {n} here"));
@@ -189,7 +179,7 @@ pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
     // A page's tabs aren't history: the tab replaces the screen, and the
     // one left is kept to come back to as it was.
     let (screen, mut cmds) = match state.unpark(&target) {
-        Some(screen) => (screen, Vec::new()),
+        Some(screen) => (screen, Cmds::new()),
         None => match target {
             Target::Page(route) => {
                 let cmds = state.ensure_route(&route, false);
@@ -210,8 +200,7 @@ pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
 }
 
 /// `gr`: the pull request's Review tab, from any of its tabs.
-#[must_use]
-pub fn review_glance(state: &mut State) -> Vec<Cmd> {
+pub fn review_glance(state: &mut State) -> Cmds {
     match review_tab(&state.chrome()) {
         Some(n) => switch_tab(state, n),
         None => state.just_say("A review at a glance is a pull request's"),
@@ -251,8 +240,7 @@ impl State {
 }
 
 /// The next or previous tab of the page; they don't wrap around.
-#[must_use]
-pub fn step_tab(state: &mut State, forward: bool) -> Vec<Cmd> {
+pub fn step_tab(state: &mut State, forward: bool) -> Cmds {
     let chrome = state.chrome();
     let n = chrome.tabs.len();
     let Some(active) = chrome.active.filter(|_| n > 1) else {

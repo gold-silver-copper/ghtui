@@ -68,7 +68,7 @@ fn loading() -> (State, PrRef, crate::diff_job::JobId) {
         of,
         DiffPrefs::fit(120),
     ))));
-    crate::fixtures::pr_cached(&mut s, &pr, crate::fixtures::pr_detail());
+    fixtures::pr_cached(&mut s, &pr, fixtures::pr_detail());
     diff_msg(
         &mut s,
         &pr,
@@ -155,7 +155,7 @@ fn the_whole_pr_after_a_commit_keeps_githubs_patches() {
 fn choosing_a_commit_keeps_the_view_toggles() {
     let (mut s, pr, job) = loading();
     deliver(&mut s, &pr, job);
-    let start = screen(&s).prefs;
+    let start = on_diff(&s).prefs;
     for action in [
         Action::IgnoreWhitespace,
         Action::BySyntax,
@@ -165,7 +165,7 @@ fn choosing_a_commit_keeps_the_view_toggles() {
     ] {
         act(&mut s, action);
     }
-    let before = screen(&s).prefs;
+    let before = on_diff(&s).prefs;
     assert!(
         before.ignore_whitespace
             && !before.by_syntax
@@ -177,7 +177,7 @@ fn choosing_a_commit_keeps_the_view_toggles() {
     );
     let job = pick_commit(&mut s, &pr, "<Down><Down><Enter>");
     deliver(&mut s, &pr, job);
-    assert_eq!(screen(&s).prefs, before);
+    assert_eq!(on_diff(&s).prefs, before);
 }
 
 /// A file marked viewed stays viewed when another range of

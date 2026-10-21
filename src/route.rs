@@ -205,6 +205,11 @@ impl Route {
         })
     }
 
+    /// An issue.
+    pub fn issue(repo: RepoId, number: u64) -> Route {
+        Route::Issues(issues::Issue { repo, number })
+    }
+
     /// A file, from the top.
     pub fn blob(repo: RepoId, rev: String, path: String) -> Route {
         Route::Code(code::Blob {
@@ -221,6 +226,11 @@ impl Route {
             login: login.to_owned(),
             tab: ProfileTab::Overview,
         })
+    }
+
+    /// A repository's Code tab: its overview.
+    pub fn code(repo: RepoId) -> Route {
+        Route::Code(code::Repo(repo))
     }
 
     /// A repository's Actions tab: all its runs.
@@ -499,7 +509,7 @@ pub fn parse_input(input: &str, context: Option<&RepoId>) -> Option<Dest> {
     }
     let issue = |repo: RepoId, n: &str| {
         let number = n.trim_start_matches('#').parse().ok()?;
-        Some(Target::Page(Route::Issues(issues::Issue { repo, number })).into())
+        Some(Target::Page(Route::issue(repo, number)).into())
     };
     if let Some((repo, n)) = input.split_once('#')
         && !repo.is_empty()
@@ -514,7 +524,7 @@ pub fn parse_input(input: &str, context: Option<&RepoId>) -> Option<Dest> {
         return issue(context?.clone(), input);
     }
     if input.contains('/') {
-        return RepoId::parse(input).map(|r| Target::Page(Route::Code(code::Repo(r))).into());
+        return RepoId::parse(input).map(|r| Target::Page(Route::code(r)).into());
     }
     None
 }
@@ -853,10 +863,7 @@ pub(crate) mod tests {
         for (url, want) in [
             ("https://github.com/".to_owned(), Route::App(app::Home)),
             ("https://github.com/octocat".into(), Route::user("octocat")),
-            (
-                "https://github.com/o/r".into(),
-                Route::Code(code::Repo(repo.clone())),
-            ),
+            ("https://github.com/o/r".into(), Route::code(repo.clone())),
             (
                 "https://github.com/o/r/issues?q=is%3Aissue+is%3Aclosed".into(),
                 issues("is:closed"),
@@ -870,10 +877,7 @@ pub(crate) mod tests {
             ),
             (
                 "https://github.com/o/r/issues/5".into(),
-                Route::Issues(issues::Issue {
-                    repo: repo.clone(),
-                    number: 5,
-                }),
+                Route::issue(repo.clone(), 5),
             ),
             (
                 "https://github.com/o/r/pull/7/commits".into(),
@@ -1191,7 +1195,7 @@ pub(crate) mod tests {
         }
         assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 
-        let repo = Route::Code(code::Repo(RepoId::new("o", "r")));
+        let repo = Route::code(RepoId::new("o", "r"));
         assert_eq!(repo.url(), "https://ghe.example.com/o/r");
         let gist = Route::Gists(gists::Gist {
             owner: Some("o".into()),
@@ -1209,7 +1213,7 @@ pub(crate) mod tests {
     #[test]
     fn a_host_with_a_port_owns_its_links() {
         let _host = crate::host::set_for_test("ghe.example.com:8443");
-        let repo = Target::Page(Route::Code(code::Repo(RepoId::new("o", "r"))));
+        let repo = Target::Page(Route::code(RepoId::new("o", "r")));
         assert_eq!(
             Dest::from_url("https://ghe.example.com:8443/o/r").target,
             repo
@@ -1457,7 +1461,7 @@ pub(crate) mod tests {
         let target = |input, context| parse_input(input, context).map(|d| d.target);
         assert_eq!(
             target("a/b", None),
-            Some(Target::Page(Route::Code(code::Repo(RepoId::new("a", "b")))))
+            Some(Target::Page(Route::code(RepoId::new("a", "b"))))
         );
         assert_eq!(
             target("@octocat", None),
@@ -1465,18 +1469,12 @@ pub(crate) mod tests {
         );
         assert_eq!(
             target("#12", Some(&repo)),
-            Some(Target::Page(Route::Issues(issues::Issue {
-                repo: repo.clone(),
-                number: 12
-            })))
+            Some(Target::Page(Route::issue(repo.clone(), 12)))
         );
         assert_eq!(target("12", None), None);
         assert_eq!(
             target("a/b#3", None),
-            Some(Target::Page(Route::Issues(issues::Issue {
-                repo: RepoId::new("a", "b"),
-                number: 3
-            })))
+            Some(Target::Page(Route::issue(RepoId::new("a", "b"), 3)))
         );
         assert_eq!(
             target("a/b/pull/5/files", None),

@@ -335,9 +335,7 @@ impl Repo {
             &self.remote,
         ])
         .args(refspecs);
-        run_with_progress(cmd, "fetch", None, progress)
-            .await
-            .map(drop)
+        run_with_progress(cmd, "fetch", None, progress).await
     }
 
     /// Every file's path at `rev`.
@@ -386,7 +384,7 @@ impl Repo {
         if self.has(oid).await {
             return Ok(());
         }
-        progress(format!("Fetching {}", oid.get(..7).unwrap_or(oid)));
+        progress(format!("Fetching {}", crate::ui::text::short_sha(oid)));
         self.fetch(&[oid], progress).await
     }
 
@@ -530,29 +528,23 @@ fn feed(child: &mut Child, input: String) -> Result<JoinHandle<()>, GitError> {
 }
 
 /// Runs `cmd` (writing `input` to its stdin, if any), reporting the
-/// latest `--progress` line from stderr. It isn't timed: the transfer gives
-/// up when it goes quiet (see [`crate::git::git`]), and git's silence says
-/// nothing, since it prints nothing while a ref list or a packet of the
-/// pack is on its way.
+/// latest `--progress` line from stderr; what it prints isn't wanted. It
+/// isn't timed: the transfer gives up when it goes quiet (see
+/// [`crate::git::git`]), and git's silence says nothing, since it prints
+/// nothing while a ref list or a packet of the pack is on its way.
 async fn run_with_progress(
     mut cmd: Command,
     what: &str,
     input: Option<String>,
     progress: Progress<'_>,
-) -> Result<String, GitError> {
+) -> Result<(), GitError> {
     if input.is_some() {
         cmd.stdin(Stdio::piped());
     }
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.stdout(Stdio::null()).stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
     let writer = input.map(|input| feed(&mut child, input)).transpose()?;
     let mut stderr = piped(child.stderr.take(), "stderr")?;
-    let mut stdout = piped(child.stdout.take(), "stdout")?;
-    let out_task = tokio::spawn(async move {
-        let mut buf = Vec::new();
-        let _ = stdout.read_to_end(&mut buf).await;
-        buf
-    });
     let mut all = Vec::new();
     let mut chunk = [0u8; 4096];
     let mut line = Vec::new();
@@ -578,7 +570,6 @@ async fn run_with_progress(
         let _ = writer.await;
     }
     let status = child.wait().await?;
-    let stdout = out_task.await.unwrap_or_default();
     if !status.success() {
         let stderr = String::from_utf8_lossy(&all);
         // Progress output is noise in an error; keep the real messages.
@@ -592,7 +583,7 @@ async fn run_with_progress(
             stderr: message.join("; "),
         });
     }
-    Ok(String::from_utf8_lossy(&stdout).into_owned())
+    Ok(())
 }
 
 #[cfg(test)]

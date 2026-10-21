@@ -422,45 +422,30 @@ impl InProject {
 /// other field, its values as they come, in order (an item with two
 /// assignees or labels is in each one's group).
 pub fn grouped<'a>(field: &'a ProjectField, items: &[&'a ProjectItem]) -> Vec<Group<'a>> {
-    if !matches!(
-        field.kind,
-        FieldKind::SingleSelect(_) | FieldKind::Iteration(_)
-    ) {
-        return grouped_by_text(field, items);
-    }
-    let values: Vec<(String, String, Option<&str>)> = match &field.kind {
-        FieldKind::SingleSelect(options) => options
-            .iter()
-            .map(|o| (o.id.clone(), o.name.clone(), Some(o.color.as_str())))
-            .collect(),
-        FieldKind::Iteration(iterations) => iterations
-            .iter()
-            .filter(|i| !i.completed)
-            .map(|i| (i.id.clone(), i.title.clone(), None))
-            .collect(),
-        _ => Vec::new(),
-    };
-    let id_of = |item: &ProjectItem| match item.value(&field.id) {
-        Some(FieldValue::Option { id, .. } | FieldValue::Iteration { id, .. }) => Some(id.clone()),
-        _ => None,
-    };
-    let mut groups = vec![Group {
-        value: None,
-        name: format!("No {}", field.name),
-        color: None,
+    let group = |id: &str, name: &str, color| Group {
+        value: Some(id.to_owned()),
+        name: name.to_owned(),
+        color,
         items: Vec::new(),
-    }];
-    for (id, name, color) in values {
-        groups.push(Group {
-            value: Some(id),
-            name,
-            color,
-            items: Vec::new(),
-        });
+    };
+    let mut groups = vec![Group::none(field)];
+    match &field.kind {
+        FieldKind::SingleSelect(options) => {
+            groups.extend((options.iter()).map(|o| group(&o.id, &o.name, Some(o.color.as_str()))));
+        }
+        FieldKind::Iteration(iterations) => groups.extend(
+            (iterations.iter())
+                .filter(|i| !i.completed)
+                .map(|i| group(&i.id, &i.title, None)),
+        ),
+        _ => return grouped_by_text(field, items),
     }
     for item in items {
-        let id = id_of(item);
-        match groups.iter_mut().find(|g| g.value == id) {
+        let id = match item.value(&field.id) {
+            Some(FieldValue::Option { id, .. } | FieldValue::Iteration { id, .. }) => Some(id),
+            _ => None,
+        };
+        match groups.iter_mut().find(|g| g.value.as_ref() == id) {
             Some(group) => group.items.push(item),
             // A value the field no longer offers (a completed
             // iteration): a group of its own.
@@ -468,7 +453,7 @@ pub fn grouped<'a>(field: &'a ProjectField, items: &[&'a ProjectItem]) -> Vec<Gr
                 name: item
                     .value(&field.id)
                     .map_or_else(String::new, |v| v.text().to_owned()),
-                value: id,
+                value: id.cloned(),
                 color: None,
                 items: vec![item],
             }),
@@ -482,12 +467,7 @@ pub fn grouped<'a>(field: &'a ProjectField, items: &[&'a ProjectItem]) -> Vec<Gr
 /// Items grouped by what they show of `field`: by each value, in order
 /// (numbers by their value), those without one first.
 fn grouped_by_text<'a>(field: &'a ProjectField, items: &[&'a ProjectItem]) -> Vec<Group<'a>> {
-    let mut groups = vec![Group {
-        value: None,
-        name: format!("No {}", field.name),
-        color: None,
-        items: Vec::new(),
-    }];
+    let mut groups = vec![Group::none(field)];
     for item in items {
         let keys = group_keys(field, item);
         if keys.is_empty()
@@ -655,6 +635,18 @@ pub struct Group<'a> {
     pub items: Vec<&'a ProjectItem>,
 }
 
+impl Group<'_> {
+    /// The items without a value of `field` ("No Status").
+    fn none(field: &ProjectField) -> Self {
+        Group {
+            value: None,
+            name: format!("No {}", field.name),
+            color: None,
+            items: Vec::new(),
+        }
+    }
+}
+
 /// What an item sorts by for `field`.
 fn sort_key(field: &ProjectField, item: &ProjectItem) -> Option<SortKey> {
     let value = item.value(&field.id);
@@ -766,8 +758,7 @@ impl GitHub {
             .await
             .map_err(scoped)?;
         self.check_connection(&wire, 30, &what);
-        let list = wire.into_results(WireSummary::into_summary);
-        Ok(list)
+        Ok(wire.into_results(WireSummary::into_summary))
     }
 
     /// A project at view `view` (its first without one): the project, its
@@ -1074,16 +1065,8 @@ struct WireField {
     id: Option<NodeId>,
     name: Option<String>,
     data_type: Option<String>,
-    options: Option<Vec<WireOption>>,
+    options: Option<Vec<SelectOption>>,
     configuration: Option<WireIterations>,
-}
-
-#[derive(Deserialize)]
-struct WireOption {
-    id: String,
-    name: String,
-    color: String,
-    description: String,
 }
 
 #[derive(Deserialize)]
@@ -1125,16 +1108,7 @@ impl WireField {
             Some("TEXT") => FieldKind::Text,
             Some("NUMBER") => FieldKind::Number,
             Some("DATE") => FieldKind::Date,
-            Some("SINGLE_SELECT") => FieldKind::SingleSelect(
-                (self.options.unwrap_or_default().into_iter())
-                    .map(|o| SelectOption {
-                        id: o.id,
-                        name: o.name,
-                        color: o.color,
-                        description: o.description,
-                    })
-                    .collect(),
-            ),
+            Some("SINGLE_SELECT") => FieldKind::SingleSelect(self.options.unwrap_or_default()),
             Some("ITERATION") => {
                 let (now, done) = self
                     .configuration
@@ -1234,14 +1208,8 @@ struct WireLinked {
     is_draft: Option<bool>,
     repository: wire::RepoName,
     assignees: wire::Counted<Login>,
-    labels: Option<wire::Counted<WireLabel>>,
+    labels: Option<wire::Counted<Label>>,
     milestone: Option<WireTitle>,
-}
-
-#[derive(Deserialize)]
-struct WireLabel {
-    name: String,
-    color: String,
 }
 
 #[derive(Deserialize)]
@@ -1251,20 +1219,13 @@ struct WireTitle {
 
 impl WireLinked {
     fn into_linked(self) -> Option<Linked> {
-        let label = |l: WireLabel| {
-            Some(Label {
-                name: l.name,
-                color: l.color,
-            })
-        };
         Some(Linked {
             repo: RepoId::parse(&self.repository.name_with_owner)?,
             number: self.number,
             title: self.title,
             url: self.url,
             assignees: self.assignees.into_capped(|u| Some(u.login)),
-            labels: (self.labels)
-                .map_or_else(|| Capped::new(Vec::new(), 0), |l| l.into_capped(label)),
+            labels: (self.labels).map_or_else(Capped::default, |l| l.into_capped(Some)),
             milestone: self.milestone.map(|m| m.title),
         })
     }

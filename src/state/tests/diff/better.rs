@@ -186,7 +186,7 @@ fn a_failed_review_lookup_says_so_beside_the_local_one() {
 fn commit_picker_loads_a_range_and_blocks_comments() {
     let (mut s, pr) = diff_state(120);
     // `ghtui pr` would have loaded metadata; the picker needs the base.
-    crate::fixtures::pr_cached(&mut s, &pr, crate::fixtures::pr_detail());
+    fixtures::pr_cached(&mut s, &pr, fixtures::pr_detail());
     assert!(matches!(
         &act(&mut s, Action::PickCommits)[..],
         [Cmd::Git(Git::ListCommits(_))]

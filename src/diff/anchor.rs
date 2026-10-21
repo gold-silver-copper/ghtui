@@ -45,18 +45,11 @@ impl HunkRange {
     }
 }
 
-/// Where commentable ranges came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RangeSource {
-    GitHubPatch,
-    /// Local Myers diff, 3 lines of context.
-    LocalFallback,
-}
-
+/// The hunks GitHub takes a file's comments in: from its patch, or a
+/// local Myers diff with 3 lines of context.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Commentable {
     pub ranges: Vec<HunkRange>,
-    pub source: RangeSource,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -73,7 +66,6 @@ impl Commentable {
     pub fn from_patch(patch: &str) -> Self {
         Self {
             ranges: parse_patch_headers(patch),
-            source: RangeSource::GitHubPatch,
         }
     }
 
@@ -84,7 +76,6 @@ impl Commentable {
                 .iter()
                 .map(|h| hunk_range((h.old_start, h.old_len), (h.new_start, h.new_len)))
                 .collect(),
-            source: RangeSource::LocalFallback,
         }
     }
 
@@ -187,7 +178,6 @@ mod tests {
         assert_eq!(c.ranges[0].new, (1, 5));
         assert_eq!(c.ranges[1].old, (20, 24));
         assert_eq!(c.ranges[2].old, (40, 41), "a missing length means 1");
-        assert_eq!(c.source, RangeSource::GitHubPatch);
     }
 
     #[test]
@@ -242,7 +232,6 @@ mod tests {
         let old: String = (1..=30).map(|i| format!("{i}\n")).collect();
         let new = old.replace("15\n", "fifteen\n");
         let c = Commentable::local(&Text::new(old.as_bytes()), &Text::new(new.as_bytes()));
-        assert_eq!(c.source, RangeSource::LocalFallback);
         assert_eq!(c.ranges.len(), 1);
         assert!(c.is_commentable(right(12)));
         assert!(c.is_commentable(right(18)));

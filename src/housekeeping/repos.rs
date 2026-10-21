@@ -2,7 +2,7 @@
 //! then the new repository's page, which follows GitHub until it's
 //! there, and (for a new one) an offer to clone it.
 
-use crate::route::{Route, code};
+use crate::route::Route;
 use std::path::PathBuf;
 
 use crate::api::housekeeping::{MadeRepo, NewFork, NewRepo, Owners, Templates};
@@ -14,7 +14,7 @@ use crate::ui::pages::{Mark, WriteFormView};
 use super::{Expected, Field, Form, FormOf, ask, expect, form, form_mut, form_row, item, setting};
 use crate::data::DataKey;
 use crate::keymap::Action;
-use crate::state::{Cmd, State};
+use crate::state::{Cmds, State};
 use crate::work::{self, Cx, Failure, Job};
 
 /// Forking a repository; the form's page asked.
@@ -43,8 +43,7 @@ fn owners(state: &State) -> Option<&Owners> {
 }
 
 /// `,F`: the repository's fork form.
-#[must_use]
-pub(super) fn open_fork(state: &mut State) -> Vec<Cmd> {
+pub(super) fn open_fork(state: &mut State) -> Cmds {
     let Some(repo) = state.route().and_then(Route::repo).cloned() else {
         return state.just_say("Open a repository first: a fork is of one");
     };
@@ -54,13 +53,12 @@ pub(super) fn open_fork(state: &mut State) -> Vec<Cmd> {
 /// Fills the form once GitHub says who you are: your account, and a
 /// fork's the repository's name (its default branch only); a new
 /// repository's name is asked for then.
-#[must_use]
-pub(super) fn follow(state: &mut State, route: &Route, fork: Option<&RepoId>) -> Vec<Cmd> {
+pub(super) fn follow(state: &mut State, route: &Route, fork: Option<&RepoId>) -> Cmds {
     if form(state, route).started {
-        return Vec::new();
+        return Cmds::new();
     }
     let Some(viewer) = owners(state).map(|o| o.viewer.clone()) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let f = form_mut(state, route);
     f.started = true;
@@ -70,7 +68,7 @@ pub(super) fn follow(state: &mut State, route: &Route, fork: Option<&RepoId>) ->
         None if state.overlay.is_none() => return super::open_field(state, route, Field::Name),
         None => {}
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// Why `name` can't name a repository, if it can't: GitHub takes
@@ -199,8 +197,7 @@ pub(super) fn template_rows(
 }
 
 /// The fork's form sent.
-#[must_use]
-pub(super) fn fork(state: &mut State, route: &Route, repo: &RepoId) -> Vec<Cmd> {
+pub(super) fn fork(state: &mut State, route: &Route, repo: &RepoId) -> Cmds {
     let f = form(state, route);
     if let Some(why) = fork_problem(state, repo, &f) {
         return crate::forms::say(state, why);
@@ -220,8 +217,7 @@ pub(super) fn fork(state: &mut State, route: &Route, repo: &RepoId) -> Vec<Cmd> 
 }
 
 /// The new repository's form sent.
-#[must_use]
-pub(super) fn create(state: &mut State, route: &Route) -> Vec<Cmd> {
+pub(super) fn create(state: &mut State, route: &Route) -> Cmds {
     let f = form(state, route);
     if let Some(why) = repo_problem(&f) {
         return crate::forms::say(state, why);
@@ -247,13 +243,13 @@ pub(super) fn create(state: &mut State, route: &Route) -> Vec<Cmd> {
 /// Made: the form gives way to the repository's page, which follows
 /// GitHub until it's there.
 #[must_use]
-fn opened(state: &mut State, route: &Route, made: &MadeRepo) -> Option<Vec<Cmd>> {
+fn opened(state: &mut State, route: &Route, made: &MadeRepo) -> Option<Cmds> {
     crate::forms::done::<Form>(state, route);
     let repo = made.repo()?;
     if state.route() != Some(route) {
-        return Some(Vec::new());
+        return Some(Cmds::new());
     }
-    let page = Route::Code(code::Repo(repo.clone()));
+    let page = Route::code(repo.clone());
     let cmds = state.replace(page.clone(), true, None);
     expect(state, page, Expected::Repo(repo));
     Some(cmds)
@@ -266,7 +262,7 @@ impl Job for Fork {
         Ok(cx.gh.fork(&self.new).await?)
     }
 
-    fn done(self, state: &mut State, result: Result<MadeRepo, Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<MadeRepo, Failure>) -> Cmds {
         let Fork { route, .. } = &self;
         match result {
             Ok(made) => {
@@ -288,17 +284,15 @@ impl Job for Make {
         Ok(cx.gh.create_repo(&self.new).await?)
     }
 
-    fn done(self, state: &mut State, result: Result<MadeRepo, Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<MadeRepo, Failure>) -> Cmds {
         let Make { route, .. } = &self;
         let made = match result {
             Ok(made) => made,
-            Err(why) => {
-                return crate::forms::failed(state, route, why.to_string());
-            }
+            Err(why) => return crate::forms::failed(state, route, why.to_string()),
         };
         state.info(format!("Created {}", made.full_name));
         let on_form = state.route() == Some(route);
-        let cmds = opened(state, route, &made).unwrap_or_default();
+        let mut cmds = opened(state, route, &made).unwrap_or_default();
         // Offered as GitHub's page offers it: its clone command, run here.
         let Some(repo) = made.repo().filter(|_| on_form) else {
             return cmds;
@@ -311,12 +305,12 @@ impl Job for Make {
         );
         let url = made.clone_url.clone();
         let clone = super::Answer::Clone { url, dir };
-        ask(
+        cmds.extend(ask(
             state,
             format!("Clone {repo}?"),
             vec![(fact, false)],
             vec![("Clone it".into(), clone)],
-        );
+        ));
         cmds
     }
 }
@@ -331,7 +325,7 @@ impl Job for CloneTo {
             .map_err(Failure::msg)
     }
 
-    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
         let CloneTo { dir, .. } = &self;
         match result {
             Ok(()) => {

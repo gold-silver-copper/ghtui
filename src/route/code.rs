@@ -87,6 +87,13 @@ pub enum RevView {
 }
 
 impl RevView {
+    const ALL: [RevView; 4] = [
+        RevView::Tree,
+        RevView::Blob,
+        RevView::Blame,
+        RevView::Commits,
+    ];
+
     fn name(self) -> &'static str {
         match self {
             RevView::Tree => "tree",
@@ -281,7 +288,7 @@ impl Family for Page {
             } => folder(repo, rev, path),
             Blame {
                 repo, rev, path, ..
-            } => blob(repo, rev, path),
+            } => return Some(Route::blob(repo.clone(), rev.clone(), path.clone())),
             Unsplit { repo, .. }
             | Commits { repo, .. }
             | Compare { repo, .. }
@@ -538,16 +545,6 @@ impl Family for Page {
     }
 }
 
-/// A file, from the top.
-pub fn blob(repo: &RepoId, rev: &str, path: &str) -> Page {
-    Blob {
-        repo: repo.clone(),
-        rev: rev.to_owned(),
-        path: path.to_owned(),
-        lines: None,
-    }
-}
-
 /// `url` at a file's `lines`, if any.
 fn lined(url: String, lines: Option<(u32, u32)>) -> String {
     match lines {
@@ -562,6 +559,8 @@ fn lined(url: String, lines: Option<(u32, u32)>) -> String {
 pub(super) fn parse_repo(repo: &RepoId, rest: &[&str], url: &Url<'_>) -> Option<Target> {
     let repo = repo.clone();
     let fragment = url.fragment();
+    // A link to its files: `#files`, or a file's `#diff-…`.
+    let files = fragment.is_some_and(|f| f == "files" || f.starts_with("diff-"));
     let page = match rest {
         [] => Repo(repo),
         [view @ ("tree" | "blob" | "blame" | "commits"), rest @ ..] => {
@@ -583,7 +582,7 @@ pub(super) fn parse_repo(repo: &RepoId, rest: &[&str], url: &Url<'_>) -> Option<
             // Its files, from one commit to the other (`a..b`; with three
             // dots it's from their merge base, which the comparison page
             // finds).
-            if fragment.is_some_and(|f| f == "files" || f.starts_with("diff-"))
+            if files
                 && !spec.contains("...")
                 && let Some((from, to)) = spec.split_once("..")
                 && let Ok(from) = Oid::parse(from)
@@ -623,7 +622,7 @@ pub(super) fn parse_repo(repo: &RepoId, rest: &[&str], url: &Url<'_>) -> Option<
             let (rev, diff) = rev
                 .strip_suffix(".diff")
                 .map_or((*rev, false), |r| (r, true));
-            if (diff || fragment.is_some_and(|f| f == "files" || f.starts_with("diff-")))
+            if (diff || files)
                 && let Ok(oid) = Oid::parse(rev)
             {
                 return Some(Target::Files(DiffOf::Commit(repo, oid)));
@@ -644,13 +643,7 @@ pub(super) fn parse_repo(repo: &RepoId, rest: &[&str], url: &Url<'_>) -> Option<
 /// ghtui writes it), or when it's `HEAD` or a full SHA; otherwise it's for
 /// GitHub to say ([`Page::Unsplit`]).
 fn rev_page(repo: RepoId, view: &str, rest: &[&str], fragment: Option<&str>) -> Option<Page> {
-    let view = match view {
-        "tree" => RevView::Tree,
-        "blob" => RevView::Blob,
-        "blame" => RevView::Blame,
-        "commits" => RevView::Commits,
-        _ => return None,
-    };
+    let view = RevView::ALL.into_iter().find(|v| v.name() == view)?;
     let lines = fragment.and_then(line_range);
     match rest {
         [] if view == RevView::Commits => view.at(repo, "HEAD".into(), String::new(), lines),

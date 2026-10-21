@@ -75,11 +75,13 @@ pub fn fill(buf: &mut Buffer, area: Rect, theme: &Theme, bg: Bg) {
     buf.set_style(area, theme.fill(bg));
 }
 
-/// Renders `left` and `right` on one line, at least `gap` columns apart,
-/// cutting the left side first (with `…`) when they don't fit.
+/// Renders `left` and `right` on one line, at least `gap` columns apart
+/// (none when `right` is empty), cutting the left side first (with `…`)
+/// when they don't fit.
 #[deny(clippy::arithmetic_side_effects)]
 fn render_split(area: Rect, buf: &mut Buffer, left: &[Span<'_>], right: &[Span<'_>], gap: u16) {
     let right_width = cols(text::spans_width(right)).min(area.width);
+    let gap = if right_width > 0 { gap } else { 0 };
     let left_area = Rect {
         width: area.width.saturating_sub(right_width.saturating_add(gap)),
         ..area
@@ -125,33 +127,15 @@ fn list_row(
     (inset(row, PAD_X, 0), bg)
 }
 
-/// `left` cut to fit (with `…`) on the left of `row`, `hint` on its right.
-#[deny(clippy::arithmetic_side_effects)]
-fn label_hint(buf: &mut Buffer, row: Rect, left: &[Span<'_>], hint: Span<'_>) {
-    let hint_w = cols(text::width(&hint.content)).min(row.width);
-    let gap = if hint_w > 0 {
-        hint_w.saturating_add(2)
-    } else {
-        0
-    };
-    Line::from(fit_spans(left, row.width.saturating_sub(gap))).render(row, buf);
-    let hint_area = Rect {
-        x: row.right().saturating_sub(hint_w),
-        width: hint_w,
-        ..row
-    };
-    hint.render(hint_area, buf);
-}
-
 /// `key what · key what`: keys in bold accent, what they do in meta.
-fn key_hints(theme: &Theme, bg: Bg, hints: &[(&str, &str)]) -> Vec<Span<'static>> {
+fn key_hints<'a>(theme: &Theme, bg: Bg, hints: &[(&'a str, &str)]) -> Vec<Span<'a>> {
     let mut spans = Vec::new();
-    for (i, (key, what)) in hints.iter().enumerate() {
+    for (i, &(key, what)) in hints.iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled(" · ", theme.meta(bg)));
         }
         spans.push(Span::styled(
-            key.to_string(),
+            key,
             theme.accent(bg).add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(format!(" {what}"), theme.meta(bg)));

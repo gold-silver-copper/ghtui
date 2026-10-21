@@ -2,6 +2,7 @@
 //! when it's GitHub's), a commit's files with their blobs and sizes, and
 //! `git grep` for a whole word, at a commit or over a set of blobs.
 
+use std::fmt::Write;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
@@ -134,7 +135,7 @@ pub async fn tree_of(repo: &Repo, files: &[(&str, &str)], scratch: &Path) -> Res
     let mut input = String::new();
     for (path, blob) in files {
         if !path.contains(['\n', '\0']) {
-            input.push_str(&format!("100644 {blob}\t{path}\n"));
+            let _ = writeln!(input, "100644 {blob}\t{path}");
         }
     }
     let mut cmd = repo.cmd();

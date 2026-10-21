@@ -32,10 +32,7 @@ pub fn explore(
     page.blank();
     say(page, not_trending(since), Role::Meta);
     page.blank();
-    let repos = repos.pick(|r| match r {
-        SearchResults::Repos(r) => Some(r),
-        _ => None,
-    });
+    let repos = repos.pick(repos_of);
     let title = format!("New and most starred, {}", since.label().to_lowercase());
     paged_list(
         page,
@@ -65,6 +62,14 @@ pub fn explore(
             topic_row(page, topic);
         },
     );
+}
+
+/// A repository search's repositories.
+fn repos_of(r: &SearchResults) -> Option<&Results<RepoSummary>> {
+    match r {
+        SearchResults::Repos(r) => Some(r),
+        _ => None,
+    }
 }
 
 /// Languages to narrow it to, as Trending's menu offers the common
@@ -151,14 +156,10 @@ pub fn topic(page: &mut Page, t: &Topic, repos: Fetched<'_, SearchResults>, now:
         page.wrapped(segs, 0, Frame::None);
     }
     page.blank();
-    let repos = repos.pick(|r| match r {
-        SearchResults::Repos(r) => Some(r),
-        _ => None,
-    });
     paged_list(
         page,
         "Repositories",
-        repos,
+        repos.pick(repos_of),
         "No repositories have this topic.",
         |page, r| repo_row(page, r, now, true),
     );

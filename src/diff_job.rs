@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crate::diff::FileDiff;
 use crate::git::blobs::BlobReader;
 use crate::git::credentials::Credentials;
-use crate::git::files::{ChangedFile, ZERO_OID, is_lockfile};
+use crate::git::files::{ChangedFile, ZERO_OID, blobs, is_lockfile};
 use crate::git::repo::{PrRefs, Repo};
 use crate::git::{GitError, Oid};
 use crate::lock;
@@ -35,6 +35,24 @@ pub struct GitContext {
     pub credentials: Credentials,
     /// Directory ghtui was started in; used to find the user's clone.
     pub cwd: PathBuf,
+}
+
+impl GitContext {
+    /// `owner/name`'s clone: yours, else the cache's (cloned on first use).
+    pub async fn repo(
+        &self,
+        owner: &str,
+        name: &str,
+        progress: crate::git::repo::Progress<'_>,
+    ) -> Result<Repo, GitError> {
+        if let Some(repo) = Repo::find_local(&self.cwd, owner, name).await? {
+            tracing::info!(path = %repo.path.display(), remote = repo.remote, "using local clone");
+            return Ok(repo);
+        }
+        let url = crate::host::current().git_url(owner, name);
+        let credentials = self.credentials.clone();
+        Repo::open_cache(&self.cache_root, owner, name, &url, credentials, progress).await
+    }
 }
 
 #[derive(Debug)]
@@ -167,24 +185,9 @@ async fn run_inner(
             out.send(JobMsg::Progress(line));
         }
     };
-    let (owner, name) = (&of.repo().owner, &of.repo().name);
-    let repo = match Repo::find_local(&ctx.cwd, owner, name).await? {
-        Some(repo) => {
-            tracing::info!(path = %repo.path.display(), remote = repo.remote, "using local clone");
-            repo
-        }
-        None => {
-            Repo::open_cache(
-                &ctx.cache_root,
-                owner,
-                name,
-                &crate::host::current().git_url(owner, name),
-                ctx.credentials.clone(),
-                &progress,
-            )
-            .await?
-        }
-    };
+    let repo = ctx
+        .repo(&of.repo().owner, &of.repo().name, &progress)
+        .await?;
     let mut refs = match of {
         DiffOf::Pr(pr) => {
             repo.fetch_pr(pr.number, &base.branch, base.oid.as_ref(), &progress)
@@ -246,23 +249,15 @@ async fn run_inner(
     let files = Arc::new(files);
     // The first batch covers the head of the queue: the first file, which
     // is where the diff screen opens.
-    let first: HashSet<usize> = control.front().into_iter().collect();
+    let first = control.front();
     let (stage_tx, stage_rx) = watch::channel(0u8);
     let mut tasks = JoinSet::new();
     {
         let repo = repo.clone();
         let files = files.clone();
-        let first = first.clone();
         tasks.spawn(async move {
-            let oids = |pick: &dyn Fn(usize) -> bool| -> Vec<String> {
-                files
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| pick(*i))
-                    .flat_map(|(_, f)| f.blob_oids().map(str::to_owned))
-                    .collect()
-            };
-            for (stage, batch) in [(1u8, oids(&|i| first.contains(&i))), (2, oids(&|_| true))] {
+            let firsts = first.and_then(|i| files.get(i));
+            for (stage, batch) in [(1u8, blobs(firsts)), (2, blobs(files.iter()))] {
                 match repo.prefetch(&batch).await {
                     Ok(n) if n > 0 => tracing::info!(n, stage, "prefetched blobs"),
                     Ok(_) => {}
@@ -280,14 +275,13 @@ async fn run_inner(
         let files = files.clone();
         let reader = reader.clone();
         let out = out.clone();
-        let first = first.clone();
         let mut stage = stage_rx.clone();
         tasks.spawn(async move {
             while let Some(index) = control.pop() {
                 let Some(file) = files.get(index) else {
                     continue;
                 };
-                let needed = if first.contains(&index) { 1 } else { 2 };
+                let needed = if first == Some(index) { 1 } else { 2 };
                 if stage.wait_for(|s| *s >= needed).await.is_err() {
                     return;
                 }
@@ -369,11 +363,7 @@ pub async fn since_review_hashes(
         .await?;
     let merge_base = repo.merge_base(&base, old_head).await?;
     let files = repo.changed_files(&merge_base, old_head).await?;
-    let oids: Vec<String> = files
-        .iter()
-        .flat_map(|f| f.blob_oids().map(str::to_owned))
-        .collect();
-    if let Err(err) = repo.prefetch(&oids).await {
+    if let Err(err) = repo.prefetch(&blobs(&files)).await {
         tracing::warn!(%err, "prefetch for the earlier diff failed");
     }
     // Diffed a few at once, as the job does.
@@ -436,16 +426,17 @@ async fn line_map(
         tracing::info!(%err, original_commit, "original commit unavailable");
         return None;
     }
-    let old = reader
-        .read(&format!("{original_commit}:{path}"))
-        .await
-        .ok()
-        .flatten()?;
-    let new = reader
-        .read(&format!("{head}:{path}"))
-        .await
-        .ok()
-        .flatten()?;
+    // Both sides asked together: one wait on git.
+    let names = [
+        format!("{original_commit}:{path}"),
+        format!("{head}:{path}"),
+    ];
+    let read = reader
+        .read_each(&names.each_ref().map(String::as_str))
+        .await;
+    let [Some(old), Some(new)] = <[_; 2]>::try_from(read.ok()?).ok()? else {
+        return None;
+    };
     let diff = move || {
         let (old, new) = (crate::diff::Text::new(&old), crate::diff::Text::new(&new));
         crate::diff::anchor::line_map(&old, &new)

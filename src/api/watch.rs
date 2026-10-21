@@ -2,9 +2,10 @@
 //! discussion's thread, and a repository's watch settings. GitHub calls
 //! all of them subscribables, with one mutation for them all.
 
+use crate::api::change::mutations;
 use crate::api::client::{ApiError, GitHub};
 use crate::api::model::{NodeId, RepoId};
-use crate::api::queries::{NumberVariables, NumberVariablesFields};
+use crate::api::queries::{NumberVariables, NumberVariablesFields, fragments};
 use crate::schema::schema;
 
 /// What a subscription is to.
@@ -111,7 +112,6 @@ impl GitHub {
         id: &NodeId,
         state: SubscriptionState,
     ) -> Result<(), ApiError> {
-        use cynic::MutationBuilder;
         if let Watched::Repo(repo) = of {
             let path = format!("/repos/{repo}/subscription");
             let (subscribed, ignored) = match state {
@@ -125,11 +125,11 @@ impl GitHub {
             let body = serde_json::json!({ "subscribed": subscribed, "ignored": ignored });
             return self.rest_write(http::Method::PUT, &path, Some(&body)).await;
         }
-        let op = UpdateSubscription::build(SubscribeVariables {
+        let vars = SubscribeVariables {
             id: id.gql(),
             state,
-        });
-        self.mutate(op).await.map(drop)
+        };
+        self.run::<UpdateSubscription, _>(vars).await
     }
 }
 
@@ -169,11 +169,19 @@ pub struct RepoNameVariables {
     pub name: String,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "RepoNameVariables")]
-pub struct RepoWatchQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoWatchRepo>,
+fragments! {
+    root "Query" repository(owner, name);
+    RepoWatchQuery("RepoNameVariables") => RepoWatchRepo,
+    ThreadWatchQuery("NumberVariables") => ThreadWatchRepo,
+    DiscussionWatchQuery("NumberVariables") => DiscussionWatchRepo,
+}
+fragments! {
+    root "Repository" issue_or_pull_request(number);
+    ThreadWatchRepo("NumberVariables") => ThreadWatchOf,
+}
+fragments! {
+    root "Repository" discussion(number);
+    DiscussionWatchRepo("NumberVariables") => DiscussionWatch,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -181,20 +189,6 @@ pub struct RepoWatchQuery {
 pub struct RepoWatchRepo {
     #[cynic(spread)]
     pub watch: RepoWatch,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "NumberVariables")]
-pub struct ThreadWatchQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<ThreadWatchRepo>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "NumberVariables")]
-pub struct ThreadWatchRepo {
-    #[arguments(number: $number)]
-    pub issue_or_pull_request: Option<ThreadWatchOf>,
 }
 
 #[derive(cynic::InlineFragments, Debug)]
@@ -206,35 +200,17 @@ pub enum ThreadWatchOf {
     Other,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "NumberVariables")]
-pub struct DiscussionWatchQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<DiscussionWatchRepo>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "NumberVariables")]
-pub struct DiscussionWatchRepo {
-    #[arguments(number: $number)]
-    pub discussion: Option<DiscussionWatch>,
-}
-
 #[derive(cynic::QueryVariables, Debug)]
 pub struct SubscribeVariables {
     pub id: cynic::Id,
     pub state: SubscriptionState,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "UpdateSubscriptionPayload")]
-pub struct SubscribePayload {
-    pub client_mutation_id: Option<String>,
+fragments! {
+    client_mutation_id: Option<String>;
+    SubscribePayload = "UpdateSubscriptionPayload",
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "SubscribeVariables")]
-pub struct UpdateSubscription {
-    #[arguments(input: { subscribableId: $id, state: $state })]
-    pub update_subscription: Option<SubscribePayload>,
+mutations! {
+    UpdateSubscription("SubscribeVariables") update_subscription: SubscribePayload { subscribableId: $id, state: $state }
 }

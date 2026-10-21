@@ -57,7 +57,7 @@ impl Family for Page {
         let (repo, page) = self.parts();
         let repo = repo.clone();
         Some(match (self, page) {
-            (Wiki { .. }, None) => Route::Code(super::code::Repo(repo)),
+            (Wiki { .. }, None) => Route::code(repo),
             (Wiki { .. }, Some(_)) => Route::Wiki(Wiki { repo, page: None }),
             (WikiEdit { .. }, page) => Route::Wiki(Wiki {
                 repo,

@@ -4,19 +4,17 @@ use super::*;
 
 impl State {
     /// Opens a diff at `anchor` (a PR's starts once its metadata is in).
-    #[must_use]
-    pub fn open_diff(&mut self, of: DiffOf, anchor: Option<String>) -> Vec<Cmd> {
+    pub fn open_diff(&mut self, of: DiffOf, anchor: Option<String>) -> Cmds {
         let (screen, cmds) = self.diff_screen(of, anchor);
         self.screens.push(screen);
         cmds
     }
 
     /// A screen of `of`'s files at `anchor`, its diff on its way.
-    #[must_use]
-    pub fn diff_screen(&mut self, of: DiffOf, anchor: Option<String>) -> (Screen, Vec<Cmd>) {
+    pub fn diff_screen(&mut self, of: DiffOf, anchor: Option<String>) -> (Screen, Cmds) {
         let mut cmds = match &of {
             DiffOf::Pr(pr) => self.ensure(DataKey::Pr(pr.clone()), false),
-            DiffOf::Commit(..) | DiffOf::Range(..) => Vec::new(),
+            DiffOf::Commit(..) | DiffOf::Range(..) => Cmds::new(),
         };
         if !self.diffs.get(&of).is_some_and(|d| d.error.is_none()) {
             cmds.extend(self.start_diff(&of));
@@ -26,7 +24,6 @@ impl State {
         (Screen::Diff(Box::new(screen)), cmds)
     }
 
-    /// The branch the PR merges into, once the PR has loaded.
     /// What the PR's diff is from, once the PR has loaded: its base
     /// branch, and for a merged or closed PR the base it had then (with a
     /// merge commit, its head is in the branch, which would leave nothing).
@@ -40,24 +37,23 @@ impl State {
         })
     }
 
-    #[must_use]
-    pub(super) fn start_diff(&mut self, of: &DiffOf) -> Vec<Cmd> {
+    pub(super) fn start_diff(&mut self, of: &DiffOf) -> Cmds {
         let base = match of {
             DiffOf::Pr(pr) => match self.pr_base(pr) {
                 Some(base) => base,
-                None => return Vec::new(),
+                None => return Cmds::new(),
             },
             DiffOf::Commit(..) | DiffOf::Range(..) => crate::diff_job::PrBase::default(),
         };
         let diff = DiffState::fresh();
         let job = diff.job;
         self.diffs.insert(of.clone(), diff);
-        let mut cmds = vec![Cmd::Git(Git::LoadDiff {
+        let mut cmds = Cmds::from(Cmd::Git(Git::LoadDiff {
             of: of.clone(),
             job,
             base,
             range: None,
-        })];
+        }));
         // Reviews, threads and viewed files are a PR's.
         if let DiffOf::Pr(pr) = of {
             cmds.extend([
@@ -82,8 +78,7 @@ impl State {
 impl State {
     /// Starts the diff on screen once it can and the joined work that's
     /// due, and re-runs the diff screen's clamping and prioritization.
-    #[must_use]
-    pub fn settle_diff(&mut self) -> Vec<Cmd> {
+    pub fn settle_diff(&mut self) -> Cmds {
         // A pull request's Review tab shows its diff's threads and drafts.
         let of = match self.screen() {
             Screen::Diff(screen) => Some(screen.of.clone()),
@@ -96,7 +91,7 @@ impl State {
             {
                 self.start_diff(&of)
             }
-            _ => Vec::new(),
+            _ => Cmds::new(),
         };
         cmds.extend(join::join(self));
         let content = self.layout().content;
@@ -109,8 +104,7 @@ impl State {
 
 impl State {
     /// Opens the composer on `target`, starting with `text`.
-    #[must_use]
-    pub fn compose(&mut self, target: compose::Target, text: &str) -> Vec<Cmd> {
+    pub fn compose(&mut self, target: compose::Target, text: &str) -> Cmds {
         let compose = Compose::new(&self.theme, target, text);
         self.overlay = Some(Overlay::Compose(Box::new(compose)));
         crate::typing::fetch_mentionable(self)

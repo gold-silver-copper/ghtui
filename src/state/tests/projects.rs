@@ -32,9 +32,7 @@ pub(super) fn with_project(view: Option<u64>) -> State {
 
 /// The selected row's link.
 fn selected(s: &State) -> String {
-    let Screen::Page(p) = s.screen() else {
-        panic!("not a page");
-    };
+    let p = page(s);
     match p.selected_link() {
         Some(Link::Url(url)) => url.clone(),
         other => panic!("{other:?}"),
@@ -214,22 +212,13 @@ fn moving_a_card_sets_its_column_and_the_board_follows() {
     let mut s = with_project(None);
     press(&mut s, "<Right>");
     assert!(press(&mut s, "m").is_empty());
-    let Some(Overlay::Picker(picker)) = &s.overlay else {
-        panic!("no picker");
-    };
-    let rows = s.picker_rows(picker);
-    let labels: Vec<(&str, &str)> = (rows.iter())
-        .map(|(r, _)| (r.label.as_str(), r.hint.as_str()))
-        .collect();
-    assert_eq!(
-        labels,
-        [
-            ("Todo", "current"),
-            ("In Progress", ""),
-            ("Done", "Shipped"),
-            ("No Status", "")
-        ]
-    );
+    let want = [
+        ("Todo", "current"),
+        ("In Progress", ""),
+        ("Done", "Shipped"),
+        ("No Status", ""),
+    ];
+    assert_eq!(picked(&s), want.map(|(l, h)| (l.into(), h.into())));
     let sent = press(&mut s, "Done<Enter>");
     let done = FieldValue::Option {
         id: "O_done".into(),
@@ -270,17 +259,9 @@ fn moving_a_card_sets_its_column_and_the_board_follows() {
 fn setting_a_field_sends_its_value() {
     let mut s = with_project(Some(2));
     act(&mut s, Action::SetField);
-    let Some(Overlay::Picker(picker)) = &s.overlay else {
-        panic!("no picker");
-    };
-    let fields: Vec<String> = (s.picker_rows(picker).into_iter())
-        .map(|(r, _)| r.label)
-        .collect();
-    assert_eq!(fields, ["Status", "Estimate", "Sprint", "Due"]);
+    assert_eq!(picked_labels(&s), ["Status", "Estimate", "Sprint", "Due"]);
     press(&mut s, "Esti<Enter>x");
-    let Some(Overlay::Picker(picker)) = &s.overlay else {
-        panic!("no picker");
-    };
+    let picker = overlay!(s, Picker);
     let rows = s.picker_rows(picker);
     assert_eq!(
         rows.first().map(|(r, _)| r.label.as_str()),
@@ -325,11 +306,7 @@ fn items_are_added_by_reference_or_as_drafts() {
     let mut s = with_project(None);
     press(&mut s, "a");
     press(&mut s, "gold-silver-copper/ghtui#14");
-    let Some(Overlay::Picker(picker)) = &s.overlay else {
-        panic!("no picker");
-    };
-    let rows = s.picker_rows(picker);
-    assert_eq!(rows[0].0.hint, "already in the project");
+    assert_eq!(picked(&s)[0].1, "already in the project");
     press(&mut s, "<C-u>gold-silver-copper/ghtui#20");
     let sent = press(&mut s, "<Enter>");
     let add = Change::Project(ProjectChange::Add {
@@ -372,9 +349,7 @@ fn items_are_archived_and_restored() {
     let mut s = with_project(None);
     press(&mut s, "<Right>");
     assert!(act(&mut s, Action::ArchiveItem).is_empty());
-    let Some(Overlay::Ask(c)) = &s.overlay else {
-        panic!("not asked");
-    };
+    let c = overlay!(s, Ask);
     assert_eq!(c.title, "Archive “Projects aren't there yet”?");
     let sent = press(&mut s, "<Enter>");
     let archive = Change::Project(ProjectChange::Archive {
@@ -414,7 +389,7 @@ fn a_drafts_title_and_text_are_edited() {
     let mut s = with_project(None);
     press(&mut s, "<Right><Down>");
     press(&mut s, "e");
-    let c = crate::fixtures::composer(&mut s);
+    let c = fixtures::composer(&mut s);
     assert_eq!(
         c.text(),
         "Write the board's docs\n\nExplain **h** and **l**, and moving cards."
@@ -440,15 +415,8 @@ fn an_issues_field_is_set_from_its_sidebar() {
     let said = "Roadmap (In progress · Estimate: 3)";
     assert!(page_text(&s).contains(said), "{}", page_text(&s));
     act(&mut s, Action::SetField);
-    let Some(Overlay::Picker(picker)) = &s.overlay else {
-        panic!("no picker");
-    };
-    let fields: Vec<(String, String)> = (s.picker_rows(picker).into_iter())
-        .map(|(r, _)| (r.label, r.hint))
-        .collect();
-    let want =
-        [("Status", "In progress"), ("Estimate", "3")].map(|(f, v)| (f.to_owned(), v.to_owned()));
-    assert_eq!(fields, want);
+    let want = [("Status", "In progress"), ("Estimate", "3")].map(|(f, v)| (f.into(), v.into()));
+    assert_eq!(picked(&s), want);
     press(&mut s, "Status<Enter>");
     let sent = press(&mut s, "Done<Enter>");
     let done = FieldValue::Option {

@@ -431,11 +431,10 @@ impl Edit<'_> {
     /// fragment, whose place in answers isn't known).
     fn selections(&mut self, set: &mut Vec<Sel>, around: &[String], path: Option<&Vec<String>>) {
         let inside = |within: &str| {
-            let names: Vec<&str> = within.split('.').collect();
-            around.len() >= names.len()
-                && (around.iter().rev())
-                    .zip(names.iter().rev())
-                    .all(|(a, n)| a == n)
+            let mut around = around.iter().rev();
+            within
+                .rsplit('.')
+                .all(|n| around.next().is_some_and(|a| a == n))
         };
         let mut kept = Vec::new();
         for mut sel in std::mem::take(set) {
@@ -643,11 +642,12 @@ fn directives<'a>(
     dirs: impl Iterator<Item = cynic_parser::executable::Directive<'a>>,
     text: &impl Fn(cynic_parser::Span) -> &'a str,
 ) -> String {
-    dirs.map(|d| {
-        let args = print_args(&arguments(d.arguments(), text));
-        format!(" @{}{args}", d.name())
-    })
-    .collect()
+    let mut out = String::new();
+    for d in dirs {
+        out.extend([" @", d.name()]);
+        print_args(&arguments(d.arguments(), text), &mut out);
+    }
+    out
 }
 
 fn value<'a>(v: cynic_parser::Value<'a>, text: &impl Fn(cynic_parser::Span) -> &'a str) -> Val {
@@ -740,12 +740,10 @@ fn print_arg((name, value): &(String, Val), out: &mut String) {
     print_val(value, out);
 }
 
-fn print_args(args: &[(String, Val)]) -> String {
-    let mut out = String::new();
+fn print_args(args: &[(String, Val)], out: &mut String) {
     if !args.is_empty() {
-        join(&mut out, '(', args, ')', print_arg);
+        join(out, '(', args, ')', print_arg);
     }
-    out
 }
 
 /// `items` between `open` and `close`, each written by `item`, with
@@ -772,7 +770,7 @@ fn print_set(set: &[Sel], out: &mut String) {
                     out.push_str(": ");
                 }
                 out.push_str(&f.name);
-                out.push_str(&print_args(&f.args));
+                print_args(&f.args, out);
                 out.push_str(&f.directives);
                 if let Some(inner) = &f.set {
                     out.push(' ');

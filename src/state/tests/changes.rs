@@ -62,14 +62,14 @@ fn merging_asks_first_and_ends_up_as_github_has_it() {
     assert!(s.overlay.is_none());
     says(&s, "Merged");
     assert!(
-        crate::fixtures::asks_pr(&cmds, &pr()),
+        fixtures::asks_pr(&cmds, &pr()),
         "the pull request is fetched again: {cmds:?}"
     );
     // Until GitHub shows it merged, nothing else is offered.
     press(&mut s, "x");
     says(&s, "hasn't shown the last change");
     let merged = mergeable(|d| d.state = PrState::Merged);
-    crate::fixtures::pr_fetched(&mut s, &pr(), Ok(merged));
+    fixtures::pr_fetched(&mut s, &pr(), Ok(merged));
     assert!(s.following.is_none());
 }
 
@@ -83,7 +83,7 @@ fn acting_on_a_homes_row_is_about_that_row() {
     s.data.retain(|key, _| !matches!(key, DataKey::Pr(_)));
     press(&mut s, "<Down><Down>");
     let cmds = press(&mut s, "M");
-    assert_eq!(cmds, vec![crate::fixtures::fetch_pr(&pr())]);
+    assert_eq!(cmds, vec![fixtures::fetch_pr(&pr())]);
     says(&s, "Loading gold-silver-copper/ghtui#12");
     pr_shows(&mut s, |_| {});
     assert_eq!(
@@ -98,8 +98,8 @@ fn acting_on_a_homes_row_is_about_that_row() {
     // The list moves; the dialog is still about #12.
     press(&mut s, "<Esc>");
     press(&mut s, "M");
-    let mine = crate::fixtures::found_prs(Vec::new(), 0);
-    crate::fixtures::section(&mut s, 1, mine);
+    let mine = fixtures::found_prs(Vec::new(), 0);
+    fixtures::section(&mut s, 1, mine);
     assert_eq!(
         overlay!(s, Ask).about,
         About::Act(Action::Merge, Subject::Pr(pr()))
@@ -111,23 +111,20 @@ fn acting_on_a_homes_row_is_about_that_row() {
     assert_eq!(w.about, crate::act::Subject::Pr(pr()));
     // Home asked again at once; GitHub's search may not show it yet.
     for i in 0..2 {
-        let none = crate::fixtures::found_prs(Vec::new(), 0);
-        crate::fixtures::section(&mut s, i, none);
+        let none = fixtures::found_prs(Vec::new(), 0);
+        fixtures::section(&mut s, i, none);
     }
     let merged = mergeable(|d| d.state = PrState::Merged);
-    let cmds = crate::fixtures::pr_fetched(&mut s, &pr(), Ok(merged));
+    let cmds = fixtures::pr_fetched(&mut s, &pr(), Ok(merged));
     assert!(s.following.is_none());
     let home = s.home[1].search.clone().unwrap().key();
-    assert!(crate::fixtures::asks(&cmds, &home), "{cmds:?}");
+    assert!(fixtures::asks(&cmds, &home), "{cmds:?}");
     // An issue row offers closing, not merging.
-    crate::fixtures::section(
+    fixtures::section(
         &mut s,
         1,
-        crate::fixtures::found_prs(
-            vec![crate::fixtures::issue_summary(
-                3,
-                Status::Issue(IssueState::Open),
-            )],
+        fixtures::found_prs(
+            vec![fixtures::issue_summary(3, Status::Issue(IssueState::Open))],
             1,
         ),
     );
@@ -163,12 +160,12 @@ fn after_updating_the_branch_merging_waits_for_the_new_head() {
     let cmds = timers(&mut s);
     assert!(cmds.contains(&Cmd::Timer(Timer::Live, 5_000)), "{cmds:?}");
     let cmds = update(&mut s, Msg::Timer(Timer::Live));
-    assert!(crate::fixtures::asks_pr(&cmds, &pr()), "{cmds:?}");
+    assert!(fixtures::asks_pr(&cmds, &pr()), "{cmds:?}");
     let moved = mergeable(|d| {
         d.head_oid = "1".repeat(40);
         d.behind_by = Some(0);
     });
-    crate::fixtures::pr_fetched(&mut s, &pr(), Ok(moved));
+    fixtures::pr_fetched(&mut s, &pr(), Ok(moved));
     press(&mut s, "M");
     let head = match &overlay!(s, Ask).choices[0].1 {
         Answer::Change(Change::Merge { head, .. }) => head.clone(),
@@ -227,7 +224,7 @@ fn what_github_forbids_is_refused() {
     );
 
     let mut s = with_run();
-    let mut repo = crate::fixtures::overview();
+    let mut repo = fixtures::overview();
     repo.can_write = false;
     fetched(&mut s, DataKey::Repo(ghtui()), Data::from(repo));
     press(&mut s, "R");
@@ -299,7 +296,7 @@ fn a_draft_is_marked_ready_at_once_and_hears_back_alone() {
 #[test]
 fn a_star_leaves_the_wait_for_another_change_alone() {
     let mut s = super::with_workflow();
-    let run = Data::from(crate::fixtures::workflow_run());
+    let run = Data::from(fixtures::workflow_run());
     fetched(&mut s, DataKey::Run(ghtui(), 7, None), run);
     let rerun = press(&mut s, "R<Enter>");
     press(&mut s, "<Esc>");
@@ -326,9 +323,7 @@ fn approving_from_the_page_takes_your_saved_drafts() {
             Cmd::LoadReview(pr())
         ]
     );
-    let Some(Overlay::Submit(dialog)) = &s.overlay else {
-        panic!("no dialog");
-    };
+    let dialog = overlay!(s, Submit);
     assert_eq!(
         (dialog.event, dialog.quick),
         (crate::api::model::ReviewEvent::Approve, true)
@@ -431,7 +426,7 @@ fn notifications_are_marked_read_and_done() {
     answer(&mut s, &sent, Ok(()));
     says(&s, "Marked read");
     // Until GitHub shows it read, the inbox is fetched again.
-    let mut inbox = crate::fixtures::notifications();
+    let mut inbox = fixtures::notifications();
     fetched(&mut s, key.clone(), Data::from(inbox.clone()));
     assert!(s.following.is_some());
     if let Some(n) = inbox.list.items.first_mut() {
@@ -494,7 +489,7 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
     fetched(&mut s, DataKey::Unread, fixtures::sample(&DataKey::Unread));
     // GitHub marks them a moment later: until then, the inbox is asked
     // again.
-    let mut inbox = crate::fixtures::notifications();
+    let mut inbox = fixtures::notifications();
     let shown = |i: &crate::api::notifications::Inbox| Data::from(i.clone());
     fetched(&mut s, key.clone(), shown(&inbox));
     assert!(s.following.is_some());
@@ -512,7 +507,7 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
     let loaded = "Only the 4 loaded: those further down stay as they are";
     assert!(c.facts.iter().any(|(f, _)| f == loaded), "{:?}", c.facts);
     let sent = press(&mut s, "<Enter>");
-    let rows = crate::fixtures::notifications().list.items;
+    let rows = fixtures::notifications().list.items;
     let threads: Vec<ThreadAt> = rows.iter().map(ThreadAt::of).collect();
     let ids: Vec<&str> = threads.iter().map(|t| t.id.as_str()).collect();
     assert_eq!(ids, ["101", "102", "103", "104"]);
@@ -532,7 +527,7 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
     let route = Route::Search(search::Notifications {
         query: "reason:mention".to_owned(),
     });
-    super::screens::open(&mut s, route, shown(&crate::fixtures::notifications()));
+    super::screens::open(&mut s, route, shown(&fixtures::notifications()));
     act(&mut s, Action::MarkAllRead);
     let each = Change::MarkEach {
         threads: threads[..2].to_vec(),
@@ -549,7 +544,7 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
 #[test]
 fn a_finished_job_in_a_running_run_cancels_the_run() {
     let mut s = with_job(None);
-    let (mut job, _) = crate::fixtures::job();
+    let (mut job, _) = fixtures::job();
     job.run.outcome = CheckOutcome::Pending;
     fetched(&mut s, DataKey::Job(ghtui(), 2), Data::from(job.clone()));
     press(&mut s, "R");
@@ -589,7 +584,7 @@ fn a_rerun_job_is_followed_to_its_new_attempt() {
     };
     let by = By::Confirm(Subject::Job(ghtui(), Some(7), 2));
     fixtures::changed(&mut s, rerun, by, Ok(()));
-    let (mut job, _) = crate::fixtures::job();
+    let (mut job, _) = fixtures::job();
     job.run.attempt = 2;
     job.run.outcome = CheckOutcome::Pending;
     fetched(&mut s, DataKey::Job(ghtui(), 2), Data::from(job.clone()));

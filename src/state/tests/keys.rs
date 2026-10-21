@@ -58,11 +58,7 @@ fn h_l_and_u_move_like_a_file_manager() {
     });
     assert_eq!(route(&state), crates, "l opens");
     press(&mut state, "u");
-    assert_eq!(
-        route(&state),
-        Route::Code(code::Repo(ghtui())),
-        "u: the folder above"
-    );
+    assert_eq!(route(&state), Route::code(ghtui()), "u: the folder above");
     press(&mut state, "<BS>");
     assert_eq!(route(&state), crates, "ctrl-o: back");
     press(&mut state, "uu");
@@ -80,7 +76,7 @@ fn arrows_move_comment_by_comment_and_enter_quotes() {
     let mut state = state();
     update(&mut state, Msg::Resize(100, 14));
     let _ = state.push(issue(14));
-    let mut issue = crate::fixtures::issue();
+    let mut issue = fixtures::issue();
     issue.body = (1..=30).map(|n| format!("Line {n}.\n\n")).collect();
     fetched(
         &mut state,
@@ -126,9 +122,7 @@ fn the_menu_filters_as_you_type() {
     let shown: Vec<&str> = menu.shown().iter().map(|d| d.label.as_str()).collect();
     assert_eq!(shown, ["Go to file"]);
     press(&mut state, "<Esc>");
-    let Some(Overlay::Menu(menu)) = &state.overlay else {
-        panic!("Esc stopped filtering, not the menu")
-    };
+    let menu = overlay!(state, Menu);
     assert!(menu.filter.is_none() && menu.shown().len() > 1);
     press(&mut state, "/gotofile");
     let cmds = press(&mut state, "<Enter>");
@@ -186,10 +180,7 @@ fn errors_are_dismissed_and_kept() {
     assert!(state.notices.shown().is_none());
     assert_eq!(state.screens.len(), depth, "Esc only dismissed");
     act(&mut state, Action::Messages);
-    let p = overlay!(state, Picker);
-    let rows = state.picker_rows(p);
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].0.label, "boom");
+    assert_eq!(picked_labels(&state), ["boom"]);
     let cmds = press(&mut state, "<Enter>");
     assert!(matches!(&cmds[..], [Cmd::Copy(t)] if t == "boom"));
 }
@@ -470,17 +461,6 @@ fn file_lines_copy_and_blame() {
     ));
 }
 
-/// The selected line, and the word under the cursor.
-fn word_here(s: &State) -> (Option<u32>, Option<String>) {
-    let Screen::Page(p) = s.screen() else {
-        panic!("not on a page")
-    };
-    let word = p
-        .word_cursor()
-        .map(|(_, code, w)| code.get(w.bytes).unwrap().to_owned());
-    (p.selected.and_then(|i| p.line_of(i)), word)
-}
-
 /// In a file, `w` and `b` move a word cursor along the line; `*` goes
 /// to the word's next line below, the cursor on it, and `#` back up.
 #[test]
@@ -503,7 +483,7 @@ fn words_in_a_file() {
 fn gx_opens_the_address_under_the_cursor() {
     let mut s = super::with_repo();
     let route = Route::blob(super::ghtui(), "main".into(), "a.rs".into());
-    let blob = crate::fixtures::file("a.rs", "// See https://example.com/docs.\n");
+    let blob = fixtures::file("a.rs", "// See https://example.com/docs.\n");
     super::open(&mut s, route, crate::data::Data::from(blob));
     let opened = |s: &mut State| match super::act(s, Action::OpenLink).as_slice() {
         [crate::state::Cmd::OpenUrl(url)] => url.clone(),
@@ -522,9 +502,7 @@ fn words_in_the_diff() {
     let at = Pos { file: 0, row: 0 };
     let mut s = screen_state(at, Pane::Diff);
     let code = |s: &State| {
-        let Screen::Diff(screen) = s.screen() else {
-            panic!("not the diff")
-        };
+        let screen = on_diff(s);
         let doc = &s.diff().unwrap().doc;
         doc.code_at(screen.cursor, screen.half)
             .unwrap_or_default()
@@ -540,9 +518,7 @@ fn words_in_the_diff() {
         &mut s,
         "<C-Right><C-Right><C-Right><C-Right><C-Right><C-Right><C-Right>",
     );
-    let Screen::Diff(screen) = s.screen() else {
-        panic!()
-    };
+    let screen = on_diff(&s);
     assert_eq!(screen.word, Some(18), "the first i32");
     act(&mut s, Action::SearchWord);
     assert!(code(&s).contains("as i32"), "{}", code(&s));
@@ -566,7 +542,7 @@ fn log_lines_are_rows() {
     press(&mut s, "<Enter>");
     assert!(format!("{:?}", s.notices.shown()).contains("Line 3 of step 3"));
     let _ = s.go(crate::route::Dest::from_url(&url));
-    let (job, log) = crate::fixtures::job();
+    let (job, log) = fixtures::job();
     let ghtui = super::ghtui();
     super::fetched(
         &mut s,
@@ -605,7 +581,7 @@ fn blame_runs_open_their_commit() {
 #[test]
 fn pr_commits_step_and_go_up() {
     let mut s = with_pr();
-    let pr = PrRef::parse("gold-silver-copper/ghtui#12").unwrap();
+    let pr = pr();
     let commit = |oid: &str| {
         Route::Code(code::Commit {
             repo: pr.repo.clone(),
@@ -630,14 +606,14 @@ fn pr_commits_step_and_go_up() {
 fn a_quote_reply_opens_under_the_comment() {
     use crate::ui::page::Link;
     let mut s = super::sized(super::with_issue(), 100, 40);
-    crate::fixtures::select_by(
+    fixtures::select_by(
         &mut s,
         |l| matches!(l, Link::Quote { author, .. } if author == "hubot"),
     );
     press(&mut s, "<Enter>");
     assert!(s.overlay.is_none(), "Enter doesn't start writing");
     press(&mut s, ">");
-    let c = crate::fixtures::composer(&mut s);
+    let c = fixtures::composer(&mut s);
     assert!(c.text().starts_with("> @hubot wrote:"), "{}", c.text());
     let screen = screen_text(&s);
     let row = |text: &str| screen.lines().position(|l| l.contains(text));

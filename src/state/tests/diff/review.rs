@@ -23,7 +23,7 @@ fn threads_show_navigate_and_resolve() {
     act(&mut s, Action::NextThread);
     let at = s.diffs[&DiffOf::Pr(pr.clone())]
         .doc
-        .annotation_at(screen(&s).cursor)
+        .annotation_at(on_diff(&s).cursor)
         .unwrap();
     assert_eq!(
         s.diffs[&DiffOf::Pr(pr.clone())].doc.annotations()[at as usize].key,
@@ -193,7 +193,7 @@ fn cancelling_a_comment_keeps_the_selection() {
     to_line(&mut s, "A point in 2D");
     press(&mut s, "s<Down>c<Esc>");
     assert!(s.overlay.is_none());
-    assert!(screen(&s).selection.is_some(), "the selection survives");
+    assert!(on_diff(&s).selection.is_some(), "the selection survives");
     // Again, and the comment covers the same lines.
     press(&mut s, "c");
     let compose = overlay!(s, Compose);
@@ -201,7 +201,7 @@ fn cancelling_a_comment_keeps_the_selection() {
         matches!(&compose.target, compose::Target::Review(crate::review::Comment::Line { start, end, .. }) if start != end)
     );
     press(&mut s, "Fine<C-s>");
-    assert!(screen(&s).selection.is_none(), "an added comment ends it");
+    assert!(on_diff(&s).selection.is_none(), "an added comment ends it");
 }
 
 #[test]
@@ -511,7 +511,7 @@ fn the_cursor_stays_on_a_thread_it_resolves() {
         assert_eq!(job.resolved, resolved);
         let doc = &s.diffs[&of].doc;
         assert_eq!(
-            doc.annotation_at(screen(&s).cursor),
+            doc.annotation_at(on_diff(&s).cursor),
             Some(ann),
             "resolved: {resolved}"
         );
@@ -528,18 +528,18 @@ fn g_ends_in_the_last_file_and_c_between_files_says_why() {
     let (mut s, pr) = diff_state(120);
     press(&mut s, "<End>");
     let doc = &s.diffs[&DiffOf::Pr(pr)].doc;
-    let at = screen(&s).cursor;
+    let at = on_diff(&s).cursor;
     assert_eq!(at.file, doc.files().len() - 1);
     assert_ne!(doc.row(at), Some(Row::Spacer));
     press(&mut s, "<Down>");
-    assert_eq!(screen(&s).cursor, at);
+    assert_eq!(on_diff(&s).cursor, at);
     if let Screen::Diff(d) = s.screens.last_mut() {
         d.cursor = Pos { file: 0, row: 0 };
     }
     press(&mut s, "<S-Down>");
     press(&mut s, "<Up>");
     let doc = &s.diffs[&DiffOf::Pr(PrRef::parse("o/r#7").unwrap())].doc;
-    assert_eq!(doc.row(screen(&s).cursor), Some(Row::Spacer));
+    assert_eq!(doc.row(on_diff(&s).cursor), Some(Row::Spacer));
     press(&mut s, "c");
     assert!(s.overlay.is_none());
     fixtures::warns(&s, "between files");
@@ -559,7 +559,7 @@ fn a_match_shows_with_its_thread() {
     press(&mut s, "<Home>");
     to_line(&mut s, "origin");
     let doc = &s.diffs[&DiffOf::Pr(pr)].doc;
-    let screen = screen(&s);
+    let screen = on_diff(&s);
     let height = usize::from(s.layout().content.height) - 1;
     let (top, cursor) = (doc.to_global(screen.top), doc.to_global(screen.cursor));
     let thread_end = (cursor + 1..doc.total_rows())

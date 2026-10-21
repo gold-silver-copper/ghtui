@@ -19,7 +19,7 @@ use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::{self, Titling};
-use crate::state::{Cmd, Overlay, Screen, State};
+use crate::state::{Cmds, Overlay, Screen, State};
 use crate::work::{Cx, Failure, Job};
 
 /// Rows a section shows unless it says.
@@ -83,7 +83,7 @@ impl Search {
     }
 }
 
-/// The config key for a kind of list, and what it calls one.
+/// The config key for a kind of list.
 fn kind_key(kind: SearchKind) -> Option<&'static str> {
     match kind {
         SearchKind::Pulls => Some("pulls"),
@@ -389,7 +389,7 @@ impl State {
                 keys.push(key);
             }
         }
-        keys.into_iter().collect()
+        keys
     }
 
     /// The repositories Home's sections list, for the search box.
@@ -574,13 +574,10 @@ pub fn unavailable(state: &State, action: Action) -> Option<String> {
 }
 
 /// Runs one of the actions on Home's sections.
-#[must_use]
-pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
+pub fn act(state: &mut State, action: Action) -> Cmds {
     let (path, plan) = match plan(state, action) {
         Ok((path, plan)) => (path.to_owned(), plan),
-        Err(why) => {
-            return state.just_say(why);
-        }
+        Err(why) => return state.just_say(why),
     };
     let (edit, what) = match plan {
         Plan::Title(titling, name) => {
@@ -609,8 +606,7 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
 
 impl State {
     /// Sends `edit` to the config file at `path`; `what` says it once it's made.
-    #[must_use]
-    pub fn edit_home(&mut self, path: PathBuf, edit: Edit, what: String) -> Vec<Cmd> {
+    pub fn edit_home(&mut self, path: PathBuf, edit: Edit, what: String) -> Cmds {
         self.home_editing = true;
         crate::work::start(EditConfig {
             path,
@@ -644,7 +640,7 @@ impl Job for EditConfig {
 
     /// `config.toml` was changed (or not, and why): Home shows what it
     /// says now, the selection staying on the section moved.
-    fn done(self, state: &mut State, result: Result<Self::Out, Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<Self::Out, Failure>) -> Cmds {
         state.home_editing = false;
         match result {
             Ok((sections, removed)) => {
@@ -672,7 +668,7 @@ impl Job for EditConfig {
         if state.route() == Some(&Route::App(app::Home)) {
             state.ensure_route(&Route::App(app::Home), false)
         } else {
-            Vec::new()
+            Cmds::new()
         }
     }
 }
@@ -680,8 +676,7 @@ impl Job for EditConfig {
 impl State {
     /// Follows a section's row that isn't a row of its list: its empty
     /// state, its error, or what's wrong with how it's written.
-    #[must_use]
-    pub fn open_section(&mut self, i: usize) -> Vec<Cmd> {
+    pub fn open_section(&mut self, i: usize) -> Cmds {
         match self.home.get(i).map(|s| s.search.clone()) {
             Some(Ok(search)) => self.push(search.route()),
             Some(Err(why)) => {
@@ -693,7 +688,7 @@ impl State {
                     "This section can't be shown: {why}. Fix it in {path}"
                 ))
             }
-            None => Vec::new(),
+            None => Cmds::new(),
         }
     }
 }

@@ -37,18 +37,25 @@ macro_rules! fragments {
             pub $field: Option<$ty>,
         }
     )*};
-    (total_count: i32; $($name:ident = $graphql:literal),* $(,)?) => {$(
-        #[derive(cynic::QueryFragment, Debug)]
-        #[cynic(graphql_type = $graphql)]
-        pub struct $name {
-            pub total_count: i32,
-        }
-    )*};
     (id: cynic::Id; $($name:ident = $graphql:literal),* $(,)?) => {$(
         #[derive(cynic::QueryFragment, Debug)]
         #[cynic(graphql_type = $graphql)]
         pub struct $name {
             pub id: cynic::Id,
+        }
+    )*};
+    ($field:ident: i32; $($name:ident = $graphql:literal),* $(,)?) => {$(
+        #[derive(cynic::QueryFragment, Debug)]
+        #[cynic(graphql_type = $graphql)]
+        pub struct $name {
+            pub $field: i32,
+        }
+    )*};
+    ($field:ident: String; $($name:ident = $graphql:literal),* $(,)?) => {$(
+        #[derive(cynic::QueryFragment, Debug)]
+        #[cynic(graphql_type = $graphql)]
+        pub struct $name {
+            pub $field: String,
         }
     )*};
     // A page of nodes and how many there are in all.
@@ -59,6 +66,13 @@ macro_rules! fragments {
             pub total_count: i32,
             pub nodes: Option<Vec<Option<$ty>>>,
         }
+
+        impl $name {
+            /// Its nodes, each made an item by `item`, of its total.
+            pub fn into_capped<T>(self, item: impl FnMut($ty) -> T) -> crate::api::model::Capped<T> {
+                crate::api::model::Capped::from_nodes(self.total_count, self.nodes, item)
+            }
+        }
     )*};
     // A page of a connection, and how many there are in all.
     (paged: $($name:ident = $graphql:literal => $ty:ident),* $(,)?) => {$(
@@ -68,6 +82,16 @@ macro_rules! fragments {
             pub total_count: i32,
             pub page_info: crate::api::queries::PageInfo,
             pub nodes: Option<Vec<Option<$ty>>>,
+        }
+
+        impl $name {
+            /// The page as results, the nodes `item` makes nothing of left out.
+            pub fn filter_results<T>(
+                self,
+                item: impl FnMut($ty) -> Option<T>,
+            ) -> crate::api::browse::Results<T> {
+                crate::api::browse::Results::from_page(self.total_count, self.page_info, self.nodes, item)
+            }
         }
     )*};
     (nodes: $($name:ident = $graphql:literal => $ty:ident),* $(,)?) => {$(
@@ -256,11 +280,7 @@ pub struct Actor {
     pub login: String,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository")]
-pub struct RepositoryName {
-    pub name_with_owner: String,
-}
+fragments! { name_with_owner: String; RepositoryName = "Repository" }
 
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Milestone")]
@@ -429,11 +449,7 @@ pub struct RefCompare {
     pub compare: Option<Behind>,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Comparison")]
-pub struct Behind {
-    pub behind_by: i32,
-}
+fragments! { behind_by: i32; Behind = "Comparison" }
 
 // ---- viewed files ------------------------------------------------------------
 

@@ -81,24 +81,23 @@ impl State {
     }
 }
 
-#[must_use]
-pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
+pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Cmds {
     let stack = state.contexts();
     let pressed = crate::keymap::Key::from(key);
     let action = state.keymap.resolve(pressed, stack);
     let Some(Overlay::Menu(menu)) = &mut state.overlay else {
-        return Vec::new();
+        return Cmds::new();
     };
     let last = menu.shown().len().saturating_sub(1);
     let typed = !key.modifiers.contains(KeyModifiers::CONTROL);
     let run = match (&mut menu.filter, key.code) {
         (_, KeyCode::Down) => {
             menu.selected = (menu.selected + 1).min(last);
-            return Vec::new();
+            return Cmds::new();
         }
         (_, KeyCode::Up) => {
             menu.selected = menu.selected.saturating_sub(1);
-            return Vec::new();
+            return Cmds::new();
         }
         (_, KeyCode::Enter) | (None, KeyCode::Right) => {
             menu.shown().get(menu.selected).map(|d| (*d).clone())
@@ -110,14 +109,14 @@ pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
                 KeyCode::Char('u') => query.clear(),
                 KeyCode::Backspace if query.pop().is_some() => {}
                 KeyCode::Backspace | KeyCode::Esc => menu.filter = None,
-                _ => return Vec::new(),
+                _ => return Cmds::new(),
             }
             menu.reselect();
-            return Vec::new();
+            return Cmds::new();
         }
         (None, _) if action == Some(Action::Search) => {
             menu.filter = Some(String::new());
-            return Vec::new();
+            return Cmds::new();
         }
         (None, KeyCode::Esc | KeyCode::Left) => None,
         (None, _) if action == Some(Action::Menu) => None,
@@ -137,11 +136,10 @@ pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
 }
 
 /// Runs a menu row (`None` closes the menu).
-#[must_use]
-pub(super) fn run_menu_row(state: &mut State, row: Option<Doable>) -> Vec<Cmd> {
+pub(super) fn run_menu_row(state: &mut State, row: Option<Doable>) -> Cmds {
     let Some(d) = row else {
         state.overlay = None;
-        return Vec::new();
+        return Cmds::new();
     };
     if let Some(why) = d.unavailable {
         return state.just_say(format!("Can't: {why}"));
