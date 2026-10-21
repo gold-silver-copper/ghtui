@@ -13,7 +13,10 @@ pub struct Menu {
 impl Menu {
     /// The rows the filter lets through, in order.
     pub fn shown(&self) -> Vec<&Doable> {
-        let query = self.filter.as_deref().unwrap_or_default();
+        // An empty filter lets every row through.
+        let Some(query) = self.filter.as_deref().filter(|q| !q.is_empty()) else {
+            return self.rows.iter().collect();
+        };
         // What's typed, as typed, before a scattered match: "revert"
         // mustn't run "Open the selected row".
         let lower = query.to_lowercase();
@@ -21,15 +24,13 @@ impl Menu {
             d.label.to_lowercase().contains(&lower)
                 || d.action.description().to_lowercase().contains(&lower)
         };
-        if self.rows.iter().any(|d| has(&d)) {
-            return self.rows.iter().filter(has).collect();
+        let exact: Vec<_> = self.rows.iter().filter(has).collect();
+        if !exact.is_empty() {
+            return exact;
         }
-        self.rows
-            .iter()
-            .filter(|d| {
-                crate::picker::fuzzy_score(query, &d.label).is_some()
-                    || crate::picker::fuzzy_score(query, d.action.description()).is_some()
-            })
+        let fuzzy = |text: &str| crate::picker::fuzzy_score(query, text).is_some();
+        (self.rows.iter())
+            .filter(|d| fuzzy(&d.label) || fuzzy(d.action.description()))
             .collect()
     }
 

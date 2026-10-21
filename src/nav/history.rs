@@ -212,24 +212,23 @@ pub fn switch_tab(state: &mut State, n: usize) -> Vec<Cmd> {
 /// `gr`: the pull request's Review tab, from any of its tabs.
 #[must_use]
 pub fn review_glance(state: &mut State) -> Vec<Cmd> {
-    match state.review_tab() {
+    match review_tab(&state.chrome()) {
         Some(n) => switch_tab(state, n),
         None => state.just_say("A review at a glance is a pull request's"),
     }
+}
+
+/// Which of the page's tabs (from 1) is a pull request's Review tab.
+pub(super) fn review_tab(chrome: &crate::chrome::Chrome) -> Option<usize> {
+    let review =
+        |(_, t): &(_, Target)| matches!(t, Target::Page(r) if browse::glanced(r).is_some());
+    chrome.tabs.iter().position(review).map(|i| i + 1)
 }
 
 /// The most page tabs kept to come back to.
 pub(super) const PARKED: usize = 16;
 
 impl State {
-    /// Which of the page's tabs (from 1) is a pull request's Review tab.
-    pub(super) fn review_tab(&self) -> Option<usize> {
-        let tabs = self.chrome().tabs;
-        let review =
-            |(_, t): &(_, Target)| matches!(t, Target::Page(r) if browse::glanced(r).is_some());
-        tabs.iter().position(review).map(|i| i + 1)
-    }
-
     /// Keeps a page tab left, as it was.
     pub(super) fn park(&mut self, screen: Screen) {
         let url = crate::tabs::url(&screen);

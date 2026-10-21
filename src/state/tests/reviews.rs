@@ -156,9 +156,7 @@ fn a_reviews_summary_is_edited() {
         |l| matches!(l, Link::Quote { author, body, .. } if author == "hubot" && body.starts_with("Yes")),
     );
     press(&mut s, "e");
-    let Some(Overlay::Compose(c)) = &s.overlay else {
-        panic!("e opens the composer")
-    };
+    let c = crate::fixtures::composer(&mut s);
     assert_eq!(c.text(), "Yes: every role is checked at both depths.");
     press(&mut s, "!");
     let cmds = press(&mut s, "<C-s>");

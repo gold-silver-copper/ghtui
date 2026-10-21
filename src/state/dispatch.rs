@@ -36,56 +36,32 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
     if wrote {
         state.data.values_mut().for_each(|r| r.stale = true);
     }
-    // The conversation's comments, fresh from GitHub.
-    let activity = match &msg {
-        Msg::Fetched {
-            key: DataKey::PrActivity(pr),
-            result: Ok(_),
-            cached_at: None,
-            ..
-        } => Some(pr.clone()),
-        _ => None,
-    };
-    // A pull request's checks, for its diff's annotations.
-    let checks = match &msg {
-        Msg::Fetched {
-            key: DataKey::PrChecks(pr),
-            result: Ok(_),
-            ..
-        } => Some(pr.clone()),
-        _ => None,
-    };
-    // Any page's data, fresh from GitHub, for the page watchers.
-    let fresh = match &msg {
+    // What came in, and whether GitHub sent it just now (not the cache).
+    let fetched = match &msg {
         Msg::Fetched {
             key,
-            result: Ok(_),
-            cached_at: None,
+            result,
+            cached_at,
             ..
-        } => Some(key.clone()),
+        } => Some((key.clone(), result.is_ok(), cached_at.is_none())),
         _ => None,
     };
-    let unread = matches!(
-        &msg,
-        Msg::Fetched {
-            key: DataKey::Unread,
-            cached_at: None,
-            ..
-        }
-    );
     let mut cmds = handle(state, msg);
-    if unread {
+    if let Some((DataKey::Unread, _, true)) = fetched {
         cmds.extend(state.unread_polled());
     }
-    if let Some(pr) = activity {
-        crate::live::activity_loaded(state, &pr);
-        cmds.extend(crate::talk::want_lines(state, &pr));
+    // Any page's data, fresh from GitHub, for the page watchers, and the
+    // conversation's comments for what's new in them.
+    if let Some((key, true, true)) = &fetched {
+        if let DataKey::PrActivity(pr) = key {
+            crate::live::activity_loaded(state, pr);
+            cmds.extend(crate::talk::want_lines(state, pr));
+        }
+        crate::live::page::loaded(state, key);
     }
-    if let Some(key) = fresh {
-        crate::live::page::loaded(state, &key);
-    }
-    if let Some(pr) = checks {
-        crate::workflows::checks_loaded(state, &pr);
+    // A pull request's checks, for its diff's annotations.
+    if let Some((DataKey::PrChecks(pr), true, _)) = &fetched {
+        crate::workflows::checks_loaded(state, pr);
     }
     if data || state.route() != opened.as_ref() {
         cmds.extend(crate::follow::follow(state));
@@ -355,25 +331,15 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         Action::UpLevel => return nav::up_level(state),
         Action::NextTab => return nav::step_tab(state, true),
         Action::PrevTab => return nav::step_tab(state, false),
-        _ if Action::PAGE_TABS.contains(&action) => {
-            let n = Action::PAGE_TABS.iter().position(|a| *a == action);
-            return nav::switch_tab(state, n.unwrap_or(0) + 1);
+        _ if let Some(n) = Action::PAGE_TABS.iter().position(|a| *a == action) => {
+            return nav::switch_tab(state, n + 1);
         }
         Action::NextOpenTab => return state.step_open_tab(true),
         Action::PrevOpenTab => return state.step_open_tab(false),
         Action::OpenInTab => return state.open_in_tab(),
         Action::CloseTab => return state.close_tab(),
-        Action::OpenTab1
-        | Action::OpenTab2
-        | Action::OpenTab3
-        | Action::OpenTab4
-        | Action::OpenTab5
-        | Action::OpenTab6
-        | Action::OpenTab7
-        | Action::OpenTab8
-        | Action::OpenTab9 => {
-            let n = Action::OPEN_TABS.iter().position(|a| *a == action);
-            return state.switch_to_tab(n.unwrap_or(0));
+        _ if let Some(n) = Action::OPEN_TABS.iter().position(|a| *a == action) => {
+            return state.switch_to_tab(n);
         }
         Action::GoHome if state.route() == Some(&Route::App(app::Home)) => {
             state.info("Already home");

@@ -414,9 +414,7 @@ fn a_drafts_title_and_text_are_edited() {
     let mut s = with_project(None);
     press(&mut s, "<Right><Down>");
     press(&mut s, "e");
-    let Some(Overlay::Compose(c)) = &s.overlay else {
-        panic!("no composer");
-    };
+    let c = crate::fixtures::composer(&mut s);
     assert_eq!(
         c.text(),
         "Write the board's docs\n\nExplain **h** and **l**, and moving cards."

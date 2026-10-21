@@ -408,9 +408,7 @@ fn a_file_is_edited_and_committed_on_a_new_branch() {
     let file = DataKey::FileLook(ghtui(), "main".into(), "src/main.rs".into());
     assert!(fixtures::asks(&cmds, &file), "{cmds:?}");
     read(&mut s);
-    let Some(Overlay::Compose(c)) = &mut s.overlay else {
-        panic!("no composer");
-    };
+    let c = crate::fixtures::composer(&mut s);
     assert!(c.text().contains("Says hello."));
     c.input.insert_str("// Edited.\n");
     press(&mut s, "<Esc>");
@@ -468,9 +466,7 @@ fn a_file_changed_meanwhile_keeps_your_text() {
         change: FileChange::Edit,
     });
     read(&mut s);
-    let Some(Overlay::Compose(c)) = &mut s.overlay else {
-        panic!("no composer");
-    };
+    let c = crate::fixtures::composer(&mut s);
     c.input.insert_str("Mine. ");
     press(&mut s, "<C-s>");
     let cmds = press(&mut s, "<Enter>");

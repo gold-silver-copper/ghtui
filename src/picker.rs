@@ -486,7 +486,7 @@ impl State {
         order.extend((Action::ALL.iter()).filter(|a| {
             contexts.contains(&a.context())
                 && !a.moves()
-                && Self::availability_in(&doables, **a).is_ok()
+                && crate::nav::availability_in(&doables, **a).is_ok()
         }));
         let mut actions: Vec<(usize, Action)> = Vec::new();
         for a in order {
