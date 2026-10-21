@@ -272,9 +272,7 @@ async fn run_inner(
         let mut stage = stage_rx.clone();
         tasks.spawn(async move {
             while let Some(index) = control.pop() {
-                let Some(file) = files.get(index) else {
-                    continue;
-                };
+                let Some(file) = files.get(index) else { continue };
                 let needed = if first == Some(index) { 1 } else { 2 };
                 if stage.wait_for(|s| *s >= needed).await.is_err() {
                     return;
@@ -597,9 +595,7 @@ mod tests {
         let old = reader.read(&files[0].old_oid).await.unwrap().unwrap();
         let new = reader.read(&files[0].new_oid).await.unwrap().unwrap();
         let diff = FileDiff::compute_plain("a.txt", Some(&old), Some(&new));
-        let crate::diff::Content::Text(text) = &diff.content else {
-            panic!()
-        };
+        let crate::diff::Content::Text(text) = &diff.content else { panic!() };
         let exact = text.alignment(crate::diff::Whitespace::Exact);
         let blocks = &exact.blocks;
         let new_blocks: Vec<String> = blocks

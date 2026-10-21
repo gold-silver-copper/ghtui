@@ -410,9 +410,7 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
     if discussions_repo(state).is_some() {
         out.push(row(Action::NewDiscussion, "Start a new discussion"));
     }
-    let Some(about) = here(state) else {
-        return;
-    };
+    let Some(about) = here(state) else { return };
     let locked = match &about {
         Subject::Pr(r) => state.pr(r).map(|d| d.locked.is_some()),
         Subject::Issue(repo, n) => issue(state, repo, *n).map(|d| d.locked.is_some()),
@@ -975,9 +973,7 @@ fn category_rows(state: &State, repo: &RepoId, q: &str) -> Rows {
 /// What a new discussion in `c` starts with: its form's title and a
 /// heading per field, as an issue form's.
 fn form_text(c: &Category) -> String {
-    let Some(form) = &c.form else {
-        return String::new();
-    };
+    let Some(form) = &c.form else { return String::new() };
     let file = format!("{}.yml", c.slug);
     let chooser = crate::create::templates::chooser(&[(file, form.clone())]);
     match chooser.templates.first() {
@@ -995,12 +991,8 @@ pub fn picker_key(
     key: KeyEvent,
     rows: &mut [(PaletteItem, Option<crate::picker::Choice>)],
 ) -> Option<Cmds> {
-    let Some(Overlay::Picker(p)) = &mut state.overlay else {
-        return None;
-    };
-    let crate::picker::Kind::Manage(pick) = &p.kind else {
-        return None;
-    };
+    let Some(Overlay::Picker(p)) = &mut state.overlay else { return None };
+    let crate::picker::Kind::Manage(pick) = &p.kind else { return None };
     let alt = key.modifiers.contains(KeyModifiers::ALT);
     match (key.code, pick) {
         (KeyCode::Up | KeyCode::Down, Pick::SubIssues { issue, id }) if alt => {
@@ -1040,9 +1032,7 @@ fn move_sub_issue(
     child: Option<IssueAt>,
     up: bool,
 ) -> Cmds {
-    let Some(d) = issue(state, &at.repo, at.number) else {
-        return Cmds::new();
-    };
+    let Some(d) = issue(state, &at.repo, at.number) else { return Cmds::new() };
     let subs: Vec<IssueAt> = d.sub_issues.iter().map(linked).collect();
     let Some((selected, child)) = child.and_then(|c| Some((subs.iter().position(|s| *s == c)?, c)))
     else {
@@ -1081,9 +1071,7 @@ fn move_sub_issue(
 /// is chosen first. `None` sends it.
 #[must_use]
 pub fn confirmed(state: &mut State, change: &Change, about: &Subject) -> Option<Cmds> {
-    let Change::Manage(m) = change else {
-        return None;
-    };
+    let Change::Manage(m) = change else { return None };
     let work: work::Work = match (m, about) {
         (Manage::CloseAsDuplicate { issue, of: None }, Subject::Issue(repo, number)) => {
             let pick = Pick::Duplicate {
@@ -1161,9 +1149,7 @@ impl Starting {
 /// ctrl-s in the composer: starts the discussion.
 pub fn start(state: &mut State, s: &Starting, text: &str) -> Cmds {
     let (title, body) = crate::create::templates::split(text);
-    let Some(Overlay::Compose(c)) = &mut state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Compose(c)) = &mut state.overlay else { return Cmds::new() };
     if title.is_empty() {
         c.sent.error = Some("Write its title on the first line".into());
         return Cmds::new();
@@ -1338,9 +1324,7 @@ fn linked(l: &crate::api::timeline::Linked) -> IssueAt {
 pub fn shows(state: &State, m: &Manage, about: &Subject) -> bool {
     match about {
         Subject::Pr(r) => {
-            let Some(d) = state.pr(r) else {
-                return false;
-            };
+            let Some(d) = state.pr(r) else { return false };
             match m {
                 Manage::DeleteBranch { .. } => d.head_gone,
                 Manage::RestoreBranch { .. } => !d.head_gone,
@@ -1355,9 +1339,7 @@ pub fn shows(state: &State, m: &Manage, about: &Subject) -> bool {
             }
         }
         Subject::Issue(repo, n) => {
-            let Some(d) = issue(state, repo, *n) else {
-                return false;
-            };
+            let Some(d) = issue(state, repo, *n) else { return false };
             let has = |list: &Capped<crate::api::timeline::Linked>, other: &IssueAt| {
                 list.iter().any(|l| linked(l) == *other)
             };
@@ -1391,9 +1373,7 @@ pub fn shows(state: &State, m: &Manage, about: &Subject) -> bool {
             }
         }
         Subject::Discussion(of, n) => {
-            let Some(d) = discussion(state, of, *n) else {
-                return false;
-            };
+            let Some(d) = discussion(state, of, *n) else { return false };
             match m {
                 Manage::Lock { .. } => d.locked.is_some(),
                 Manage::Unlock { .. } => d.locked.is_none(),

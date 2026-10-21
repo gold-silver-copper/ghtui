@@ -124,9 +124,7 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
 
 /// The gist on screen, as loaded.
 fn shown(state: &State) -> Option<&Gist> {
-    let Some(Route::Gists(gists::Gist { id, .. })) = state.route() else {
-        return None;
-    };
+    let Some(Route::Gists(gists::Gist { id, .. })) = state.route() else { return None };
     state.picked::<Gist>(&DataKey::Gist(id.clone()))
 }
 
@@ -167,9 +165,7 @@ pub fn open_edit(state: &mut State) -> Cmds {
 /// Brings the form on screen up to date: an edit's filled in from the
 /// gist once it's loaded, then the composer opens on its first file.
 fn follow(state: &mut State) -> Cmds {
-    let Some((route, form)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, form)) = here(state) else { return Cmds::new() };
     if form.started {
         return Cmds::new();
     }
@@ -222,9 +218,7 @@ fn file_of(f: &crate::api::browse::GistFile) -> File {
 
 /// The composer, on file `i` of the form on screen.
 fn compose(state: &mut State, i: usize) -> Cmds {
-    let Some((route, form)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, form)) = here(state) else { return Cmds::new() };
     if let Some(why) = form.files.get(i).and_then(|f| f.locked.clone()) {
         return state.just_say(why);
     }
@@ -253,9 +247,7 @@ pub const FORM: crate::forms::Kind = crate::forms::Kind {
 
 /// Enter on one of the form's rows.
 fn on_row(state: &mut State, link: &Row) -> Cmds {
-    let Some((route, _)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, _)) = here(state) else { return Cmds::new() };
     match link {
         Row::Description => state.open_picker(crate::picker::Kind::Description(route)),
         Row::Rename(i) => state.open_picker(crate::picker::Kind::FileName(route, Some(*i))),
@@ -419,9 +411,7 @@ fn change(form: &Form, id: &str, files: &[(String, String)]) -> GistChange {
 /// `,s`, ctrl-s or its button: asks whether a new gist is secret or
 /// public; saves an edit.
 fn submit(state: &mut State) -> Cmds {
-    let Some((route, form)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, form)) = here(state) else { return Cmds::new() };
     let files = match named(&form) {
         Ok(files) => files,
         Err(why) => return say(state, why),
@@ -458,9 +448,7 @@ fn submit(state: &mut State) -> Cmds {
 
 /// Makes the new gist, secret or public.
 pub fn create(state: &mut State, route: &Route, public: bool) -> Cmds {
-    let Some(form) = state.forms.get::<Form>(route) else {
-        return Cmds::new();
-    };
+    let Some(form) = state.forms.get::<Form>(route) else { return Cmds::new() };
     let files = match named(form) {
         Ok(files) => files,
         Err(why) => return say(state, why),
@@ -492,9 +480,7 @@ pub fn ask_delete(state: &mut State) -> Cmds {
     } else {
         format!("“{}” and its {files}", g.description)
     };
-    let Some(route) = state.route().cloned() else {
-        return Cmds::new();
-    };
+    let Some(route) = state.route().cloned() else { return Cmds::new() };
     crate::forms::ask(
         state,
         route,
@@ -506,9 +492,7 @@ pub fn ask_delete(state: &mut State) -> Cmds {
 
 /// Deletes the gist on `route`'s page.
 pub fn delete(state: &mut State, route: &Route) -> Cmds {
-    let Route::Gists(gists::Gist { id, .. }) = route else {
-        return Cmds::new();
-    };
+    let Route::Gists(gists::Gist { id, .. }) = route else { return Cmds::new() };
     let Some(g) = state.picked::<Gist>(&DataKey::Gist(id.clone())) else {
         return Cmds::new();
     };
@@ -697,9 +681,7 @@ fn offers(state: &State, out: &mut Vec<Doable>) {
 /// The menu's rows: a new gist anywhere a gist or profile is; changing
 /// and deleting your gist on its page.
 fn doables(state: &State, out: &mut Vec<Doable>) {
-    let Some(route) = state.route().filter(|_| here(state).is_none()) else {
-        return;
-    };
+    let Some(route) = state.route().filter(|_| here(state).is_none()) else { return };
     if let Route::Gists(gists::Gist { .. }) = route {
         let why = match shown(state) {
             Some(g) => not_yours(state, g),

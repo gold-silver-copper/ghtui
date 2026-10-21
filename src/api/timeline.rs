@@ -927,9 +927,7 @@ pub(crate) fn pr_timeline(t: PrTimeline, pending: Option<PendingReviews>) -> Cap
     let has_pending =
         (timeline.iter()).any(|i| matches!(i, Item::Review(r) if r.state == ReviewState::Pending));
     let pending = pending.and_then(|p| nodes(p.nodes).next());
-    let Some(p) = pending.filter(|_| !has_pending) else {
-        return timeline;
-    };
+    let Some(p) = pending.filter(|_| !has_pending) else { return timeline };
     let total = timeline.total() + 1;
     let mut items = timeline.items;
     items.push(Item::Review(p.into_review()));
@@ -1089,10 +1087,10 @@ mod tests {
         ]));
         let items: Vec<Item> = items.into_iter().filter_map(PrItem::into_item).collect();
         let [Item::Event(refd), Item::Event(closed)] = items.as_slice() else {
-            panic!("{items:?}");
+            panic!("{items:?}")
         };
         let What::CrossReferenced { from, will_close } = &refd.what else {
-            panic!("{refd:?}");
+            panic!("{refd:?}")
         };
         assert!(*will_close && from.is_pr() && from.name(&RepoId::new("o", "r")) == "#5");
         assert_eq!(closed.actor, "alice");

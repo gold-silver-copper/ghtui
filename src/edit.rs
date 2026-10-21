@@ -202,9 +202,7 @@ fn description<'a>(state: &'a State, about: &Subject) -> Result<Spot<'a>, String
 /// The comment selected on a page (its description is one), or, with
 /// `fallback`, the description when no comment is.
 fn page_spot<'a>(state: &'a State, about: &Subject, fallback: bool) -> Result<Spot<'a>, String> {
-    let Screen::Page(p) = state.screen() else {
-        return Err(String::new());
-    };
+    let Screen::Page(p) = state.screen() else { return Err(String::new()) };
     let Some(crate::ui::page::Link::Quote { author, at, .. }) = p.selected_link() else {
         if fallback {
             return description(state, about);
@@ -283,12 +281,8 @@ fn diff_spot(state: &State) -> Result<Spot<'_>, String> {
     let file = doc.files().get(cursor.file).ok_or(move_to)?;
     let mut comment = None;
     for row in (0..=cursor.row).rev() {
-        let Some(Row::Thread(t)) = doc.row(Pos { row, ..cursor }) else {
-            break;
-        };
-        let Some(r) = file.thread_row(t).filter(|r| r.ann == ann) else {
-            break;
-        };
+        let Some(Row::Thread(t)) = doc.row(Pos { row, ..cursor }) else { break };
+        let Some(r) = file.thread_row(t).filter(|r| r.ann == ann) else { break };
         match r.kind {
             ThreadRowKind::Head { comment: c, .. } => {
                 comment = Some(c);
@@ -487,9 +481,7 @@ fn choose(choosing: Choosing) -> Result<Step, String> {
 /// The edits the menu offers here: each action, its label, and why it
 /// can't be made now, if it can't.
 pub fn doables(state: &State) -> Vec<Doable> {
-    let Some(about) = subject_here(state) else {
-        return Vec::new();
-    };
+    let Some(about) = subject_here(state) else { return Vec::new() };
     let diff = matches!(state.screen(), Screen::Diff(_));
     let what = spot(state, &about, true).map_or_else(|_| "the comment".to_owned(), |s| s.name());
     ACTIONS
@@ -537,9 +529,7 @@ fn row(
 /// The sidebar a picker reads, or the row saying it's loading or why it
 /// couldn't.
 fn sidebar<'a>(state: &'a State, c: &Choosing) -> Result<&'a Sidebar, Rows> {
-    let Some(key) = c.need() else {
-        return Err(Vec::new());
-    };
+    let Some(key) = c.need() else { return Err(Vec::new()) };
     #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
     let listed = Remote::fetched(state.remote(&key), "")
         .pick(<Sidebar as crate::data::Picked>::pick)
@@ -730,12 +720,8 @@ pub fn on_picker_key(state: &mut State, key: KeyEvent, rows: Rows) -> Cmds {
         },
         _ => None,
     };
-    let Some(Overlay::Picker(p)) = &mut state.overlay else {
-        return Cmds::new();
-    };
-    let picker::Kind::Edit(c) = &mut p.kind else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Picker(p)) = &mut state.overlay else { return Cmds::new() };
+    let picker::Kind::Edit(c) = &mut p.kind else { return Cmds::new() };
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::Esc => state.overlay = None,
@@ -777,12 +763,8 @@ fn node(state: &State, about: &Subject) -> Option<NodeId> {
 
 /// Sends what a picker's row picks, closing the picker.
 fn send_pick(state: &mut State, pick: Pick) -> Cmds {
-    let Some(Overlay::Picker(p)) = &state.overlay else {
-        return Cmds::new();
-    };
-    let picker::Kind::Edit(c) = &p.kind else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Picker(p)) = &state.overlay else { return Cmds::new() };
+    let picker::Kind::Edit(c) = &p.kind else { return Cmds::new() };
     let edit = match (pick, c) {
         (Pick::React(content), Choosing::React { about, target, .. }) => Some((
             about.clone(),
@@ -801,9 +783,7 @@ fn send_pick(state: &mut State, pick: Pick) -> Cmds {
             },
         )),
         (Pick::Milestone(name), Choosing::Milestone { about }) => {
-            let Ok(s) = sidebar(state, c) else {
-                return Cmds::new();
-            };
+            let Ok(s) = sidebar(state, c) else { return Cmds::new() };
             if s.milestone.as_ref().map(|m| &m.name) == name.as_ref() {
                 state.overlay = None;
                 return state.just_say("That's its milestone now");
@@ -821,9 +801,7 @@ fn send_pick(state: &mut State, pick: Pick) -> Cmds {
         }
         _ => None,
     };
-    let Some((about, edit)) = edit else {
-        return Cmds::new();
-    };
+    let Some((about, edit)) = edit else { return Cmds::new() };
     send(state, about, edit)
 }
 
@@ -836,9 +814,7 @@ fn send(state: &mut State, about: Subject, edit: Edit) -> Cmds {
 
 /// ctrl-s in a picker of many: sends what changed from what's set.
 fn apply(state: &mut State) -> Cmds {
-    let Some(Overlay::Picker(p)) = &state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Picker(p)) = &state.overlay else { return Cmds::new() };
     let picker::Kind::Edit(
         c @ Choosing::Many {
             field,
@@ -991,12 +967,8 @@ pub fn shown(state: &State, edit: &Edit, about: &Subject) -> bool {
         Edit::Reviewers {
             users, teams, bots, ..
         } => {
-            let Subject::Pr(pr) = about else {
-                return true;
-            };
-            let Some(a) = state.activity(pr) else {
-                return false;
-            };
+            let Subject::Pr(pr) = about else { return true };
+            let Some(a) = state.activity(pr) else { return false };
             let asked: BTreeSet<&str> = (a.requested.iter())
                 .map(|r| match &r.who {
                     crate::api::browse::Reviewer::User(n)

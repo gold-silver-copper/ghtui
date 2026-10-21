@@ -42,9 +42,7 @@ pub fn labels_page(
         Frame::None,
     );
     page.blank();
-    let Some(l) = list.show(page, "labels") else {
-        return;
-    };
+    let Some(l) = list.show(page, "labels") else { return };
     let title = counted("Labels", l);
     list_box(
         page,

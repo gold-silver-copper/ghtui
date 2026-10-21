@@ -52,9 +52,7 @@ pub(super) fn list<'a>(state: &'a State, repo: &RepoId) -> Option<&'a Results<La
 
 /// The label selected on the labels page.
 pub(super) fn picked(state: &State) -> Option<&LabelInfo> {
-    let Some(Route::Issues(issues::Labels(repo))) = state.route() else {
-        return None;
-    };
+    let Some(Route::Issues(issues::Labels(repo))) = state.route() else { return None };
     let list = list(state, repo)?;
     selected(state, &list.items, |l| {
         crate::ui::pages::url::label(repo, &l.name)
@@ -299,9 +297,7 @@ impl Job for Save {
 
 /// The form's page.
 pub(super) fn build(state: &State, page: &mut Page, route: &Route) {
-    let Route::Housekeeping(of @ FormOf::Label { repo, name }) = route else {
-        return;
-    };
+    let Route::Housekeeping(of @ FormOf::Label { repo, name }) = route else { return };
     let f = form(state, route);
     let heading = match name {
         Some(name) => format!("Edit the label {name} in {repo}"),

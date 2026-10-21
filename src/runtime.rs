@@ -145,12 +145,8 @@ async fn drive(
             && let std::task::Poll::Ready(event) = futures::poll!(events.next())
         {
             // Ended: the loop sees it next.
-            let Some(event) = event.transpose()? else {
-                break;
-            };
-            let Some(msg) = event_msg(event) else {
-                continue;
-            };
+            let Some(event) = event.transpose()? else { break };
+            let Some(msg) = event_msg(event) else { continue };
             cmds.extend(state.settle());
             cmds.extend(apply_msg(&mut state, msg));
         }
@@ -369,9 +365,7 @@ impl Effects {
             }
             Git::MapOutdated(joined) => {
                 let (pr, job, head, threads) = joined.into_inner();
-                let Some(git) = self.job_git(&DiffOf::Pr(pr.clone())) else {
-                    return;
-                };
+                let Some(git) = self.job_git(&DiffOf::Pr(pr.clone())) else { return };
                 spawn_guarded(&self.tx, replies, |tx| async move {
                     let (repo, reader) = git;
                     let mapped = diff_job::map_outdated(&repo, &reader, &head, &threads).await;

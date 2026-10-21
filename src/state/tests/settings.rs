@@ -113,7 +113,7 @@ fn a_rule_is_edited_as_a_form_and_named_before_saving() {
     let cmds = press(&mut s, "<Enter>");
     let (change, by) = sent(&cmds);
     let SettingsChange::UpdateRule { id, to, .. } = change else {
-        panic!("{change:?}");
+        panic!("{change:?}")
     };
     assert_eq!(id, &NodeId::new("BPR_1"));
     assert_eq!(by, &By::Confirm(about(SettingsPage::Branches)));
@@ -122,9 +122,7 @@ fn a_rule_is_edited_as_a_form_and_named_before_saving() {
     assert!(s.following.is_some(), "it waits for GitHub to show it");
     let mut shown = crate::settings::fixtures::rule();
     shown.form = to;
-    let Settings::Branches(mut b) = page(SettingsPage::Branches) else {
-        panic!()
-    };
+    let Settings::Branches(mut b) = page(SettingsPage::Branches) else { panic!() };
     b.rules = vec![shown].into();
     deliver(&mut s, SettingsPage::Branches, Settings::Branches(b));
     assert!(s.following.is_none());
@@ -241,9 +239,7 @@ fn webhooks_are_added_disabled_redelivered_and_deleted() {
     press(&mut s, "x");
     assert!(asked(&s).starts_with("Disable this webhook?\nhttps://example.com/hook/11"));
     let cmds = press(&mut s, "<Enter>");
-    let SettingsChange::UpdateHook { to, .. } = sent(&cmds).0 else {
-        panic!()
-    };
+    let SettingsChange::UpdateHook { to, .. } = sent(&cmds).0 else { panic!() };
     assert!(!to.active);
     press(&mut s, "<Esc>");
     select(&mut s, |l| *l == SettingLink::Delivery(902));
@@ -336,9 +332,7 @@ fn archiving_asks_twice() {
         }
     );
     answer(&mut s, &cmds, Ok(()));
-    let Settings::General(mut g) = page(SettingsPage::General) else {
-        panic!()
-    };
+    let Settings::General(mut g) = page(SettingsPage::General) else { panic!() };
     g.archived = true;
     deliver(&mut s, SettingsPage::General, Settings::General(g));
     assert!(s.following.is_none());

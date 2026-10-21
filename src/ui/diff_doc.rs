@@ -323,9 +323,7 @@ impl DocFile {
     /// The lines a suggested change in `ann` would replace: its lines on
     /// the new side, when a comment in it suggests one.
     fn suggested_on(&self, ann: &Annotation) -> Option<Vec<String>> {
-        let Place::Line { at, start } = ann.place else {
-            return None;
-        };
+        let Place::Line { at, start } = ann.place else { return None };
         let suggests = (ann.comments.iter()).any(|c| c.body.contains("```suggestion"));
         if at.side != Side::Right || !suggests {
             return None;
@@ -424,9 +422,7 @@ impl DocFile {
             return;
         }
         let diff = self.diff.clone();
-        let Some(Content::Text(text)) = diff.as_deref().map(|d| &d.content) else {
-            return;
-        };
+        let Some(Content::Text(text)) = diff.as_deref().map(|d| &d.content) else { return };
         let a = text.view(self.whitespace, self.structural);
         let lines = &a.lines;
         self.blocks.clone_from(&a.blocks);
@@ -555,9 +551,7 @@ impl DocFile {
     /// Screen lines `row` takes with code wrapped in a pane `width` wide:
     /// a split row, its longer half's.
     fn screen_lines(&self, row: Row, width: u16, split: bool) -> usize {
-        let (Some(text), Some(a)) = (self.text(), self.alignment()) else {
-            return 1;
-        };
+        let (Some(text), Some(a)) = (self.text(), self.alignment()) else { return 1 };
         let lines = |e: Option<u32>, side: Option<Side>, width| {
             let line = e.and_then(|e| a.lines.get(e as usize));
             line.and_then(|l| side.map_or(Some(l.shown()), |s| l.on(s)))
@@ -1024,9 +1018,7 @@ impl Doc {
         }
         let open = |a: &Annotation| is_open(thread_open, a);
         for index in which {
-            let Some(file) = files.get_mut(index) else {
-                continue;
-            };
+            let Some(file) = files.get_mut(index) else { continue };
             let moves = file_moves.remove(&index).unwrap_or_default();
             let extras = Extras {
                 anns: anns.get(file.meta.path()).map_or(&[], Vec::as_slice),
@@ -1096,12 +1088,8 @@ impl Doc {
 
     /// Opens a folded block (formatting-only or seen).
     pub fn unfold(&mut self, pos: Pos) -> bool {
-        let Some(Row::Fold { block, .. }) = self.row(pos) else {
-            return false;
-        };
-        let Some(file) = self.files.get_mut(pos.file) else {
-            return false;
-        };
+        let Some(Row::Fold { block, .. }) = self.row(pos) else { return false };
+        let Some(file) = self.files.get_mut(pos.file) else { return false };
         let Some(start) = file.blocks.get(block as usize).map(|b| b.entries.start) else {
             return false;
         };
@@ -1112,9 +1100,7 @@ impl Doc {
 
     /// Whether the file has changes not in the diff at your last review.
     pub fn has_new_changes(&self, file: usize) -> bool {
-        let Some(since) = &self.since else {
-            return true;
-        };
+        let Some(since) = &self.since else { return true };
         self.files
             .get(file)
             .is_some_and(|f| f.blocks.iter().any(|b| !since.contains(&b.hash)))
@@ -1127,9 +1113,7 @@ impl Doc {
 
     /// Opens or closes a thread.
     pub fn toggle_thread(&mut self, index: u32) {
-        let Some(ann) = self.inputs.annotations.get(index as usize) else {
-            return;
-        };
+        let Some(ann) = self.inputs.annotations.get(index as usize) else { return };
         let open = is_open(&self.thread_open, ann);
         self.thread_open.insert(ann.key.clone(), !open);
         if let Some(file) = self.files.iter().position(|f| f.meta.path() == ann.path) {
@@ -1211,9 +1195,7 @@ impl Doc {
     /// Whether a row is where an unresolved thread starts: its first row,
     /// or the line of a collapsed one.
     fn is_open_thread_start(&self, pos: Pos) -> bool {
-        let Some(file) = self.files.get(pos.file) else {
-            return false;
-        };
+        let Some(file) = self.files.get(pos.file) else { return false };
         let unresolved = |i: u32| {
             self.annotations()
                 .get(i as usize)
@@ -1304,9 +1286,7 @@ impl Doc {
     #[expect(clippy::single_range_in_vec_init, reason = "a list of one window")]
     pub fn expand(&mut self, pos: Pos) {
         let Some(row) = self.row(pos) else { return };
-        let Some(file) = self.files.get_mut(pos.file) else {
-            return;
-        };
+        let Some(file) = self.files.get_mut(pos.file) else { return };
         let Some(a) = file.alignment() else { return };
         let len = idx(a.lines.len());
         let step = EXPAND_STEP;
@@ -1420,9 +1400,7 @@ impl Doc {
     /// The scopes the line at `pos` (or the next line below it) is in,
     /// outermost first: what the sticky header names.
     pub fn scope_at(&self, pos: Pos) -> Vec<&str> {
-        let Some(file) = self.files.get(pos.file) else {
-            return Vec::new();
-        };
+        let Some(file) = self.files.get(pos.file) else { return Vec::new() };
         let (Some(text), Some(a), Some(e)) = (
             file.text(),
             file.alignment(),
@@ -1616,9 +1594,7 @@ impl Doc {
     /// Whether `test` passes any part of a row's searchable text (a split
     /// row's halves are two).
     fn row_has(&self, pos: Pos, mut test: impl FnMut(&str) -> bool) -> bool {
-        let Some(file) = self.files.get(pos.file) else {
-            return false;
-        };
+        let Some(file) = self.files.get(pos.file) else { return false };
         let text = |p: LinePos| file.text().map_or("", |t| t.line(p));
         match self.row(pos) {
             Some(Row::Header) => test(file.meta.path()),

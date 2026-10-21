@@ -283,9 +283,7 @@ pub(super) fn list_url(base: &str, query: &str) -> String {
 /// A list's filter from its URL. GitHub's list URLs repeat `is:issue` or
 /// `is:pr`; the route adds them back.
 pub(super) fn list_query(url: &Url<'_>) -> String {
-    let Some(query) = url.param("q") else {
-        return OPEN.to_owned();
-    };
+    let Some(query) = url.param("q") else { return OPEN.to_owned() };
     let words: Vec<&str> = query
         .split_whitespace()
         .filter(|w| !matches!(*w, "is:issue" | "is:pr"))

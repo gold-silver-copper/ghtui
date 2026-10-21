@@ -410,9 +410,7 @@ pub fn act(state: &mut State, action: Action) -> Cmds {
         }
         (Action::AddItem, _) => state.open_picker(Kind::Project(Pick::Add(project, view))),
         (Action::ArchiveItem, Some(id)) => {
-            let Some(it) = h.item else {
-                return Cmds::new();
-            };
+            let Some(it) = h.item else { return Cmds::new() };
             let archived = !it.archived;
             let change = Change::Project(ProjectChange::Archive {
                 project: project_id,
@@ -440,9 +438,7 @@ pub fn act(state: &mut State, action: Action) -> Cmds {
             Cmds::new()
         }
         (Action::EditComment | Action::EditTitle, _) => {
-            let Ok(d) = draft(state, &h) else {
-                return Cmds::new();
-            };
+            let Ok(d) = draft(state, &h) else { return Cmds::new() };
             let text = format!("{}\n\n{}", d.title, d.body);
             let drafting = Drafting {
                 project,
@@ -473,12 +469,8 @@ pub fn act(state: &mut State, action: Action) -> Cmds {
 /// (the nearest that has cards), or the first card of the board.
 fn column_step(state: &mut State, next: bool) {
     let height = state.page_height();
-    let Some(h) = here(state) else {
-        return;
-    };
-    let Ok((p, field)) = board(&h) else {
-        return;
-    };
+    let Some(h) = here(state) else { return };
+    let Ok((p, field)) = board(&h) else { return };
     // With swimlanes, the columns are the lane's.
     let lanes: Vec<Vec<&ProjectItem>> = match p.lanes() {
         Some((_, lanes)) => lanes.into_iter().map(|l| l.items).collect(),
@@ -748,18 +740,14 @@ fn listing(pick: Pick) -> Choice {
 /// be told.
 pub fn shows(state: &State, change: &Change, project: &ProjectRef, view: Option<u64>) -> bool {
     let key = DataKey::Project(project.clone(), view);
-    let Some(p) = state.picked::<Project>(&key) else {
-        return false;
-    };
+    let Some(p) = state.picked::<Project>(&key) else { return false };
     // An item that's not loaded may be further down, or filtered out.
     let unseen = p.items.next.is_some() || p.shown().is_some_and(|v| !v.filter.is_empty());
     match change {
         Change::SetProjectField {
             item, field, value, ..
         } => {
-            let Some(it) = p.loaded().find(|it| it.id == *item) else {
-                return true;
-            };
+            let Some(it) = p.loaded().find(|it| it.id == *item) else { return true };
             match value {
                 Some(value) => it.value(field).is_some_and(|v| v.same(value)),
                 None => it.value(field).is_none(),

@@ -260,9 +260,7 @@ async fn line_counts(repo: &Repo, from: &str, to: &str, files: &[ChangedFile]) -
 /// wrote and committed it, its parents and what it changed against its
 /// first parent. `None` when there's no such commit here.
 pub async fn commit(repo: &Repo, rev: &str) -> Read<Option<CommitDetail>> {
-    let Ok(oid) = repo.rev_parse(rev).await else {
-        return Ok(None);
-    };
+    let Ok(oid) = repo.rev_parse(rev).await else { return Ok(None) };
     let format = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%ct%x1f%cn%x1f%ce%x1f%ct%x1f%B";
     let out = repo.run(&["show", "-s", format, &oid]).await?;
     let bad = || GitError::Parse(format!("show {oid}"));
@@ -371,9 +369,7 @@ fn parse_blame(out: &str) -> Blame {
             commits.entry(key).or_default();
             continue;
         }
-        let Some(seen) = current.and_then(|c| commits.get_mut(c)) else {
-            continue;
-        };
+        let Some(seen) = current.and_then(|c| commits.get_mut(c)) else { continue };
         match key {
             "author" => seen.name = value.to_owned(),
             "author-mail" => seen.email = value.trim_matches(['<', '>']).to_owned(),
@@ -406,9 +402,7 @@ fn parse_blame(out: &str) -> Blame {
             last.end = n;
             continue;
         }
-        let Some(c) = commits.get(oid) else {
-            continue;
-        };
+        let Some(c) = commits.get(oid) else { continue };
         ranges.push(BlameRange {
             start: n,
             end: n,
@@ -499,9 +493,7 @@ pub async fn last_commits(
     let mut found = HashMap::new();
     let mut commit: Option<CommitInfo> = None;
     while !wanted.is_empty() && !enough() {
-        let Some(line) = lines.next_line().await.map_err(GitError::from)? else {
-            break;
-        };
+        let Some(line) = lines.next_line().await.map_err(GitError::from)? else { break };
         if let Some(fields) = line.strip_prefix('\u{1e}') {
             commit = commit_info(fields);
             continue;
@@ -513,9 +505,7 @@ pub async fn last_commits(
             line.strip_prefix(dir)
                 .and_then(|rest| rest.strip_prefix('/'))
         };
-        let Some(name) = inside.and_then(|p| p.split('/').next()) else {
-            continue;
-        };
+        let Some(name) = inside.and_then(|p| p.split('/').next()) else { continue };
         if wanted.remove(name) {
             found.insert(name.to_owned(), c.clone());
         }
@@ -565,9 +555,7 @@ fn parse_ls_remote(out: &str) -> RemoteRefs {
     let mut refs = RemoteRefs::default();
     let mut peeled: HashMap<String, Oid> = HashMap::new();
     for line in out.lines() {
-        let Some((oid, name)) = line.split_once('\t') else {
-            continue;
-        };
+        let Some((oid, name)) = line.split_once('\t') else { continue };
         let Ok(oid) = Oid::parse(oid) else { continue };
         if let Some(branch) = name.strip_prefix("refs/heads/") {
             refs.branches.push((branch.to_owned(), oid));

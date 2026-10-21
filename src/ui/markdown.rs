@@ -94,9 +94,7 @@ fn resolve_safe(base: Option<&LinkBase>, url: &str) -> String {
             None => format!("{}/{rest}", crate::ui::pages::url::base()),
         };
     }
-    let Some(base) = base else {
-        return url.to_owned();
-    };
+    let Some(base) = base else { return url.to_owned() };
     if base.wiki {
         let page = url.trim_start_matches("./").trim_end_matches(".md");
         return format!(
@@ -242,9 +240,7 @@ impl Renderer<'_> {
             } else if !before.is_empty() && !before.contains('\n') {
                 self.text(" ");
             }
-            let Some((tag, after)) = tail.split_once('>') else {
-                break;
-            };
+            let Some((tag, after)) = tail.split_once('>') else { break };
             let lower = tag.to_ascii_lowercase();
             let closing = lower.starts_with('/');
             let name: String = lower
@@ -466,9 +462,7 @@ impl Renderer<'_> {
                 self.roles.pop();
             }
             TagEnd::Image => {
-                let Some((alt, outer)) = self.image.take() else {
-                    return;
-                };
+                let Some((alt, outer)) = self.image.take() else { return };
                 if !alt.trim().is_empty() {
                     self.seg(format!("[image: {}]", alt.trim()), Role::Meta);
                 }
@@ -496,9 +490,7 @@ impl Renderer<'_> {
     }
 
     fn end_code(&mut self) {
-        let Some((lang, code)) = self.code.take() else {
-            return;
-        };
+        let Some((lang, code)) = self.code.take() else { return };
         let (indent, frame) = (self.indent, self.frame);
         let line = |segs| PageLine {
             segs,
@@ -520,9 +512,7 @@ impl Renderer<'_> {
     /// A suggested change, as a small diff: the lines it replaces (when
     /// they're known), then the lines it suggests.
     fn end_suggestion(&mut self) {
-        let Some((_, code)) = self.code.take() else {
-            return;
-        };
+        let Some((_, code)) = self.code.take() else { return };
         self.suggesting = false;
         let (indent, frame) = (self.indent, self.frame);
         let line = |sign: &str, role: Role, text: &str, tone: Tone| PageLine {
@@ -549,9 +539,7 @@ impl Renderer<'_> {
     }
 
     fn end_table(&mut self) {
-        let Some(rows) = self.table.take() else {
-            return;
-        };
+        let Some(rows) = self.table.take() else { return };
         let cols = rows.iter().map(Vec::len).max().unwrap_or(0);
         let width = |cell: &Vec<Seg>| {
             cell.iter()

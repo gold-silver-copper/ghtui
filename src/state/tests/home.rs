@@ -82,16 +82,12 @@ fn a_section_opens_the_rest_of_its_list() {
     assert_eq!(selected_text(&state).trim(), "… 26 more");
     let key = mine_key(&state);
     press(&mut state, "<Enter>");
-    let DataKey::Search(kind, query) = key.clone() else {
-        panic!("{key:?}")
-    };
+    let DataKey::Search(kind, query) = key.clone() else { panic!("{key:?}") };
     assert_eq!(route(&state), Route::Search(search::Search { kind, query }));
     assert!(selected_text(&state).contains("PR 1"), "the same list");
     press(&mut state, "<BS>");
     let cmds = press(&mut state, "o");
-    let [Cmd::OpenUrl(url)] = cmds.as_slice() else {
-        panic!("{cmds:?}")
-    };
+    let [Cmd::OpenUrl(url)] = cmds.as_slice() else { panic!("{cmds:?}") };
     assert!(url.contains("author:@me"), "{url}");
 }
 

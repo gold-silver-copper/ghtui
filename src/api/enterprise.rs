@@ -455,9 +455,7 @@ impl Edit<'_> {
                     });
                     if let Some(lack) = lack {
                         self.note(lack);
-                        let Missing::Field { fill, .. } = &lack.missing else {
-                            continue;
-                        };
+                        let Missing::Field { fill, .. } = &lack.missing else { continue };
                         let value = match fill {
                             Fill::Alias(other) => {
                                 let alias = Some(key);

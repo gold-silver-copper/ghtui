@@ -314,9 +314,7 @@ pub fn search(
         SearchKind::Code => "code",
     };
     let searching = |page: &mut Page| loading_box(page, vec![meta("Searching…")]);
-    let Some(results) = results.show_or(page, "results", searching) else {
-        return;
-    };
+    let Some(results) = results.show_or(page, "results", searching) else { return };
     let (total, shown) = results.counts();
     page.box_top(
         vec![strong(format!(

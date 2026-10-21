@@ -637,12 +637,8 @@ impl<'a> Matcher<'a> {
     /// are too many candidates.
     fn pair_up(&mut self, ls: &[u32], rs: &[u32]) -> Result<Vec<(usize, usize)>, Fallback> {
         let weight = |me: &mut Self, i: usize, j: usize| -> Result<Option<f64>, Fallback> {
-            let (Some(&a), Some(&b)) = (ls.get(i), rs.get(j)) else {
-                return Ok(None);
-            };
-            let Some(s) = me.score(a, b)? else {
-                return Ok(None);
-            };
+            let (Some(&a), Some(&b)) = (ls.get(i), rs.get(j)) else { return Ok(None) };
+            let Some(s) = me.score(a, b)? else { return Ok(None) };
             let size = me.bag(0, a).len() + me.bag(1, b).len();
             Ok(Some(s * size as f64))
         };
@@ -697,9 +693,7 @@ impl<'a> Matcher<'a> {
             }
             return Ok(());
         };
-        let Some(Node::List { children, .. }) = self.node(s, n) else {
-            return Ok(());
-        };
+        let Some(Node::List { children, .. }) = self.node(s, n) else { return Ok(()) };
         if s == 1 {
             self.seq(ls, children)
         } else {
@@ -820,9 +814,7 @@ impl Matching {
             // Each changed line's novel ranges and whether that's all of it.
             let mut lines = Vec::new();
             for e in entries.clone() {
-                let Some(l) = line.lines.get(e as usize) else {
-                    continue;
-                };
+                let Some(l) = line.lines.get(e as usize) else { continue };
                 let pos = l.shown();
                 let s = usize::from(pos.side == crate::diff::anchor::Side::Right);
                 let code = text.line(pos);
@@ -866,9 +858,7 @@ fn merged(code: &str, ranges: &[(u32, u32)]) -> Vec<(u32, u32)> {
     sorted.sort_unstable();
     let mut out: Vec<(u32, u32)> = Vec::new();
     for (a, b) in sorted {
-        let Some(piece) = code.get(a as usize..b as usize) else {
-            continue;
-        };
+        let Some(piece) = code.get(a as usize..b as usize) else { continue };
         let lead = sat_u32(piece.len() - piece.trim_start().len());
         let trail = sat_u32(piece.len() - piece.trim_end().len());
         let (a, b) = (a + lead, b.saturating_sub(trail));

@@ -186,9 +186,7 @@ fn an_edited_comment_stays_selected() {
             Some(0),
         ),
     );
-    let Screen::Page(p) = s.screen_mut() else {
-        panic!("not on a page")
-    };
+    let Screen::Page(p) = s.screen_mut() else { panic!("not on a page") };
     let page_ = p.page();
     let at = |i: &crate::ui::page::Item| page_.lines[i.start].text().contains("hubot");
     let n = page_.items.iter().position(at).unwrap();

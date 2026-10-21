@@ -549,9 +549,7 @@ const MAGIC: &str = "ghtui code index 1";
 /// Saves `index` as `file`, keeping only the newest [`KEEP`] beside it.
 fn save(file: &Path, index: &Index) -> std::io::Result<()> {
     use std::fmt::Write;
-    let Some(dir) = file.parent() else {
-        return Ok(());
-    };
+    let Some(dir) = file.parent() else { return Ok(()) };
     std::fs::create_dir_all(dir)?;
     let cut = index.cut.map_or("-", Cut::word);
     let mut out = format!("{MAGIC}\n{}\t{cut}\n", index.eligible);
@@ -699,9 +697,7 @@ mod tests {
                 let word = var("GHTUI_INDEX_WORD");
                 let found = snap.index.definitions(&word, |_| true).count();
                 println!("{found} definitions of {word}");
-                let (Some(git), true) = (&snap.repo, git_partial(&snap)) else {
-                    break;
-                };
+                let (Some(git), true) = (&snap.repo, git_partial(&snap)) else { break };
                 let at = Instant::now();
                 let files: Vec<(&str, &str)> = (snap.index.files.iter())
                     .map(|f| (f.path.as_str(), f.blob.as_str()))

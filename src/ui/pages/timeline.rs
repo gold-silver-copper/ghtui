@@ -160,9 +160,7 @@ fn commit_link(place: &Place<'_>, oid: &str) -> String {
 
 /// A run of events as one line (commits, a line each under it).
 fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&Event]) {
-    let (Some(first), Some(last)) = (run.first(), run.last()) else {
-        return;
-    };
+    let (Some(first), Some(last)) = (run.first(), run.last()) else { return };
     let here = place.repo;
     let who = login_seg(page, &first.actor, Role::Strong);
     let when = meta(format!(" {}", time::ago_iso(&last.at, talk.now)));
@@ -549,9 +547,7 @@ fn commits(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&
             _ => None,
         })
         .collect();
-    let (Some(first), Some(last)) = (run.first(), run.last()) else {
-        return;
-    };
+    let (Some(first), Some(last)) = (run.first(), run.last()) else { return };
     let one = run.iter().all(|e| e.actor == first.actor) && !first.actor.is_empty();
     let added = plural(infos.len() as u64, "commit");
     let mut segs = if one {
@@ -764,9 +760,7 @@ pub(super) fn review(
 /// whether it's resolved or outdated, the lines it's on, and its
 /// comments. A resolved one shows only its first line, as GitHub folds it.
 fn thread(page: &mut Page, place: &Place<'_>, t: &ReviewThread, marks: Marks<'_>, now: u64) {
-    let Some(first) = t.comments.first() else {
-        return;
-    };
+    let Some(first) = t.comments.first() else { return };
     let line = if t.file_level {
         None
     } else {
@@ -845,12 +839,8 @@ fn git_lines(page: &mut Page, t: &ReviewThread, lines: &LinesAt<'_>) -> bool {
     if t.side != crate::api::model::Side::Right {
         return false;
     }
-    let Some(commit) = &first.original_commit else {
-        return false;
-    };
-    let Some(text) = lines.get(&(commit.clone(), t.path.clone())) else {
-        return false;
-    };
+    let Some(commit) = &first.original_commit else { return false };
+    let Some(text) = lines.get(&(commit.clone(), t.path.clone())) else { return false };
     let on = t.original_start_line.unwrap_or(end)..=end;
     let start = if on.start() == on.end() {
         end.saturating_sub(CONTEXT).max(1)

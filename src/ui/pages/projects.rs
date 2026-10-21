@@ -57,9 +57,7 @@ pub fn project_view(
     cx: PageCtx<'_>,
 ) {
     heading(page, p);
-    let Some(shown) = p.shown() else {
-        return;
-    };
+    let Some(shown) = p.shown() else { return };
     let column = p.column_field();
     page.wrapped(about(p, shown, column), 0, Frame::None);
     let at = Spot { project, view, p };
@@ -291,9 +289,7 @@ fn card_fields<'a>(p: &'a Project, said: &[&crate::api::model::NodeId]) -> Vec<&
 
 /// An option's description, for its column's top edge.
 fn option_description(field: &ProjectField, group: &Group<'_>) -> Option<String> {
-    let FieldKind::SingleSelect(options) = &field.kind else {
-        return None;
-    };
+    let FieldKind::SingleSelect(options) = &field.kind else { return None };
     let option = options
         .iter()
         .find(|o| Some(&o.id) == group.value.as_ref())?;
@@ -458,9 +454,7 @@ fn value_segs(it: &ProjectItem, field: &ProjectField) -> Vec<Seg> {
             .map(text)
             .unwrap_or_default(),
         FieldKind::SingleSelect(options) => {
-            let Some(value) = it.value(&field.id) else {
-                return Vec::new();
-            };
+            let Some(value) = it.value(&field.id) else { return Vec::new() };
             let color = options
                 .iter()
                 .find(|o| o.name == value.text())
@@ -687,9 +681,7 @@ impl Timeline {
     /// (or after it) where they fit, or a diamond for one day; today's
     /// column marked where it's free.
     fn bar(&self, span: Option<(i64, i64)>, color: Option<&str>) -> Vec<Seg> {
-        let Some((start, end)) = span else {
-            return vec![meta("no dates")];
-        };
+        let Some((start, end)) = span else { return vec![meta("no dates")] };
         let (Some(a), Some(b)) = (self.column(start), self.column(end)) else {
             return Vec::new();
         };
@@ -743,12 +735,8 @@ fn month_of(m: i64) -> &'static str {
 
 /// An item's color by `field`'s option: GitHub's name for it.
 fn option_color<'a>(field: &'a ProjectField, it: &ProjectItem) -> Option<&'a str> {
-    let FieldKind::SingleSelect(options) = &field.kind else {
-        return None;
-    };
-    let Some(FieldValue::Option { id, .. }) = it.value(&field.id) else {
-        return None;
-    };
+    let FieldKind::SingleSelect(options) = &field.kind else { return None };
+    let Some(FieldValue::Option { id, .. }) = it.value(&field.id) else { return None };
     options
         .iter()
         .find(|o| o.id == *id)

@@ -101,9 +101,7 @@ fn checkout(state: &mut State) -> Cmds {
 
 /// The pull request waited for has loaded, or couldn't be.
 fn loaded(state: &mut State, about: Subject, _: Action) -> Cmds {
-    let Subject::Pr(pr) = about else {
-        return Cmds::new();
-    };
+    let Subject::Pr(pr) = about else { return Cmds::new() };
     if let Some(branch) = state.pr(&pr).map(|d| branch(&pr, d)) {
         return start_checkout(state, pr, branch);
     }

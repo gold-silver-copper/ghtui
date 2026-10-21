@@ -46,9 +46,7 @@ pub(super) fn list_query(state: &State) -> Option<(Route, String)> {
 }
 
 pub(super) fn set_list_state(state: &mut State, which: &str) -> Cmds {
-    let Some((route, query)) = list_query(state) else {
-        return Cmds::new();
-    };
+    let Some((route, query)) = list_query(state) else { return Cmds::new() };
     match route.family().with_query(with_state(&query, which)) {
         Some(r) if r != route => state.replace(r, true, None),
         _ => Cmds::new(),

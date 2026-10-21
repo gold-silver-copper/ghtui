@@ -8,9 +8,7 @@ use crate::route::{issues, people, runs, security};
 fn with_history() -> (State, DataKey) {
     let mut state = with_repo();
     let url = format!("https://github.com/{}/commits/main/src", ghtui());
-    let Target::Page(route) = Dest::from_url(&url).target else {
-        panic!("{url}");
-    };
+    let Target::Page(route) = Dest::from_url(&url).target else { panic!("{url}") };
     let key = DataKey::History(ghtui(), "main".into(), "src".into());
     let cmds = state.push(route);
     assert!(cmds.contains(&fetch(key.clone())), "{cmds:?}");
@@ -41,9 +39,7 @@ fn commit_history_loads_more() {
         &mut state,
         Msg::FetchedMore(key.clone(), "h1".into(), Ok(Data::from(more)), None),
     );
-    let Some(Data::History(h)) = state.get(&key) else {
-        panic!()
-    };
+    let Some(Data::History(h)) = state.get(&key) else { panic!() };
     assert_eq!((h.items.len(), h.next.as_deref()), (4, None));
     // The first commit loaded takes the place of "Load more".
     let p = page(&state);
@@ -93,9 +89,7 @@ fn an_extended_list_is_kept_until_asked() {
     };
     fixtures::changed(&mut state, star, act::By::Star, Ok(()));
     assert!(!state.load_visible(false).contains(&refetch));
-    let Some(Data::Runs(runs)) = state.get(&key) else {
-        panic!()
-    };
+    let Some(Data::Runs(runs)) = state.get(&key) else { panic!() };
     assert_eq!(runs.items.len(), 4);
     assert!(
         state.load_visible(true).contains(&refetch),
@@ -136,9 +130,7 @@ fn a_next_page_from_before_a_refresh_is_not_appended() {
         &mut state,
         Msg::FetchedMore(key.clone(), "h2".into(), Ok(page('d', None)), None),
     );
-    let Some(Data::History(h)) = state.get(&key) else {
-        panic!()
-    };
+    let Some(Data::History(h)) = state.get(&key) else { panic!() };
     let oids: Vec<&str> = h.items.iter().map(|c| c.oid.as_str()).collect();
     assert_eq!(
         oids,
@@ -178,9 +170,7 @@ fn a_next_page_survives_a_failed_refresh() {
         &mut state,
         Msg::FetchedMore(key.clone(), "h1".into(), Ok(page(None)), None),
     );
-    let Some(Data::History(h)) = state.get(&key) else {
-        panic!()
-    };
+    let Some(Data::History(h)) = state.get(&key) else { panic!() };
     // The same commits, so only the cursor moves.
     assert_eq!(h.next, None, "the next page was dropped");
 }

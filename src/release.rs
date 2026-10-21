@@ -341,9 +341,7 @@ pub fn open_edit(state: &mut State) -> Cmds {
     if let Some(why) = unchangeable(state) {
         return state.just_say(why);
     }
-    let Some((repo, tag, _)) = shown(state) else {
-        return Cmds::new();
-    };
+    let Some((repo, tag, _)) = shown(state) else { return Cmds::new() };
     crate::forms::open(state, Route::Releases(releases::EditRelease { repo, tag }))
 }
 
@@ -351,9 +349,7 @@ pub fn open_edit(state: &mut State) -> Cmds {
 /// release, starts a new one by choosing its tag, and asks GitHub about
 /// a tag it hasn't yet.
 fn follow(state: &mut State) -> Cmds {
-    let Some((route, repo, form)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, repo, form)) = here(state) else { return Cmds::new() };
     if let Route::Releases(releases::EditRelease { tag, .. }) = &route
         && !form.started
         && let Some(r) = state.picked::<Release>(&DataKey::Release(repo.clone(), tag.clone()))
@@ -378,9 +374,7 @@ fn follow(state: &mut State) -> Cmds {
 
 /// The composer, on the title and notes.
 fn compose(state: &mut State) -> Cmds {
-    let Some((route, ..)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, ..)) = here(state) else { return Cmds::new() };
     crate::forms::compose::<Form>(state, &route, 0, crate::forms::TITLE)
 }
 
@@ -396,9 +390,7 @@ pub const FORM: crate::forms::Kind = crate::forms::Kind {
 
 /// Enter on one of the form's rows.
 fn on_row(state: &mut State, link: &Row) -> Cmds {
-    let Some((route, repo, form)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, repo, form)) = here(state) else { return Cmds::new() };
     match link {
         Row::Tag => state.open_picker(crate::picker::Kind::Tag(route)),
         Row::Target if form.new_tag(state, &repo) => {
@@ -425,9 +417,7 @@ fn on_row(state: &mut State, link: &Row) -> Cmds {
 
 /// Asks GitHub to write the notes.
 fn generate(state: &mut State) -> Cmds {
-    let Some((route, repo, form)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, repo, form)) = here(state) else { return Cmds::new() };
     let Some(tag) = form.tag.clone() else {
         return state
             .just_say("Choose a tag first: GitHub writes the notes since the release before it");
@@ -475,9 +465,7 @@ fn form_repo(route: &Route) -> Option<&RepoId> {
 
 /// The tag picker's rows: a new tag typed, then the tags GitHub has.
 pub fn tag_rows(state: &State, route: &Route, q: &str) -> Rows {
-    let Some(repo) = form_repo(route) else {
-        return Vec::new();
-    };
+    let Some(repo) = form_repo(route) else { return Vec::new() };
     let tags = state.picked::<Results<TagInfo>>(&DataKey::Tags(repo.clone()));
     let typed = match tag_problem(q) {
         Some(why) => entry(why, "", None),
@@ -505,9 +493,7 @@ pub fn tag_rows(state: &State, route: &Route, q: &str) -> Rows {
 
 /// The target picker's rows: a commit typed, then the branches.
 pub fn target_rows(state: &State, route: &Route, q: &str) -> Rows {
-    let Some(repo) = form_repo(route) else {
-        return Vec::new();
-    };
+    let Some(repo) = form_repo(route) else { return Vec::new() };
     let branches = state.picked::<Results<BranchInfo>>(&DataKey::Branches(repo.clone()));
     let typed = Some(filling(route, Row::Target, q));
     let typed = entry(format!("Use {q}"), "a branch or a commit's SHA", typed);
@@ -609,9 +595,7 @@ fn problem(state: &State, repo: &RepoId, form: &Form) -> Option<String> {
 /// `,s`, ctrl-s, or its button: asks whether to publish it or keep a
 /// draft.
 fn submit(state: &mut State) -> Cmds {
-    let Some((route, repo, form)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, repo, form)) = here(state) else { return Cmds::new() };
     let Some(tag) = form.tag.clone() else {
         return say(state, "Choose a tag first (Enter on Tag)".into());
     };
@@ -676,15 +660,9 @@ fn submit(state: &mut State) -> Cmds {
 
 /// Saves the release: published, or a draft.
 pub fn create(state: &mut State, route: &Route, draft: bool) -> Cmds {
-    let Some(repo) = form_repo(route).cloned() else {
-        return Cmds::new();
-    };
-    let Some(form) = state.forms.get::<Form>(route) else {
-        return Cmds::new();
-    };
-    let Some(tag) = form.tag.clone() else {
-        return Cmds::new();
-    };
+    let Some(repo) = form_repo(route).cloned() else { return Cmds::new() };
+    let Some(form) = state.forms.get::<Form>(route) else { return Cmds::new() };
+    let Some(tag) = form.tag.clone() else { return Cmds::new() };
     let (name, notes) = templates::split(&form.text);
     let new = NewRelease {
         target: form.target.clone().filter(|_| form.new_tag(state, &repo)),
@@ -714,9 +692,7 @@ pub fn ask_delete(state: &mut State) -> Cmds {
     if let Some(name) = assets::selected(state) {
         return assets::ask_delete(state, &name);
     }
-    let Some((repo, tag, r)) = shown(state) else {
-        return Cmds::new();
-    };
+    let Some((repo, tag, r)) = shown(state) else { return Cmds::new() };
     let mut facts = Vec::new();
     let n = r.assets.total();
     if n > 0 {
@@ -782,9 +758,7 @@ impl Job for Generate {
         else {
             return Cmds::new();
         };
-        let Some(form) = state.forms.get_mut::<Form>(&route) else {
-            return Cmds::new();
-        };
+        let Some(form) = state.forms.get_mut::<Form>(&route) else { return Cmds::new() };
         form.generating = false;
         match result {
             Ok(notes) => {
@@ -846,9 +820,7 @@ impl Job for Save {
     /// and follows GitHub until it shows it.
     fn done(self, state: &mut State, result: Result<Made, Failure>) -> Cmds {
         let route = &self.route;
-        let Some(repo) = form_repo(route).cloned() else {
-            return Cmds::new();
-        };
+        let Some(repo) = form_repo(route).cloned() else { return Cmds::new() };
         match result {
             Ok(made) => {
                 let form: Form = crate::forms::done(state, route);
@@ -971,12 +943,8 @@ fn offers(state: &State, out: &mut Vec<Doable>) {
 /// The menu's rows: making a release from a repository's pages, and
 /// changing the release on screen.
 fn doables(state: &State, out: &mut Vec<Doable>) {
-    let Some(route) = state.route().filter(|_| here(state).is_none()) else {
-        return;
-    };
-    let Some(repo) = route.repo() else {
-        return;
-    };
+    let Some(route) = state.route().filter(|_| here(state).is_none()) else { return };
+    let Some(repo) = route.repo() else { return };
     if matches!(route, Route::Releases(releases::Release { .. })) {
         let why = unchangeable(state);
         out.push(row(

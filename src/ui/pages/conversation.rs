@@ -375,9 +375,7 @@ pub fn discussions(
     category: Option<&str>,
     now: u64,
 ) {
-    let Some(l) = list.show(page, "discussions") else {
-        return;
-    };
+    let Some(l) = list.show(page, "discussions") else { return };
     if !l.categories.is_empty() {
         let all = ("All".to_owned(), base.to_owned(), category.is_none());
         let categories = l.categories.iter().map(|c| {

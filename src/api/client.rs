@@ -458,9 +458,7 @@ impl GitHub {
         let mut list = first;
         let mut seen = std::collections::HashSet::new();
         for _ in 1..max {
-            let Some(after) = list.next.take() else {
-                break;
-            };
+            let Some(after) = list.next.take() else { break };
             if !seen.insert(after.clone()) {
                 self.doubt(format!("{what}: GitHub gave the cursor {after} twice"));
                 break;
@@ -1845,9 +1843,7 @@ impl GitHub {
                 .await?;
         for (i, name) in names.iter().enumerate() {
             let node = commit.pointer(&format!("/e{i}/nodes/0"));
-            let Some(node) = node.filter(|n| !n.is_null()) else {
-                continue;
-            };
+            let Some(node) = node.filter(|n| !n.is_null()) else { continue };
             match <browse::wire::Commit as serde::Deserialize>::deserialize(node) {
                 Ok(commit) => {
                     out.insert(name.clone(), commit.into_info());

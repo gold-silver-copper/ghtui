@@ -174,9 +174,7 @@ pub fn deployments(
     environment: Option<&str>,
     now: u64,
 ) {
-    let Some(l) = list.show(page, "deployments") else {
-        return;
-    };
+    let Some(l) = list.show(page, "deployments") else { return };
     let base = format!("{}/deployments", url::repo(repo));
     let filter = |env: &str| {
         format!(
@@ -262,9 +260,7 @@ pub fn milestones(
     closed: bool,
     now: u64,
 ) {
-    let Some(l) = list.show(page, "milestones") else {
-        return;
-    };
+    let Some(l) = list.show(page, "milestones") else { return };
     let base = format!("{}/milestones", url::repo(repo));
     let tabs = [
         (format!("Open {}", l.open), base.clone(), !closed),

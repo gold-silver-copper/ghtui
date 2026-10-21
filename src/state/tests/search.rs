@@ -268,13 +268,9 @@ fn search_box_jumps_searches_and_loads_more() {
         &mut state,
         Msg::FetchedMore(key.clone(), "c1".into(), Ok(Data::from(more)), None),
     );
-    let Some(Data::Search(results)) = state.get(&key) else {
-        panic!()
-    };
+    let Some(Data::Search(results)) = state.get(&key) else { panic!() };
     assert_eq!(results.next(), None);
-    let SearchResults::Issues(r) = &**results else {
-        panic!()
-    };
+    let SearchResults::Issues(r) = &**results else { panic!() };
     assert_eq!(r.items.len(), 6);
 
     // Loading more doesn't block a refresh, and a next page that
@@ -303,12 +299,8 @@ fn search_box_jumps_searches_and_loads_more() {
             None,
         ),
     );
-    let Some(Data::Search(results)) = state.get(&key) else {
-        panic!()
-    };
-    let SearchResults::Issues(r) = &**results else {
-        panic!()
-    };
+    let Some(Data::Search(results)) = state.get(&key) else { panic!() };
+    let SearchResults::Issues(r) = &**results else { panic!() };
     assert_eq!(r.items.len(), 3, "the stale page wasn't appended");
 }
 
@@ -369,7 +361,7 @@ fn a_link_typed_after_a_scope_or_a_filter_opens() {
     let _ = state.push(search);
     press(&mut state, "/label:bug<Enter>");
     let Route::Search(search::Search { query, .. }) = route(&state) else {
-        panic!("not a search");
+        panic!("not a search")
     };
     assert_eq!(query, "repo:gold-silver-copper/ghtui bug label:bug");
 }

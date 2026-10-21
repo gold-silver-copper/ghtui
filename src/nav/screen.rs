@@ -204,9 +204,7 @@ impl State {
         let width = self.page_width();
         let height = self.page_height();
         let (now, minute) = ((self.clock)(), self.minute);
-        let Screen::Page(p) = self.screen() else {
-            return;
-        };
+        let Screen::Page(p) = self.screen() else { return };
         let built = (
             self.data_version(&p.route),
             self.shown_gen,

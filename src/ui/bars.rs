@@ -82,9 +82,7 @@ impl Widget for StatusBar<'_> {
             for (i, (keys, what)) in self.hints.iter().enumerate() {
                 let gap = if i == 0 { 1 } else { 4 };
                 let w = text::width(keys).saturating_add(text::width(what));
-                let Some(rest) = room.checked_sub(w.saturating_add(gap)) else {
-                    break;
-                };
+                let Some(rest) = room.checked_sub(w.saturating_add(gap)) else { break };
                 room = rest;
                 if i > 0 {
                     left.push(Span::styled("   ", theme.body(BAR)));

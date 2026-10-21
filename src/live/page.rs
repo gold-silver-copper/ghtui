@@ -313,9 +313,7 @@ pub fn on_timer(state: &mut State, id: u64) -> Cmds {
             .map(|j| j.run_id),
         _ => None,
     };
-    let Some(w) = state.page_watch.as_mut() else {
-        return Cmds::new();
-    };
+    let Some(w) = state.page_watch.as_mut() else { return Cmds::new() };
     let probes = match &what {
         // A job that ended in a run still going: the run's end shows on it.
         Watched::Job { repo, job } => std::iter::once(Probe::Job(repo.clone(), *job))
@@ -503,9 +501,7 @@ fn discussion_here(state: &State) -> Option<&DiscussionDetail> {
 /// Fresh data came in for `key`: on a watched page, what wasn't there
 /// before is new, and said; a followed job that ended says how.
 pub fn loaded(state: &mut State, key: &DataKey) {
-    let Some(what) = state.page_watch.as_ref().map(|w| w.what.clone()) else {
-        return;
-    };
+    let Some(what) = state.page_watch.as_ref().map(|w| w.what.clone()) else { return };
     if self::key(&what) != *key {
         return;
     }
@@ -520,9 +516,7 @@ pub fn loaded(state: &mut State, key: &DataKey) {
             (came, "comment", format!("{repo}#{number}"))
         }
         Watched::Discussion { number, .. } => {
-            let Some(d) = state.picked::<DiscussionDetail>(key) else {
-                return;
-            };
+            let Some(d) = state.picked::<DiscussionDetail>(key) else { return };
             let came = discussion_comments(d)
                 .map(|(id, a)| (id, mine(a)))
                 .collect();
@@ -533,9 +527,7 @@ pub fn loaded(state: &mut State, key: &DataKey) {
             )
         }
         Watched::Runs { .. } => {
-            let Some(runs) = state.picked::<Results<RunSummary>>(key) else {
-                return;
-            };
+            let Some(runs) = state.picked::<Results<RunSummary>>(key) else { return };
             let came = (runs.items.iter())
                 .map(|r| (r.id, r.actor.as_deref().is_some_and(mine)))
                 .collect();
@@ -547,9 +539,7 @@ pub fn loaded(state: &mut State, key: &DataKey) {
         }
         Watched::Run { .. } => return,
     };
-    let Some(w) = state.page_watch.as_mut() else {
-        return;
-    };
+    let Some(w) = state.page_watch.as_mut() else { return };
     let came = super::note(&mut w.seen, came, |mine| *mine);
     // Runs are said, not marked: the list's order shows them.
     if word != "run" {
@@ -564,9 +554,7 @@ pub fn loaded(state: &mut State, key: &DataKey) {
 
 /// A followed job's steps came in: once it ends, say how.
 fn job_loaded(state: &mut State, key: &DataKey) {
-    let Some(job) = state.picked::<Job>(key) else {
-        return;
-    };
+    let Some(job) = state.picked::<Job>(key) else { return };
     if job.outcome == CheckOutcome::Pending {
         return;
     }

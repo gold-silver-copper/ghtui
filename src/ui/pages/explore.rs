@@ -44,9 +44,7 @@ pub fn explore(
         },
     );
     page.blank();
-    let Some(t) = topics.show(page, "featured topics") else {
-        return;
-    };
+    let Some(t) = topics.show(page, "featured topics") else { return };
     let count = match t.total.saturating_sub(t.topics.len() as u64) {
         0 => t.topics.len().to_string(),
         n => format!("{} of {}", t.topics.len(), t.topics.len() as u64 + n),

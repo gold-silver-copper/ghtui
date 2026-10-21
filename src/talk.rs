@@ -58,9 +58,7 @@ const MOST_LINES: usize = 40;
 /// are on, read from the clone where they aren't yet (where there's no
 /// clone, or git can't, the threads show GitHub's diff hunks).
 pub fn want_lines(state: &mut State, pr: &PrRef) -> Cmds {
-    let Some(activity) = state.activity(pr) else {
-        return Cmds::new();
-    };
+    let Some(activity) = state.activity(pr) else { return Cmds::new() };
     let mut keys: Vec<DataKey> = Vec::new();
     for t in activity.threads.iter().filter(|t| !t.file_level) {
         let Some(commit) = t.comments.first().and_then(|c| c.original_commit.clone()) else {
@@ -218,9 +216,7 @@ fn open_range(
         state.info("Loading the pull request first");
         return cmds;
     };
-    let Some((screen, diff)) = state.diff_parts() else {
-        return cmds;
-    };
+    let Some((screen, diff)) = state.diff_parts() else { return cmds };
     let same = diff.range() == range.as_ref() && diff.error.is_none();
     if !same {
         // The diff starts again on the range; a whole diff's start is

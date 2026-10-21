@@ -305,9 +305,7 @@ pub(crate) mod tests {
             Some(b"fn b() {}\nfn c() {}\n"),
         );
         assert_eq!((diff.additions, diff.deletions), (2, 1));
-        let Content::Text(text) = &diff.content else {
-            panic!("{diff:?}")
-        };
+        let Content::Text(text) = &diff.content else { panic!("{diff:?}") };
         assert!(!text.alignment(Whitespace::Exact).blocks.is_empty());
         let new = |line| LinePos {
             side: Side::Right,

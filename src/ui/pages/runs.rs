@@ -19,9 +19,7 @@ pub(super) fn outcome_mark(o: CheckOutcome) -> (&'static str, Role) {
 /// The checks on a commit, grouped by workflow or app, failures first.
 /// Each links to its details on GitHub (logs, re-runs).
 pub fn checks(page: &mut Page, checks: Fetched<'_, Checks>, now: u64) {
-    let Some(c) = checks.show(page, "checks") else {
-        return;
-    };
+    let Some(c) = checks.show(page, "checks") else { return };
     let sha = short_sha(&c.oid);
     if c.items.is_empty() {
         let title = meta(format!("✓ Checks on {sha}"));

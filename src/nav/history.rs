@@ -158,9 +158,7 @@ impl State {
 
 /// Goes to the page above this one.
 pub fn up_level(state: &mut State) -> Cmds {
-    let Some(route) = state.route().cloned() else {
-        return Cmds::new();
-    };
+    let Some(route) = state.route().cloned() else { return Cmds::new() };
     match route.family().up(state) {
         Some(parent) => state.push(parent),
         None => state.just_say("Already at the top"),

@@ -103,16 +103,12 @@ pub fn poll(state: &mut State) -> Vec<DataKey> {
 /// After GitHub's data arrives: stops waiting for a change the page now
 /// shows, or follows it to the page it's on.
 pub fn follow(state: &mut State) -> Cmds {
-    let Some(f) = following(state) else {
-        return Cmds::new();
-    };
+    let Some(f) = following(state) else { return Cmds::new() };
     let polls = f.polls;
     match f.what.shown(state, &f.route) {
         Shown::No => Cmds::new(),
         Shown::Yes => {
-            let Some(f) = state.following.take() else {
-                return Cmds::new();
-            };
+            let Some(f) = state.following.take() else { return Cmds::new() };
             f.what.then(state, &f.route)
         }
         Shown::There(route, what) => {

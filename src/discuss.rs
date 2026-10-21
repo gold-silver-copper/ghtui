@@ -364,9 +364,7 @@ fn plan(state: &State, h: &Here<'_>, action: Action) -> Result<Step, String> {
 
 /// Runs one of [`ACTIONS`] on the discussion on screen.
 pub fn act(state: &mut State, action: Action) -> Cmds {
-    let Some(h) = here(state) else {
-        return state.just_say(action.not_here());
-    };
+    let Some(h) = here(state) else { return state.just_say(action.not_here()) };
     let planned =
         plan(state, &h, action).and_then(|step| crate::act::settled(state).map(|()| step));
     crate::act::take(state, planned)
@@ -374,9 +372,7 @@ pub fn act(state: &mut State, action: Action) -> Cmds {
 
 /// The menu's rows on a discussion's page.
 pub fn doables(state: &State, out: &mut Vec<Doable>) {
-    let Some(h) = here(state) else {
-        return;
-    };
+    let Some(h) = here(state) else { return };
     let answerable = h.d.is_some_and(|d| d.answerable);
     let replying = h.selected.is_some_and(|s| {
         h.d.and_then(|d| spot(d, s))
@@ -433,9 +429,7 @@ pub fn same_text(a: &str, b: &str) -> bool {
 /// Whether the discussion, as loaded, shows `change`.
 pub fn shows(state: &State, change: &Change, of: &DiscussionsOf, number: u64) -> bool {
     let key = DataKey::Discussion(of.clone(), number);
-    let Some(d) = state.picked::<DiscussionDetail>(&key) else {
-        return false;
-    };
+    let Some(d) = state.picked::<DiscussionDetail>(&key) else { return false };
     let find = |id: &NodeId| all(d).find(|(e, _)| e.id == *id);
     match change {
         Change::Discussion(Discuss::Comment { body, reply_to, .. }) => {

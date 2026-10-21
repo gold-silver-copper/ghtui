@@ -425,9 +425,7 @@ fn every_query_without_what_an_old_server_lacks_is_valid() {
     let mut errors = Vec::new();
     let mut rewritten = 0;
     for (name, query) in typed().into_iter().chain(crate::api::raw::all()) {
-        let Some(done) = rewrite(&query, &old) else {
-            continue;
-        };
+        let Some(done) = rewrite(&query, &old) else { continue };
         rewritten += 1;
         errors.extend(check(&schema, name, &done.query).errors);
         let doc = cynic_parser::parse_executable_document(&done.query).unwrap();

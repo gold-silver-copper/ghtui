@@ -157,9 +157,7 @@ impl Parser {
 
     /// The node starting at the next line, if it's at least `min` in.
     fn block(&mut self, min: usize) -> Value {
-        let Some((at, content)) = self.peek() else {
-            return Value::Null;
-        };
+        let Some((at, content)) = self.peek() else { return Value::Null };
         if at < min {
             return Value::Null;
         }
@@ -176,9 +174,7 @@ impl Parser {
     fn list(&mut self, at: usize) -> Value {
         let mut items = Vec::new();
         while let Some((here, content)) = self.peek() {
-            let Some(rest) = dash(&content).filter(|_| here == at) else {
-                break;
-            };
+            let Some(rest) = dash(&content).filter(|_| here == at) else { break };
             let item = rest.trim_start();
             if item.is_empty() {
                 self.at += 1;
@@ -205,9 +201,7 @@ impl Parser {
             if here != at || dash(&content).is_some() {
                 break;
             }
-            let Some((key, value)) = key_value(&content) else {
-                break;
-            };
+            let Some((key, value)) = key_value(&content) else { break };
             self.at += 1;
             let value = if value.is_empty() {
                 // A list may sit at the key's own indentation.

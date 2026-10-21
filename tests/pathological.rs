@@ -27,8 +27,6 @@ fn deeply_nested_code_compares_by_syntax() {
     };
     let (old, new) = (nested("a"), nested("b"));
     let diff = FileDiff::compute("src/lib.rs", Some(old.as_bytes()), Some(new.as_bytes()));
-    let Content::Text(text) = &diff.content else {
-        panic!("{:?}", diff.content);
-    };
+    let Content::Text(text) = &diff.content else { panic!("{:?}", diff.content) };
     assert_eq!(text.view(Whitespace::Exact, true).blocks.len(), 1);
 }

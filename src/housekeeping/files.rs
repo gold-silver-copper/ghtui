@@ -84,9 +84,7 @@ fn looked<'a>(state: &'a State, of: &FormOf) -> Option<Result<&'a FileLook, &'a 
 /// Once the file is read from GitHub, fills the form and opens the
 /// composer on its text.
 pub(super) fn follow(state: &mut State, route: &Route, of: &FormOf) -> Cmds {
-    let Some((_, _, path, change)) = parts(of) else {
-        return Cmds::new();
-    };
+    let Some((_, _, path, change)) = parts(of) else { return Cmds::new() };
     if !form(state, route).values.contains_key(&Field::Path) {
         let f = form_mut(state, route);
         match change {
@@ -186,9 +184,7 @@ fn message(f: &Form, of: &FormOf) -> String {
     if !written.is_empty() {
         return written.to_owned();
     }
-    let Some((_, _, was, change)) = parts(of) else {
-        return String::new();
-    };
+    let Some((_, _, was, change)) = parts(of) else { return String::new() };
     let now = path(f);
     let name = |p: &str| p.rsplit('/').next().unwrap_or(p).to_owned();
     match change {
@@ -201,12 +197,8 @@ fn message(f: &Form, of: &FormOf) -> String {
 
 /// The branch picker's rows: the branch it's on, or a new one.
 pub(super) fn branch_rows(state: &State, route: &Route, q: &str) -> crate::picker::Rows {
-    let Route::Housekeeping(of) = route else {
-        return Vec::new();
-    };
-    let Some((_, rev, _, _)) = parts(of) else {
-        return Vec::new();
-    };
+    let Route::Housekeeping(of) = route else { return Vec::new() };
+    let Some((_, rev, _, _)) = parts(of) else { return Vec::new() };
     let set = |b: &str| setting(route, Field::Branch, b);
     let mut rows = Vec::new();
     if !q.is_empty() {
@@ -238,12 +230,8 @@ pub(super) fn branch_rows(state: &State, route: &Route, q: &str) -> crate::picke
 
 /// `,s`: asks before committing, as GitHub's "Commit changes" does.
 pub(super) fn ask_commit(state: &mut State, route: &Route) -> Cmds {
-    let Route::Housekeeping(of) = route else {
-        return Cmds::new();
-    };
-    let Some((repo, rev, was, change)) = parts(of) else {
-        return Cmds::new();
-    };
+    let Route::Housekeeping(of) = route else { return Cmds::new() };
+    let Some((repo, rev, was, change)) = parts(of) else { return Cmds::new() };
     let repo = repo.clone();
     if let Some(why) = problem(state, route, of) {
         return crate::forms::say(state, why);
@@ -307,19 +295,13 @@ pub(super) fn ask_commit(state: &mut State, route: &Route) -> Cmds {
 
 /// The commit asked for, sent.
 pub(super) fn commit(state: &mut State, route: &Route) -> Cmds {
-    let Route::Housekeeping(of) = route else {
-        return Cmds::new();
-    };
-    let Some((repo, rev, was, change)) = parts(of) else {
-        return Cmds::new();
-    };
+    let Route::Housekeeping(of) = route else { return Cmds::new() };
+    let Some((repo, rev, was, change)) = parts(of) else { return Cmds::new() };
     if let Some(why) = problem(state, route, of) {
         return crate::forms::say(state, why);
     }
     let f = form(state, route);
-    let Some(Ok(look)) = looked(state, of) else {
-        return Cmds::new();
-    };
+    let Some(Ok(look)) = looked(state, of) else { return Cmds::new() };
     let now = path(&f).to_owned();
     let new_branch = f.get(Field::Branch).trim().to_owned();
     let seen_file = look.file.as_ref().map(|file| file.oid.clone());
@@ -459,12 +441,8 @@ impl Job for Commit {
     fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
         let Commit { route, write } = self;
         let route = &route;
-        let Route::Housekeeping(of) = route else {
-            return Cmds::new();
-        };
-        let Some((repo, _, _, change)) = parts(of) else {
-            return Cmds::new();
-        };
+        let Route::Housekeeping(of) = route else { return Cmds::new() };
+        let Some((repo, _, _, change)) = parts(of) else { return Cmds::new() };
         let repo = repo.clone();
         if let Err(why) = result {
             return crate::forms::failed(state, route, why.to_string());
@@ -541,9 +519,7 @@ pub(super) fn propose(
 
 /// The menu's rows on a repository's files.
 pub(super) fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
-    let Some(repo) = route.repo() else {
-        return;
-    };
+    let Some(repo) = route.repo() else { return };
     let why = why_not(state, repo);
     match route {
         Route::Code(code::Blob { .. }) => {
@@ -575,9 +551,7 @@ pub(super) fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
 
 /// The form's page.
 pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) {
-    let Some((repo, rev, was, change)) = parts(of) else {
-        return;
-    };
+    let Some((repo, rev, was, change)) = parts(of) else { return };
     let f = form(state, route);
     let heading = match change {
         FileChange::Edit => format!("Editing {was} in {repo}"),

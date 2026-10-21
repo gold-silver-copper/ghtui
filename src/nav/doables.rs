@@ -469,12 +469,8 @@ impl State {
     /// Verbs for what's under the diff's cursor (a thread, a draft) and for
     /// a review in progress, most useful first.
     pub(super) fn focus_hints(&self) -> Vec<(Action, String)> {
-        let Screen::Diff(screen) = self.screen() else {
-            return Vec::new();
-        };
-        let Some(diff) = self.diffs.get(&screen.of) else {
-            return Vec::new();
-        };
+        let Screen::Diff(screen) = self.screen() else { return Vec::new() };
+        let Some(diff) = self.diffs.get(&screen.of) else { return Vec::new() };
         let mut out = Vec::new();
         // The file tree has its own keys.
         if screen.focus == Pane::Tree && screen.prefs.tree_visible {

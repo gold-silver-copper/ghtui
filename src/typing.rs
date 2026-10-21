@@ -175,9 +175,7 @@ fn pr_participants(state: &State, pr: &PrRef) -> Vec<String> {
 /// `@` or `#` whose list wasn't closed: who to mention (the people taking
 /// part first, then the repository's), or which issue or pull request.
 pub fn completions(state: &State) -> Option<Vec<Choice>> {
-    let Some(Overlay::Compose(compose)) = &state.overlay else {
-        return None;
-    };
+    let Some(Overlay::Compose(compose)) = &state.overlay else { return None };
     let typed = typed(&compose.input)?;
     if compose.completing.dismissed == Some(typed.at) {
         return None;
@@ -231,9 +229,7 @@ pub fn completions(state: &State) -> Option<Vec<Choice>> {
 /// list. Any other key is the box's (`None`).
 pub fn on_compose_key(state: &mut State, key: KeyEvent) -> Option<Cmds> {
     let choices = completions(state)?;
-    let Some(Overlay::Compose(compose)) = &mut state.overlay else {
-        return None;
-    };
+    let Some(Overlay::Compose(compose)) = &mut state.overlay else { return None };
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let last = choices.len().saturating_sub(1);
     let completing = &mut compose.completing;

@@ -102,9 +102,7 @@ pub(crate) fn start_hints(state: &mut State, browser: bool) {
 }
 
 pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Cmds {
-    let Some(Overlay::Hints(hints)) = &mut state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Hints(hints)) = &mut state.overlay else { return Cmds::new() };
     match key.code {
         KeyCode::Backspace => {
             hints.typed.pop();

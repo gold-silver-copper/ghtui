@@ -35,21 +35,15 @@ impl Store {
     /// This account's rows, in order; a row that no longer decodes is
     /// left out (and said in the log).
     pub fn queue_all<T: DeserializeOwned>(&self) -> Vec<(u64, T)> {
-        let Some(db) = self.db.as_ref() else {
-            return Vec::new();
-        };
+        let Some(db) = self.db.as_ref() else { return Vec::new() };
         let prefix = self.scoped("queue/");
         let result = (|| -> Result<Vec<(u64, T)>, StoreError> {
             let txn = db.database.begin_read()?;
-            let Some(table) = super::open(&txn, QUEUE)? else {
-                return Ok(Vec::new());
-            };
+            let Some(table) = super::open(&txn, QUEUE)? else { return Ok(Vec::new()) };
             let mut rows = Vec::new();
             for row in table.range(prefix.as_str()..)? {
                 let (key, value) = row?;
-                let Some(id) = key.value().strip_prefix(prefix.as_str()) else {
-                    break;
-                };
+                let Some(id) = key.value().strip_prefix(prefix.as_str()) else { break };
                 let Ok(id) = id.parse::<u64>() else { continue };
                 match serde_json::from_slice(value.value()) {
                     Ok(value) => rows.push((id, value)),

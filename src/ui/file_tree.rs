@@ -64,9 +64,7 @@ pub fn tree_rows(doc: &Doc) -> Vec<TreeRow> {
                     });
                     node.children.len().saturating_sub(1)
                 });
-            let Some(child) = node.children.get_mut(pos) else {
-                break;
-            };
+            let Some(child) = node.children.get_mut(pos) else { break };
             node = child;
         }
     }
@@ -272,9 +270,7 @@ impl FileTree<'_> {
                 .render(area, buf);
             }
             TreeRow::File { index, name, depth } => {
-                let Some(file) = self.doc.files.get(*index) else {
-                    return;
-                };
+                let Some(file) = self.doc.files.get(*index) else { return };
                 let (mark, mark_fg) = match file.meta.status {
                     FileStatus::Added => ("A", Fg::Success),
                     FileStatus::Deleted => ("D", Fg::Error),

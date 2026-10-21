@@ -201,9 +201,7 @@ pub(super) fn file_box(
         commits,
     } = dir;
     let PageCtx { icons, now, .. } = cx;
-    let Some(entries) = entries.show(page, "the directory") else {
-        return;
-    };
+    let Some(entries) = entries.show(page, "the directory") else { return };
     page.box_top(title.0, title.1);
     // GitHub's columns: name, the latest commit's message, its age.
     let name_w = entries

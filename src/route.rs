@@ -394,9 +394,7 @@ fn parse(parsed: &url::Url) -> Option<Target> {
         return Some(target);
     }
     // GitHub's own pages: settings, apps, the marketplace…
-    let [owner, name, rest @ ..] = segments.as_slice() else {
-        return None;
-    };
+    let [owner, name, rest @ ..] = segments.as_slice() else { return None };
     if is_reserved(owner) {
         return None;
     }
@@ -1535,9 +1533,7 @@ pub(crate) mod tests {
         /// A corpus URL with its owner and repository, numbers and commit
         /// IDs swapped for `owner`, `name`, `number` and `sha`.
         fn vary(url: &str, owner: &str, name: &str, number: u64, sha: &str) -> String {
-            let Ok(mut parsed) = url::Url::parse(url) else {
-                return url.to_owned();
-            };
+            let Ok(mut parsed) = url::Url::parse(url) else { return url.to_owned() };
             let segments: Vec<String> = parsed
                 .path_segments()
                 .map(|s| s.map(str::to_owned).collect())

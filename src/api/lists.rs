@@ -162,9 +162,7 @@ impl GitHub {
                 .page_info
                 .end_cursor
                 .filter(|_| page.page_info.has_next_page);
-            let Some(after) = next else {
-                return Ok((Some(false), total));
-            };
+            let Some(after) = next else { return Ok((Some(false), total)) };
             if read >= MEMBERS_MAX {
                 return Ok((None, total));
             }

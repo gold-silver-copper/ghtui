@@ -278,9 +278,7 @@ impl Family for Page {
                 }
             }
             Page::StarList { login, .. } => {
-                let Some(key) = self.paged() else {
-                    return;
-                };
+                let Some(key) = self.paged() else { return };
                 if let Some(l) = b.get(&key).show(page, "the list") {
                     pages::star_list(page, login, l, now);
                 }

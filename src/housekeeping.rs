@@ -408,9 +408,7 @@ fn clone_here(state: &mut State, repo: &RepoId) -> Result<Option<Clone>, Cmds> {
 /// Whether `action` is housekeeping's here: its own actions anywhere, and
 /// editing, deleting, closing and saving on its pages.
 fn takes(state: &State, action: Action) -> bool {
-    let Some(route) = state.route() else {
-        return false;
-    };
+    let Some(route) = state.route() else { return false };
     let milestones = matches!(
         route,
         Route::Issues(issues::Milestones { .. } | issues::Milestone { .. })
@@ -522,9 +520,7 @@ pub const FORM: crate::forms::Kind = crate::forms::Kind {
 
 /// `,s`, ctrl-s or a form's button.
 fn submit(state: &mut State) -> Cmds {
-    let Some((route, of)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, of)) = here(state) else { return Cmds::new() };
     match &of {
         FormOf::Label { repo, name } => labels::submit(state, &route, repo, name.as_deref()),
         FormOf::Milestone { repo, number } => milestones::submit(state, &route, repo, *number),
@@ -538,9 +534,7 @@ fn submit(state: &mut State) -> Cmds {
 /// page's rows are its items, in order) and checked by its link.
 fn selected<'a, T>(state: &State, items: &'a [T], url: impl Fn(&T) -> String) -> Option<&'a T> {
     let p = state.screen().page()?;
-    let Some(Link::Url(link)) = p.selected_link() else {
-        return None;
-    };
+    let Some(Link::Url(link)) = p.selected_link() else { return None };
     // Rows come in order; links in them (a milestone's pull request) don't
     // count. The row at its place is the one, unless the page has others.
     let at = p.selected.and_then(|i| items.get(i));
@@ -554,9 +548,7 @@ fn selected<'a, T>(state: &State, items: &'a [T], url: impl Fn(&T) -> String) ->
 /// milestones, branches, tags or files edited, then what's new here, then
 /// a fork and a new repository, wherever you are.
 pub fn change_doables(state: &State) -> Vec<Doable> {
-    let Some(route) = state.route() else {
-        return Vec::new();
-    };
+    let Some(route) = state.route() else { return Vec::new() };
     let mut mine = Vec::new();
     page_doables(state, route, &mut mine);
     if let Some(repo) = route.repo() {
@@ -677,9 +669,7 @@ fn problem(state: &State, route: &Route, of: &FormOf) -> Option<String> {
 /// Brings housekeeping's form on screen up to date with what's arrived:
 /// filled in from GitHub's data once.
 fn follow(state: &mut State) -> Cmds {
-    let Some((route, of)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, of)) = here(state) else { return Cmds::new() };
     match &of {
         FormOf::Label { repo, name } => labels::follow(state, &route, repo, name.as_ref()),
         FormOf::Milestone { repo, number } => milestones::follow(state, &route, repo, *number),
@@ -739,9 +729,7 @@ impl Expectation for Expected {
         };
         let shown = match self {
             Expected::Label { repo, gone, shown } => {
-                let Some(list) = labels::list(state, repo) else {
-                    return Shown::No;
-                };
+                let Some(list) = labels::list(state, repo) else { return Shown::No };
                 let gone = gone
                     .as_ref()
                     .is_none_or(|name| list.items.iter().all(|l| l.name != *name));
@@ -795,9 +783,7 @@ impl Expectation for Expected {
                         .picked::<Results<TagInfo>>(&DataKey::Tags(repo.clone())))
                     .map(|l| (l.items.iter().any(|t| t.name == *name), false)),
                 };
-                let Some((listed, later)) = found else {
-                    return Shown::No;
-                };
+                let Some((listed, later)) = found else { return Shown::No };
                 if *there { listed || later } else { !listed }
             }
             Expected::Repo(repo) => state.overview(repo).is_some(),
@@ -862,9 +848,7 @@ fn loaded(b: Build<'_>, page: &mut Page, of: &FormOf) -> bool {
 
 /// `c`, or Enter on a form's text: the composer on it.
 fn compose(state: &mut State) -> Cmds {
-    let Some((route, of)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, of)) = here(state) else { return Cmds::new() };
     match of {
         FormOf::Milestone { .. } => {}
         FormOf::File { change, .. } if change != FileChange::Delete => {
@@ -1019,9 +1003,7 @@ pub fn open_field(state: &mut State, route: &Route, field: Field) -> Cmds {
 
 /// What was chosen for a form's row.
 fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Cmds {
-    let Row::Field(field) = *row else {
-        return Cmds::new();
-    };
+    let Row::Field(field) = *row else { return Cmds::new() };
     let f = form_mut(state, route);
     f.set(field, value);
     let blank = f.text.is_empty();

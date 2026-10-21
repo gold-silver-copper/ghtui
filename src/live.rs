@@ -495,15 +495,9 @@ pub fn threads_loaded(state: &mut State, pr: &PrRef) {
         notices,
         ..
     } = state;
-    let Some(w) = watch.as_mut().filter(|w| w.pr == *pr) else {
-        return;
-    };
-    let Some(diff) = diffs.get_mut(&DiffOf::Pr(pr.clone())) else {
-        return;
-    };
-    let Some(threads) = diff.inputs().threads.data.as_ref() else {
-        return;
-    };
+    let Some(w) = watch.as_mut().filter(|w| w.pr == *pr) else { return };
+    let Some(diff) = diffs.get_mut(&DiffOf::Pr(pr.clone())) else { return };
+    let Some(threads) = diff.inputs().threads.data.as_ref() else { return };
     let (new_threads, replies) = note_threads(w, threads, viewer.as_deref());
     if diff.inputs().fresh != w.new_threads {
         let fresh = w.new_threads.clone();
@@ -530,13 +524,9 @@ pub fn activity_loaded(state: &mut State, pr: &PrRef) {
     let activity = (data.get(&DataKey::PrActivity(pr.clone())))
         .and_then(|r| r.data.as_ref())
         .and_then(<PrActivity as crate::data::Picked>::pick);
-    let Some(activity) = activity else {
-        return;
-    };
+    let Some(activity) = activity else { return };
     let viewer = viewer.as_deref();
-    let Some(w) = watch.as_mut().filter(|w| w.pr == *pr) else {
-        return;
-    };
+    let Some(w) = watch.as_mut().filter(|w| w.pr == *pr) else { return };
     let mut what = Vec::new();
     let mine = |author: &&str| viewer == Some(*author);
     // Comments.

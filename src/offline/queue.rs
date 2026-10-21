@@ -329,9 +329,7 @@ impl Queue {
     /// Settles write `id` with how sending it went; whether to go on
     /// sending (not when GitHub can't be reached).
     pub fn settle(&mut self, id: u64, sent: Sent) -> bool {
-        let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) else {
-            return true;
-        };
+        let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) else { return true };
         let (status, go_on) = match sent {
             Sent::Taken => {
                 self.store.queue_remove(id);

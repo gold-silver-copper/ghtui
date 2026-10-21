@@ -209,9 +209,7 @@ impl State {
             self.before.push(left);
         }
         while self.active_tab() > i {
-            let Some(previous) = self.before.pop() else {
-                break;
-            };
+            let Some(previous) = self.before.pop() else { break };
             let right = self.swap_in(previous);
             self.after.insert(0, right);
         }
@@ -258,9 +256,7 @@ impl State {
             Target::Page(route) => Some(Screen::Page(Box::new(PageScreen::new(route, None)))),
             Target::External(_) => None,
         });
-        let Some(first) = screens.next() else {
-            return;
-        };
+        let Some(first) = screens.next() else { return };
         self.screens = Screens::new(first);
         self.forward.clear();
         self.after = screens.map(Tab::new).collect();

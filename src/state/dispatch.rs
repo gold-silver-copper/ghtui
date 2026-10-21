@@ -267,9 +267,7 @@ pub(super) fn on_key(state: &mut State, key: KeyEvent) -> Cmds {
 }
 
 pub(super) fn on_search_key(state: &mut State, key: KeyEvent) -> Cmds {
-    let Some(Overlay::Find(input)) = &mut state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Find(input)) = &mut state.overlay else { return Cmds::new() };
     match key.code {
         KeyCode::Esc => state.overlay = None,
         KeyCode::Enter => {
@@ -421,9 +419,7 @@ pub(super) fn diff_action(state: &mut State, action: Action) -> Cmds {
         notices,
         ..
     } = &mut *state;
-    let Screen::Diff(screen) = screens.last_mut() else {
-        return Cmds::new();
-    };
+    let Screen::Diff(screen) = screens.last_mut() else { return Cmds::new() };
     match diffs.get_mut(&screen.of) {
         Some(diff) => diff_screen::apply(screen, diff, action, content, notices),
         None => {

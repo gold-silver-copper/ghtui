@@ -446,9 +446,7 @@ fn write(form: Form, text: String) -> Result<Step, String> {
 
 /// The menu's rows on a settings page.
 pub fn doables(state: &State, out: &mut Vec<Doable>) {
-    let Some((repo, page)) = here(state) else {
-        return;
-    };
+    let Some((repo, page)) = here(state) else { return };
     let row = |action, label: &str| {
         // The status bar names the page's main ones.
         let short = match action {
@@ -1264,9 +1262,7 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Step>)> {
 /// Whether the page `at`, as loaded, shows `c`.
 pub fn shows(state: &State, c: &SettingsChange, repo: &RepoId, at: SettingsPage) -> bool {
     use SettingsChange as C;
-    let Some(s) = data(state, repo, at) else {
-        return false;
-    };
+    let Some(s) = data(state, repo, at) else { return false };
     match (c, s) {
         (C::CreateRule { form, .. }, Settings::Branches(b)) => {
             b.rules.iter().any(|r| r.form.pattern == form.pattern)

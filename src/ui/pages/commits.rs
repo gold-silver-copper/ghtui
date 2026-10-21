@@ -10,9 +10,7 @@ pub fn pr_commits(
     now: u64,
 ) {
     pr_summary(page, pr, d, now);
-    let Some(a) = activity.show(page, "commits") else {
-        return;
-    };
+    let Some(a) = activity.show(page, "commits") else { return };
     commit_rows(page, &pr.repo, Some(pr), &a.commits, now);
 }
 
@@ -87,9 +85,7 @@ pub fn commit_history(
     title.push(meta(at));
     page.wrapped(title, 0, Frame::None);
     page.blank();
-    let Some(h) = history.show(page, "commits") else {
-        return;
-    };
+    let Some(h) = history.show(page, "commits") else { return };
     if h.items.is_empty() {
         empty_box(page, meta("◷ Commits"), "No commits here.");
         return;

@@ -916,9 +916,7 @@ mod tests {
         // GitHub moved on since the clone was made.
         let head = Oid::parse(&commit(g, &[("b.txt", "two\n")], "Second").await).unwrap();
         let (data, from) = local.fetch(&gh, &blob("b.txt"), None).await;
-        let Ok(Data::Blob(b)) = data else {
-            panic!("{data:?}")
-        };
+        let Ok(Data::Blob(b)) = data else { panic!("{data:?}") };
         assert_eq!(b.text.as_deref(), Some("two\n"));
         let at_head = From::Git {
             clone: Clone::Cache,
@@ -937,9 +935,7 @@ mod tests {
 
         let history = DataKey::History(repo.clone(), "main".into(), String::new());
         let (data, _) = local.fetch(&gh, &history, None).await;
-        let Ok(Data::History(h)) = data else {
-            panic!("{data:?}")
-        };
+        let Ok(Data::History(h)) = data else { panic!("{data:?}") };
         assert_eq!(h.items.len(), 2);
         let refs = DataKey::Refs(repo.clone());
         let Ok(Data::Refs(refs)) = local.fetch(&gh, &refs, None).await.0 else {
@@ -1006,9 +1002,7 @@ mod tests {
         gh.reach().lost();
         let local = Local::new(context);
         let (data, from) = local.fetch(&gh, &blob, None).await;
-        let Ok(Data::Blob(b)) = data else {
-            panic!("{data:?}")
-        };
+        let Ok(Data::Blob(b)) = data else { panic!("{data:?}") };
         assert_eq!(b.text.as_deref(), Some("one\n"));
         assert!(
             matches!(

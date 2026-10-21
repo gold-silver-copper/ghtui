@@ -616,9 +616,7 @@ impl Page {
     /// page as wide as it that shares this page's links. False if it
     /// doesn't: what the sidebar would say goes in the column.
     pub fn build_aside(&mut self, f: impl FnOnce(&mut Page)) -> bool {
-        let Some(Aside { width, .. }) = self.aside else {
-            return false;
-        };
+        let Some(Aside { width, .. }) = self.aside else { return false };
         let mut aside = Page::new(width);
         self.sharing_links(&mut aside, f);
         let lines = aside.lines;
@@ -712,9 +710,7 @@ pub(crate) fn wrap_segs(segs: Vec<Seg>, width: usize) -> Vec<Vec<Seg>> {
     let mut lines: Vec<Vec<Seg>> = vec![Vec::new()];
     let mut used = 0usize;
     let push = |lines: &mut Vec<Vec<Seg>>, seg: &Seg, text: &str| {
-        let Some(line) = lines.last_mut() else {
-            return;
-        };
+        let Some(line) = lines.last_mut() else { return };
         match line.last_mut() {
             Some(last) if last.role == seg.role && last.link == seg.link => {
                 last.text.push_str(text);
@@ -826,9 +822,7 @@ fn inside(line: &PageLine, x: u16, width: u16) -> Option<(u16, u16)> {
 
 /// Segments of a line placed on a row: `(x, visible text, seg)`.
 fn place(line: &PageLine, x: u16, width: u16) -> Vec<(u16, Cow<'_, str>, &Seg)> {
-    let Some((tx, tw)) = inside(line, x, width) else {
-        return Vec::new();
-    };
+    let Some((tx, tw)) = inside(line, x, width) else { return Vec::new() };
     // Between the sides; a top edge keeps a column of rule on each.
     let gap = if line.frame == Frame::Top { 4 } else { 2 };
     // The right side gets at most half when there's a left side too.
@@ -980,9 +974,7 @@ pub fn hit(page: &Page, area: Rect, scroll: usize, x: u16, y: u16) -> PageHit {
         let link = a.lines.get(row).and_then(|l| link_at(l, ax, a.width));
         return PageHit { line: None, link };
     }
-    let Some(line) = page.lines.get(row) else {
-        return PageHit::default();
-    };
+    let Some(line) = page.lines.get(row) else { return PageHit::default() };
     PageHit {
         line: Some(row),
         link: link_at(line, layout.main_x, page.width),

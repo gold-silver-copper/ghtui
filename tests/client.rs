@@ -1207,7 +1207,7 @@ async fn a_searched_pr_is_shown_then_gets_its_checks() {
         .await
         .unwrap();
     let ghtui::api::browse::SearchResults::Issues(r) = results else {
-        panic!("{results:?}");
+        panic!("{results:?}")
     };
     let checks = |i: &ghtui::api::browse::IssueSummary| match i.kind {
         ghtui::api::browse::IssueKind::Pr { state, checks, .. } => (i.number, state, checks),
@@ -1218,7 +1218,7 @@ async fn a_searched_pr_is_shown_then_gets_its_checks() {
         [(5, PrState::Draft, Some(ChecksState::Failing))]
     );
     let Some(ghtui::api::browse::SearchResults::Issues(first)) = shown.into_inner().unwrap() else {
-        panic!("the page wasn't shown before its checks");
+        panic!("the page wasn't shown before its checks")
     };
     assert_eq!(checks(&first.items[0]), (5, PrState::Draft, None));
     let seen = seen.lock().unwrap();
@@ -1318,7 +1318,7 @@ async fn discussion_search_reads_its_count_and_hits() {
         .await
         .unwrap();
     let ghtui::api::browse::SearchResults::Discussions(r) = results else {
-        panic!("not discussions");
+        panic!("not discussions")
     };
     assert_eq!(
         (r.total, r.items.len(), r.next.as_deref()),
@@ -2898,14 +2898,14 @@ async fn a_project_reads_its_view_and_the_items_its_filter_finds() {
     let board = p.views.first().unwrap();
     assert_eq!(board.column, Some(NodeId::new("F_status")));
     let Some(FieldKind::Iteration(sprints)) = p.fields.get(2).map(|f| &f.kind) else {
-        panic!("{:?}", p.fields);
+        panic!("{:?}", p.fields)
     };
     assert_eq!(
         sprints.iter().map(|s| s.completed).collect::<Vec<_>>(),
         [false, true]
     );
     let [issue, draft, hidden] = p.items.items.as_slice() else {
-        panic!("{:?}", p.items);
+        panic!("{:?}", p.items)
     };
     assert_eq!(issue.number, 1001);
     assert!(matches!(
@@ -3122,7 +3122,7 @@ async fn alert_lists_filter_and_page() {
         .unwrap();
     assert_eq!(first.results.next.as_deref(), Some("page=2"));
     let Some(Detail::Code(code)) = first.results.items.first().map(|a| &a.detail) else {
-        panic!("{first:?}");
+        panic!("{first:?}")
     };
     assert_eq!(
         (code.path.as_deref(), code.lines),
@@ -4273,7 +4273,7 @@ async fn settings_send_their_requests_and_read_their_pages() {
         gh.change(&Change::Settings(change)).await.unwrap();
     }
     let Settings::Hooks(hooks) = gh.settings(&repo, SettingsPage::Hooks).await.unwrap() else {
-        panic!("not the webhooks");
+        panic!("not the webhooks")
     };
     assert!(hooks.more, "GitHub has another page");
     assert_eq!(hooks.items[0].form.url, "https://example.com/h");

@@ -215,9 +215,7 @@ impl State {
     /// until it's done. A list extended with Load more isn't: fetching it
     /// again would cut it back to its first page.
     pub fn running_here(&self) -> Vec<DataKey> {
-        let Screen::Page(p) = self.screen() else {
-            return Vec::new();
-        };
+        let Screen::Page(p) = self.screen() else { return Vec::new() };
         self.needs(&p.route)
             .into_iter()
             // A watcher fetches what it watches when GitHub says it changed.

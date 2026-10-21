@@ -45,9 +45,7 @@ pub fn pr_review(
 fn reviewers(page: &mut Page, pr: &PrRef, d: &PrDetail, activity: Fetched<'_, PrActivity>) {
     let title = strong("Reviewers");
     let loading = |page: &mut Page| empty_box(page, title.clone(), "Loading…");
-    let Some(a) = activity.show_or(page, "the reviews", loading) else {
-        return;
-    };
+    let Some(a) = activity.show_or(page, "the reviews", loading) else { return };
     let latest: Vec<_> = a.latest.iter().filter(|l| l.author != d.author).collect();
     page.box_top(vec![title], Vec::new());
     if latest.is_empty() && a.requested.is_empty() && a.requested.left_out() == 0 {
@@ -175,9 +173,7 @@ pub fn pr_reviewed(
     cx: PageCtx<'_>,
 ) {
     pr_summary(page, pr, d, cx.now);
-    let Some(a) = activity.show(page, "the review's comments") else {
-        return;
-    };
+    let Some(a) = activity.show(page, "the review's comments") else { return };
     // From all of them, or else from the conversation's newest.
     #[expect(clippy::disallowed_methods, reason = "either says where it is")]
     let all = reviews.ready_unchecked();
@@ -212,9 +208,7 @@ pub fn pr_reviewed(
         ..marks
     };
     timeline::review(page, &talk, &place, r, marks);
-    let Some(commit) = &r.commit else {
-        return;
-    };
+    let Some(commit) = &r.commit else { return };
     page.box_top(vec![strong("Its changes")], Vec::new());
     let reviewed = Link::Review(ReviewLink::AsReviewed {
         pr: pr.clone(),

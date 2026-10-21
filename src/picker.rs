@@ -577,9 +577,7 @@ impl State {
         let mut rows = Vec::new();
         for (names, what) in [(&refs.branches, "branch"), (&refs.tags, "tag")] {
             for name in names {
-                let Some(score) = fuzzy_score(q, name) else {
-                    continue;
-                };
+                let Some(score) = fuzzy_score(q, name) else { continue };
                 let is_default = default == Some(name.as_str());
                 let hint = if is_default {
                     "default"
@@ -614,9 +612,7 @@ impl State {
     }
 
     fn diff_file_rows(&self, q: &str) -> Rows {
-        let Some(diff) = self.diff() else {
-            return Vec::new();
-        };
+        let Some(diff) = self.diff() else { return Vec::new() };
         let mut hits: Vec<(usize, usize, _)> = diff
             .doc
             .files()
@@ -638,9 +634,7 @@ impl State {
     }
 
     fn commit_rows(&self, mark: Option<usize>) -> Rows {
-        let Some(diff) = self.diff() else {
-            return Vec::new();
-        };
+        let Some(diff) = self.diff() else { return Vec::new() };
         let current = |on: bool| if on { "current" } else { "" };
         let since = diff.doc.since_active();
         let mut rows = vec![
@@ -720,17 +714,13 @@ pub fn move_in_list(key: KeyEvent, selected: &mut usize, count: usize) -> bool {
 }
 
 pub fn on_key(state: &mut State, key: KeyEvent) -> Cmds {
-    let Some(Overlay::Picker(p)) = &state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Picker(p)) = &state.overlay else { return Cmds::new() };
     let mut rows = state.picker_rows(p);
     // Moving a sub-issue (alt-↑↓) before moving in the list.
     if let Some(cmds) = crate::manage::picker_key(state, key, &mut rows) {
         return cmds;
     }
-    let Some(Overlay::Picker(p)) = &mut state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Picker(p)) = &mut state.overlay else { return Cmds::new() };
     if move_in_list(key, &mut p.selected, rows.len()) {
         return Cmds::new();
     }

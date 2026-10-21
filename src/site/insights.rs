@@ -55,9 +55,7 @@ pub fn count_commits<'a>(lines: impl Iterator<Item = &'a str>, now: u64) -> Acti
         else {
             continue;
         };
-        let Ok(time) = time.trim().parse::<u64>() else {
-            continue;
-        };
+        let Ok(time) = time.trim().parse::<u64>() else { continue };
         let name = name.trim();
         // Looked up first: most commits are by someone already counted.
         let i = match names.get(name) {

@@ -80,9 +80,7 @@ pub fn header_layout(area: Rect, crumbs: &[Crumb], right: &[String]) -> HeaderLa
         .iter()
         .map(|item| {
             let w = cols(text::width(item));
-            let Some(rest) = room.checked_sub(w.saturating_add(3)) else {
-                return 0;
-            };
+            let Some(rest) = room.checked_sub(w.saturating_add(3)) else { return 0 };
             room = rest;
             w
         })

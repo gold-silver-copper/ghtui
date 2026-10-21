@@ -428,9 +428,7 @@ pub fn disk_size(path: &std::path::Path) -> u64 {
     let mut total = 0u64;
     let mut dirs = vec![path.to_owned()];
     while let Some(dir) = dirs.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
         for entry in entries.flatten() {
             match entry.file_type() {
                 Ok(t) if t.is_dir() => dirs.push(entry.path()),

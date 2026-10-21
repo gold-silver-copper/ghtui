@@ -270,7 +270,7 @@ fn setting_a_field_sends_its_value() {
     assert!(rows.first().is_some_and(|(_, chosen)| chosen.is_none()));
     let sent = press(&mut s, "<BS>8<Enter>");
     let (Change::SetProjectField { field, value, .. }, _) = fixtures::sent_change(&sent) else {
-        panic!("{sent:?}");
+        panic!("{sent:?}")
     };
     assert_eq!(field.as_str(), "F_estimate");
     assert_eq!(value, &Some(FieldValue::Number("8".into())));

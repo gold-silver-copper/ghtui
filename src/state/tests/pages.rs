@@ -129,7 +129,7 @@ fn a_link_to_lines_opens_on_them() {
     let blob = fixtures::file("src/main.rs", &text);
     let url = "https://github.com/gold-silver-copper/ghtui/blob/main/src/main.rs#L60-L62";
     let crate::route::Target::Page(route) = Dest::from_url(url).target else {
-        panic!("{url}");
+        panic!("{url}")
     };
     let route = route.split(None).unwrap_or(route);
     open(&mut state, route, Data::from(blob));

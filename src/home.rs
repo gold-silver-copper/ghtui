@@ -459,9 +459,7 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
 /// The menu's rows: saving the list on screen to Home, and on Home, its
 /// sections'.
 fn offers(state: &State, out: &mut Vec<Doable>) {
-    let Some(route) = state.route() else {
-        return;
-    };
+    let Some(route) = state.route() else { return };
     let mut add = |section, action, label: String| {
         let why = unavailable(state, action);
         out.push(crate::nav::row(section, action, label, "", why));

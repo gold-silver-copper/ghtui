@@ -51,9 +51,7 @@ pub(super) fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> C
             }
             if inside(panel.area(screen)) {
                 let pick = panel.row_at(screen, y).and_then(|r| picks.get(r));
-                let Some(Some(pick)) = pick.cloned() else {
-                    return Cmds::new();
-                };
+                let Some(Some(pick)) = pick.cloned() else { return Cmds::new() };
                 state.overlay = None;
                 return choose(state, pick);
             }
@@ -112,9 +110,7 @@ pub(super) fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> C
     }
     let area = state.page_area();
     let height = state.page_height();
-    let Screen::Page(p) = state.screen_mut() else {
-        return Cmds::new();
-    };
+    let Screen::Page(p) = state.screen_mut() else { return Cmds::new() };
     if !inside(area) {
         return Cmds::new();
     }

@@ -292,9 +292,7 @@ pub fn references(state: &mut State) -> Cmds {
         Ok(here) => here,
         Err(why) => return state.just_say(why),
     };
-    let Some(word) = name_here(state, here.word.clone()) else {
-        return Cmds::new();
-    };
+    let Some(word) = name_here(state, here.word.clone()) else { return Cmds::new() };
     state.info(format!("Looking for “{word}” in {}", here.repo));
     ask(state, &here, Want::References(word))
 }
@@ -335,9 +333,7 @@ pub fn definition(state: &mut State) -> Cmds {
         Ok(here) => here,
         Err(why) => return state.just_say(why),
     };
-    let Some(word) = name_here(state, here.word.clone()) else {
-        return Cmds::new();
-    };
+    let Some(word) = name_here(state, here.word.clone()) else { return Cmds::new() };
     let defines = |s: &&Scope| s.defines.as_deref() == Some(word.as_str());
     let local: Vec<Scope> = here.scopes.iter().filter(defines).cloned().collect();
     match local.as_slice() {

@@ -277,9 +277,7 @@ pub fn target(
 /// Where a draft is: its lines, or its file.
 fn place(d: &DraftComment) -> Comment {
     let path = d.path.clone();
-    let Some(line) = d.line else {
-        return Comment::File { path, reason: None };
-    };
+    let Some(line) = d.line else { return Comment::File { path, reason: None } };
     let end = LinePos {
         side: d.side.into(),
         line,
@@ -628,9 +626,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Cmds {
                 })
                 .into();
             }
-            let Some((screen, diff)) = state.diff_parts() else {
-                return Cmds::new();
-            };
+            let Some((screen, diff)) = state.diff_parts() else { return Cmds::new() };
             let active = !diff.doc.since_active();
             if diff_screen::preserving_position(screen, diff, |d| d.doc.show_since(active)) {
                 return state.just_say(if active {
@@ -725,9 +721,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Cmds {
                 state.info("Now a comment on the file");
                 return save;
             }
-            let Some(file) = diff.doc.files().get(cursor.file) else {
-                return Cmds::new();
-            };
+            let Some(file) = diff.doc.files().get(cursor.file) else { return Cmds::new() };
             let path = file.meta.path().to_owned();
             state.compose(Target::Review(Comment::File { path, reason: None }), "")
         }
@@ -923,9 +917,7 @@ fn draft_action(state: &mut State, action: Action) -> Cmds {
             None => Cmds::new(),
         };
     }
-    let Some((pr, id)) = draft_here(state) else {
-        return Cmds::new();
-    };
+    let Some((pr, id)) = draft_here(state) else { return Cmds::new() };
     match action {
         Action::EditComment => edit_draft(state, &pr, id),
         _ => delete_draft(state, &pr, id),
@@ -962,12 +954,8 @@ pub(crate) fn apply_commit_choice(
     let Some(pr) = state.screen().diff().and_then(|d| d.of.pr()).cloned() else {
         return Cmds::new();
     };
-    let Some(base) = state.pr_base(&pr) else {
-        return Cmds::new();
-    };
-    let Some((screen, diff)) = state.diff_parts() else {
-        return Cmds::new();
-    };
+    let Some(base) = state.pr_base(&pr) else { return Cmds::new() };
+    let Some((screen, diff)) = state.diff_parts() else { return Cmds::new() };
     let since = choice == PickItem::SinceReview;
     let range = match choice {
         // Already on the whole PR: only "since your review" changes.
@@ -1017,12 +1005,8 @@ pub(crate) fn apply_commit_choice(
 /// `ctrl-s` in the composer on a review's comment: drafts join the
 /// pending review (and are saved); replies post right away.
 pub(crate) fn save(state: &mut State, comment: Comment, body: String) -> Cmds {
-    let Some((screen, diff)) = state.diff_parts() else {
-        return Cmds::new();
-    };
-    let Some(pr) = screen.of.pr().cloned() else {
-        return Cmds::new();
-    };
+    let Some((screen, diff)) = state.diff_parts() else { return Cmds::new() };
+    let Some(pr) = screen.of.pr().cloned() else { return Cmds::new() };
     match comment {
         Comment::Reply { thread_id } => {
             crate::forms::sending(state);
@@ -1043,13 +1027,9 @@ pub(crate) fn save(state: &mut State, comment: Comment, body: String) -> Cmds {
             save
         }
         target @ (Comment::Line { .. } | Comment::File { .. }) => {
-            let Some(head) = diff.head() else {
-                return Cmds::new();
-            };
+            let Some(head) = diff.head() else { return Cmds::new() };
             let id = diff.inputs().review.next_draft_id();
-            let Some(draft) = draft(&target, &body, id, &head) else {
-                return Cmds::new();
-            };
+            let Some(draft) = draft(&target, &body, id, &head) else { return Cmds::new() };
             let save = diff.edit_review(&pr, |i| i.review.pending.push(draft));
             let count = diff.inputs().review.pending.len();
             screen.selection = None;
@@ -1064,9 +1044,7 @@ pub(crate) fn save(state: &mut State, comment: Comment, body: String) -> Cmds {
 }
 
 pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Cmds {
-    let Some(Overlay::Submit(dialog)) = &mut state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Submit(dialog)) = &mut state.overlay else { return Cmds::new() };
     if dialog.sent.sending {
         return Cmds::new();
     }
@@ -1100,9 +1078,7 @@ pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Cmds {
 /// Submits the review in the dialog, with your drafts, on the head they
 /// were written against: the diff's, or the pull request's from its page.
 fn submit(state: &mut State) -> Cmds {
-    let Some(Overlay::Submit(dialog)) = &state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Submit(dialog)) = &state.overlay else { return Cmds::new() };
     let (event, body, pr, seen) = (
         dialog.event,
         dialog.input.lines().join("\n"),
@@ -1122,9 +1098,7 @@ fn submit(state: &mut State) -> Cmds {
         (_, None) => Some("The pull request hasn't loaded yet"),
         _ => None,
     };
-    let Some(Overlay::Submit(dialog)) = &mut state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Submit(dialog)) = &mut state.overlay else { return Cmds::new() };
     let (None, Some(drafts), Some(head)) = (problem, drafts, head) else {
         dialog.sent.error = problem.map(Into::into);
         return Cmds::new();

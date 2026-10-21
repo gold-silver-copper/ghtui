@@ -941,9 +941,7 @@ mod tests {
             Some("gist, read:org"),
             None,
         );
-        let Some(Refusal::Denied(why)) = scope else {
-            panic!("{scope:?}")
-        };
+        let Some(Refusal::Denied(why)) = scope else { panic!("{scope:?}") };
         assert!(
             why.contains("`gh auth refresh -s security_events`"),
             "{why}"
@@ -955,9 +953,7 @@ mod tests {
             None,
             Some("secret_scanning_alerts=read"),
         );
-        let Some(Refusal::Denied(why)) = fine else {
-            panic!("{fine:?}")
-        };
+        let Some(Refusal::Denied(why)) = fine else { panic!("{fine:?}") };
         assert!(
             why.contains("Secret scanning alerts: read permission"),
             "{why}"

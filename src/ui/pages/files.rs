@@ -80,12 +80,8 @@ pub fn blame(
         lines: marked,
     } = at;
     code_toolbar(page, repo, rev, path, true, None, keys);
-    let Some(blob) = blob.show(page, "the file") else {
-        return;
-    };
-    let Some(blame) = blame.show(page, "the blame") else {
-        return;
-    };
+    let Some(blob) = blob.show(page, "the file") else { return };
+    let Some(blame) = blame.show(page, "the blame") else { return };
     let Some(text) = &blob.text else {
         empty_box(page, meta("Blame"), "Binary file not shown.");
         return;

@@ -13,9 +13,7 @@ pub fn notifications(page: &mut Page, query: &str, inbox: Fetched<'_, Inbox>, cx
     let knows = "notifications filter by is:unread, is:read, reason: and repo:";
     ignored_note(page, &ignored, knows);
     page.blank();
-    let Some(inbox) = inbox.show(page, "your notifications") else {
-        return;
-    };
+    let Some(inbox) = inbox.show(page, "your notifications") else { return };
     let l = &inbox.list;
     let shown = list_state(query);
     let tabs = [("all", "All"), ("unread", "Unread"), ("read", "Read")]

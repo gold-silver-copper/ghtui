@@ -327,9 +327,7 @@ fn per_line(old: &Side<'_>, new: &Side<'_>) -> BlockEmphasis {
     }
     let mut out = BlockEmphasis::default();
     for (r, a) in pair_lines(&texts(old), &texts(new)) {
-        let (Some(&(o, os)), Some(&(n, ns))) = (old.get(r), new.get(a)) else {
-            continue;
-        };
+        let (Some(&(o, os)), Some(&(n, ns))) = (old.get(r), new.get(a)) else { continue };
         if let Some((old_changed, new_changed)) = diff_pair(o, n, os, ns) {
             let [o_map, n_map] = &mut out;
             o_map.insert(r, old_changed);

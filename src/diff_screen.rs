@@ -951,9 +951,7 @@ pub fn select_tree_row(screen: &mut DiffScreen, state: &DiffState, row: usize) {
 /// A click at `x`, `y`: in the file tree, selects its row; a second click
 /// on a folder folds or unfolds it.
 pub fn click(screen: &mut DiffScreen, state: &DiffState, content: Rect, x: u16, y: u16) {
-    let Some(tree) = layout(content, &screen.prefs, &state.tree).tree else {
-        return;
-    };
+    let Some(tree) = layout(content, &screen.prefs, &state.tree).tree else { return };
     let rows = unfolded(&state.tree, &screen.folded);
     let Some(row) = (file_tree::row_at(tree, screen.tree_scroll, y))
         .filter(|&row| x < tree.right() && row < rows.len())
@@ -1052,9 +1050,7 @@ fn toggle_viewed(screen: &mut DiffScreen, state: &mut DiffState, notice: &mut No
         return Cmds::new();
     };
     let index = screen.cursor.file;
-    let Some(file) = state.doc.files().get(index) else {
-        return Cmds::new();
-    };
+    let Some(file) = state.doc.files().get(index) else { return Cmds::new() };
     let (previous, path) = (file.viewed, file.meta.path().to_owned());
     let now = if previous == Viewed::Viewed {
         Viewed::Unviewed
@@ -1102,9 +1098,7 @@ fn toggle_reviewed(screen: &DiffScreen, state: &mut DiffState, notice: &mut Noti
 /// under it, or else its file.
 pub fn here_url(screen: &DiffScreen, state: &DiffState) -> String {
     let (doc, cursor) = (&state.doc, screen.cursor);
-    let Some(file) = doc.files().get(cursor.file) else {
-        return screen.of.url();
-    };
+    let Some(file) = doc.files().get(cursor.file) else { return screen.of.url() };
     let from = (screen.selection)
         .filter(|s| s.file == cursor.file)
         .unwrap_or(cursor);
@@ -1158,9 +1152,7 @@ fn anchor_pos(anchor: &str, state: &DiffState, pr: bool) -> Option<Option<Landin
             return Some(None);
         };
         let top = Pos { file, row: 0 };
-        let Some((start, end)) = parse_lines(lines) else {
-            return Some(Some(top.into()));
-        };
+        let Some((start, end)) = parse_lines(lines) else { return Some(Some(top.into())) };
         // Lines wait for the file's diff; a folded file shows none.
         if f.diff.is_none() && !f.collapsed() {
             return None;
@@ -1387,9 +1379,7 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Cmds {
         return Cmds::new();
     }
     // The rest is about reviewing a pull request.
-    let DiffOf::Pr(pr) = of.clone() else {
-        return Cmds::new();
-    };
+    let DiffOf::Pr(pr) = of.clone() else { return Cmds::new() };
     match msg {
         DiffMsg::LastReview(result) => {
             if let Some(diff) = state.diffs.get_mut(of) {

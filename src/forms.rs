@@ -77,9 +77,7 @@ pub fn submit(state: &mut State) -> Cmds {
 /// `c` on a form's page: the composer on the text selected (the first,
 /// when it's a row of another).
 pub fn compose_here(state: &mut State) -> Cmds {
-    let Some(kind) = here(state) else {
-        return Cmds::new();
-    };
+    let Some(kind) = here(state) else { return Cmds::new() };
     let part = match state.screen().page().and_then(|p| p.selected_link()) {
         Some(Link::Form(Row::Text(i) | Row::Rename(i) | Row::Remove(i))) => *i,
         _ => 0,
@@ -143,9 +141,7 @@ pub(crate) fn filling(route: &Route, row: Row, value: impl Into<String>) -> crat
 
 /// Sets the form at `route`'s `row` to what was chosen in its picker.
 pub fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Cmds {
-    let Some(kind) = route.family().form() else {
-        return Cmds::new();
-    };
+    let Some(kind) = route.family().form() else { return Cmds::new() };
     state.forms.sent_mut(route).error = None;
     (kind.fill)(state, route, row, value)
 }
@@ -611,9 +607,7 @@ pub(crate) fn ask(
 
 /// Keys in the question: choose, go ahead, or cancel.
 pub fn on_ask_key(state: &mut State, key: KeyEvent) -> Cmds {
-    let Some(Overlay::Ask(ask)) = &mut state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Ask(ask)) = &mut state.overlay else { return Cmds::new() };
     let n = ask.choices.len().max(1);
     match key.code {
         KeyCode::Esc => state.overlay = None,

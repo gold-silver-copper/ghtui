@@ -293,9 +293,7 @@ impl Job for Make {
         let on_form = state.route() == Some(route);
         let mut cmds = opened(state, route, &made).unwrap_or_default();
         // Offered as GitHub's page offers it: its clone command, run here.
-        let Some(repo) = made.repo().filter(|_| on_form) else {
-            return cmds;
-        };
+        let Some(repo) = made.repo().filter(|_| on_form) else { return cmds };
         let dir = PathBuf::from(&repo.name);
         let fact = format!(
             "Into ./{} here, with your own git: git clone {}",

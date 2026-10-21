@@ -69,9 +69,7 @@ pub fn settings_page(
         say(page, why, Role::Meta);
         page.blank();
     }
-    let Some(data) = data.show(page, &at.name().to_lowercase()) else {
-        return;
-    };
+    let Some(data) = data.show(page, &at.name().to_lowercase()) else { return };
     match data {
         Settings::General(g) => general(page, repo, g, keys),
         Settings::Branches(b) => branches(page, b, keys),

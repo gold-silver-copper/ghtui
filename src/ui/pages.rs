@@ -562,9 +562,7 @@ fn paged_list<T>(
     empty: &str,
     row: impl FnMut(&mut Page, &T),
 ) {
-    let Some(l) = list.show(page, &name.to_lowercase()) else {
-        return;
-    };
+    let Some(l) = list.show(page, &name.to_lowercase()) else { return };
     list_box(page, counted(name, l), Vec::new(), l, empty, row);
 }
 

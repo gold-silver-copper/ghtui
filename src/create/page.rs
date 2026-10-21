@@ -7,9 +7,7 @@ use crate::ui::pages::{self, FormRow, Mark, Starter, TextBox, WriteFormView};
 
 /// The page for `route`, a form's, once what it can have has loaded.
 pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
-    let Some(repo) = form_repo(route) else {
-        return;
-    };
+    let Some(repo) = form_repo(route) else { return };
     let form = state.forms.shown::<Form>(route);
     let form = form.as_ref();
     let pr = matches!(route, Route::Pulls(pulls::NewPr(_)));

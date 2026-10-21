@@ -267,15 +267,11 @@ pub const FORM: crate::forms::Kind = crate::forms::Kind {
 /// Brings the form on screen up to date with what's arrived: starts it,
 /// fills in what's known, asks for what's missing.
 fn follow(state: &mut State) -> Cmds {
-    let Some((route, repo, _)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, repo, _)) = here(state) else { return Cmds::new() };
     if let Route::Pulls(pulls::NewPr(_)) = route {
         return follow_pr(state, &route, &repo);
     }
-    let Some(d) = form_data(&state.data, &repo) else {
-        return Cmds::new();
-    };
+    let Some(d) = form_data(&state.data, &repo) else { return Cmds::new() };
     if (state.forms.get::<Form>(&route)).is_none_or(|f| f.chooser.is_none()) {
         let chooser = templates::chooser(&d.issue_templates);
         let form = state.forms.edit::<Form>(&route);
@@ -299,9 +295,7 @@ fn follow(state: &mut State) -> Cmds {
 
 /// The composer, on the form on screen: `c`, or Enter on its text box.
 fn compose(state: &mut State) -> Cmds {
-    let Some((route, _, form)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, _, form)) = here(state) else { return Cmds::new() };
     if matches!(route, Route::Issues(issues::NewIssue(_))) && form.template.is_none() {
         return state.just_say("Choose a template first");
     }
@@ -313,9 +307,7 @@ fn compose(state: &mut State) -> Cmds {
 /// `,s`, ctrl-s in the composer, Enter on the form's button: makes the
 /// issue; for a pull request, asks first whether it's a draft.
 fn submit(state: &mut State) -> Cmds {
-    let Some((route, repo, form)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, repo, form)) = here(state) else { return Cmds::new() };
     let (title, body) = templates::split(&form.text);
     let Some(d) = form_data(&state.data, &repo) else {
         return say(state, "Still loading what it can have".into());
@@ -363,9 +355,7 @@ fn submit(state: &mut State) -> Cmds {
 /// the clone's, until they're chosen, and its text from the head's
 /// commits once they're in, unless you've written it.
 fn follow_pr(state: &mut State, route: &Route, repo: &RepoId) -> Cmds {
-    let Some(d) = form_data(&state.data, repo) else {
-        return Cmds::new();
-    };
+    let Some(d) = form_data(&state.data, repo) else { return Cmds::new() };
     let (default, template) = (d.default_branch.clone(), d.pr_template.clone());
     let checked_out = state
         .clone_of(repo)
@@ -380,9 +370,7 @@ fn follow_pr(state: &mut State, route: &Route, repo: &RepoId) -> Cmds {
         let form = state.forms.edit::<Form>(route);
         (form.base, form.head) = (base.clone(), head.clone());
     }
-    let (Some(base), Some(head)) = (base, head) else {
-        return Cmds::new();
-    };
+    let (Some(base), Some(head)) = (base, head) else { return Cmds::new() };
     let Some(key) = state.forms.shown::<Form>(route).head_key(repo) else {
         return Cmds::new();
     };
@@ -453,12 +441,8 @@ fn head_problem<'a>(state: &'a State, repo: &RepoId, form: &Form) -> Result<&'a 
 
 /// Asks whether to open the pull request as a draft.
 fn ask_create(state: &mut State, route: &Route) -> Cmds {
-    let Some(form) = state.forms.get::<Form>(route) else {
-        return Cmds::new();
-    };
-    let Some(repo) = form_repo(route) else {
-        return Cmds::new();
-    };
+    let Some(form) = state.forms.get::<Form>(route) else { return Cmds::new() };
+    let Some(repo) = form_repo(route) else { return Cmds::new() };
     let hs = match head_problem(state, repo, form) {
         Ok(hs) => hs,
         Err(why) => return say(state, why),
@@ -561,12 +545,8 @@ fn ask_push(state: &mut State) -> Cmds {
 /// A pull request's question was answered: push its branch (`None`), or
 /// make it, a draft or not.
 pub fn answer(state: &mut State, route: &Route, draft: Option<bool>) -> Cmds {
-    let Some(form) = state.forms.get::<Form>(route) else {
-        return Cmds::new();
-    };
-    let Some(repo) = form_repo(route).cloned() else {
-        return Cmds::new();
-    };
+    let Some(form) = state.forms.get::<Form>(route) else { return Cmds::new() };
+    let Some(repo) = form_repo(route).cloned() else { return Cmds::new() };
     let head = form.head.clone().unwrap_or_default();
     let work: work::Work = match draft {
         None => Push { repo, branch: head }.into(),
@@ -575,9 +555,7 @@ pub fn answer(state: &mut State, route: &Route, draft: Option<bool>) -> Cmds {
                 Ok(hs) => hs,
                 Err(why) => return say(state, why),
             };
-            let Some(d) = form_data(&state.data, &repo) else {
-                return Cmds::new();
-            };
+            let Some(d) = form_data(&state.data, &repo) else { return Cmds::new() };
             let (title, body) = templates::split(&form.text);
             let new = Submission::Pr(NewPr {
                 repo: d.repo_id.clone(),
@@ -647,9 +625,7 @@ impl Job for Submit {
     /// not.
     fn done(self, state: &mut State, result: Result<u64, Failure>) -> Cmds {
         let route = &self.route;
-        let Some(repo) = form_repo(route).cloned() else {
-            return Cmds::new();
-        };
+        let Some(repo) = form_repo(route).cloned() else { return Cmds::new() };
         match result {
             Ok(number) => {
                 crate::forms::done::<Form>(state, route);
@@ -703,12 +679,8 @@ fn on_row(state: &mut State, row: &Row) -> Cmds {
 /// Starts the issue from template `file` (empty: a blank one): its title,
 /// text, labels and assignees, unless you've written your own text.
 fn choose_template(state: &mut State, file: &str) -> Cmds {
-    let Some((route, repo, _)) = here(state) else {
-        return Cmds::new();
-    };
-    let Some(d) = form_data(&state.data, &repo) else {
-        return Cmds::new();
-    };
+    let Some((route, repo, _)) = here(state) else { return Cmds::new() };
+    let Some(d) = form_data(&state.data, &repo) else { return Cmds::new() };
     let form = state.forms.edit::<Form>(&route);
     let template = (form.chooser.as_ref())
         .and_then(|c| c.templates.iter().find(|t| t.file == file))
@@ -771,9 +743,7 @@ pub enum Picked {
 }
 
 fn open_pick(state: &mut State, pick: Pick) -> Cmds {
-    let Some((_, repo, _)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((_, repo, _)) = here(state) else { return Cmds::new() };
     let what = match pick {
         Pick::Labels => "labels",
         Pick::Assignees => "assignees",
@@ -886,9 +856,7 @@ pub fn picker_rows(state: &State, pick: Pick, q: &str) -> crate::picker::Rows {
 
 /// Choosing one of a form picker's rows.
 pub fn pick(state: &mut State, picked: Picked) -> Cmds {
-    let Some(form) = here_mut(state) else {
-        return Cmds::new();
-    };
+    let Some(form) = here_mut(state) else { return Cmds::new() };
     let toggle = |list: &mut Vec<NodeId>, id: NodeId| match list.iter().position(|i| *i == id) {
         Some(at) => {
             list.remove(at);
@@ -907,9 +875,7 @@ pub fn pick(state: &mut State, picked: Picked) -> Cmds {
 
 /// What the menu offers on a form: writing, pushing and making it.
 fn offers(state: &State, out: &mut Vec<Doable>) {
-    let Some((route, repo, form)) = here(state) else {
-        return;
-    };
+    let Some((route, repo, form)) = here(state) else { return };
     let repo = &repo;
     let pr = matches!(route, Route::Pulls(pulls::NewPr(_)));
     let why = (!pr && form.template.is_none()).then(|| "choose a template first".to_owned());
@@ -946,9 +912,7 @@ fn offers(state: &State, out: &mut Vec<Doable>) {
 /// What the menu offers on a repository's pages: a new issue or pull
 /// request.
 fn doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
-    let Some(repo) = route.repo() else {
-        return;
-    };
+    let Some(repo) = route.repo() else { return };
     let why = |pr| refused(state, repo, pr);
     out.push(row("New", Action::NewIssue, "New issue", "", why(false)));
     out.push(row("New", Action::NewPr, "New pull request", "", why(true)));

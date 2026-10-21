@@ -445,9 +445,7 @@ pub(crate) fn issue<'a>(
 /// notifications, in order.
 fn thread(state: &State) -> Option<Subject> {
     let p = state.screen().page()?;
-    let Route::Search(search::Notifications { query }) = &p.route else {
-        return None;
-    };
+    let Route::Search(search::Notifications { query }) = &p.route else { return None };
     let key = DataKey::Notifications(query.clone());
     let inbox = state.picked::<Inbox>(&key)?;
     let n = inbox.list.items.get(p.selected?)?;
@@ -500,16 +498,12 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
     match subject {
         Subject::Pr(pr) => {
             let loaded = loaded(state.pr_remote(pr), &name)?;
-            let Some(detail) = loaded.and_then(PrDetail::pick) else {
-                return Ok(Plan::Load);
-            };
+            let Some(detail) = loaded.and_then(PrDetail::pick) else { return Ok(Plan::Load) };
             pr_plan(state, pr, detail, action)
         }
         Subject::Issue(repo, number) => {
             let key = DataKey::Issue(repo.clone(), *number);
-            let Some(data) = loaded(state.remote(&key), &name)? else {
-                return Ok(Plan::Load);
-            };
+            let Some(data) = loaded(state.remote(&key), &name)? else { return Ok(Plan::Load) };
             // A number that's a pull request is one.
             let crate::data::Data::Issue(Some(issue)) = data else {
                 return Err(elsewhere(action).to_owned());
@@ -599,9 +593,7 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         }
         Subject::Inbox { query } => {
             let key = DataKey::Notifications(query.clone());
-            let Some(data) = loaded(state.remote(&key), &name)? else {
-                return Ok(Plan::Load);
-            };
+            let Some(data) = loaded(state.remote(&key), &name)? else { return Ok(Plan::Load) };
             let crate::data::Data::Notifications(list) = data else {
                 return Err("GitHub sent something else for your notifications".into());
             };
@@ -1018,9 +1010,7 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
             yes(crate::projects::sidebar::shows(state, change, about))
         }
         (_, Subject::Pr(r)) => {
-            let Some(d) = pr(r) else {
-                return Shown::No;
-            };
+            let Some(d) = pr(r) else { return Shown::No };
             let merged = d.state == PrState::Merged;
             yes(match change {
                 Change::Merge { .. } => merged,
@@ -1039,9 +1029,7 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
             })
         }
         (Change::CloseIssue { .. } | Change::ReopenIssue { .. }, Subject::Issue(repo, number)) => {
-            let Some(issue) = issue(state, repo, *number) else {
-                return Shown::No;
-            };
+            let Some(issue) = issue(state, repo, *number) else { return Shown::No };
             let open = issue.state == IssueState::Open;
             yes(open == matches!(change, Change::ReopenIssue { .. }))
         }
@@ -1050,9 +1038,7 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
         }
         (Change::Rerun { .. } | Change::CancelRun { .. }, Subject::Run(repo, run, attempt)) => {
             let key = DataKey::Run(repo.clone(), *run, *attempt);
-            let Some(r) = state.picked::<WorkflowRun>(&key) else {
-                return Shown::No;
-            };
+            let Some(r) = state.picked::<WorkflowRun>(&key) else { return Shown::No };
             let running = r.outcome == CheckOutcome::Pending;
             yes(running == matches!(change, Change::Rerun { .. }))
         }
@@ -1080,9 +1066,7 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
         }
         (Change::MarkRead { .. } | Change::MarkDone { .. }, Subject::Thread { query, .. }) => {
             let key = DataKey::Notifications(query.clone());
-            let Some(inbox) = state.picked::<Inbox>(&key) else {
-                return Shown::No;
-            };
+            let Some(inbox) = state.picked::<Inbox>(&key) else { return Shown::No };
             // Read, it stays, read (or leaves a list of the unread); done,
             // it leaves.
             let row = |id: &str| inbox.list.items.iter().find(|n| n.id == id);
@@ -1119,13 +1103,9 @@ pub fn follow(state: &mut State) -> Cmds {
             cmds.extend((p.then)(state, p.subject, p.action));
         }
     }
-    let Some(Overlay::Ask(ask)) = &state.overlay else {
-        return cmds;
-    };
+    let Some(Overlay::Ask(ask)) = &state.overlay else { return cmds };
     // Another module's question (deleting a comment, a form's) is its own.
-    let About::Act(action, about) = &ask.about else {
-        return cmds;
-    };
+    let About::Act(action, about) = &ask.about else { return cmds };
     if ask.sent.sending || !ACTIONS.contains(action) {
         return cmds;
     }

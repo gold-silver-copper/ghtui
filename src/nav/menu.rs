@@ -85,9 +85,7 @@ pub fn on_menu_key(state: &mut State, key: KeyEvent) -> Cmds {
     let stack = state.contexts();
     let pressed = crate::keymap::Key::from(key);
     let action = state.keymap.resolve(pressed, stack);
-    let Some(Overlay::Menu(menu)) = &mut state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Menu(menu)) = &mut state.overlay else { return Cmds::new() };
     let last = menu.shown().len().saturating_sub(1);
     let typed = !key.modifiers.contains(KeyModifiers::CONTROL);
     let run = match (&mut menu.filter, key.code) {

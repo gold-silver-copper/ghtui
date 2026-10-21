@@ -39,9 +39,7 @@ pub fn cached(gh: &GitHub, key: &DataKey) -> Option<Cached<Data>> {
         return Some(found);
     }
     // A pull request it is, as kept: offline, its page opens.
-    let DataKey::Issue(repo, number) = key else {
-        return None;
-    };
+    let DataKey::Issue(repo, number) = key else { return None };
     let pr = PrRef {
         repo: repo.clone(),
         number: *number,

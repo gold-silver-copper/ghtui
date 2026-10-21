@@ -344,13 +344,9 @@ impl Project {
     /// orders them.
     pub fn sorted(&self) -> Vec<&ProjectItem> {
         let mut items: Vec<&ProjectItem> = self.items.items.iter().collect();
-        let Some(view) = self.shown() else {
-            return items;
-        };
+        let Some(view) = self.shown() else { return items };
         for (field, descending) in view.sort.iter().rev() {
-            let Some(field) = self.field(field) else {
-                continue;
-            };
+            let Some(field) = self.field(field) else { continue };
             // Each item's key once, not once a comparison.
             let mut keyed: Vec<_> = (items.into_iter())
                 .map(|i| (sort_key(field, i), i))
@@ -610,9 +606,7 @@ impl Project {
                 Some((a, b))
             }
             Dates::Iteration(field) => {
-                let FieldKind::Iteration(iterations) = &field.kind else {
-                    return None;
-                };
+                let FieldKind::Iteration(iterations) = &field.kind else { return None };
                 let Some(FieldValue::Iteration { id, .. }) = it.value(&field.id) else {
                     return None;
                 };
@@ -715,9 +709,7 @@ pub enum ProjectChange {
 /// GitHub's word that the token lacks a scope projects need, said as what
 /// to do about it.
 fn scoped(err: ApiError) -> ApiError {
-    let ApiError::GraphQl(messages) = &err else {
-        return err;
-    };
+    let ApiError::GraphQl(messages) = &err else { return err };
     let read = messages.iter().any(|m| m.contains("'read:project'"));
     let write = messages.iter().any(|m| m.contains("'project'"));
     if write {
@@ -797,9 +789,7 @@ impl GitHub {
         };
         let mut items = self.project_items(project, &filter, after, false).await?;
         for _ in 1..pages {
-            let Some(next) = items.next.take() else {
-                break;
-            };
+            let Some(next) = items.next.take() else { break };
             let more = self
                 .project_items(project, &filter, Some(next), false)
                 .await?;

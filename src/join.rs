@@ -93,9 +93,7 @@ pub(crate) fn join(state: &mut State) -> Cmds {
     }
     // What tells you something is for the diff on screen: a hidden one's
     // keys stay unclaimed until it's back.
-    let Some(of @ DiffOf::Pr(pr)) = &shown else {
-        return cmds;
-    };
+    let Some(of @ DiffOf::Pr(pr)) = &shown else { return cmds };
     let refresh = state.first_key(Action::Refresh);
     let Some(diff) = state.diffs.get_mut(of).filter(|d| d.range().is_none()) else {
         return cmds;
