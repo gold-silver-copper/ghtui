@@ -166,10 +166,10 @@ pub const REASONS: [(&str, &str); 15] = [
 ];
 
 /// A reason as the inbox says it.
-pub fn reason_label(reason: &str) -> String {
+pub fn reason_label(reason: &str) -> std::borrow::Cow<'static, str> {
     REASONS.iter().find(|(r, _)| *r == reason).map_or_else(
-        || reason.replace('_', " "),
-        |(_, label)| (*label).to_owned(),
+        || reason.replace('_', " ").into(),
+        |(_, label)| (*label).into(),
     )
 }
 
@@ -217,7 +217,7 @@ impl InboxFilter {
     /// The REST path of page `page`, `per_page` threads a page.
     pub fn path(&self, page: u64, per_page: u64) -> String {
         let list = match &self.repo {
-            Some(repo) => format!("/repos/{}/{}/notifications", repo.owner, repo.name),
+            Some(repo) => format!("/repos/{repo}/notifications"),
             None => "/notifications".to_owned(),
         };
         // Read threads too, unless only unread ones are asked for.

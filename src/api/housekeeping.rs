@@ -413,8 +413,10 @@ impl GitHub {
             key: String,
             name: String,
         }
-        let gitignores = self.rest_get("/gitignore/templates", "templates").await?;
-        let licenses = self.rest_get("/licenses", "licences").await?;
+        let (gitignores, licenses) = tokio::try_join!(
+            self.rest_get("/gitignore/templates", "templates"),
+            self.rest_get("/licenses", "licences"),
+        )?;
         let licenses: Vec<License> = serde_json::from_str(&licenses)?;
         Ok(Templates {
             gitignores: serde_json::from_str(&gitignores)?,

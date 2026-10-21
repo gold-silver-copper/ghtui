@@ -260,8 +260,7 @@ impl GitHub {
         let base = p.path(self.is_org(&p.owner).await?);
         let mut path = format!("{base}/versions?per_page={VERSIONS}");
         if let Some(after) = &after {
-            path.push('&');
-            path.push_str(after);
+            path.extend(["&", after]);
         }
         let (package, answer) = tokio::try_join!(
             self.packages_answer(&base, &what),

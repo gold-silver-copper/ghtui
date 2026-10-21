@@ -71,40 +71,22 @@ impl AlertKind {
     }
 
     /// The reasons to dismiss (for secrets, resolve) an alert of this
-    /// kind: GitHub's word for each, a label, and what it means.
+    /// kind: GitHub's word for each, a label, and what it means. One row
+    /// each, so rustfmt is kept off.
+    #[rustfmt::skip]
     pub fn reasons(self) -> &'static [(&'static str, &'static str, &'static str)] {
         match self {
             AlertKind::Dependabot => &[
-                (
-                    "fix_started",
-                    "A fix has already been started",
-                    "fix started",
-                ),
+                ("fix_started", "A fix has already been started", "fix started"),
                 ("no_bandwidth", "No bandwidth to fix this", "no bandwidth"),
-                (
-                    "tolerable_risk",
-                    "Risk is tolerable to this project",
-                    "tolerable risk",
-                ),
-                (
-                    "inaccurate",
-                    "This alert is inaccurate or incorrect",
-                    "inaccurate",
-                ),
-                (
-                    "not_used",
-                    "Vulnerable code is not actually used",
-                    "not used",
-                ),
+                ("tolerable_risk", "Risk is tolerable to this project", "tolerable risk"),
+                ("inaccurate", "This alert is inaccurate or incorrect", "inaccurate"),
+                ("not_used", "Vulnerable code is not actually used", "not used"),
             ],
             AlertKind::CodeScanning => &[
                 ("false positive", "False positive", "the alert isn't valid"),
                 ("won't fix", "Won't fix", "the alert isn't relevant"),
-                (
-                    "used in tests",
-                    "Used in tests",
-                    "the code is only in tests",
-                ),
+                ("used in tests", "Used in tests", "the code is only in tests"),
             ],
             AlertKind::SecretScanning => &[
                 ("revoked", "Revoked", "the secret no longer works"),
@@ -329,32 +311,27 @@ pub fn filter(kind: AlertKind, query: &str) -> Filter {
             f.ignored.push(word.to_owned());
             continue;
         };
+        let to = |name, value: &str| Some((name, value.to_owned()));
         let param = match (kind, key, value) {
-            (_, "is" | "state", "open") => Some(("state", "open".to_owned())),
             (K::Dependabot, "is" | "state", "closed") => {
-                Some(("state", "dismissed,fixed,auto_dismissed".to_owned()))
+                to("state", "dismissed,fixed,auto_dismissed")
             }
-            (K::CodeScanning, "is" | "state", "closed") => Some(("state", "closed".to_owned())),
-            (K::SecretScanning, "is" | "state", "closed") => Some(("state", "resolved".to_owned())),
-            (K::Dependabot, "is" | "state", "dismissed" | "fixed" | "auto_dismissed")
-            | (K::CodeScanning, "is" | "state", "dismissed" | "fixed") => {
-                Some(("state", value.to_owned()))
-            }
-            (K::Dependabot | K::CodeScanning, "severity", _) => {
-                Some(("severity", value.to_owned()))
-            }
-            (K::Dependabot, "ecosystem", _) => Some(("ecosystem", value.to_owned())),
-            (K::Dependabot, "package", _) => Some(("package", value.to_owned())),
-            (K::Dependabot, "manifest", _) => Some(("manifest", value.to_owned())),
-            (K::Dependabot, "scope", "runtime" | "development") => {
-                Some(("scope", value.to_owned()))
-            }
-            (K::CodeScanning, "tool", _) => Some(("tool_name", value.to_owned())),
-            (K::CodeScanning, "branch", _) => Some(("ref", format!("refs/heads/{value}"))),
-            (K::CodeScanning, "ref", _) => Some(("ref", value.to_owned())),
-            (K::SecretScanning, "secret-type", _) => Some(("secret_type", value.to_owned())),
-            (K::SecretScanning, "resolution", _) => Some(("resolution", value.to_owned())),
-            (K::SecretScanning, "validity", _) => Some(("validity", value.to_owned())),
+            (K::CodeScanning, "is" | "state", "closed") => to("state", "closed"),
+            (K::SecretScanning, "is" | "state", "closed") => to("state", "resolved"),
+            (_, "is" | "state", "open")
+            | (K::Dependabot, "is" | "state", "dismissed" | "fixed" | "auto_dismissed")
+            | (K::CodeScanning, "is" | "state", "dismissed" | "fixed") => to("state", value),
+            (K::Dependabot | K::CodeScanning, "severity", _) => to("severity", value),
+            (K::Dependabot, "ecosystem", _) => to("ecosystem", value),
+            (K::Dependabot, "package", _) => to("package", value),
+            (K::Dependabot, "manifest", _) => to("manifest", value),
+            (K::Dependabot, "scope", "runtime" | "development") => to("scope", value),
+            (K::CodeScanning, "tool", _) => to("tool_name", value),
+            (K::CodeScanning, "branch", _) => to("ref", &format!("refs/heads/{value}")),
+            (K::CodeScanning, "ref", _) => to("ref", value),
+            (K::SecretScanning, "secret-type", _) => to("secret_type", value),
+            (K::SecretScanning, "resolution", _) => to("resolution", value),
+            (K::SecretScanning, "validity", _) => to("validity", value),
             _ => None,
         };
         match param {
@@ -470,14 +447,11 @@ impl GitHub {
     ) -> Result<AlertList, ApiError> {
         let mut path = format!("/repos/{repo}/{}/alerts?per_page={PAGE}", kind.slug());
         for (name, value) in filter(kind, query).params {
-            path.push_str(&format!(
-                "&{name}={}",
-                url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>()
-            ));
+            path.extend(["&", name, "="]);
+            path.extend(url::form_urlencoded::byte_serialize(value.as_bytes()));
         }
         if let Some(after) = &after {
-            path.push('&');
-            path.push_str(after);
+            path.extend(["&", after]);
         }
         let what = format!("{repo}'s {}", kind.alerts().to_lowercase());
         let list = match self.alerts_answer(kind, &path, &what).await? {
@@ -843,75 +817,40 @@ mod wire {
             };
             let (title, severity, level, detail) = match kind {
                 AlertKind::Dependabot => {
-                    let Advisory {
-                        ghsa_id,
-                        cve_id,
-                        summary,
-                        description,
-                        severity: advisory_severity,
-                        cwes,
-                        references,
-                    } = self.security_advisory.unwrap_or_default();
-                    let Vulnerability {
-                        severity,
-                        vulnerable_version_range,
-                        first_patched_version,
-                    } = self.security_vulnerability.unwrap_or_default();
-                    let Dependency {
-                        package,
-                        manifest_path,
-                        scope,
-                        relationship,
-                    } = self.dependency.unwrap_or_default();
-                    let (name, ecosystem) = package.map_or((None, None), |p| (p.name, p.ecosystem));
+                    let a = self.security_advisory.unwrap_or_default();
+                    let v = self.security_vulnerability.unwrap_or_default();
+                    let d = self.dependency.unwrap_or_default();
+                    let (name, ecosystem) =
+                        (d.package).map_or((None, None), |p| (p.name, p.ecosystem));
                     let detail = super::Dependency {
                         package: name.unwrap_or_default(),
                         ecosystem: ecosystem.unwrap_or_default(),
-                        manifest: manifest_path.unwrap_or_default(),
-                        scope,
-                        relationship: relationship.filter(|r| r != "unknown"),
-                        vulnerable: vulnerable_version_range,
-                        patched: first_patched_version.map(|v| v.identifier),
-                        ghsa: ghsa_id,
-                        cve: cve_id,
-                        description: description.unwrap_or_default(),
-                        cwes: cwes
-                            .into_iter()
+                        manifest: d.manifest_path.unwrap_or_default(),
+                        scope: d.scope,
+                        relationship: d.relationship.filter(|r| r != "unknown"),
+                        vulnerable: v.vulnerable_version_range,
+                        patched: v.first_patched_version.map(|v| v.identifier),
+                        ghsa: a.ghsa_id,
+                        cve: a.cve_id,
+                        description: a.description.unwrap_or_default(),
+                        cwes: (a.cwes.into_iter())
                             .map(|c| format!("{} {}", c.cwe_id, c.name))
                             .collect(),
-                        references: references.into_iter().map(|r| r.url).collect(),
+                        references: a.references.into_iter().map(|r| r.url).collect(),
                         update: None,
                     };
-                    let severity = severity.or(advisory_severity);
+                    let severity = v.severity.or(a.severity);
                     (
-                        summary,
+                        a.summary,
                         severity,
                         None,
                         Detail::Dependency(Box::new(detail)),
                     )
                 }
                 AlertKind::CodeScanning => {
-                    let Rule {
-                        id,
-                        name,
-                        severity,
-                        security_severity_level,
-                        description,
-                        full_description,
-                        help,
-                        tags,
-                    } = self.rule.unwrap_or_default();
-                    let Instance {
-                        git_ref,
-                        commit_sha,
-                        message,
-                        location,
-                    } = self.most_recent_instance.unwrap_or_default();
-                    let Location {
-                        path,
-                        start_line,
-                        end_line,
-                    } = location.unwrap_or_default();
+                    let rule = self.rule.unwrap_or_default();
+                    let at = self.most_recent_instance.unwrap_or_default();
+                    let place = at.location.unwrap_or_default();
                     let tool = self.tool.map(|t| {
                         let name = t.name.unwrap_or_default();
                         match t.version {
@@ -920,20 +859,20 @@ mod wire {
                         }
                     });
                     let detail = CodeAlert {
-                        rule: id.unwrap_or_default(),
-                        rule_description: nonempty(full_description).unwrap_or_default(),
-                        help: help.unwrap_or_default(),
+                        rule: rule.id.unwrap_or_default(),
+                        rule_description: nonempty(rule.full_description).unwrap_or_default(),
+                        help: rule.help.unwrap_or_default(),
                         tool: tool.unwrap_or_default(),
-                        message: message.and_then(|m| m.text).unwrap_or_default(),
-                        path,
-                        lines: start_line.map(|start| span(start, end_line)),
-                        commit: commit_sha,
-                        git_ref,
-                        tags,
+                        message: at.message.and_then(|m| m.text).unwrap_or_default(),
+                        path: place.path,
+                        lines: (place.start_line).map(|start| span(start, place.end_line)),
+                        commit: at.commit_sha,
+                        git_ref: at.git_ref,
+                        tags: rule.tags,
                     };
-                    let title = description.or(name).unwrap_or_default();
+                    let title = rule.description.or(rule.name).unwrap_or_default();
                     let detail = Detail::Code(Box::new(detail));
-                    (title, security_severity_level, severity, detail)
+                    (title, rule.security_severity_level, rule.severity, detail)
                 }
                 AlertKind::SecretScanning => {
                     let secret_type = self

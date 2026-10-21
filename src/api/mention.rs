@@ -25,7 +25,7 @@ impl GitHub {
             number: u64,
             title: String,
         }
-        let base = format!("/repos/{}/{}", repo.owner, repo.name);
+        let base = format!("/repos/{repo}");
         let users = format!("{base}/assignees?per_page=100");
         let issues = format!("{base}/issues?state=all&sort=updated&per_page=100");
         let (users, issues) = futures::join!(

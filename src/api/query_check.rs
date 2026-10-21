@@ -18,29 +18,16 @@ use cynic_parser::type_system::{Definition, TypeDefinition};
 use cynic_parser::{ExecutableDocument, Value};
 
 /// Lists that are fine without a total, and why. (A list of one, `first:
-/// 1`, is a "the newest" or "the first", not a list, and needs none.)
+/// 1`, is a "the newest" or "the first", not a list, and needs none.) One
+/// row each, so rustfmt is kept off.
+#[rustfmt::skip]
 const ALLOWED: &[(&str, &str)] = &[
-    (
-        "q::LastReviewQuery: repository.pullRequest.reviews",
-        "Your newest submitted review: you have at most one pending review on a PR, so your last 20 include it",
-    ),
+    ("q::LastReviewQuery: repository.pullRequest.reviews", "Your newest submitted review: you have at most one pending review on a PR, so your last 20 include it"),
     ("b::ProfileQuery: user.pinnedItems", "GitHub pins at most 6"),
-    (
-        "b::ProfileQuery: organization.pinnedItems",
-        "GitHub pins at most 6",
-    ),
-    (
-        "b::ProfileQuery: user.socialAccounts",
-        "GitHub keeps at most 4 social accounts",
-    ),
-    (
-        "TOPIC: topic.relatedTopics",
-        "A topic's related topics: GitHub relates at most 10",
-    ),
-    (
-        "BRANCHES: repository.refs.nodes.associatedPullRequests",
-        "Only the newest from this branch in this repository is shown; 10 newer ones from forks' branches of the same name is not worth paging for",
-    ),
+    ("b::ProfileQuery: organization.pinnedItems", "GitHub pins at most 6"),
+    ("b::ProfileQuery: user.socialAccounts", "GitHub keeps at most 4 social accounts"),
+    ("TOPIC: topic.relatedTopics", "A topic's related topics: GitHub relates at most 10"),
+    ("BRANCHES: repository.refs.nodes.associatedPullRequests", "Only the newest from this branch in this repository is shown; 10 newer ones from forks' branches of the same name is not worth paging for"),
 ];
 
 /// A list's size when its `first:` is a variable: GitHub's most.
@@ -575,6 +562,8 @@ fn every_query_is_checked() {
         - 1
         + crate::api::change::MUTATIONS
         + crate::api::edit::MUTATIONS
+        + crate::api::create::MUTATIONS
+        + crate::api::watch::MUTATIONS
         + roots;
     assert_eq!(typed().len(), operations);
     // The text queries are listed by `raw!`, but those built at run time

@@ -460,11 +460,7 @@ words! {
     TooHeated "TOO_HEATED" "too heated";
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReview")]
-pub struct ReviewAuthor {
-    pub author: Option<Actor>,
-}
+fragments! { author: Option<Actor>; ReviewAuthor = "PullRequestReview" }
 
 /// A review, as the timeline and the list of reviews have it.
 #[derive(cynic::QueryFragment, Debug)]
@@ -633,8 +629,7 @@ fragments! {
 
 /// A repository's pinned issues.
 pub(crate) fn pinned_issues(p: PinnedIssues) -> Capped<Linked> {
-    let items = nodes(p.nodes).filter_map(|p| p.issue.into_linked());
-    Capped::new(items.collect(), count(p.total_count))
+    capped(p.total_count, p.nodes, |p| p.issue.into_linked())
 }
 
 /// How many reviewers' latest word is an approval.
@@ -658,6 +653,17 @@ fn event(actor_: Option<Actor>, at: DateTime, what: What) -> Item {
         at: at.0,
         what,
     })
+}
+
+fn label(l: QLabel) -> Label {
+    Label {
+        name: l.name,
+        color: l.color,
+    }
+}
+
+fn linked(issue: Option<LinkedIssue>) -> Option<Linked> {
+    issue.and_then(LinkedIssue::into_linked)
 }
 
 fn oid(c: Option<CommitOid>) -> Option<String> {
@@ -751,12 +757,14 @@ impl WireReview {
     }
 }
 
-/// The events both kinds of timeline have, made into items.
-macro_rules! shared_events {
-    ($item:expr, $ty:ident, $($extra:tt)*) => {
-        match $item {
-            $ty::IssueComment(c) => Some(Item::Comment(comment(*c))),
-            $ty::ClosedEvent(e) => {
+/// A timeline's items: its comments, the `$arm`s it has besides, and its
+/// events, each `Variant(e) => what` (who and when come from `e`; a `?`
+/// in `what` leaves the event out). The events both kinds of timeline
+/// have are written here once.
+macro_rules! timeline_items {
+    ($item:expr, $ty:ident, { $($arm:tt)* } $($v:ident($e:ident) => $what:expr,)*) => {
+        timeline_items!(@all $item, $ty, { $($arm)* }
+            ClosedEvent(e) => {
                 let by = match e.closer {
                     Some(WireCloser::Commit(c)) => Some(Closer::Commit(c.oid.0)),
                     Some(WireCloser::PullRequest(p)) => p.into_linked().map(Closer::Pr),
@@ -767,78 +775,55 @@ macro_rules! shared_events {
                     _ => IssueState::Closed,
                 });
                 let duplicate = e.state_reason == Some(StateReason::Duplicate);
-                Some(event(e.actor, e.created_at, What::Closed { by, reason, duplicate }))
-            }
-            $ty::ReopenedEvent(e) => Some(event(e.actor, e.created_at, What::Reopened)),
-            $ty::CrossReferencedEvent(e) => {
-                let from = e.source.into_linked()?;
-                let will_close = e.will_close_target;
-                Some(event(e.actor, e.created_at, What::CrossReferenced { from, will_close }))
-            }
-            $ty::ReferencedEvent(e) => {
-                let commit = oid(e.commit)?;
+                What::Closed { by, reason, duplicate }
+            },
+            ReopenedEvent(e) => What::Reopened,
+            CrossReferencedEvent(e) => What::CrossReferenced {
+                from: e.source.into_linked()?,
+                will_close: e.will_close_target,
+            },
+            ReferencedEvent(e) => {
                 let repo = RepoId::parse(&e.commit_repository.name_with_owner);
-                Some(event(e.actor, e.created_at, What::Referenced { commit, repo }))
-            }
-            $ty::LabeledEvent(e) => {
-                let label = Label { name: e.label.name, color: e.label.color };
-                Some(event(e.actor, e.created_at, What::Labeled { label, added: true }))
-            }
-            $ty::UnlabeledEvent(e) => {
-                let label = Label { name: e.label.name, color: e.label.color };
-                Some(event(e.actor, e.created_at, What::Labeled { label, added: false }))
-            }
-            $ty::AssignedEvent(e) => {
-                let who = assignee(e.assignee);
-                Some(event(e.actor, e.created_at, What::Assigned { who, added: true }))
-            }
-            $ty::UnassignedEvent(e) => {
-                let who = assignee(e.assignee);
-                Some(event(e.actor, e.created_at, What::Assigned { who, added: false }))
-            }
-            $ty::MilestonedEvent(e) => {
-                let title = e.milestone_title;
-                Some(event(e.actor, e.created_at, What::Milestoned { title, added: true }))
-            }
-            $ty::DemilestonedEvent(e) => {
-                let title = e.milestone_title;
-                Some(event(e.actor, e.created_at, What::Milestoned { title, added: false }))
-            }
-            $ty::AddedToProjectV2Event(e) => {
-                Some(event(e.actor, e.created_at, What::Project { added: true }))
-            }
-            $ty::RemovedFromProjectV2Event(e) => {
-                Some(event(e.actor, e.created_at, What::Project { added: false }))
-            }
-            $ty::ProjectV2ItemStatusChangedEvent(e) => {
-                let what = What::ProjectStatus { from: e.previous_status, to: e.status };
-                Some(event(e.actor, e.created_at, what))
-            }
-            $ty::RenamedTitleEvent(e) => {
-                let what = What::Renamed { from: e.previous_title, to: e.current_title };
-                Some(event(e.actor, e.created_at, what))
-            }
-            $ty::LockedEvent(e) => {
-                let reason = e.lock_reason.map(|r| r.said().to_owned());
-                Some(event(e.actor, e.created_at, What::Locked { reason }))
-            }
-            $ty::UnlockedEvent(e) => Some(event(e.actor, e.created_at, What::Unlocked)),
-            $ty::MarkedAsDuplicateEvent(e) => {
-                let of = e.canonical.and_then(IssueOrPrLink::into_linked);
-                Some(event(e.actor, e.created_at, What::MarkedDuplicate { of, undone: false }))
-            }
-            $ty::UnmarkedAsDuplicateEvent(e) => {
-                let of = e.canonical.and_then(IssueOrPrLink::into_linked);
-                Some(event(e.actor, e.created_at, What::MarkedDuplicate { of, undone: true }))
-            }
-            $($extra)*
+                What::Referenced { commit: oid(e.commit)?, repo }
+            },
+            LabeledEvent(e) => What::Labeled { label: label(e.label), added: true },
+            UnlabeledEvent(e) => What::Labeled { label: label(e.label), added: false },
+            AssignedEvent(e) => What::Assigned { who: assignee(e.assignee), added: true },
+            UnassignedEvent(e) => What::Assigned { who: assignee(e.assignee), added: false },
+            MilestonedEvent(e) => What::Milestoned { title: e.milestone_title, added: true },
+            DemilestonedEvent(e) => What::Milestoned { title: e.milestone_title, added: false },
+            AddedToProjectV2Event(e) => What::Project { added: true },
+            RemovedFromProjectV2Event(e) => What::Project { added: false },
+            ProjectV2ItemStatusChangedEvent(e) => {
+                What::ProjectStatus { from: e.previous_status, to: e.status }
+            },
+            RenamedTitleEvent(e) => What::Renamed { from: e.previous_title, to: e.current_title },
+            LockedEvent(e) => What::Locked { reason: e.lock_reason.map(|r| r.said().to_owned()) },
+            UnlockedEvent(e) => What::Unlocked,
+            MarkedAsDuplicateEvent(e) => What::MarkedDuplicate {
+                of: e.canonical.and_then(IssueOrPrLink::into_linked),
+                undone: false,
+            },
+            UnmarkedAsDuplicateEvent(e) => What::MarkedDuplicate {
+                of: e.canonical.and_then(IssueOrPrLink::into_linked),
+                undone: true,
+            },
+            $($v($e) => $what,)*
+        )
+    };
+    (@all $item:expr, $ty:ident, { $($arm:tt)* } $($v:ident($e:ident) => $what:expr,)*) => {
+        match $item {
+            $ty::IssueComment(c) => Some(Item::Comment(comment(*c))),
+            $($arm)*
+            $($ty::$v($e) => Some(event($e.actor, $e.created_at, $what)),)*
+            $ty::Other => None,
         }
     };
 }
 
 impl PrItem {
     pub(crate) fn into_item(self) -> Option<Item> {
-        shared_events!(self, PrItem,
+        timeline_items!(self, PrItem, {
             PrItem::PullRequestReview(r) => Some(Item::Review(r.into_review())),
             PrItem::PullRequestCommit(c) => {
                 let at = c.commit.committed_date.0.clone();
@@ -846,155 +831,125 @@ impl PrItem {
                 let actor = info.author.login().unwrap_or_default().to_owned();
                 Some(Item::Event(Event { actor, at, what: What::Committed(info) }))
             }
-            PrItem::MergedEvent(e) => {
-                let what = What::Merged { commit: oid(e.commit), into: e.merge_ref_name };
-                Some(event(e.actor, e.created_at, what))
-            }
-            PrItem::ReviewRequestedEvent(e) => {
-                let who = reviewer(e.requested_reviewer);
-                Some(event(e.actor, e.created_at, What::ReviewRequested { who, added: true }))
-            }
-            PrItem::ReviewRequestRemovedEvent(e) => {
-                let who = reviewer(e.requested_reviewer);
-                Some(event(e.actor, e.created_at, What::ReviewRequested { who, added: false }))
-            }
-            PrItem::ReviewDismissedEvent(e) => {
-                let of = e.review.map(|r| author(r.author));
-                let message = e.dismissal_message.unwrap_or_default();
-                Some(event(e.actor, e.created_at, What::ReviewDismissed { of, message }))
-            }
-            PrItem::ReadyForReviewEvent(e) => Some(event(e.actor, e.created_at, What::ReadyForReview)),
-            PrItem::ConvertToDraftEvent(e) => Some(event(e.actor, e.created_at, What::ConvertedToDraft)),
-            PrItem::HeadRefForcePushedEvent(e) => {
-                let what = What::ForcePushed {
-                    base: false,
-                    before: oid(e.before_commit),
-                    after: oid(e.after_commit),
-                };
-                Some(event(e.actor, e.created_at, what))
-            }
-            PrItem::BaseRefForcePushedEvent(e) => {
-                let what = What::ForcePushed {
-                    base: true,
-                    before: oid(e.before_commit),
-                    after: oid(e.after_commit),
-                };
-                Some(event(e.actor, e.created_at, what))
-            }
-            PrItem::HeadRefDeletedEvent(e) => {
-                let what = What::BranchDeleted { name: e.head_ref_name };
-                Some(event(e.actor, e.created_at, what))
-            }
-            PrItem::HeadRefRestoredEvent(e) => Some(event(e.actor, e.created_at, What::BranchRestored)),
-            PrItem::BaseRefChangedEvent(e) => {
-                let what = What::BaseChanged { from: e.previous_ref_name, to: e.current_ref_name };
-                Some(event(e.actor, e.created_at, what))
-            }
-            PrItem::AutoMergeEnabledEvent(e) => Some(event(e.actor, e.created_at, What::AutoMerge { on: true })),
-            PrItem::AutoMergeDisabledEvent(e) => Some(event(e.actor, e.created_at, What::AutoMerge { on: false })),
-            PrItem::AddedToMergeQueueEvent(e) => {
-                Some(event(e.actor, e.created_at, What::MergeQueue { added: true, reason: None }))
-            }
-            PrItem::RemovedFromMergeQueueEvent(e) => {
-                let reason = e.reason.filter(|r| !r.trim().is_empty());
-                Some(event(e.actor, e.created_at, What::MergeQueue { added: false, reason }))
-            }
-            PrItem::Other => None,
+        }
+            MergedEvent(e) => What::Merged { commit: oid(e.commit), into: e.merge_ref_name },
+            ReviewRequestedEvent(e) => {
+                What::ReviewRequested { who: reviewer(e.requested_reviewer), added: true }
+            },
+            ReviewRequestRemovedEvent(e) => {
+                What::ReviewRequested { who: reviewer(e.requested_reviewer), added: false }
+            },
+            ReviewDismissedEvent(e) => What::ReviewDismissed {
+                of: e.review.map(|r| author(r.author)),
+                message: e.dismissal_message.unwrap_or_default(),
+            },
+            ReadyForReviewEvent(e) => What::ReadyForReview,
+            ConvertToDraftEvent(e) => What::ConvertedToDraft,
+            HeadRefForcePushedEvent(e) => What::ForcePushed {
+                base: false,
+                before: oid(e.before_commit),
+                after: oid(e.after_commit),
+            },
+            BaseRefForcePushedEvent(e) => What::ForcePushed {
+                base: true,
+                before: oid(e.before_commit),
+                after: oid(e.after_commit),
+            },
+            HeadRefDeletedEvent(e) => What::BranchDeleted { name: e.head_ref_name },
+            HeadRefRestoredEvent(e) => What::BranchRestored,
+            BaseRefChangedEvent(e) => {
+                What::BaseChanged { from: e.previous_ref_name, to: e.current_ref_name }
+            },
+            AutoMergeEnabledEvent(e) => What::AutoMerge { on: true },
+            AutoMergeDisabledEvent(e) => What::AutoMerge { on: false },
+            AddedToMergeQueueEvent(e) => What::MergeQueue { added: true, reason: None },
+            RemovedFromMergeQueueEvent(e) => What::MergeQueue {
+                added: false,
+                reason: e.reason.filter(|r| !r.trim().is_empty()),
+            },
         )
     }
 }
 
 impl IssueItem {
     pub(crate) fn into_item(self) -> Option<Item> {
-        shared_events!(self, IssueItem,
-            IssueItem::PinnedEvent(e) => Some(event(e.actor, e.created_at, What::Pinned { pinned: true })),
-            IssueItem::UnpinnedEvent(e) => Some(event(e.actor, e.created_at, What::Pinned { pinned: false })),
-            IssueItem::TransferredEvent(e) => {
-                let from = e.from_repository.map(|r| r.name_with_owner);
-                Some(event(e.actor, e.created_at, What::Transferred { from }))
-            }
-            IssueItem::SubIssueAddedEvent(e) => {
-                let issue = e.sub_issue.and_then(LinkedIssue::into_linked);
-                Some(event(e.actor, e.created_at, What::SubIssue { issue, added: true }))
-            }
-            IssueItem::SubIssueRemovedEvent(e) => {
-                let issue = e.sub_issue.and_then(LinkedIssue::into_linked);
-                Some(event(e.actor, e.created_at, What::SubIssue { issue, added: false }))
-            }
-            IssueItem::ParentIssueAddedEvent(e) => {
-                let issue = e.parent.and_then(LinkedIssue::into_linked);
-                Some(event(e.actor, e.created_at, What::Parent { issue, added: true }))
-            }
-            IssueItem::ParentIssueRemovedEvent(e) => {
-                let issue = e.parent.and_then(LinkedIssue::into_linked);
-                Some(event(e.actor, e.created_at, What::Parent { issue, added: false }))
-            }
-            IssueItem::IssueTypeAddedEvent(e) => {
-                let what = What::IssueType { from: None, to: e.issue_type.map(|t| t.name) };
-                Some(event(e.actor, e.created_at, what))
-            }
-            IssueItem::IssueTypeChangedEvent(e) => {
-                let what = What::IssueType {
-                    from: e.prev_issue_type.map(|t| t.name),
-                    to: e.issue_type.map(|t| t.name),
-                };
-                Some(event(e.actor, e.created_at, what))
-            }
-            IssueItem::IssueTypeRemovedEvent(e) => {
-                let what = What::IssueType { from: e.issue_type.map(|t| t.name), to: None };
-                Some(event(e.actor, e.created_at, what))
-            }
-            IssueItem::ConvertedToDiscussionEvent(e) => {
-                Some(event(e.actor, e.created_at, What::ConvertedToDiscussion))
-            }
-            IssueItem::Other => None,
+        timeline_items!(self, IssueItem, {}
+            PinnedEvent(e) => What::Pinned { pinned: true },
+            UnpinnedEvent(e) => What::Pinned { pinned: false },
+            TransferredEvent(e) => {
+                What::Transferred { from: e.from_repository.map(|r| r.name_with_owner) }
+            },
+            SubIssueAddedEvent(e) => What::SubIssue { issue: linked(e.sub_issue), added: true },
+            SubIssueRemovedEvent(e) => What::SubIssue { issue: linked(e.sub_issue), added: false },
+            ParentIssueAddedEvent(e) => What::Parent { issue: linked(e.parent), added: true },
+            ParentIssueRemovedEvent(e) => What::Parent { issue: linked(e.parent), added: false },
+            IssueTypeAddedEvent(e) => {
+                What::IssueType { from: None, to: e.issue_type.map(|t| t.name) }
+            },
+            IssueTypeChangedEvent(e) => What::IssueType {
+                from: e.prev_issue_type.map(|t| t.name),
+                to: e.issue_type.map(|t| t.name),
+            },
+            IssueTypeRemovedEvent(e) => {
+                What::IssueType { from: e.issue_type.map(|t| t.name), to: None }
+            },
+            ConvertedToDiscussionEvent(e) => What::ConvertedToDiscussion,
         )
     }
 }
 
-/// A timeline's items, oldest first, of how many there are in all.
-/// Your pending review, which the timeline may not have, comes last.
-pub(crate) fn pr_timeline(t: PrTimeline, pending: Option<PendingReviews>) -> Capped<Item> {
-    let fetched = t.nodes.as_ref().map_or(0, Vec::len) as u64;
-    let mut items: Vec<Item> = nodes(t.nodes).filter_map(PrItem::into_item).collect();
-    // What ghtui doesn't show isn't left out.
+/// The nodes `f` makes items, of a connection's `total`.
+fn capped<N, T>(
+    total: i32,
+    list: Option<Vec<Option<N>>>,
+    f: impl FnMut(N) -> Option<T>,
+) -> Capped<T> {
+    Capped::new(nodes(list).filter_map(f).collect(), count(total))
+}
+
+/// A timeline's items, oldest first, of how many there are in all: what
+/// ghtui doesn't show isn't left out.
+fn timeline<N>(
+    total: i32,
+    list: Option<Vec<Option<N>>>,
+    item: fn(N) -> Option<Item>,
+) -> Capped<Item> {
+    let fetched = list.as_ref().map_or(0, Vec::len) as u64;
+    let items: Vec<Item> = nodes(list).filter_map(item).collect();
     let unshown = fetched.saturating_sub(items.len() as u64);
-    let total = count(t.total_count).saturating_sub(unshown);
-    let has_pending = items
-        .iter()
-        .any(|i| matches!(i, Item::Review(r) if r.state == ReviewState::Pending));
+    Capped::new(items, count(total).saturating_sub(unshown))
+}
+
+/// A pull request's timeline. Your pending review, which the timeline may
+/// not have, comes last.
+pub(crate) fn pr_timeline(t: PrTimeline, pending: Option<PendingReviews>) -> Capped<Item> {
+    let timeline = timeline(t.total_count, t.nodes, PrItem::into_item);
+    let has_pending =
+        (timeline.iter()).any(|i| matches!(i, Item::Review(r) if r.state == ReviewState::Pending));
     let pending = pending.and_then(|p| nodes(p.nodes).next());
-    if let Some(p) = pending.filter(|_| !has_pending) {
-        items.push(Item::Review(p.into_review()));
-        return Capped::new(items, total + 1);
-    }
+    let Some(p) = pending.filter(|_| !has_pending) else {
+        return timeline;
+    };
+    let total = timeline.total() + 1;
+    let mut items = timeline.items;
+    items.push(Item::Review(p.into_review()));
     Capped::new(items, total)
 }
 
 pub(crate) fn issue_timeline(t: IssueTimeline) -> Capped<Item> {
-    let fetched = t.nodes.as_ref().map_or(0, Vec::len) as u64;
-    let items: Vec<Item> = nodes(t.nodes).filter_map(IssueItem::into_item).collect();
-    let unshown = fetched.saturating_sub(items.len() as u64);
-    Capped::new(items, count(t.total_count).saturating_sub(unshown))
+    timeline(t.total_count, t.nodes, IssueItem::into_item)
 }
 
 pub(crate) fn linked_issues(c: Issues) -> Capped<Linked> {
-    let items = nodes(c.nodes)
-        .filter_map(LinkedIssue::into_linked)
-        .collect();
-    Capped::new(items, count(c.total_count))
+    capped(c.total_count, c.nodes, LinkedIssue::into_linked)
 }
 
 pub(crate) fn linked_prs(c: ClosedBy) -> Capped<Linked> {
-    let items = nodes(c.nodes).filter_map(LinkedPr::into_linked).collect();
-    Capped::new(items, count(c.total_count))
+    capped(c.total_count, c.nodes, LinkedPr::into_linked)
 }
 
 pub(crate) fn branches(b: Branches) -> Capped<String> {
-    let items = nodes(b.nodes)
-        .filter_map(|b| Some(b.branch?.name))
-        .collect();
-    Capped::new(items, count(b.total_count))
+    capped(b.total_count, b.nodes, |b| Some(b.branch?.name))
 }
 
 pub(crate) fn progress(p: &WireProgress) -> Option<Progress> {
@@ -1005,51 +960,43 @@ pub(crate) fn progress(p: &WireProgress) -> Option<Progress> {
 }
 
 pub(crate) fn latest(l: Option<LatestReviews>) -> Capped<Latest> {
-    let Some(l) = l else {
-        return Capped::default();
-    };
-    Capped::from_nodes(l.total_count, l.nodes, |r| Latest {
-        author: author(r.author),
-        state: r.state,
-        id: database_id(r.full_database_id),
-        at: r.submitted_at.map(|d| d.0).unwrap_or_default(),
-        commit: oid(r.commit),
-        for_teams: nodes(r.on_behalf_of.nodes)
-            .map(|t| t.combined_slug)
-            .collect(),
+    l.map_or_else(Capped::default, |l| {
+        Capped::from_nodes(l.total_count, l.nodes, |r| Latest {
+            author: author(r.author),
+            state: r.state,
+            id: database_id(r.full_database_id),
+            at: r.submitted_at.map(|d| d.0).unwrap_or_default(),
+            commit: oid(r.commit),
+            for_teams: nodes(r.on_behalf_of.nodes)
+                .map(|t| t.combined_slug)
+                .collect(),
+        })
     })
 }
 
 /// Who a pull request's review requests name; one GitHub's types don't
 /// cover (an enterprise team) counts as left out.
 pub(crate) fn requested(r: Option<Requests>) -> Capped<Requested> {
-    let Some(r) = r else {
-        return Capped::default();
-    };
-    let named = nodes(r.nodes).filter_map(|r| {
-        Some(Requested {
-            who: reviewer(r.requested_reviewer)?,
-            code_owner: r.as_code_owner,
+    r.map_or_else(Capped::default, |r| {
+        capped(r.total_count, r.nodes, |r| {
+            Some(Requested {
+                who: reviewer(r.requested_reviewer)?,
+                code_owner: r.as_code_owner,
+            })
         })
-    });
-    Capped::new(named.collect(), count(r.total_count))
+    })
 }
 
 // ---- a pull request's reviews ----------------------------------------------------------
 
-/// A page of a pull request's reviews, oldest first.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "PageVariables")]
-pub struct ReviewsQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoReviews>,
+fragments! {
+    root "Query" repository(owner, name);
+    /// A page of a pull request's reviews, oldest first.
+    ReviewsQuery("PageVariables") => RepoReviews,
 }
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "PageVariables")]
-pub struct RepoReviews {
-    #[arguments(number: $number)]
-    pub pull_request: Option<PrReviews>,
+fragments! {
+    root "Repository" pull_request(number);
+    RepoReviews("PageVariables") => PrReviews,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
