@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use ratatui_textarea::TextArea;
 
-use crate::ui::{Ctx, PAD_X, cols, fill, fit_spans, list_row, put, render_split, text};
+use crate::ui::{Ctx, PAD_X, cols, fill, fit_spans, inset, list_row, put, render_split, text};
 
 const BAR: Bg = Bg::Container;
 const FIELD: Bg = Bg::ContainerHighest;
@@ -373,11 +373,7 @@ pub struct TitleBar<'a> {
 impl Widget for TitleBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         fill(buf, area, self.ctx.theme, BAR);
-        let inner = Rect {
-            x: area.x.saturating_add(PAD_X),
-            width: area.width.saturating_sub(2 * PAD_X),
-            ..area
-        };
+        let inner = inset(area, PAD_X, 0);
         let spans = fit_spans(&self.line.spans, inner.width);
         Line { spans, ..self.line }.render(inner, buf);
     }
