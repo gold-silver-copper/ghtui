@@ -335,6 +335,21 @@ page_in! {
 }
 
 impl<T> Results<T> {
+    /// A page of a connection: its total, its cursor, and the nodes `item`
+    /// makes something of.
+    pub(crate) fn from_page<N>(
+        total: i32,
+        page: PageInfo,
+        list: Option<Vec<Option<N>>>,
+        item: impl FnMut(N) -> Option<T>,
+    ) -> Self {
+        Self {
+            total: count(total),
+            items: nodes(list).filter_map(item).collect(),
+            next: page.next(),
+        }
+    }
+
     /// A page of a list GitHub doesn't count.
     pub(crate) fn uncounted(items: Vec<T>, next: Option<String>) -> Self {
         Self {
@@ -698,6 +713,61 @@ fragments! {
     Pinned = "PinnableItemConnection" => PinnedItem,
 }
 
+// Pages of lists, and how many there are in all.
+fragments! {
+    paged:
+    CommitHistory = "CommitHistoryConnection" => CommitCard,
+    RollupContexts = "StatusCheckRollupContextConnection" => RollupContext,
+    PagedRepos = "RepositoryConnection" => RepoCard,
+    PagedStars = "StarredRepositoryConnection" => RepoCard,
+    ReleaseList = "ReleaseConnection" => WireRelease,
+    TagRefs = "RefConnection" => TagRef,
+}
+
+// The roots of the queries below, and what they open in a repository.
+fragments! {
+    root "Query" repository(owner, name);
+    RepoQuery("RepoVariables") => RepoFull,
+    /// A directory listing or file by `<ref>:<path>`.
+    ObjectQuery("RepoVariables") => RepoObject,
+    IssueQuery("NumberVariables") => RepoIssue,
+    PrActivityQuery("NumberVariables") => RepoPrActivity,
+    /// A commit by revision (`<sha>`, short or full).
+    CommitQuery("RepoVariables") => RepoCommit,
+    /// A revision's commits, newest first (touching `path`, if given).
+    HistoryQuery("HistoryVariables") => RepoHistory,
+    /// The checks on a pull request's head.
+    PrChecksQuery("NumberVariables") => RepoPrChecks,
+    ContextsQuery("ContextsVariables") => ContextsRepo,
+    /// The checks on a commit, by revision.
+    CommitChecksQuery("RepoVariables") => RepoCommitChecks,
+    /// A repository's forks, most starred first.
+    ForksQuery("ListVariables") => RepoForks,
+    /// A repository's releases, newest first.
+    ReleasesQuery("ListVariables") => RepoReleases,
+    /// One release, with its notes and assets.
+    ReleaseQuery("ReleaseVariables") => RepoRelease,
+    /// A repository's tags, most recently committed first.
+    TagsQuery("ListVariables") => RepoTags,
+}
+fragments! {
+    root "Repository" object(expression);
+    RepoObject("RepoVariables") => GitObject,
+    RepoCommit("RepoVariables") => CommitObject,
+    RepoHistory("HistoryVariables") => HistoryObject,
+    ContextsRepo("ContextsVariables") => ContextsTarget,
+    RepoCommitChecks("RepoVariables") => ChecksTarget,
+}
+fragments! {
+    root "Repository" pull_request(number);
+    RepoPrActivity("NumberVariables") => WirePrActivity,
+    RepoPrChecks("NumberVariables") => PrChecks,
+}
+fragments! {
+    root "Repository" issue_or_pull_request(number);
+    RepoIssue("NumberVariables") => IssueOrPr,
+}
+
 // ---- repository ---------------------------------------------------------------------
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -706,13 +776,6 @@ pub struct RepoVariables {
     pub name: String,
     /// `HEAD:` for the root of the default branch.
     pub expression: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "RepoVariables")]
-pub struct RepoQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoFull>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -840,21 +903,6 @@ pub struct BlobObject {
     pub is_binary: Option<bool>,
     pub byte_size: i32,
     pub is_truncated: bool,
-}
-
-/// A directory listing or file by `<ref>:<path>`.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "RepoVariables")]
-pub struct ObjectQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoObject>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "RepoVariables")]
-pub struct RepoObject {
-    #[arguments(expression: $expression)]
-    pub object: Option<GitObject>,
 }
 
 // ---- search ----------------------------------------------------------------------
@@ -1010,20 +1058,6 @@ pub enum StateReason {
 
 // ---- issue ------------------------------------------------------------------------
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "NumberVariables")]
-pub struct IssueQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoIssue>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "NumberVariables")]
-pub struct RepoIssue {
-    #[arguments(number: $number)]
-    pub issue_or_pull_request: Option<IssueOrPr>,
-}
-
 #[derive(cynic::InlineFragments, Debug)]
 #[cynic(graphql_type = "IssueOrPullRequest")]
 pub enum IssueOrPr {
@@ -1115,20 +1149,6 @@ pub struct WireComment {
 // ---- PR activity -----------------------------------------------------------------
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "NumberVariables")]
-pub struct PrActivityQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoPrActivity>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "NumberVariables")]
-pub struct RepoPrActivity {
-    #[arguments(number: $number)]
-    pub pull_request: Option<WirePrActivity>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "PullRequest")]
 pub struct WirePrActivity {
     pub id: cynic::Id,
@@ -1190,21 +1210,6 @@ pub struct CommitCard {
 
 // ---- commits -------------------------------------------------------------------------
 
-/// A commit by revision (`<sha>`, short or full).
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "RepoVariables")]
-pub struct CommitQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoCommit>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "RepoVariables")]
-pub struct RepoCommit {
-    #[arguments(expression: $expression)]
-    pub object: Option<CommitObject>,
-}
-
 #[derive(cynic::InlineFragments, Debug)]
 #[cynic(graphql_type = "GitObject")]
 pub enum CommitObject {
@@ -1258,21 +1263,6 @@ pub struct HistoryVariables {
     pub after: Option<String>,
 }
 
-/// A revision's commits, newest first (touching `path`, if given).
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "HistoryVariables")]
-pub struct HistoryQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoHistory>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "HistoryVariables")]
-pub struct RepoHistory {
-    #[arguments(expression: $expression)]
-    pub object: Option<HistoryObject>,
-}
-
 #[derive(cynic::InlineFragments, Debug)]
 #[cynic(graphql_type = "GitObject", variables = "HistoryVariables")]
 pub enum HistoryObject {
@@ -1288,40 +1278,15 @@ pub struct HistoryCommit {
     pub history: CommitHistory,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CommitHistoryConnection")]
-pub struct CommitHistory {
-    pub total_count: i32,
-    pub page_info: PageInfo,
-    pub nodes: Option<Vec<Option<CommitCard>>>,
-}
-
 impl CommitHistory {
     pub(crate) fn into_results(self) -> Results<CommitInfo> {
-        Results {
-            total: count(self.total_count),
-            items: nodes(self.nodes).map(CommitCard::into_info).collect(),
-            next: self.page_info.next(),
-        }
+        Results::from_page(self.total_count, self.page_info, self.nodes, |c| {
+            Some(c.into_info())
+        })
     }
 }
 
 // ---- checks --------------------------------------------------------------------------
-
-/// The checks on a pull request's head.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "NumberVariables")]
-pub struct PrChecksQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoPrChecks>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "NumberVariables")]
-pub struct RepoPrChecks {
-    #[arguments(number: $number)]
-    pub pull_request: Option<PrChecks>,
-}
 
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "PullRequest")]
@@ -1366,14 +1331,6 @@ pub struct WireRollup {
     pub contexts: RollupContexts,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "StatusCheckRollupContextConnection")]
-pub struct RollupContexts {
-    pub total_count: i32,
-    pub page_info: crate::api::queries::PageInfo,
-    pub nodes: Option<Vec<Option<RollupContext>>>,
-}
-
 /// A later page of a commit's checks (by its oid in `expression`): a
 /// re-run on a later page is a check's newest run.
 #[derive(cynic::QueryVariables, Debug)]
@@ -1382,20 +1339,6 @@ pub struct ContextsVariables {
     pub name: String,
     pub expression: String,
     pub after: Option<String>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "ContextsVariables")]
-pub struct ContextsQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<ContextsRepo>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "ContextsVariables")]
-pub struct ContextsRepo {
-    #[arguments(expression: $expression)]
-    pub object: Option<ContextsTarget>,
 }
 
 #[derive(cynic::InlineFragments, Debug)]
@@ -1539,11 +1482,7 @@ pub(crate) fn rollup_contexts(rollup: Option<WireRollup>) -> Results<RollupConte
 
 impl RollupContexts {
     pub(crate) fn into_results(self) -> Results<RollupContext> {
-        Results {
-            total: count(self.total_count),
-            items: nodes(self.nodes).collect(),
-            next: self.page_info.next(),
-        }
+        Results::from_page(self.total_count, self.page_info, self.nodes, Some)
     }
 }
 
@@ -2691,21 +2630,6 @@ impl rest_actions::Job {
                 .collect(),
         }
     }
-}
-
-/// The checks on a commit, by revision.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "RepoVariables")]
-pub struct CommitChecksQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoCommitChecks>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "RepoVariables")]
-pub struct RepoCommitChecks {
-    #[arguments(expression: $expression)]
-    pub object: Option<ChecksTarget>,
 }
 
 // ---- branches ---------------------------------------------------------------------------------
@@ -4304,14 +4228,6 @@ pub struct ListVariables {
     pub after: Option<String>,
 }
 
-/// A repository's forks, most starred first.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "ListVariables")]
-pub struct ForksQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoForks>,
-}
-
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Repository", variables = "ListVariables")]
 pub struct RepoForks {
@@ -4319,24 +4235,14 @@ pub struct RepoForks {
     pub forks: PagedRepos,
 }
 
-/// A page of repositories.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "RepositoryConnection")]
-pub struct PagedRepos {
-    pub total_count: i32,
-    pub page_info: PageInfo,
-    pub nodes: Option<Vec<Option<RepoCard>>>,
-}
-
 impl PagedRepos {
     pub(crate) fn into_results(self) -> Results<RepoSummary> {
-        Results {
-            total: count(self.total_count),
-            items: nodes(self.nodes)
-                .filter_map(RepoCard::into_summary)
-                .collect(),
-            next: self.page_info.next(),
-        }
+        Results::from_page(
+            self.total_count,
+            self.page_info,
+            self.nodes,
+            RepoCard::into_summary,
+        )
     }
 }
 
@@ -4415,49 +4321,24 @@ pub struct UserStarred {
     pub starred_repositories: PagedStars,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "StarredRepositoryConnection")]
-pub struct PagedStars {
-    pub total_count: i32,
-    pub page_info: PageInfo,
-    pub nodes: Option<Vec<Option<RepoCard>>>,
-}
-
 impl PagedStars {
     pub(crate) fn into_results(self) -> Results<RepoSummary> {
-        Results {
-            total: count(self.total_count),
-            items: nodes(self.nodes)
-                .filter_map(RepoCard::into_summary)
-                .collect(),
-            next: self.page_info.next(),
-        }
+        Results::from_page(
+            self.total_count,
+            self.page_info,
+            self.nodes,
+            RepoCard::into_summary,
+        )
     }
 }
 
 // ---- releases and tags ---------------------------------------------------------------------
-
-/// A repository's releases, newest first.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "ListVariables")]
-pub struct ReleasesQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoReleases>,
-}
 
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Repository", variables = "ListVariables")]
 pub struct RepoReleases {
     #[arguments(first: 20, after: $after, orderBy: { field: CREATED_AT, direction: DESC })]
     pub releases: ReleaseList,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ReleaseConnection")]
-pub struct ReleaseList {
-    pub total_count: i32,
-    pub page_info: PageInfo,
-    pub nodes: Option<Vec<Option<WireRelease>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -4478,14 +4359,6 @@ pub struct ReleaseVariables {
     pub owner: String,
     pub name: String,
     pub tag: String,
-}
-
-/// One release, with its notes and assets.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "ReleaseVariables")]
-pub struct ReleaseQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoRelease>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -4521,27 +4394,11 @@ pub struct WireAsset {
     pub download_url: Uri,
 }
 
-/// A repository's tags, most recently committed first.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "ListVariables")]
-pub struct TagsQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoTags>,
-}
-
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Repository", variables = "ListVariables")]
 pub struct RepoTags {
     #[arguments(refPrefix: "refs/tags/", first: 30, after: $after, orderBy: { field: TAG_COMMIT_DATE, direction: DESC })]
     pub refs: Option<TagRefs>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "RefConnection")]
-pub struct TagRefs {
-    pub total_count: i32,
-    pub page_info: PageInfo,
-    pub nodes: Option<Vec<Option<TagRef>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -4605,11 +4462,9 @@ impl WireRelease {
 
 impl ReleaseList {
     pub(crate) fn into_results(self) -> Results<Release> {
-        Results {
-            total: count(self.total_count),
-            items: nodes(self.nodes).map(WireRelease::into_release).collect(),
-            next: self.page_info.next(),
-        }
+        Results::from_page(self.total_count, self.page_info, self.nodes, |r| {
+            Some(r.into_release())
+        })
     }
 }
 
@@ -4634,28 +4489,21 @@ impl WireReleaseFull {
 
 impl TagRefs {
     pub(crate) fn into_results(self) -> Results<TagInfo> {
-        let items = nodes(self.nodes)
-            .map(|r| {
-                let commit = match r.target {
-                    Some(TagTarget::Commit(c)) => Some(c),
-                    Some(TagTarget::Tag(t)) => match t.target {
-                        TaggedObject::Commit(c) => Some(c),
-                        TaggedObject::Other => None,
-                    },
-                    _ => None,
-                };
-                TagInfo {
-                    name: r.name,
-                    oid: commit.as_ref().map(|c| c.oid.0.clone()),
-                    date: commit.map(|c| c.committed_date.0),
-                }
+        Results::from_page(self.total_count, self.page_info, self.nodes, |r| {
+            let commit = match r.target {
+                Some(TagTarget::Commit(c)) => Some(c),
+                Some(TagTarget::Tag(t)) => match t.target {
+                    TaggedObject::Commit(c) => Some(c),
+                    TaggedObject::Other => None,
+                },
+                _ => None,
+            };
+            Some(TagInfo {
+                name: r.name,
+                oid: commit.as_ref().map(|c| c.oid.0.clone()),
+                date: commit.map(|c| c.committed_date.0),
             })
-            .collect();
-        Results {
-            total: count(self.total_count),
-            items,
-            next: self.page_info.next(),
-        }
+        })
     }
 }
 

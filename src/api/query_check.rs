@@ -560,8 +560,20 @@ fn every_query_is_checked() {
         include_str!("timeline.rs"),
     ]
     .concat();
+    // The rows of `fragments! { root "Query" .. }` tables are queries too.
+    let roots: usize = (source.split("root \"Query\"").skip(1))
+        .map(|table| {
+            table
+                .split('}')
+                .next()
+                .unwrap_or("")
+                .matches(") =>")
+                .count()
+        })
+        .sum();
     let operations = source.matches("graphql_type = \"Query\"").count()
-        + source.matches("graphql_type = \"Mutation\"").count();
+        + source.matches("graphql_type = \"Mutation\"").count()
+        + roots;
     assert_eq!(typed().len(), operations);
     let raw = include_str!("raw.rs");
     let defined =
