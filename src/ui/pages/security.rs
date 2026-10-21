@@ -313,7 +313,7 @@ fn code(page: &mut Page, repo: &RepoId, c: &crate::api::security::CodeAlert) {
                 .as_deref()
                 .map(|r| r.strip_prefix("refs/heads/").unwrap_or(r))
                 .map_or_else(String::new, |r| format!(" on {r}"));
-            segs.push(meta(format!("{on} at {}", crate::ui::text::short_sha(at))));
+            segs.push(meta(format!("{on} at {}", short_sha(at))));
             body(page, segs);
         }
         (Some(path), ..) => body(page, vec![meta(path.clone())]),
@@ -363,7 +363,7 @@ fn secret(page: &mut Page, repo: &RepoId, s: &crate::api::security::SecretAlert)
             } => {
                 let segs = vec![
                     file_link(page, repo, path, *lines, commit),
-                    meta(format!(" at {}", crate::ui::text::short_sha(commit))),
+                    meta(format!(" at {}", short_sha(commit))),
                 ];
                 body(page, segs);
             }

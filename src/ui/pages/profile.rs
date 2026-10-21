@@ -122,7 +122,7 @@ pub fn gist(page: &mut Page, g: &Gist, now: u64) {
     for f in &g.files {
         page.blank();
         let mut info = vec![strong(f.name.clone())];
-        let mut facts = vec![crate::ui::text::size(f.size)];
+        let mut facts = vec![size(f.size)];
         if let Some(language) = &f.language {
             facts.push(language.clone());
         }

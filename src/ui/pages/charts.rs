@@ -96,8 +96,8 @@ pub fn columns(page: &mut Page, values: &[u64], width: usize, height: usize) {
 
 /// The dates under [`columns`]: the first column's and the last's.
 pub fn column_dates(page: &mut Page, columns: usize, first: &str, last: &str) {
-    let room = columns.saturating_sub(crate::ui::text::width(first));
-    let gap = room.saturating_sub(crate::ui::text::width(last)).max(1);
+    let room = columns.saturating_sub(width(first));
+    let gap = room.saturating_sub(width(last)).max(1);
     body(
         page,
         vec![meta(format!(

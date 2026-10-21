@@ -215,7 +215,7 @@ pub fn deployments(
             ];
             let right = vec![meta(time::ago_iso(&d.created_at, now))];
             page.box_line(segs, right, 0);
-            let sha = crate::ui::text::short_sha(&d.oid);
+            let sha = short_sha(&d.oid);
             let mut subline = vec![link_seg(page, sha, url::commit(repo, &d.oid), Role::Code)];
             if let Some(branch) = &d.branch {
                 subline.push(meta(" · "));

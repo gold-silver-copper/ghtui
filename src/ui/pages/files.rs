@@ -21,7 +21,7 @@ pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
         lines: marked,
     } = at;
     code_toolbar(page, repo, rev, path, true, None, keys);
-    let size = crate::ui::text::size(blob.size);
+    let size = size(blob.size);
     let Some(text) = &blob.text else {
         let title = meta(size);
         empty_box(
@@ -48,14 +48,14 @@ pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
         return;
     }
     let lines = markdown::highlighted_file(text, crate::diff::Language::from_path(path));
-    let width = lines.len().to_string().len();
+    let digits = lines.len().to_string().len();
     let is_marked = |n: usize| marked.is_some_and(|(a, b)| (a as usize..=b as usize).contains(&n));
     // Each line is a row: selected, `y` copies its link.
     let file_url = url::blob(repo, rev, path);
     let line_url = |n: usize| format!("{file_url}#L{n}");
     for (i, mut segs) in lines.into_iter().enumerate() {
         let n = i + 1;
-        segs.insert(0, line_number(n, width));
+        segs.insert(0, line_number(n, digits));
         let start = code_line(page, segs, is_marked(n), 1);
         let link = page.link(line_url(n));
         page.item(start, link);
@@ -95,12 +95,12 @@ pub fn blame(
     let info = format!("Blame · {}", plural(commits, "commit"));
     page.box_top(vec![meta(info)], vec![file]);
     let lines = markdown::highlighted_file(text, crate::diff::Language::from_path(path));
-    let width = lines.len().to_string().len();
+    let digits = lines.len().to_string().len();
     let is_marked = |n: usize| marked.is_some_and(|(a, b)| (a as usize..=b as usize).contains(&n));
     // Beside each run of lines: its commit, author, age and message, in
     // a column that takes what the page can spare.
     let author_w = (blame.ranges.iter())
-        .map(|r| crate::ui::text::width(r.commit.author.name()))
+        .map(|r| width(r.commit.author.name()))
         .max()
         .unwrap_or(0)
         .min(20);
@@ -128,11 +128,11 @@ pub fn blame(
             Some(r) if r.start as usize == n => {
                 run_start = page.lines.len();
                 let c = &r.commit;
-                let author = crate::ui::text::truncate(c.author.name(), author_w);
+                let author = truncate(c.author.name(), author_w);
                 let mut gutter = vec![
                     link_seg(
                         page,
-                        crate::ui::text::short_sha(&c.oid),
+                        short_sha(&c.oid),
                         url::commit(repo, &c.oid),
                         Role::Code,
                     ),
@@ -142,7 +142,7 @@ pub fn blame(
                     )),
                 ];
                 if message_w >= 8 {
-                    let message = crate::ui::text::truncate(&c.headline, message_w);
+                    let message = truncate(&c.headline, message_w);
                     gutter.push(Seg::new(format!("{message:<message_w$}  "), Role::Body));
                 }
                 gutter
@@ -150,7 +150,7 @@ pub fn blame(
             _ => vec![meta(" ".repeat(gutter_w))],
         };
         let fixed = u8::try_from(gutter.len() + 1).unwrap_or(u8::MAX);
-        gutter.push(line_number(n, width));
+        gutter.push(line_number(n, digits));
         gutter.append(&mut segs);
         // A marked line selects the run it's in, pushed once the run ends.
         code_line(page, gutter, is_marked(n), fixed);

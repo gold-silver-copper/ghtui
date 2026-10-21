@@ -177,10 +177,10 @@ pub fn repos(page: &mut Page, title: &str, repos: Fetched<'_, Results<RepoSummar
 
 /// The filter field above a list: `⌕ is:open label:bug`.
 pub(super) fn filter_field(page: &mut Page, query: &str, keys: Keys<'_>, verb: &str) {
-    let width = usize::from(page.room(Frame::None, 0));
+    let room = usize::from(page.room(Frame::None, 0));
     let hint = format!("{} to {verb} ", keys.filter);
     let text = format!(" ⌕ {query}");
-    let pad = width.saturating_sub(crate::ui::text::width(&text) + crate::ui::text::width(&hint));
+    let pad = room.saturating_sub(width(&text) + width(&hint));
     let link = page.link(Link::Filter);
     page.line(vec![
         Seg::linked(
@@ -336,7 +336,7 @@ pub fn search(
         SearchResults::Commits(r) => box_rows(page, r, |page, hit| {
             let c = &hit.commit;
             item(page, url::commit(&hit.repo, &c.oid), |page, link| {
-                let right = vec![Seg::new(crate::ui::text::short_sha(&c.oid), Role::Code)];
+                let right = vec![Seg::new(short_sha(&c.oid), Role::Code)];
                 page.box_line(
                     vec![Seg::linked(c.headline.clone(), Role::Strong, link)],
                     right,
@@ -366,7 +366,7 @@ pub fn search(
             for (n, text) in &hit.lines {
                 item(page, format!("{file}#L{n}"), |page, link| {
                     let number = Seg::linked(format!("{n:>5}  "), Role::Meta, link);
-                    let text = crate::ui::text::truncate(text.trim(), 200);
+                    let text = truncate(text.trim(), 200);
                     body(page, vec![number, Seg::new(text, Role::Code)]);
                 });
             }

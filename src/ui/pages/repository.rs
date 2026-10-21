@@ -131,7 +131,7 @@ pub(super) fn code_toolbar(
     let refs = top.filter(|o| o.branches > 0).map(|o| (o.branches, o.tags));
     // A commit's ID is shown short, as GitHub's branch button shows it.
     let shown = match crate::git::Oid::parse(rev) {
-        Ok(_) => crate::ui::text::short_sha(rev),
+        Ok(_) => short_sha(rev),
         Err(_) => rev,
     };
     let mut segs = vec![
@@ -234,7 +234,7 @@ pub(super) fn file_box(
     // GitHub's columns: name, the latest commit's message, its age.
     let name_w = entries
         .iter()
-        .map(|e| crate::ui::text::width(&e.name))
+        .map(|e| width(&e.name))
         .max()
         .unwrap_or(0)
         .min(usize::from(page.room(Frame::Body, 0)) / 3)
@@ -261,8 +261,8 @@ pub(super) fn file_box(
                     (url::blob(repo, rev, &e.path), Role::Body)
                 };
                 item(page, target, |page, link| {
-                    let name = crate::ui::text::truncate(&e.name, name_w - 4);
-                    let pad = name_w.saturating_sub(crate::ui::text::width(&name) + 2);
+                    let name = truncate(&e.name, name_w - 4);
+                    let pad = name_w.saturating_sub(width(&name) + 2);
                     let mut segs = vec![
                         Seg::new(format!("{icon} "), icon_role),
                         Seg::linked(name, role, link),
@@ -326,7 +326,7 @@ pub fn repo_code(
                 vec![author, Seg::new("  ", Role::Body), headline],
                 vec![meta(format!(
                     "{} · {}",
-                    crate::ui::text::short_sha(&c.oid),
+                    short_sha(&c.oid),
                     time::ago_iso(&c.date, now)
                 ))],
             )
@@ -442,7 +442,7 @@ pub fn release(page: &mut Page, repo: &RepoId, r: &Release, now: u64) {
         item(page, target, |page, link| {
             let right = vec![meta(format!(
                 "{} · {}",
-                crate::ui::text::size(a.size),
+                size(a.size),
                 plural(a.downloads, "download")
             ))];
             page.box_line(
@@ -463,10 +463,7 @@ pub fn tags(page: &mut Page, repo: &RepoId, list: Fetched<'_, Results<TagInfo>>,
                 right.push(meta(time::ago_iso(date, now)));
             }
             if let Some(oid) = &t.oid {
-                right.push(Seg::new(
-                    format!("  {}", crate::ui::text::short_sha(oid)),
-                    Role::Code,
-                ));
+                right.push(Seg::new(format!("  {}", short_sha(oid)), Role::Code));
             }
             page.box_line(
                 vec![Seg::linked(t.name.clone(), Role::Link, link)],
@@ -513,7 +510,7 @@ pub fn branches(
             page.box_line(segs, right, 0);
             let mut subline = Vec::new();
             if let Some(oid) = &b.oid {
-                let sha = crate::ui::text::short_sha(oid);
+                let sha = short_sha(oid);
                 subline.push(link_seg(page, sha, url::commit(repo, oid), Role::Code));
                 subline.push(meta(" "));
             }

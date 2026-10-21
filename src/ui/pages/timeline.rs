@@ -588,7 +588,7 @@ fn commits(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&
     for c in infos {
         item(page, commit_link(place, &c.oid), |page, link| {
             let room = usize::from(page.room(Frame::None, 5)).saturating_sub(9);
-            let headline = crate::ui::text::truncate(&c.headline, room);
+            let headline = truncate(&c.headline, room);
             page.add(
                 Frame::None,
                 5,
@@ -899,7 +899,7 @@ fn git_lines(page: &mut Page, t: &ReviewThread, lines: &LinesAt<'_>) -> bool {
         } else {
             crate::ui::page::Tone::Code
         };
-        let code = crate::ui::text::truncate(&code.replace('\t', "    "), room);
+        let code = truncate(&code.replace('\t', "    "), room);
         page.push(PageLine {
             segs: vec![meta(format!("{n:>width$} │ ")), Seg::new(code, Role::Code)],
             indent: 2,
@@ -930,7 +930,7 @@ fn hunk_lines(page: &mut Page, t: &ReviewThread) {
             Some('-') => crate::ui::page::Tone::Removed,
             _ => crate::ui::page::Tone::Code,
         };
-        let text = crate::ui::text::truncate(&l.replace('\t', "    "), room);
+        let text = truncate(&l.replace('\t', "    "), room);
         page.push(PageLine {
             segs: vec![Seg::new(text, Role::Code)],
             indent: 2,

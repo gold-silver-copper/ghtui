@@ -25,7 +25,7 @@ use crate::theme::{Bg, Syntax};
 
 use crate::ui::markdown::{self, LinkBase};
 use crate::ui::page::{Frame, Link, Page, PageLine, Role, Seg, Tone};
-use crate::ui::text::{noun, short_sha};
+use crate::ui::text::{noun, short_sha, size, truncate, width};
 use crate::ui::{Fetched, Icons, cols, time};
 
 mod commits;
@@ -289,12 +289,11 @@ pub fn loading_box(page: &mut Page, title: Vec<Seg>) {
 
 /// A flash banner across the page (errors), like GitHub's.
 pub fn flash(page: &mut Page, text: &str) {
-    let width = usize::from(page.room(Frame::None, 0));
-    for line in
-        crate::ui::page::wrap_segs(vec![Seg::new(text, Role::Body)], width.saturating_sub(4))
+    let room = usize::from(page.room(Frame::None, 0));
+    for line in crate::ui::page::wrap_segs(vec![Seg::new(text, Role::Body)], room.saturating_sub(4))
     {
         let text: String = line.iter().map(Seg::text).collect();
-        let pad = width.saturating_sub(crate::ui::text::width(&text) + 2);
+        let pad = room.saturating_sub(width(&text) + 2);
         page.line(vec![Seg::new(
             format!("  {text}{}", " ".repeat(pad)),
             Role::Chip(Bg::ErrorContainer),
@@ -572,7 +571,7 @@ fn paged_list<T>(
 /// `prefix` then `segs` wrapped inside a box, continuation lines aligned
 /// after the prefix.
 fn hanging(page: &mut Page, prefix: Seg, segs: Vec<Seg>, frame: Frame) {
-    let width = cols(crate::ui::text::width(prefix.text()));
+    let width = cols(width(prefix.text()));
     let start = page.lines.len();
     page.wrapped(segs, width, frame);
     if let Some(first) = page.lines.get_mut(start) {

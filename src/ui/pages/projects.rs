@@ -8,7 +8,6 @@ use crate::api::project::{
     Dates, FieldKind, FieldValue, Group, ItemContent, Layout, Project, ProjectField, ProjectItem,
     ProjectRef, ProjectSummary, ProjectView, ProjectsOf, grouped,
 };
-use crate::ui::text::{truncate, width};
 
 /// An owner's projects, or those linked to a repository.
 pub fn projects(

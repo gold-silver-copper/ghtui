@@ -58,7 +58,7 @@ pub(super) fn commit_rows(
         item(page, commit, |page, link| {
             page.box_line(
                 vec![Seg::linked(c.headline.clone(), Role::Strong, link)],
-                vec![Seg::new(crate::ui::text::short_sha(&c.oid), Role::Code)],
+                vec![Seg::new(short_sha(&c.oid), Role::Code)],
                 0,
             );
             let who = c.author.name();
@@ -155,10 +155,7 @@ pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now
         None => {}
     }
     page.wrapped(who, 0, Frame::None);
-    let mut ids = vec![meta(format!(
-        "commit {}",
-        crate::ui::text::short_sha(&d.oid)
-    ))];
+    let mut ids = vec![meta(format!("commit {}", short_sha(&d.oid)))];
     if !d.parents.is_empty() {
         let noun = if d.parents.total() == 1 {
             "parent"
@@ -170,7 +167,7 @@ pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now
             if i > 0 {
                 ids.push(meta(" + "));
             }
-            let short = crate::ui::text::short_sha(parent);
+            let short = short_sha(parent);
             ids.push(link_seg(page, short, url::commit(repo, parent), Role::Code));
         }
         more_chips(&mut ids, &d.parents);

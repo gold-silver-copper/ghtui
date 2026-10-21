@@ -116,7 +116,7 @@ pub fn contributors(page: &mut Page, repo: &RepoId, a: &Activity) {
     let most = a.authors.iter().map(|x| x.commits).max().unwrap_or(0);
     let digits = compact(most).len();
     let names = (a.authors.iter())
-        .map(|x| crate::ui::text::width(&x.name))
+        .map(|x| width(&x.name))
         .max()
         .unwrap_or(0)
         .min(24);
@@ -132,8 +132,8 @@ pub fn contributors(page: &mut Page, repo: &RepoId, a: &Activity) {
             page.box_rule();
         }
         let (_, weeks) = buckets(&author.weeks, n);
-        let name = crate::ui::text::truncate(&author.name, names);
-        let pad = " ".repeat(names.saturating_sub(crate::ui::text::width(&name)));
+        let name = truncate(&author.name, names);
+        let pad = " ".repeat(names.saturating_sub(width(&name)));
         let mut segs = vec![meta(format!("{:>3}  ", i + 1))];
         let commits = Seg::new(
             format!("  {:>digits$} ", compact(author.commits)),
@@ -339,20 +339,20 @@ pub fn dependencies(page: &mut Page, d: &Dependencies) {
             empty_row(page, "No dependencies.");
         }
         let names = (m.dependencies.iter())
-            .map(|d| crate::ui::text::width(&d.package))
+            .map(|d| width(&d.package))
             .max()
             .unwrap_or(0)
             .min(40);
         let wants = (m.dependencies.iter())
-            .map(|d| crate::ui::text::width(&d.requirements))
+            .map(|d| width(&d.requirements))
             .max()
             .unwrap_or(0)
             .min(30);
         for dep in &m.dependencies {
-            let name = crate::ui::text::truncate(&dep.package, names);
-            let pad = " ".repeat(names.saturating_sub(crate::ui::text::width(&name)) + 2);
-            let want = crate::ui::text::truncate(&dep.requirements, wants);
-            let gap = " ".repeat(wants.saturating_sub(crate::ui::text::width(&want)) + 2);
+            let name = truncate(&dep.package, names);
+            let pad = " ".repeat(names.saturating_sub(width(&name)) + 2);
+            let want = truncate(&dep.requirements, wants);
+            let gap = " ".repeat(wants.saturating_sub(width(&want)) + 2);
             let rest = vec![
                 Seg::new(pad, Role::Body),
                 Seg::new(want, Role::Body),

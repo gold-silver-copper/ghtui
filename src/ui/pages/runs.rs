@@ -20,7 +20,7 @@ pub fn checks(page: &mut Page, checks: Fetched<'_, Checks>, now: u64) {
     let Some(c) = checks.show(page, "checks") else {
         return;
     };
-    let sha = crate::ui::text::short_sha(&c.oid);
+    let sha = short_sha(&c.oid);
     if c.items.is_empty() {
         let title = meta(format!("✓ Checks on {sha}"));
         empty_box(page, title, "No checks ran on this commit.");
@@ -207,7 +207,7 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
         ));
         subline.push(meta(" · "));
     }
-    let sha = crate::ui::text::short_sha(&run.sha);
+    let sha = short_sha(&run.sha);
     subline.push(link_seg(page, sha, url::commit(repo, &run.sha), Role::Code));
     if let Some(actor) = &run.actor {
         subline.push(meta(" · "));
@@ -289,7 +289,7 @@ fn artifacts(page: &mut Page, list: &Capped<Artifact>, now: u64) {
             (Some(at), false) => format!("expires {}", time::until_iso(at, now)),
             (None, false) => String::new(),
         };
-        let right = vec![meta(format!("{}  {when}", crate::ui::text::size(a.size)))];
+        let right = vec![meta(format!("{}  {when}", size(a.size)))];
         let target = Link::Artifact {
             id: a.id,
             name: a.name.clone(),

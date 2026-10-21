@@ -257,7 +257,7 @@ pub fn pr_reviewed(
 /// The first line of `text` with words in it, cut to `max` columns.
 pub(super) fn first_line(text: &str, max: u16) -> String {
     let line = text.lines().map(str::trim).find(|l| !l.is_empty());
-    crate::ui::text::truncate(line.unwrap_or_default(), usize::from(max))
+    truncate(line.unwrap_or_default(), usize::from(max))
 }
 
 /// `path:line`, or the path alone for a comment on the whole file.
