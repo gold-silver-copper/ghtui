@@ -302,12 +302,24 @@ fn item(page: &mut Page, target: impl Into<Link>, build: impl FnOnce(&mut Page, 
     page.item(start, link);
 }
 
-/// Each name once, in order.
+/// [`item`] when there's a `target`, else just the lines.
+fn maybe_item<L: Into<Link>>(
+    page: &mut Page,
+    target: Option<L>,
+    build: impl FnOnce(&mut Page, Option<u32>),
+) {
+    match target {
+        Some(target) => item(page, target, |page, link| build(page, Some(link))),
+        None => build(page, None),
+    }
+}
+
 /// A file shown as Markdown, read as prose rather than as code.
 pub fn is_markdown(path: &str) -> bool {
     path.to_ascii_lowercase().ends_with(".md")
 }
 
+/// Each name once, in order.
 fn unique<'a>(names: impl IntoIterator<Item = &'a String>) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for name in names {

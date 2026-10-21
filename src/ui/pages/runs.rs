@@ -75,29 +75,19 @@ pub fn checks(page: &mut Page, checks: Fetched<'_, Checks>, now: u64) {
 }
 
 pub(super) fn check_row(page: &mut Page, check: &CheckItem, now: u64) {
-    let (mark, role) = outcome_mark(check.outcome);
-    let took = match (&check.started_at, &check.completed_at, check.outcome) {
-        (Some(start), Some(end), _) => time::duration_iso(start, end),
-        (Some(start), None, CheckOutcome::Pending) => {
-            Some(format!("started {}", time::ago_iso(start, now)))
-        }
-        _ => None,
-    };
-    let right = took.map_or_else(Vec::new, |t| vec![meta(t)]);
-    let row = |page: &mut Page, link: Option<u32>| {
-        let name = match link {
-            Some(link) => Seg::linked(check.name.clone(), Role::Strong, link),
-            None => strong(check.name.clone()),
-        };
-        page.box_line(vec![Seg::new(format!("{mark} "), role), name], right, 0);
+    let took = took(
+        check.started_at.as_ref(),
+        check.completed_at.as_ref(),
+        check.outcome,
+        now,
+    );
+    maybe_item(page, check.url.clone(), |page, link| {
+        let name = Seg::linked(check.name.clone(), Role::Strong, link);
+        status_row(page, outcome_mark(check.outcome), name, took);
         if let Some(summary) = check.summary.as_ref().filter(|_| !page.compact) {
             body(page, vec![meta(format!("  {summary}"))]);
         }
-    };
-    match &check.url {
-        Some(url) => item(page, url.clone(), |page, link| row(page, Some(link))),
-        None => row(page, None),
-    }
+    });
     annotation_rows(page, &check.annotations, check.url.as_deref(), 2);
 }
 
@@ -125,11 +115,14 @@ pub(super) fn annotation_rows(
             Level::Warning => ("!", Role::Accent),
             Level::Notice => ("i", Role::Meta),
         };
-        let row = |page: &mut Page, link: Option<u32>| {
-            let place = match link {
-                Some(link) => Seg::linked(a.place(), Role::Link, link),
-                None => meta(a.place()),
+        let target = a.url.as_deref().or(run).map(str::to_owned);
+        maybe_item(page, target, |page, link| {
+            let linked = if link.is_some() {
+                Role::Link
+            } else {
+                Role::Meta
             };
+            let place = Seg::linked(a.place(), linked, link);
             let mut segs = vec![Seg::new(format!("{mark} "), role), place];
             if !a.title.is_empty() {
                 segs.push(strong(format!("  {}", a.title)));
@@ -144,11 +137,7 @@ pub(super) fn annotation_rows(
                 let text = vec![Seg::new(line.to_owned(), Role::Body)];
                 page.wrapped(text, indent + 2, Frame::Body);
             }
-        };
-        match a.url.as_deref().or(run) {
-            Some(url) => item(page, url.to_owned(), |page, link| row(page, Some(link))),
-            None => row(page, None),
-        }
+        });
     }
     let more = list.total().saturating_sub(list.len().min(shown) as u64);
     if more > 0 {
@@ -175,6 +164,18 @@ pub(super) fn took(
         }
         _ => None,
     }
+}
+
+/// A row of something that ran: its mark, its name, and how long it
+/// took.
+pub(super) fn status_row(
+    page: &mut Page,
+    (mark, role): (&str, Role),
+    name: Seg,
+    took: Option<String>,
+) {
+    let segs = vec![Seg::new(format!("{mark} "), role), name];
+    page.box_line(segs, Vec::from_iter(took.map(meta)), 0);
 }
 
 pub(super) fn outcome_title(page: &mut Page, title: String, outcome: CheckOutcome) {
@@ -243,7 +244,7 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
     }
     page.wrapped(facts, 0, Frame::None);
     page.blank();
-    let mut jobs = run.jobs.clone();
+    let mut jobs: Vec<_> = run.jobs.iter().collect();
     jobs.sort_by(|a, b| (a.outcome, &a.name).cmp(&(b.outcome, &b.name)));
     let title = counted("Jobs", &run.jobs);
     // A run just started (or re-run) has no jobs until GitHub queues them.
@@ -257,22 +258,17 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
     if failed.is_some() {
         page.selects = Some(page.items.len());
     }
-    list_box(page, title, Vec::new(), &jobs, none, |page, job| {
+    list_box(page, title, Vec::new(), &Whole(&jobs), none, |page, job| {
         let target = format!("{}/actions/runs/{}/job/{}", url::repo(repo), run.id, job.id);
+        let took = took(
+            job.started_at.as_ref(),
+            job.completed_at.as_ref(),
+            job.outcome,
+            now,
+        );
         item(page, target, |page, link| {
-            let (mark, role) = outcome_mark(job.outcome);
-            let right = took(
-                job.started_at.as_ref(),
-                job.completed_at.as_ref(),
-                job.outcome,
-                now,
-            )
-            .map_or_else(Vec::new, |t| vec![meta(t)]);
-            let segs = vec![
-                Seg::new(format!("{mark} "), role),
-                Seg::linked(job.name.clone(), Role::Strong, link),
-            ];
-            page.box_line(segs, right, 0);
+            let name = Seg::linked(job.name.clone(), Role::Strong, link);
+            status_row(page, outcome_mark(job.outcome), name, took);
         });
     });
     artifacts(page, &run.artifacts, now);
@@ -318,7 +314,9 @@ pub fn step_lines<'a>(job: &Job, cut: &'a str, log: &'a str) -> Vec<(u32, usize,
         .iter()
         .map(|s| (s.number, 0, Vec::new()))
         .collect();
-    let second = |at: Option<&String>| at.map(|at| at.get(..19).unwrap_or(at).to_owned());
+    fn second(at: Option<&String>) -> Option<&str> {
+        at.map(|at| at.get(..19).unwrap_or(at))
+    }
     // Skipped steps log nothing.
     let ran: Vec<usize> = job
         .steps
@@ -353,9 +351,8 @@ pub fn step_lines<'a>(job: &Job, cut: &'a str, log: &'a str) -> Vec<(u32, usize,
                 let starts = marks
                     && begun
                     && run.is_none_or(|r| !next.name.starts_with("Run ") || r == next.name);
-                let next_started =
-                    second(next.started_at.as_ref()).is_some_and(|s| s.as_str() <= t);
-                let ended = second(current.completed_at.as_ref()).is_some_and(|s| s.as_str() < t);
+                let next_started = second(next.started_at.as_ref()).is_some_and(|s| s <= t);
+                let ended = second(current.completed_at.as_ref()).is_some_and(|s| s < t);
                 if !next_started || !(ended || starts) {
                     break;
                 }
@@ -417,9 +414,8 @@ pub(super) fn strip_escapes(text: &str) -> String {
 /// A log line as shown, as GitHub shows it: its markers (`##[group]`,
 /// a composite action's `##[start-action]`, `##[error]`, `##[warning]`,
 /// `##[notice]`, `##[debug]`, `[command]`) as styles rather than text, and
-/// its color codes gone.
+/// its color codes gone (`text` comes without them).
 pub fn log_seg(text: &str) -> Seg {
-    let text = &strip_escapes(text);
     if let Some(group) = text.strip_prefix("##[group]") {
         strong(format!("▾ {group}"))
     } else if text.starts_with("##[endgroup]") || text.starts_with("##[end-action ") {
@@ -524,7 +520,9 @@ pub fn job(
         empty_row(page, &text);
     }
     let q = at.query.to_lowercase();
-    let matches = |line: &str| crate::ui::text::has(&strip_escapes(line).to_lowercase(), &q);
+    // Whether a line, without its escapes or as logged, has the search.
+    let hit = |line: &str| !q.is_empty() && crate::ui::text::has(&line.to_lowercase(), &q);
+    let matches = |line: &str| !q.is_empty() && hit(&strip_escapes(line));
     // With a match anywhere, the search decides where the page opens.
     let searched = lines
         .iter()
@@ -551,6 +549,12 @@ pub fn job(
         .or(job.steps.first())
         .map(|s| s.number);
     let follow = followed.map(|s| s.number).filter(|n| opens == Some(*n));
+    let job_url = format!(
+        "{}/actions/runs/{}/job/{}",
+        url::repo(repo),
+        job.run_id,
+        job.id
+    );
     for (n, step) in job.steps.iter().enumerate() {
         if n > 0 {
             page.box_rule();
@@ -562,50 +566,31 @@ pub fn job(
                 page.jump = Some(page.lines.len());
             }
         }
-        let target = format!(
-            "{}/actions/runs/{}/job/{}#step:{}:1",
-            url::repo(repo),
-            job.run_id,
-            job.id,
-            step.number
+        // Each line is a row, as a file's are: `y` copies its link.
+        let step_url = format!("{job_url}#step:{}:", step.number);
+        let mark = match step.outcome {
+            // Queued: not running yet.
+            CheckOutcome::Pending if step.started_at.is_none() => ("○", Role::Meta),
+            outcome => outcome_mark(outcome),
+        };
+        let took = took(
+            step.started_at.as_ref(),
+            step.completed_at.as_ref(),
+            step.outcome,
+            now,
         );
-        item(page, target, |page, link| {
-            let (mark, role) = match step.outcome {
-                // Queued: not running yet.
-                CheckOutcome::Pending if step.started_at.is_none() => ("○", Role::Meta),
-                outcome => outcome_mark(outcome),
-            };
-            let right = took(
-                step.started_at.as_ref(),
-                step.completed_at.as_ref(),
-                step.outcome,
-                now,
-            )
-            .map_or_else(Vec::new, |t| vec![meta(t)]);
-            let segs = vec![
-                Seg::new(format!("{mark} "), role),
-                Seg::linked(step.name.clone(), Role::Strong, link),
-            ];
-            page.box_line(segs, right, 0);
+        item(page, format!("{step_url}1"), |page, link| {
+            let name = Seg::linked(step.name.clone(), Role::Strong, link);
+            status_row(page, mark, name, took);
         });
         let pointed = at.step.map(|(s, _)| s) == Some(step.number);
         let failed = step.outcome == CheckOutcome::Failure;
         // Numbered from the step's first line, cut ones included.
-        let (cut, shown): (usize, Vec<(usize, &str)>) = lines
+        let (cut, raw) = lines
             .as_ref()
             .and_then(|lines| lines.iter().find(|(n, _, _)| *n == step.number))
-            .map(|(_, cut, l)| {
-                (
-                    *cut,
-                    l.iter()
-                        .copied()
-                        .enumerate()
-                        .map(|(i, t)| (cut + i, t))
-                        .collect(),
-                )
-            })
-            .unwrap_or_default();
-        let found = shown.iter().any(|(_, l)| matches(l));
+            .map_or((0, &[][..]), |(_, cut, l)| (*cut, l.as_slice()));
+        let found = raw.iter().any(|l| matches(l));
         let followed = follow == Some(step.number);
         if !(pointed || failed || found || followed) {
             continue;
@@ -618,17 +603,20 @@ pub fn job(
             body(page, vec![meta(text)]);
             continue;
         }
+        // Each shown line without its escapes, numbered from the step's
+        // first line, cut ones included.
+        let shown: Vec<(usize, String)> = (raw.iter().enumerate())
+            .map(|(i, l)| (cut + i, strip_escapes(l)))
+            .collect();
         // Where the page opens: the first search match; else the line a
         // link points at; else a failed step's first error (or its end).
         let at_line = |l: u32| shown.iter().position(|(i, _)| i + 1 == l as usize);
         let first_error = || {
-            let error = shown
-                .iter()
-                .position(|(_, l)| strip_escapes(l).starts_with("##[error]"));
+            let error = (shown.iter()).position(|(_, l)| l.starts_with("##[error]"));
             error.or(shown.len().checked_sub(1))
         };
         let focus = match at.step {
-            _ if searched => shown.iter().position(|(_, l)| matches(l)),
+            _ if searched => shown.iter().position(|(_, l)| hit(l)),
             Some((_, l)) if pointed => at_line(l),
             _ if failed => first_error(),
             // Followed to its end, as `tail -f` leaves it.
@@ -655,23 +643,13 @@ pub fn job(
             body(page, vec![meta(text)]);
         }
         let width = shown.last().map_or(1, |(i, _)| (i + 1).to_string().len());
-        // Each line is a row, as a file's are: `y` copies its link.
-        let line_url = |n: usize| {
-            format!(
-                "{}/actions/runs/{}/job/{}#step:{}:{n}",
-                url::repo(repo),
-                job.run_id,
-                job.id,
-                step.number
-            )
-        };
         for (n, (i, text)) in shown.iter().enumerate() {
             // The page opens there, with that line selected.
             if focus == Some(n) && page.jump.is_none() {
                 page.jump = Some(page.lines.len());
                 page.selects = Some(page.items.len());
             }
-            if matches(text) {
+            if hit(text) {
                 page.marks.push(page.lines.len());
             }
             let number = Seg::new(
@@ -688,7 +666,7 @@ pub fn job(
                 fixed: 1,
                 ..PageLine::default()
             });
-            let link = page.link(line_url(i + 1));
+            let link = page.link(format!("{step_url}{}", i + 1));
             page.item(start, link);
         }
         if pointed && !searched {
@@ -751,7 +729,6 @@ pub(super) fn run_list(
             page,
             format!("{}/actions/runs/{}", url::repo(repo), run.id),
             |page, link| {
-                let (mark, role) = outcome_mark(run.outcome);
                 let title = if run.title.is_empty() {
                     format!("Run #{}", run.number)
                 } else {
@@ -762,16 +739,9 @@ pub(super) fn run_list(
                     .updated_at
                     .as_ref()
                     .filter(|_| run.outcome != CheckOutcome::Pending);
-                let right =
-                    took(start, end, run.outcome, now).map_or_else(Vec::new, |t| vec![meta(t)]);
-                page.box_line(
-                    vec![
-                        Seg::new(format!("{mark} "), role),
-                        Seg::linked(title, Role::Strong, link),
-                    ],
-                    right,
-                    0,
-                );
+                let took = took(start, end, run.outcome, now);
+                let name = Seg::linked(title, Role::Strong, link);
+                status_row(page, outcome_mark(run.outcome), name, took);
                 let mut subline = format!("{} #{} · {}", run.workflow, run.number, run.event);
                 if let Some(b) = &run.branch {
                     subline.push_str(&format!(" · {b}"));
@@ -894,11 +864,6 @@ pub fn dispatch_form(page: &mut Page, v: &DispatchView<'_>) {
     });
 }
 
-/// A commit's checks.
-pub fn commit_checks(page: &mut Page, c: Fetched<'_, Checks>, now: u64) {
-    checks(page, c, now);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -914,6 +879,38 @@ mod tests {
         }
     }
 
+    /// A finished job of `steps`.
+    fn job_of(steps: Vec<crate::api::browse::Step>) -> Job {
+        Job {
+            id: 1,
+            run_id: 1,
+            attempt: 1,
+            run: finished_run(),
+            annotations: Default::default(),
+            name: String::new(),
+            outcome: CheckOutcome::Success,
+            started_at: None,
+            completed_at: None,
+            steps,
+        }
+    }
+
+    /// A job page at `step`, searched for `query`.
+    fn at(step: Option<(u32, u32)>, query: &str) -> JobAt<'_> {
+        JobAt {
+            step,
+            query,
+            keys: Keys::default(),
+            follows: false,
+        }
+    }
+
+    /// Step `n`'s lines.
+    fn lines_of<'a>(lines: &[(u32, usize, Vec<&'a str>)], n: u32) -> Vec<&'a str> {
+        let step = lines.iter().find(|(s, _, _)| *s == n);
+        step.map(|(_, _, l)| l.clone()).unwrap_or_default()
+    }
+
     /// Steps that start in the second the one before ends still get their
     /// own lines, by the lines that start them.
     #[test]
@@ -925,25 +922,14 @@ mod tests {
             started_at: Some(format!("2026-10-05T17:42:{start}Z")),
             completed_at: Some(format!("2026-10-05T17:42:{end}Z")),
         };
-        let job = Job {
-            id: 1,
-            run_id: 1,
-            attempt: 1,
-            run: finished_run(),
-            annotations: Default::default(),
-            name: String::new(),
-            outcome: CheckOutcome::Success,
-            started_at: None,
-            completed_at: None,
-            steps: vec![
-                step(1, CheckOutcome::Success, "04", "04"),
-                step(2, CheckOutcome::Success, "04", "16"),
-                step(3, CheckOutcome::Skipped, "16", "16"),
-                step(4, CheckOutcome::Success, "16", "37"),
-                step(8, CheckOutcome::Success, "37", "37"),
-                step(9, CheckOutcome::Success, "37", "37"),
-            ],
-        };
+        let job = job_of(vec![
+            step(1, CheckOutcome::Success, "04", "04"),
+            step(2, CheckOutcome::Success, "04", "16"),
+            step(3, CheckOutcome::Skipped, "16", "16"),
+            step(4, CheckOutcome::Success, "16", "37"),
+            step(8, CheckOutcome::Success, "37", "37"),
+            step(9, CheckOutcome::Success, "37", "37"),
+        ]);
         let log = [
             "\u{feff}2026-10-05T17:42:04.31Z Current runner version",
             "2026-10-05T17:42:04.32Z ##[group]Runner Image",
@@ -956,13 +942,7 @@ mod tests {
         ]
         .join("\n");
         let lines = step_lines(&job, "", &log);
-        let of = |n: u32| {
-            lines
-                .iter()
-                .find(|(s, _, _)| *s == n)
-                .map(|(_, _, l)| l.clone())
-                .unwrap_or_default()
-        };
+        let of = |n| lines_of(&lines, n);
         assert_eq!(of(1), ["Current runner version", "##[group]Runner Image"]);
         assert_eq!(
             of(2),
@@ -974,14 +954,11 @@ mod tests {
         assert_eq!(of(9), ["Cleaning up orphan processes"]);
         // A start line just after the step before ended starts one step,
         // not every step that started in that second.
-        let job = Job {
-            steps: vec![
-                step(1, CheckOutcome::Success, "48", "48"),
-                step(2, CheckOutcome::Success, "48", "49"),
-                step(3, CheckOutcome::Failure, "49", "49"),
-            ],
-            ..job
-        };
+        let job = job_of(vec![
+            step(1, CheckOutcome::Success, "48", "48"),
+            step(2, CheckOutcome::Success, "48", "49"),
+            step(3, CheckOutcome::Failure, "49", "49"),
+        ]);
         let log = [
             "2026-10-05T17:42:48.10Z Current runner version",
             "2026-10-05T17:42:49.10Z ##[group]Run ./prepare",
@@ -991,18 +968,9 @@ mod tests {
         ]
         .join("\n");
         let lines = step_lines(&job, "", &log);
-        let of = |n: u32| {
-            lines
-                .iter()
-                .find(|(s, _, _)| *s == n)
-                .map(|(_, _, l)| l.clone())
-        };
+        assert_eq!(lines_of(&lines, 2), ["##[group]Run ./prepare", "prepared"]);
         assert_eq!(
-            of(2).unwrap_or_default(),
-            ["##[group]Run ./prepare", "prepared"]
-        );
-        assert_eq!(
-            of(3).unwrap_or_default(),
+            lines_of(&lines, 3),
             ["##[group]Run ./build", "##[error]boom"]
         );
     }
@@ -1018,18 +986,7 @@ mod tests {
             started_at: Some("2026-10-05T17:42:00Z".into()),
             completed_at: Some("2026-10-05T17:43:00Z".into()),
         };
-        let job = Job {
-            id: 1,
-            run_id: 1,
-            attempt: 1,
-            run: finished_run(),
-            annotations: Default::default(),
-            name: String::new(),
-            outcome: CheckOutcome::Success,
-            started_at: None,
-            completed_at: None,
-            steps: vec![step],
-        };
+        let job = job_of(vec![step]);
         let log: String = (1..=3000)
             .map(|n| {
                 let needle = if n % 1000 == 0 { " needle" } else { "" };
@@ -1038,13 +995,7 @@ mod tests {
             .collect();
         let shown = |query: &str| {
             let mut page = Page::new(100);
-            let at = JobAt {
-                step: Some((1, 10)),
-                query,
-                keys: Keys::default(),
-                follows: false,
-            };
-            job_page(&mut page, &job, &log, at);
+            job_page(&mut page, &job, &log, at(Some((1, 10)), query));
             let lines: Vec<String> = page.lines.iter().map(PageLine::text).collect();
             let at = |i: Option<usize>| i.and_then(|i| lines.get(i)).cloned().unwrap_or_default();
             let marks: Vec<String> = page.marks.iter().map(|&m| at(Some(m))).collect();
@@ -1062,33 +1013,16 @@ mod tests {
     /// The log's filter matches what shows, not the color codes around it.
     #[test]
     fn the_log_filter_ignores_color_codes() {
-        let job = Job {
-            id: 1,
-            run_id: 1,
-            attempt: 1,
-            run: finished_run(),
-            annotations: Default::default(),
-            name: String::new(),
+        let job = job_of(vec![crate::api::browse::Step {
+            number: 1,
+            name: "Build".into(),
             outcome: CheckOutcome::Success,
             started_at: None,
             completed_at: None,
-            steps: vec![crate::api::browse::Step {
-                number: 1,
-                name: "Build".into(),
-                outcome: CheckOutcome::Success,
-                started_at: None,
-                completed_at: None,
-            }],
-        };
+        }]);
         let log = "2026-10-05T17:42:01.0Z \u{1b}[36;1mcd\u{1b}[0m src\n";
-        let at = JobAt {
-            step: None,
-            query: "cd src",
-            keys: Keys::default(),
-            follows: false,
-        };
         let mut page = Page::new(100);
-        job_page(&mut page, &job, log, at);
+        job_page(&mut page, &job, log, at(None, "cd src"));
         assert!(page.lines.iter().any(|l| l.text().ends_with("cd src")));
     }
 
@@ -1133,35 +1067,22 @@ mod tests {
             text: log.into(),
             ..JobLog::default()
         };
-        super::job(
-            page,
-            &RepoId::new("o", "r"),
-            job,
-            Fetched::ready(&log),
-            at,
-            0,
-        );
+        log_page(page, job, Fetched::ready(&log), at);
+    }
+
+    fn log_page(page: &mut Page, job: &Job, log: Fetched<'_, JobLog>, at: JobAt<'_>) {
+        super::job(page, &RepoId::new("o", "r"), job, log, at, 0);
     }
 
     fn one_step_job(outcome: CheckOutcome) -> Job {
-        Job {
-            id: 1,
-            run_id: 1,
-            attempt: 1,
-            run: finished_run(),
-            annotations: Default::default(),
-            name: String::new(),
+        let job = job_of(vec![crate::api::browse::Step {
+            number: 1,
+            name: "Build".into(),
             outcome,
-            started_at: None,
+            started_at: Some("2026-10-05T17:42:00Z".into()),
             completed_at: None,
-            steps: vec![crate::api::browse::Step {
-                number: 1,
-                name: "Build".into(),
-                outcome,
-                started_at: Some("2026-10-05T17:42:00Z".into()),
-                completed_at: None,
-            }],
-        }
+        }]);
+        Job { outcome, ..job }
     }
 
     /// A job GitHub keeps no steps for (an old one) still says what became
@@ -1171,21 +1092,8 @@ mod tests {
         let mut job = one_step_job(CheckOutcome::Success);
         job.steps.clear();
         let mut page = Page::new(120);
-        let at = JobAt {
-            step: None,
-            query: "",
-            keys: Keys::default(),
-            follows: false,
-        };
         let expired = "this log has expired";
-        super::job(
-            &mut page,
-            &RepoId::new("o", "r"),
-            &job,
-            Fetched::failed(expired),
-            at,
-            0,
-        );
+        log_page(&mut page, &job, Fetched::failed(expired), at(None, ""));
         let text: Vec<String> = page.lines.iter().map(PageLine::text).collect();
         assert!(
             text.iter()
@@ -1199,7 +1107,7 @@ mod tests {
     #[test]
     fn log_markers_show_as_styles() {
         let seg = |line: &str| {
-            let s = log_seg(line);
+            let s = log_seg(&strip_escapes(line));
             (s.text().to_owned(), s.role)
         };
         assert_eq!(seg("##[notice]Deployed"), ("Deployed".into(), Role::Strong));
@@ -1247,20 +1155,8 @@ mod tests {
         let first_kept = cut.lines().count() + 1;
         let shown = |line: usize| {
             let mut page = Page::new(100);
-            let at = JobAt {
-                step: Some((1, u32::try_from(line).unwrap())),
-                query: "",
-                keys: Keys::default(),
-                follows: false,
-            };
-            super::job(
-                &mut page,
-                &RepoId::new("o", "r"),
-                &job,
-                Fetched::ready(&log),
-                at,
-                0,
-            );
+            let at = at(Some((1, u32::try_from(line).unwrap())), "");
+            log_page(&mut page, &job, Fetched::ready(&log), at);
             let jump = page
                 .jump
                 .and_then(|j| page.lines.get(j))
@@ -1282,13 +1178,7 @@ mod tests {
     fn a_log_that_isnt_there_says_why() {
         let text = |job: &Job, log: Fetched<'_, JobLog>| {
             let mut page = Page::new(120);
-            let at = JobAt {
-                step: Some((1, 1)),
-                query: "",
-                keys: Keys::default(),
-                follows: false,
-            };
-            super::job(&mut page, &RepoId::new("o", "r"), job, log, at, 0);
+            log_page(&mut page, job, log, at(Some((1, 1)), ""));
             page.lines
                 .iter()
                 .map(PageLine::text)
@@ -1325,21 +1215,10 @@ mod tests {
             started_at: Some(format!("2026-10-05T17:42:{start}Z")),
             completed_at: Some(format!("2026-10-05T17:42:{end}Z")),
         };
-        let job = Job {
-            id: 1,
-            run_id: 1,
-            attempt: 1,
-            run: finished_run(),
-            annotations: Default::default(),
-            name: String::new(),
-            outcome: CheckOutcome::Success,
-            started_at: None,
-            completed_at: None,
-            steps: vec![
-                step(1, "Run ./build", "00", "05"),
-                step(2, "Run ./test", "05", "09"),
-            ],
-        };
+        let job = job_of(vec![
+            step(1, "Run ./build", "00", "05"),
+            step(2, "Run ./test", "05", "09"),
+        ]);
         let log = [
             "2026-10-05T17:42:00.1Z ##[group]Run ./build",
             "2026-10-05T17:42:05.1Z ##[group]Run inner",
@@ -1348,13 +1227,7 @@ mod tests {
         ]
         .join("\n");
         let lines = step_lines(&job, "", &log);
-        let of = |n: u32| {
-            lines
-                .iter()
-                .find(|(s, _, _)| *s == n)
-                .map(|(_, _, l)| l.len())
-                .unwrap_or_default()
-        };
+        let of = |n| lines_of(&lines, n).len();
         assert_eq!((of(1), of(2)), (3, 1));
     }
 
