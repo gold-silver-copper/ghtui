@@ -1606,6 +1606,7 @@ impl GitHub {
         query: &str,
         after: Option<String>,
     ) -> Result<browse::SearchResults, ApiError> {
+        use browse::rest_search::{Code, Commit};
         use browse::{Results, SearchKind as Kind, SearchResults};
         if kind == Kind::Discussions {
             let vars = serde_json::json!({ "q": query, "after": after });
@@ -1640,7 +1641,6 @@ impl GitHub {
             encode_query(query)
         );
         let next = |total: u64| next_page(number, REST_PAGE, total.min(SEARCH_CAP));
-        use browse::rest_search::{Code, Commit};
         Ok(if kind == Kind::Commits {
             SearchResults::Commits(self.rest_hits(&path, next, Commit::into_hit).await?)
         } else {
@@ -3099,9 +3099,14 @@ fn next_after(link: &str) -> Option<String> {
     )
 }
 
-/// A GraphQL request's body.
+/// A GraphQL request's body, made of `variables` as they are (`json!`
+/// would copy them).
 fn gql_body(query: &str, variables: Value) -> Value {
-    serde_json::json!({ "query": query, "variables": variables })
+    let body = [
+        ("query".into(), query.into()),
+        ("variables".into(), variables),
+    ];
+    Value::Object(body.into_iter().collect())
 }
 
 /// A REST path as an error names it: without `/repos/`.
