@@ -392,7 +392,7 @@ impl Local {
             None => {}
         }
         let ready = match Repo::find_local(&self.git.cwd, &repo.owner, &repo.name).await {
-            Ok(Some(clone)) => Some((clone.path.clone(), clone, true)),
+            Ok(Some(clone)) => Some((Clone::Yours(clone.path.clone()), clone)),
             _ => match Repo::open_cached(
                 &self.git.cache_root,
                 &repo.owner,
@@ -401,7 +401,7 @@ impl Local {
             )
             .await
             {
-                Ok(Some(clone)) => Some((clone.path.clone(), clone, false)),
+                Ok(Some(clone)) => Some((Clone::Cache, clone)),
                 Ok(None) => None,
                 Err(err) => {
                     let why = format!("ghtui's clone of {repo} doesn't open: {err}");
@@ -411,12 +411,7 @@ impl Local {
             },
         };
         let mut clones = lock(&self.clones);
-        if let Some((top, clone, yours)) = ready {
-            let whose = if yours {
-                Clone::Yours(top)
-            } else {
-                Clone::Cache
-            };
+        if let Some((whose, clone)) = ready {
             let clone = Arc::new(clone);
             clones.insert(slug, Slot::Ready(clone.clone(), whose.clone()));
             return Ok((clone, whose));
@@ -761,7 +756,7 @@ impl Local {
                 };
                 let mut tags = listed.tags;
                 // Newest versions first, as near as names say.
-                tags.sort_by(|a, b| version_order(&b.0, &a.0));
+                tags.sort_by_cached_key(|t| std::cmp::Reverse(version_key(&t.0)));
                 let refs = Refs {
                     branches: names(listed.branches),
                     tags: names(tags),
@@ -818,17 +813,15 @@ fn wait(key: &DataKey) -> Duration {
     })
 }
 
-/// Tag names in version order: `v1.10` after `v1.9`.
-fn version_order(a: &str, b: &str) -> std::cmp::Ordering {
-    let parts = |s: &str| -> Vec<(u64, String)> {
-        (s.split(|c: char| !c.is_ascii_alphanumeric()))
-            .map(|p| {
-                let digits: String = p.chars().take_while(char::is_ascii_digit).collect();
-                (digits.parse().unwrap_or(0), p.to_owned())
-            })
-            .collect()
-    };
-    parts(a).cmp(&parts(b))
+/// A tag name's key in version order: `v1.10` after `v1.9`.
+fn version_key(s: &str) -> Vec<(u64, String)> {
+    (s.split(|c: char| !c.is_ascii_alphanumeric()))
+        .map(|p| {
+            let digits = p.find(|c: char| !c.is_ascii_digit()).unwrap_or(p.len());
+            let number = p.get(..digits).and_then(|d| d.parse().ok());
+            (number.unwrap_or(0), p.to_owned())
+        })
+        .collect()
 }
 
 /// How much a clone has received, from its progress line (`Receiving
@@ -1066,7 +1059,7 @@ mod tests {
     #[test]
     fn tags_go_newest_version_first() {
         let mut tags = vec!["v1.9", "v1.10", "v1.2"];
-        tags.sort_by(|a, b| version_order(b, a));
+        tags.sort_by_cached_key(|t| std::cmp::Reverse(version_key(t)));
         assert_eq!(tags, ["v1.10", "v1.9", "v1.2"]);
     }
 }

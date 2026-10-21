@@ -281,29 +281,30 @@ fn place(d: &DraftComment) -> Comment {
         return Comment::File { path, reason: None };
     };
     let end = LinePos {
-        side: side_of(d.side),
+        side: d.side.into(),
         line,
     };
     let start = LinePos {
-        side: side_of(d.start_side.unwrap_or(d.side)),
+        side: d.start_side.unwrap_or(d.side).into(),
         line: d.start_line.unwrap_or(line),
     };
     Comment::Line { path, start, end }
 }
 
-fn draft_side(side: Side) -> DraftSide {
-    match side {
-        Side::Left => DraftSide::Left,
-        Side::Right => DraftSide::Right,
-    }
+/// The same side in each of the types that name one.
+macro_rules! sides {
+    ($($from:ident => $to:ident),*) => {$(
+        impl From<$from> for $to {
+            fn from(side: $from) -> Self {
+                match side {
+                    $from::Left => $to::Left,
+                    $from::Right => $to::Right,
+                }
+            }
+        }
+    )*};
 }
-
-fn side_of(side: DraftSide) -> Side {
-    match side {
-        DraftSide::Left => Side::Left,
-        DraftSide::Right => Side::Right,
-    }
-}
+sides!(Side => DraftSide, DraftSide => Side, DraftSide => ApiSide, ApiSide => Side);
 
 /// A new draft for a line or file target.
 pub fn draft(target: &Comment, body: &str, id: u64, commit: &str) -> Option<DraftComment> {
@@ -319,10 +320,10 @@ pub fn draft(target: &Comment, body: &str, id: u64, commit: &str) -> Option<Draf
         Comment::Line { path, start, end } => {
             let ranged = start != end;
             Some(DraftComment {
-                side: draft_side(end.side),
+                side: end.side.into(),
                 line: Some(end.line),
                 start_line: ranged.then_some(start.line),
-                start_side: ranged.then_some(draft_side(start.side)),
+                start_side: ranged.then_some(start.side.into()),
                 ..base(path)
             })
         }
@@ -332,17 +333,13 @@ pub fn draft(target: &Comment, body: &str, id: u64, commit: &str) -> Option<Draf
 }
 
 pub fn new_thread(draft: &DraftComment) -> NewThread {
-    let side = |s: DraftSide| match s {
-        DraftSide::Left => ApiSide::Left,
-        DraftSide::Right => ApiSide::Right,
-    };
     NewThread {
         path: draft.path.clone(),
         body: draft.body.clone(),
         line: draft.line,
-        side: side(draft.side),
+        side: draft.side.into(),
         start_line: draft.start_line,
-        start_side: draft.start_side.map(side),
+        start_side: draft.start_side.map(Into::into),
     }
 }
 
@@ -359,10 +356,7 @@ pub fn annotations(
     let mut out: Vec<Annotation> = threads
         .iter()
         .map(|t| {
-            let side = match t.side {
-                ApiSide::Left => Side::Left,
-                ApiSide::Right => Side::Right,
-            };
+            let side = t.side.into();
             let moved_to = mapped.get(&t.id).copied().flatten();
             let place = match (t.file_level, t.outdated, t.line, moved_to) {
                 (true, outdated, ..) => Place::File { outdated },
@@ -405,7 +399,7 @@ pub fn annotations(
         place: match d.line {
             Some(line) => Place::Line {
                 at: LinePos {
-                    side: side_of(d.side),
+                    side: d.side.into(),
                     line,
                 },
                 start: d.start_line,

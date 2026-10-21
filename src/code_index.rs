@@ -109,9 +109,7 @@ impl Index {
         word: &'a str,
         keep: impl Fn(&str) -> bool + 'a,
     ) -> impl Iterator<Item = (&'a FileDefs, &'a Def)> + 'a {
-        let files = self.files.iter().filter(move |f| keep(&f.path));
-        let defs = files.flat_map(|f| f.defs.iter().map(move |d| (f, d)));
-        defs.filter(move |(_, d)| d.defines.as_deref() == Some(word))
+        (self.symbols()).filter(move |(f, d)| d.defines.as_deref() == Some(word) && keep(&f.path))
     }
 
     pub fn symbols(&self) -> impl Iterator<Item = (&FileDefs, &Def)> {
@@ -169,7 +167,9 @@ impl Snapshot {
 
     /// The commit, short, for saying where it's read.
     pub fn at(&self) -> String {
-        (self.commit.as_ref()).map_or_else(String::new, |c| c.get(..7).unwrap_or(c).to_owned())
+        (self.commit.as_deref())
+            .map_or("", crate::ui::text::short_sha)
+            .to_owned()
     }
 
     /// What isn't in the index, in a sentence, if anything: it's still
@@ -212,8 +212,6 @@ struct RepoIndexes {
     /// The latest build of each revision, and when it started.
     builds: Mutex<HashMap<String, (Instant, watch::Receiver<Snapshot>)>>,
 }
-
-impl RepoIndexes {}
 
 /// Every repository's index: builds run once, in the background, and are
 /// shared by whoever asks.
