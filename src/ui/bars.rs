@@ -3,6 +3,7 @@
 
 #![deny(clippy::arithmetic_side_effects)]
 
+use crate::api::model::ChecksState;
 use crate::theme::Bg;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -50,24 +51,17 @@ impl Widget for StatusBar<'_> {
             left.push(Span::styled("   ", theme.body(BAR)));
         }
         match self.notice {
-            Some(Notice::Info(msg)) => left.push(Span::styled(msg.clone(), theme.body(BAR))),
-            Some(Notice::Error(msg)) => left.push(Span::styled(
-                format!(
-                    "{} {msg}",
-                    if self.ctx.icons.nerd_font {
-                        "\u{f467}"
-                    } else {
-                        "✗"
-                    }
-                ),
-                theme.error(BAR),
-            )),
+            Some(Notice::Info(msg)) => left.push(Span::styled(msg.as_str(), theme.body(BAR))),
+            Some(Notice::Error(msg)) => {
+                let failed = self.ctx.icons.checks(ChecksState::Failing);
+                left.push(Span::styled(format!("{failed} {msg}"), theme.error(BAR)));
+            }
             None => {}
         }
 
         let mut right = Vec::new();
         if let Some(view) = self.view {
-            right.push(Span::styled(view.to_owned(), theme.meta(BAR)));
+            right.push(Span::styled(view, theme.meta(BAR)));
             right.push(Span::styled("   ", theme.body(BAR)));
         }
         if let Some((label, remaining, limit)) = self.rate_limit {
@@ -153,14 +147,8 @@ impl Widget for Banner<'_> {
         }
         let inner = inset(area, PAD_X, 0);
         for (i, (line, y)) in lines.into_iter().zip(area.top()..area.bottom()).enumerate() {
-            let right = if i == 0 {
-                vec![Span::styled(
-                    hint.to_owned(),
-                    style.add_modifier(Modifier::BOLD),
-                )]
-            } else {
-                Vec::new()
-            };
+            let hint = if i == 0 { hint } else { "" };
+            let right = [Span::styled(hint, style.add_modifier(Modifier::BOLD))];
             let row = Rect {
                 y,
                 height: 1,

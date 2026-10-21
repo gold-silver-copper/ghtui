@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use ratatui_textarea::TextArea;
 
-use crate::ui::{Ctx, PAD_X, cols, fill, fit_spans, label_hint, list_row, put, render_split, text};
+use crate::ui::{Ctx, PAD_X, cols, fill, fit_spans, list_row, put, render_split, text};
 
 const BAR: Bg = Bg::Container;
 const FIELD: Bg = Bg::ContainerHighest;
@@ -169,7 +169,7 @@ impl Widget for Header<'_> {
             }
         }
         for (item, r) in self.right.iter().zip(&lay.right) {
-            Span::styled(item.clone(), theme.meta(BAR)).render(*r, buf);
+            Span::styled(item.as_str(), theme.meta(BAR)).render(*r, buf);
         }
     }
 }
@@ -228,26 +228,30 @@ enum Fit {
 /// the inactive tabs from the right shrink to their icons until it fits.
 fn fit(area: Rect, tabs: &[PageTab], active: Option<usize>) -> Vec<Fit> {
     let room = area.width.saturating_sub(PAD_X);
-    let total = |levels: &[Fit]| {
-        tabs.iter()
-            .zip(levels)
-            .enumerate()
-            .map(|(i, (t, &level))| tab_width(t, level, active == Some(i)).saturating_add(1))
+    let width = |i: usize, tab, level| tab_width(tab, level, active == Some(i)).saturating_add(1);
+    let total = |level| {
+        (tabs.iter().enumerate())
+            .map(|(i, tab)| width(i, tab, level))
             .fold(0, u16::saturating_add)
     };
-    let mut levels = vec![Fit::Full; tabs.len()];
-    if total(&levels) <= room {
-        return levels;
+    if total(Fit::Full) <= room {
+        return vec![Fit::Full; tabs.len()];
     }
-    levels.fill(Fit::NoCounts);
-    for i in (0..tabs.len()).rev() {
-        if total(&levels) <= room {
+    let mut levels = vec![Fit::NoCounts; tabs.len()];
+    let mut used = total(Fit::NoCounts);
+    for (i, tab) in tabs.iter().enumerate().rev() {
+        if used <= room {
             break;
         }
         if active != Some(i)
             && let Some(level) = levels.get_mut(i)
         {
             *level = Fit::Icons;
+            used = (used.saturating_sub(width(i, tab, Fit::NoCounts))).saturating_add(width(
+                i,
+                tab,
+                Fit::Icons,
+            ));
         }
     }
     levels
@@ -255,10 +259,14 @@ fn fit(area: Rect, tabs: &[PageTab], active: Option<usize>) -> Vec<Fit> {
 
 /// Each tab's rectangle on the label row.
 pub fn tab_layout(area: Rect, tabs: &[PageTab], active: Option<usize>) -> Vec<Rect> {
-    let levels = fit(area, tabs, active);
+    tab_rects(area, tabs, active, &fit(area, tabs, active))
+}
+
+/// [`tab_layout`], with how much each tab shows.
+fn tab_rects(area: Rect, tabs: &[PageTab], active: Option<usize>, levels: &[Fit]) -> Vec<Rect> {
     let mut x = area.x.saturating_add(PAD_X.min(area.width));
     let mut out = Vec::new();
-    for (i, (tab, &level)) in tabs.iter().zip(&levels).enumerate() {
+    for (i, (tab, &level)) in tabs.iter().zip(levels).enumerate() {
         let w = tab_width(tab, level, active == Some(i));
         let w = w.min(area.right().saturating_sub(x));
         out.push(Rect::new(x, area.y, w, 1));
@@ -315,7 +323,7 @@ impl Widget for TabBar<'_> {
         for (i, ((tab, r), &level)) in self
             .tabs
             .iter()
-            .zip(tab_layout(labels, self.tabs, self.active))
+            .zip(tab_rects(labels, self.tabs, self.active, &levels))
             .zip(&levels)
             .enumerate()
         {
@@ -339,7 +347,7 @@ impl Widget for TabBar<'_> {
                 Span::styled(format!(" {} ", tab.icon), theme.meta(BAR)),
             ];
             if shown(Fit::NoCounts) {
-                spans.push(Span::styled(tab.label.clone(), label_style));
+                spans.push(Span::styled(tab.label.as_str(), label_style));
             }
             if let Some(n) = tab.count.filter(|_| shown(Fit::Full)) {
                 spans.push(Span::styled(" ", theme.body(BAR)));
@@ -467,12 +475,8 @@ impl Widget for SearchPanel<'_> {
                         Span::styled(format!("{icon}  {label}"), theme.body(bg)),
                         Span::styled(format!("  {detail}"), theme.meta(bg)),
                     ];
-                    label_hint(
-                        buf,
-                        line,
-                        &left,
-                        Span::styled(hint.as_str(), theme.meta(bg)),
-                    );
+                    let hint = [Span::styled(hint.as_str(), theme.meta(bg))];
+                    render_split(line, buf, &left, &hint, 2);
                 }
             }
         }
@@ -606,7 +610,7 @@ impl Widget for KeyPanel<'_> {
                 Span::styled(format!("{}{}   ", " ".repeat(pad), row.key), key_style),
                 Span::styled(row.label.as_str(), label_style),
             ];
-            label_hint(buf, line, &left, Span::raw(""));
+            render_split(line, buf, &left, &[], 0);
         }
     }
 }

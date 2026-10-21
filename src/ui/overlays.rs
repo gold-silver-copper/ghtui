@@ -10,7 +10,7 @@ use ratatui::text::Span;
 use ratatui::widgets::Widget;
 use ratatui_textarea::TextArea;
 
-use crate::ui::{Ctx, PAD_Y, centered, cols, fill, label_hint, list_row, padded, text};
+use crate::ui::{Ctx, PAD_Y, centered, cols, fill, list_row, padded, render_split, text};
 
 const POPUP: Bg = Bg::ContainerHigh;
 
@@ -58,7 +58,7 @@ impl Widget for Palette<'_> {
 
         let prompt = Rect { height: 1, ..inner };
         Span::styled(
-            self.prompt.to_owned(),
+            self.prompt,
             theme.accent(POPUP).add_modifier(Modifier::BOLD),
         )
         .render(prompt, buf);
@@ -143,13 +143,9 @@ impl Widget for Palette<'_> {
         let shown = self.items.iter().enumerate().skip(first).take(rows);
         for ((i, item), y) in shown.zip(list_top..inner.bottom()) {
             let (row, bg) = list_row(buf, theme, area, y, i == self.selected, POPUP);
-            let label = Span::styled(item.label.as_str(), theme.body(bg));
-            label_hint(
-                buf,
-                row,
-                &[label],
-                Span::styled(item.hint.as_str(), theme.meta(bg)),
-            );
+            let label = [Span::styled(item.label.as_str(), theme.body(bg))];
+            let hint = [Span::styled(item.hint.as_str(), theme.meta(bg))];
+            render_split(row, buf, &label, &hint, 2);
         }
     }
 }
