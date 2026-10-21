@@ -107,10 +107,7 @@ impl State {
 
     /// The header's search field.
     pub fn header_search(&self) -> Rect {
-        let chrome = self.chrome();
-        let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
-        let right: Vec<_> = chrome.right.iter().map(|(t, _)| t.clone()).collect();
-        chrome::header_layout(self.layout().header, &crumbs, &right).search
+        header_of(&self.chrome(), self.layout().header).search
     }
 
     /// "→ o/r#5 go to", for what's typed when it's a place or ends in a

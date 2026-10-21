@@ -35,13 +35,6 @@ pub struct Remote<T> {
     pub(crate) version: u64,
 }
 
-impl<T> Remote<T> {
-    /// Pages were added with Load more.
-    pub fn extended(&self) -> bool {
-        self.extended
-    }
-}
-
 impl<T> Default for Remote<T> {
     fn default() -> Self {
         Self {
@@ -61,6 +54,11 @@ impl<T> Default for Remote<T> {
 }
 
 impl<T> Remote<T> {
+    /// Pages were added with Load more.
+    pub fn extended(&self) -> bool {
+        self.extended
+    }
+
     /// What a page shows of a fetch: one that hasn't started is loading.
     #[expect(
         clippy::disallowed_methods,

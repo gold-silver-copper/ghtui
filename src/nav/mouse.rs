@@ -74,9 +74,7 @@ pub(super) fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> C
     let lay = state.layout();
     let chrome = state.chrome();
     if inside(lay.header) {
-        let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
-        let right: Vec<_> = chrome.right.iter().map(|(t, _)| t.clone()).collect();
-        let h = chrome::header_layout(lay.header, &crumbs, &right);
+        let h = header_of(&chrome, lay.header);
         if inside(h.search) {
             return state.open_search(true);
         }
@@ -99,9 +97,10 @@ pub(super) fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> C
     if let Some(tabs) = lay.tabs
         && inside(tabs)
     {
-        let tab_list: Vec<_> = chrome.tabs.iter().map(|(t, _)| t.clone()).collect();
-        let rects = chrome::tab_layout(tabs, &tab_list, chrome.active);
-        return match rects.iter().position(|r| x >= r.x && x < r.right()) {
+        return match tabs_of(&chrome, tabs)
+            .iter()
+            .position(|r| x >= r.x && x < r.right())
+        {
             Some(i) => switch_tab(state, i + 1),
             None => Cmds::new(),
         };

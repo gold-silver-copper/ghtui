@@ -33,6 +33,16 @@ pub(crate) fn row(
     }
 }
 
+impl Doable {
+    /// Unavailable, for `why`, when `not`.
+    fn unavailable_if(mut self, not: bool, why: &str) -> Self {
+        if not {
+            self.unavailable = Some(why.to_owned());
+        }
+        self
+    }
+}
+
 /// The diff's menu, section by section, with the status bar's few.
 pub(super) const DIFF_DOABLES: &[(&str, &[(Action, &str)])] = {
     use Action as A;
@@ -138,15 +148,9 @@ impl State {
             out.push(go(Action::Tab1, "Back to the conversation", ""));
         }
         if let Some(n) = review_tab(&chrome) {
-            let mut glance = go(
-                Action::ReviewGlance,
-                "The review at a glance: drafts, threads, reviewers",
-                "",
-            );
-            if chrome.active == Some(n - 1) {
-                glance.unavailable = Some("this is it".into());
-            }
-            out.push(glance);
+            let glance = "The review at a glance: drafts, threads, reviewers";
+            let glance = go(Action::ReviewGlance, glance, "");
+            out.push(glance.unavailable_if(chrome.active == Some(n - 1), "this is it"));
         }
         let (open, copy) = match (selected, self.screen()) {
             (Some(_), _) => ("Open the selection on GitHub", "Copy the selection's link"),
@@ -158,39 +162,28 @@ impl State {
         };
         out.push(go(Action::OpenInBrowser, open, "browser"));
         out.push(go(Action::Copy, copy, "copy link"));
-        let mut link = go(Action::OpenLink, Action::OpenLink.description(), "");
-        if self.link_under_cursor().is_none() {
-            link.unavailable = Some("no link is under the cursor".into());
-        }
-        out.push(link);
+        let link = go(Action::OpenLink, Action::OpenLink.description(), "");
+        let no_link = self.link_under_cursor().is_none();
+        out.push(link.unavailable_if(no_link, "no link is under the cursor"));
         out.push(go(Action::Hints, "Follow any link by its letters", "links"));
         if let Screen::Page(_) = self.screen() {
             out.push(go(Action::UpLevel, "Up a level", ""));
         }
-        let mut back = go(Action::Back, "Back", "");
-        if self.screens.len() < 2 {
-            back.unavailable = Some("this is the first page".into());
+        let back = go(Action::Back, "Back", "");
+        out.push(back.unavailable_if(self.screens.len() < 2, "this is the first page"));
+        let fwd = go(Action::Forward, "Forward", "");
+        out.push(fwd.unavailable_if(self.forward.is_empty(), "nothing to go forward to"));
+        for (action, label) in [
+            (Action::GoHome, "Home"),
+            (Action::Notifications, "Notifications"),
+            (Action::Explore, "Explore: new repositories and topics"),
+            (Action::Refresh, "Refresh"),
+            (Action::CommandPalette, "Command palette"),
+        ] {
+            out.push(go(action, label, ""));
         }
-        out.push(back);
-        let mut fwd = go(Action::Forward, "Forward", "");
-        if self.forward.is_empty() {
-            fwd.unavailable = Some("nothing to go forward to".into());
-        }
-        out.push(fwd);
-        out.push(go(Action::GoHome, "Home", ""));
-        out.push(go(Action::Notifications, "Notifications", ""));
-        out.push(go(
-            Action::Explore,
-            "Explore: new repositories and topics",
-            "",
-        ));
-        out.push(go(Action::Refresh, "Refresh", ""));
-        out.push(go(Action::CommandPalette, "Command palette", ""));
-        let mut messages = go(Action::Messages, "Recent messages and errors", "");
-        if self.notices.log().is_empty() {
-            messages.unavailable = Some("nothing yet".into());
-        }
-        out.push(messages);
+        let messages = go(Action::Messages, "Recent messages and errors", "");
+        out.push(messages.unavailable_if(self.notices.log().is_empty(), "nothing yet"));
         let tab = |action, label: &str| row("Tabs", action, label, "", None);
         out.push(tab(Action::OpenInTab, "Open in a new tab"));
         if self.tab_count() > 1 {
@@ -223,8 +216,10 @@ impl State {
     pub(super) fn page_doables(&self, p: &PageScreen, out: &mut Vec<Doable>) {
         let here = |action, label: &str, short| row("This page", action, label, short, None);
         let route = &p.route;
+        let file = matches!(route, Route::Code(code::Blob { .. } | code::Blame { .. }));
+        let job = matches!(route, Route::Runs(runs::Job { .. }));
         // A file's line is this page, as a log's is: nothing to open.
-        let line = matches!(route, Route::Runs(runs::Job { .. })) && p.code_line().is_some();
+        let line = job && p.code_line().is_some();
         if !matches!(route, Route::Code(code::Blob { .. })) && !line {
             let mut open = here(Action::Open, "Open the selected row", "open");
             match p.selected_link() {
@@ -276,10 +271,7 @@ impl State {
             out.push(here(Action::NextCommit, "Next commit", "next commit"));
             out.push(here(Action::PrevCommit, "Previous commit", ""));
         }
-        if matches!(
-            route,
-            Route::Code(code::Blob { .. }) | Route::Code(code::Blame { .. })
-        ) {
+        if file {
             let blame = match route {
                 Route::Code(code::Blob { .. }) => "Blame this line",
                 _ => "Back to the file",
@@ -295,36 +287,21 @@ impl State {
             let show = format!("Show {}", next_list_state(route, query));
             out.push(here(Action::ToggleState, &show, "unread/read"));
         }
-        // A word cursor moves along a line of code.
-        if matches!(
-            route,
-            Route::Code(code::Blob { .. })
-                | Route::Code(code::Blame { .. })
-                | Route::Runs(runs::Job { .. })
-        ) {
-            let why = (p.word_cursor().is_none()).then(|| "no line of code is selected".to_owned());
-            for action in [Action::WordNext, Action::WordPrev, Action::SearchWord] {
-                let mut row = here(action, action.description(), "");
-                row.unavailable.clone_from(&why);
-                out.push(row);
+        // A word cursor moves along a line of code; in a file, code
+        // navigation goes from a name to its definition and references.
+        if file || job {
+            let no_word = p.word_cursor().is_none();
+            let word = |action: Action| {
+                let row = here(action, action.description(), "");
+                row.unavailable_if(no_word, "no line of code is selected")
+            };
+            out.extend([Action::WordNext, Action::WordPrev, Action::SearchWord].map(word));
+            if file {
+                out.push(here(Action::Symbols, "Symbols in this file", ""));
+                out.push(word(Action::Definition));
+                out.push(here(Action::RepoSymbols, "Symbols in the repository", ""));
+                out.push(word(Action::References));
             }
-        }
-        // Code navigation: a file's symbols, and a name's definition.
-        if matches!(
-            route,
-            Route::Code(code::Blob { .. }) | Route::Code(code::Blame { .. })
-        ) {
-            out.push(here(Action::Symbols, "Symbols in this file", ""));
-            let mut definition = here(Action::Definition, Action::Definition.description(), "");
-            if p.word_cursor().is_none() {
-                definition.unavailable = Some("no line of code is selected".into());
-            }
-            let definition_unavailable = definition.unavailable.clone();
-            out.push(definition);
-            out.push(here(Action::RepoSymbols, "Symbols in the repository", ""));
-            let mut references = here(Action::References, Action::References.description(), "");
-            references.unavailable.clone_from(&definition_unavailable);
-            out.push(references);
         }
         if let Some(query) = &list {
             // Open, closed and sorting are issues', pull requests' and
@@ -356,11 +333,9 @@ impl State {
                 | Route::Code(code::Commit { .. })
         ) {
             out.push(here(Action::Comment, "Write a comment", "comment"));
-            let mut quote = here(Action::QuoteReply, "Reply quoting the selected comment", "");
-            if !matches!(p.selected_link(), Some(Link::Quote { .. })) {
-                quote.unavailable = Some("no comment is selected".into());
-            }
-            out.push(quote);
+            let quote = here(Action::QuoteReply, "Reply quoting the selected comment", "");
+            let unquotable = !matches!(p.selected_link(), Some(Link::Quote { .. }));
+            out.push(quote.unavailable_if(unquotable, "no comment is selected"));
         }
         // Long reviews fold, in a conversation and on a review's page.
         let folds = p
@@ -465,10 +440,7 @@ impl State {
         let focused = self.focus_hints();
         // The file tree's keys are all its own.
         let tree = self.contexts().first() == Some(&crate::keymap::Context::Tree);
-        let usual = self
-            .doables()
-            .into_iter()
-            .filter(|_| !tree)
+        let usual = ((!tree).then(|| self.doables()).into_iter().flatten())
             .filter(|d| d.unavailable.is_none() && !d.short.is_empty())
             .filter(|d| !focused.iter().any(|(a, _)| *a == d.action))
             .map(|d| (d.action, d.short.to_owned()));

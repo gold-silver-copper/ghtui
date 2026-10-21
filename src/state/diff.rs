@@ -24,7 +24,6 @@ impl State {
         (Screen::Diff(Box::new(screen)), cmds)
     }
 
-    /// The branch the PR merges into, once the PR has loaded.
     /// What the PR's diff is from, once the PR has loaded: its base
     /// branch, and for a merged or closed PR the base it had then (with a
     /// merge commit, its head is in the branch, which would leave nothing).

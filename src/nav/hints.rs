@@ -38,11 +38,8 @@ pub(super) fn hint_labels(n: usize) -> Vec<String> {
 pub(crate) fn start_hints(state: &mut State, browser: bool) {
     // The page's own tabs first, then its links.
     let chrome = state.chrome();
-    let tab_list: Vec<_> = chrome.tabs.iter().map(|(t, _)| t.clone()).collect();
     let lay = state.layout_of(&chrome);
-    let tab_rects = (lay.tabs)
-        .map(|bar| chrome::tab_layout(bar, &tab_list, chrome.active))
-        .unwrap_or_default();
+    let tab_rects = (lay.tabs).map_or_else(Vec::new, |bar| tabs_of(&chrome, bar));
     let url = |target: &Target| match target {
         Target::Page(route) => route.url(),
         Target::Files(of) => of.url(),
@@ -76,9 +73,7 @@ pub(crate) fn start_hints(state: &mut State, browser: bool) {
         },
     };
     // Then the header's (your unread notifications, you).
-    let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
-    let right: Vec<_> = chrome.right.iter().map(|(t, _)| t.clone()).collect();
-    let header = chrome::header_layout(lay.header, &crumbs, &right).right;
+    let header = header_of(&chrome, lay.header).right;
     let header = (chrome.right.iter().zip(header))
         .filter(|(_, rect)| rect.width > 0)
         .map(|((_, target), rect)| ((rect.x, rect.y), Link::Url(url(target)), None));

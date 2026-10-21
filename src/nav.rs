@@ -63,3 +63,16 @@ pub use mouse::*;
 pub use screen::*;
 pub use search::*;
 pub use write::*;
+
+/// Where `chrome`'s header parts are in `area`.
+fn header_of(chrome: &crate::chrome::Chrome, area: Rect) -> chrome::HeaderLayout {
+    let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
+    let right: Vec<_> = chrome.right.iter().map(|(t, _)| t.clone()).collect();
+    chrome::header_layout(area, &crumbs, &right)
+}
+
+/// Where `chrome`'s page tabs are in their `bar`.
+fn tabs_of(chrome: &crate::chrome::Chrome, bar: Rect) -> Vec<Rect> {
+    let tabs: Vec<_> = chrome.tabs.iter().map(|(t, _)| t.clone()).collect();
+    chrome::tab_layout(bar, &tabs, chrome.active)
+}
