@@ -484,7 +484,9 @@ impl State {
         // Not moving around (those are keys, not commands to look for), and
         // only what does something here.
         order.extend((Action::ALL.iter()).filter(|a| {
-            contexts.contains(&a.context()) && !a.moves() && self.availability(**a).is_ok()
+            contexts.contains(&a.context())
+                && !a.moves()
+                && Self::availability_in(&doables, **a).is_ok()
         }));
         let mut actions: Vec<(usize, Action)> = Vec::new();
         for a in order {

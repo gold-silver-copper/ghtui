@@ -82,7 +82,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 Some(Overlay::Hints(h)) => h.shown(),
                 _ => Vec::new(),
             };
-            let area = state.page_area();
+            let area = State::page_area_in(content);
             let page = p.page();
             // The composer takes the comment box's place, goes under the
             // comment it quotes, or takes the place of the comment it
@@ -378,10 +378,9 @@ fn render_diff(
         return None;
     }
     let key = |a| state.first_key(a);
-    let jump = key(Action::Open);
-    let (show, expand, viewed, reply, resolve, delete, file_comment) = (
-        key(Action::Open),
-        key(Action::Open),
+    // Showing, expanding and jumping are all Enter's.
+    let open = key(Action::Open);
+    let (viewed, reply, resolve, delete, file_comment) = (
         key(Action::ToggleViewed),
         key(Action::Comment),
         key(Action::ResolveThread),
@@ -411,9 +410,9 @@ fn render_diff(
         half: screen.half,
         top: doc.to_pos(top),
         keys: Keys {
-            show: &show,
-            jump: &jump,
-            expand: &expand,
+            show: &open,
+            jump: &open,
+            expand: &open,
             viewed: &viewed,
             reply: &reply,
             resolve: &resolve,

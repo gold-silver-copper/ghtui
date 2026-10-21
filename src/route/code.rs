@@ -525,7 +525,7 @@ impl Family for Page {
             }
             CommitChecks { repo, oid } => {
                 let checks = b.get(&DataKey::CommitChecks(repo.clone(), oid.clone()));
-                pages::commit_checks(page, checks, now);
+                pages::checks(page, checks, now);
             }
             Compare { repo, spec } => {
                 if let Some(c) = b.list(self.paged()).show(page, &title) {

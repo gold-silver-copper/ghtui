@@ -2,7 +2,7 @@
 //! started, and GitHub's events, in order. Events are one line each, and a
 //! run of the same kind by the same person reads as one.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::*;
 use crate::api::commit_comments::CommitComment;
@@ -60,8 +60,8 @@ pub const FOLD_AFTER: usize = 3;
 pub(super) struct Place<'a> {
     pub(super) repo: &'a RepoId,
     pub(super) pr: Option<&'a PrRef>,
-    /// The pull request's review threads, which its reviews started.
-    pub(super) threads: &'a [ReviewThread],
+    /// The pull request's review threads, by the review they're in.
+    pub(super) threads: HashMap<u64, ReviewThreads<'a>>,
     pub(super) icons: Icons,
 }
 
@@ -131,8 +131,12 @@ fn event_line(page: &mut Page, (icon, role): (&str, Role), segs: Vec<Seg>) {
     }
 }
 
-fn meta(text: impl Into<String>) -> Seg {
-    Seg::new(text.into(), Role::Meta)
+/// ` and` before what's said after something already said.
+fn and(segs: &mut Vec<Seg>, said: &mut bool) {
+    if *said {
+        segs.push(meta(" and"));
+    }
+    *said = true;
 }
 
 /// `#12 Title`, linked, with its state's icon.
@@ -284,10 +288,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
                 if list.is_empty() {
                     continue;
                 }
-                if said {
-                    segs.push(meta(" and"));
-                }
-                said = true;
+                and(&mut segs, &mut said);
                 if list == [first.actor.as_str()] {
                     segs.push(meta(if verb == " assigned" {
                         " self-assigned this"
@@ -308,17 +309,14 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
             let mut said = false;
             for e in run {
                 if let What::Milestoned { title, added } = &e.what {
-                    if said {
-                        segs.push(meta(" and"));
-                    }
-                    said = true;
+                    and(&mut segs, &mut said);
                     let (verb, to) = if *added {
                         (" added this to the ", " milestone")
                     } else {
                         (" removed this from the ", " milestone")
                     };
                     segs.push(meta(verb));
-                    segs.push(Seg::new(title.clone(), Role::Strong));
+                    segs.push(strong(title.clone()));
                     segs.push(meta(to));
                 }
             }
@@ -333,13 +331,13 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
                 }
                 What::ProjectStatus { from, to } if from.is_empty() => {
                     segs.push(meta(" set its status in a project to "));
-                    segs.push(Seg::new(to.clone(), Role::Strong));
+                    segs.push(strong(to.clone()));
                 }
                 What::ProjectStatus { from, to } => {
                     segs.push(meta(" moved this in a project from "));
-                    segs.push(Seg::new(from.clone(), Role::Strong));
+                    segs.push(strong(from.clone()));
                     segs.push(meta(" to "));
-                    segs.push(Seg::new(to.clone(), Role::Strong));
+                    segs.push(strong(to.clone()));
                 }
                 _ => {}
             }
@@ -360,10 +358,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
                 if who.is_empty() {
                     continue;
                 }
-                if said {
-                    segs.push(meta(" and"));
-                }
-                said = true;
+                and(&mut segs, &mut said);
                 segs.push(meta(if added {
                     " requested a review from"
                 } else {
@@ -398,7 +393,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
             segs.push(meta(" changed the title "));
             segs.push(Seg::new(from.clone(), Role::Strike));
             segs.push(space());
-            segs.push(Seg::new(to.clone(), Role::Strong));
+            segs.push(strong(to.clone()));
         }
         What::ReadyForReview | What::ConvertedToDraft => {
             icon = ("◌", Role::Meta);
@@ -524,10 +519,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
                     What::Parent { issue, .. } => (" removed a parent issue", issue),
                     _ => continue,
                 };
-                if said {
-                    segs.push(meta(" and"));
-                }
-                said = true;
+                and(&mut segs, &mut said);
                 segs.push(meta(verb));
                 if let Some(issue) = issue {
                     segs.push(space());
@@ -541,17 +533,17 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
             match (from, to) {
                 (Some(from), Some(to)) => {
                     segs.push(meta(" changed the issue type from "));
-                    segs.push(Seg::new(from.clone(), Role::Strong));
+                    segs.push(strong(from.clone()));
                     segs.push(meta(" to "));
-                    segs.push(Seg::new(to.clone(), Role::Strong));
+                    segs.push(strong(to.clone()));
                 }
                 (None, Some(to)) => {
                     segs.push(meta(" added the issue type "));
-                    segs.push(Seg::new(to.clone(), Role::Strong));
+                    segs.push(strong(to.clone()));
                 }
                 (Some(from), None) => {
                     segs.push(meta(" removed the issue type "));
-                    segs.push(Seg::new(from.clone(), Role::Strong));
+                    segs.push(strong(from.clone()));
                 }
                 (None, None) => segs.push(meta(" changed the issue type")),
             }
@@ -562,10 +554,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
         }
     }
     segs.push(when);
-    match link {
-        Some(target) => item(page, target, |page, _| event_line(page, icon, segs)),
-        None => event_line(page, icon, segs),
-    }
+    maybe_item(page, link, |page, _| event_line(page, icon, segs));
 }
 
 /// A run of commits: who added how many, then a line for each, each
@@ -599,7 +588,7 @@ fn commits(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&
     for c in infos {
         item(page, commit_link(place, &c.oid), |page, link| {
             let room = usize::from(page.room(Frame::None, 5)).saturating_sub(9);
-            let headline = crate::ui::text::truncate(&c.headline, room);
+            let headline = truncate(&c.headline, room);
             page.add(
                 Frame::None,
                 5,
@@ -650,27 +639,37 @@ fn state_chip_of(state: ReviewState) -> Seg {
     }
 }
 
-/// The threads a review started, in file order.
-pub(super) fn started_by<'a>(
-    threads: &'a [ReviewThread],
-    review: &Review,
-) -> Vec<&'a ReviewThread> {
-    let mut out: Vec<&ReviewThread> = (threads.iter())
-        .filter(|t| review.id.is_some() && t.comments.first().and_then(|c| c.review) == review.id)
-        .collect();
-    out.sort_by_key(|t| (&t.path, t.line.or(t.original_line)));
-    out
+/// A review's threads: those it started, in file order, and those it
+/// replied in without starting them.
+#[derive(Default)]
+pub(super) struct ReviewThreads<'a> {
+    started: Vec<&'a ReviewThread>,
+    replied: Vec<&'a ReviewThread>,
 }
 
-/// The threads a review replied in without starting them.
-fn replied_in<'a>(threads: &'a [ReviewThread], review: &Review) -> Vec<&'a ReviewThread> {
-    (threads.iter())
-        .filter(|t| {
-            review.id.is_some()
-                && t.comments.first().and_then(|c| c.review) != review.id
-                && t.comments.iter().skip(1).any(|c| c.review == review.id)
-        })
-        .collect()
+/// Each review's threads, by its ID, in one pass over them all.
+pub(super) fn by_review(threads: &[ReviewThread]) -> HashMap<u64, ReviewThreads<'_>> {
+    let mut out: HashMap<u64, ReviewThreads<'_>> = HashMap::new();
+    for t in threads {
+        let starter = t.comments.first().and_then(|c| c.review);
+        if let Some(id) = starter {
+            out.entry(id).or_default().started.push(t);
+        }
+        let mut repliers: Vec<u64> = (t.comments.iter().skip(1))
+            .filter_map(|c| c.review)
+            .filter(|&id| Some(id) != starter)
+            .collect();
+        repliers.sort_unstable();
+        repliers.dedup();
+        for id in repliers {
+            out.entry(id).or_default().replied.push(t);
+        }
+    }
+    for r in out.values_mut() {
+        r.started
+            .sort_by_key(|t| (&t.path, t.line.or(t.original_line)));
+    }
+    out
 }
 
 /// A review: its state and summary, then each thread it started with
@@ -688,8 +687,9 @@ pub(super) fn review(
     }
     let mine = marks.viewer == Some(r.author.as_str());
     let pending = r.state == ReviewState::Pending;
-    let started = started_by(place.threads, r);
-    let replied = replied_in(place.threads, r);
+    let none = ReviewThreads::default();
+    let threads = r.id.and_then(|id| place.threads.get(&id)).unwrap_or(&none);
+    let (started, replied) = (&threads.started, &threads.replied);
     let new = r.id.is_some_and(|id| marks.reviews.contains(&id));
     let (icon, what) = review_said(r.state);
     // A review that only decided: one line.
@@ -698,8 +698,7 @@ pub(super) fn review(
         let ago = time::ago_iso(&r.at, talk.now);
         let mut segs = vec![who, meta(format!(" {what} {ago}"))];
         if new {
-            segs.push(space());
-            segs.push(chip("New", Bg::TertiaryContainer));
+            tag(&mut segs, "New", Bg::TertiaryContainer);
         }
         event_line(page, icon, segs);
         return;
@@ -749,36 +748,23 @@ pub(super) fn review(
         page.box_rule();
         thread(page, place, t, marks, talk.now);
     }
-    if folds {
+    if started.len() > FOLD_AFTER {
         page.box_rule();
         let hidden = started.len().saturating_sub(shown) as u64;
-        let link = ReviewLink::Fold(anchor);
-        item(page, Link::Review(link), |page, link| {
-            body(
-                page,
-                vec![
-                    Seg::linked(
-                        format!("▸ {hidden} more {} in this review", noun(hidden, "thread")),
-                        Role::Link,
-                        link,
-                    ),
-                    meta(" · ↵ shows them"),
-                ],
-            );
-        });
-    } else if started.len() > FOLD_AFTER {
-        page.box_rule();
+        let (label, hint) = if folds {
+            let threads = noun(hidden, "thread");
+            (
+                format!("▸ {hidden} more {threads} in this review"),
+                " · ↵ shows them",
+            )
+        } else {
+            ("▾ Fold this review's threads".to_owned(), " · ↵")
+        };
         item(
             page,
             Link::Review(ReviewLink::Fold(anchor)),
             |page, link| {
-                body(
-                    page,
-                    vec![
-                        Seg::linked("▾ Fold this review's threads", Role::Link, link),
-                        meta(" · ↵"),
-                    ],
-                );
+                body(page, vec![Seg::linked(label, Role::Link, link), meta(hint)]);
             },
         );
     }
@@ -822,21 +808,17 @@ fn thread(page: &mut Page, place: &Place<'_>, t: &ReviewThread, marks: Marks<'_>
     });
     item(page, target, |page, link| {
         let mut segs = vec![Seg::linked(at, Role::Link, link)];
-        let mut tag = |text: &str, bg| {
-            segs.push(space());
-            segs.push(chip(text, bg));
-        };
         if t.outdated {
-            tag("Outdated", Bg::ContainerHigh);
+            tag(&mut segs, "Outdated", Bg::ContainerHigh);
         }
         if t.resolved {
-            tag("Resolved", Bg::SuccessContainer);
+            tag(&mut segs, "Resolved", Bg::SuccessContainer);
         }
         if first.pending {
-            tag("Pending", Bg::TertiaryContainer);
+            tag(&mut segs, "Pending", Bg::TertiaryContainer);
         }
         if t.comments.iter().any(|c| marks.threads.contains(&c.id)) {
-            tag("New", Bg::TertiaryContainer);
+            tag(&mut segs, "New", Bg::TertiaryContainer);
         }
         let more = t.comments.total().saturating_sub(1);
         let right = (t.resolved && more > 0).then(|| meta(plural(more, "reply")));
@@ -844,10 +826,7 @@ fn thread(page: &mut Page, place: &Place<'_>, t: &ReviewThread, marks: Marks<'_>
         if t.resolved {
             let said = super::review::first_line(&first.body, page.room(Frame::Body, 2));
             page.box_line(
-                vec![
-                    Seg::new(format!("{}: ", first.author), Role::Strong),
-                    meta(said),
-                ],
+                vec![strong(format!("{}: ", first.author)), meta(said)],
                 Vec::new(),
                 2,
             );
@@ -863,12 +842,11 @@ fn thread(page: &mut Page, place: &Place<'_>, t: &ReviewThread, marks: Marks<'_>
             }
             let verb = if n == 0 { "" } else { " replied" };
             let mut segs = vec![
-                Seg::new(c.author.clone(), Role::Strong),
+                strong(c.author.clone()),
                 meta(format!("{verb} {}", time::ago_iso(&c.created_at, now))),
             ];
             if n > 0 && marks.threads.contains(&c.id) {
-                segs.push(space());
-                segs.push(chip("New", Bg::TertiaryContainer));
+                tag(&mut segs, "New", Bg::TertiaryContainer);
             }
             page.box_line(segs, Vec::new(), 2);
             let body_start = page.lines.len();
@@ -881,8 +859,6 @@ fn thread(page: &mut Page, place: &Place<'_>, t: &ReviewThread, marks: Marks<'_>
     });
 }
 
-/// The lines a thread is on, as GitHub kept them when it was started:
-/// the end of its diff hunk, up to four lines (or the lines it spans).
 /// Lines before a one-line thread's line, for context.
 const CONTEXT: u32 = 3;
 
@@ -923,12 +899,9 @@ fn git_lines(page: &mut Page, t: &ReviewThread, lines: &LinesAt<'_>) -> bool {
         } else {
             crate::ui::page::Tone::Code
         };
-        let code = crate::ui::text::truncate(&code.replace('\t', "    "), room);
+        let code = truncate(&code.replace('\t', "    "), room);
         page.push(PageLine {
-            segs: vec![
-                Seg::new(format!("{n:>width$} │ "), Role::Meta),
-                Seg::new(code, Role::Code),
-            ],
+            segs: vec![meta(format!("{n:>width$} │ ")), Seg::new(code, Role::Code)],
             indent: 2,
             right: Vec::new(),
             frame: Frame::Body,
@@ -939,6 +912,8 @@ fn git_lines(page: &mut Page, t: &ReviewThread, lines: &LinesAt<'_>) -> bool {
     true
 }
 
+/// The lines a thread is on, as GitHub kept them when it was started:
+/// the end of its diff hunk, up to four lines (or the lines it spans).
 fn hunk_lines(page: &mut Page, t: &ReviewThread) {
     let lines: Vec<&str> = (t.diff_hunk.lines())
         .filter(|l| !l.starts_with("@@"))
@@ -955,7 +930,7 @@ fn hunk_lines(page: &mut Page, t: &ReviewThread) {
             Some('-') => crate::ui::page::Tone::Removed,
             _ => crate::ui::page::Tone::Code,
         };
-        let text = crate::ui::text::truncate(&l.replace('\t', "    "), room);
+        let text = truncate(&l.replace('\t', "    "), room);
         page.push(PageLine {
             segs: vec![Seg::new(text, Role::Code)],
             indent: 2,
@@ -983,7 +958,7 @@ pub(super) fn reviewers_aside(
     aside_heading(page, "Reviewers");
     let latest: Vec<&Latest> = latest.iter().filter(|l| l.author != author).collect();
     if latest.is_empty() && requested.is_empty() {
-        page.wrapped(vec![meta("No reviews")], 0, Frame::None);
+        say(page, "No reviews", Role::Meta);
     }
     for l in latest {
         let ((mark, role), what) = match l.state {
@@ -1026,7 +1001,7 @@ pub(super) fn reviewers_aside(
     }
     if requested.left_out() > 0 {
         let more = format!("and {} more asked, unnamed", requested.left_out());
-        page.wrapped(vec![meta(more)], 0, Frame::None);
+        say(page, more, Role::Meta);
     }
 }
 
@@ -1042,7 +1017,7 @@ pub(super) fn linked_aside(
 ) {
     aside_heading(page, heading);
     if list.is_empty() {
-        page.wrapped(vec![meta(none)], 0, Frame::None);
+        say(page, none, Role::Meta);
     }
     for l in list {
         let segs = linked_segs(page, icons, here, l);
@@ -1050,7 +1025,7 @@ pub(super) fn linked_aside(
     }
     if list.left_out() > 0 {
         let more = left_out_text(list.left_out(), "more", "more");
-        page.wrapped(vec![meta(more)], 0, Frame::None);
+        say(page, more, Role::Meta);
     }
 }
 
@@ -1064,7 +1039,7 @@ pub(super) fn relations_aside(page: &mut Page, icons: Icons, d: &IssueDetail) {
     }
     aside_heading(page, "Development");
     if d.closed_by.is_empty() && d.branches.is_empty() {
-        page.wrapped(vec![meta("No pull requests or branches")], 0, Frame::None);
+        say(page, "No pull requests or branches", Role::Meta);
     }
     for l in &d.closed_by {
         let segs = linked_segs(page, icons, &d.repo, l);
@@ -1124,7 +1099,7 @@ pub fn commit_comments(
         0 => "No comments yet".to_owned(),
         n => format!("Comments · {n}"),
     };
-    page.line(vec![Seg::new(title, Role::Strong)]);
+    page.line(vec![strong(title)]);
     for c in comments {
         connector(page);
         let at = c.path.as_ref().map(|path| {
@@ -1176,11 +1151,11 @@ pub fn pinned_issues(page: &mut Page, repo: &RepoId, pinned: &Capped<Linked>, ic
     if pinned.is_empty() {
         return;
     }
-    page.box_top(vec![Seg::new("Pinned issues", Role::Strong)], Vec::new());
+    page.box_top(vec![strong("Pinned issues")], Vec::new());
     for l in pinned {
         item(page, l.url(), |page, _| {
             let segs = linked_segs(page, icons, repo, l);
-            hanging(page, Seg::new("⚲ ", Role::Meta), segs, Frame::Body);
+            hanging(page, meta("⚲ "), segs, Frame::Body);
         });
     }
     page.box_bottom();
@@ -1194,14 +1169,14 @@ pub(super) fn projects_aside(page: &mut Page, projects: Fetched<'_, Capped<InPro
     aside_heading(page, "Projects");
     #[expect(clippy::disallowed_methods, reason = "said in the sidebar's row")]
     match projects.text("the projects") {
-        Ok(list) if list.is_empty() => page.wrapped(vec![meta("None yet")], 0, Frame::None),
+        Ok(list) if list.is_empty() => say(page, "None yet", Role::Meta),
         Ok(list) => {
             for p in list {
                 let title = link_seg(page, p.title.clone(), p.url.clone(), Role::Link);
                 let mut segs = vec![meta("▦ "), title];
                 if let Some(status) = p.status() {
                     segs.push(meta(" · "));
-                    segs.push(Seg::new(status.to_owned(), Role::Strong));
+                    segs.push(strong(status.to_owned()));
                 }
                 page.wrapped(segs, 2, Frame::None);
                 let others: Vec<String> = (p.others())
@@ -1213,10 +1188,10 @@ pub(super) fn projects_aside(page: &mut Page, projects: Fetched<'_, Capped<InPro
             }
             if list.left_out() > 0 {
                 let more = left_out_text(list.left_out(), "more", "more");
-                page.wrapped(vec![meta(more)], 0, Frame::None);
+                say(page, more, Role::Meta);
             }
         }
-        Err(why) => page.wrapped(vec![meta(why)], 0, Frame::None),
+        Err(why) => say(page, why, Role::Meta),
     }
 }
 
@@ -1231,9 +1206,7 @@ pub(super) fn projects_inline(page: &mut Page, projects: Fetched<'_, Capped<InPr
     };
     let mut segs = Vec::new();
     for p in list {
-        if !segs.is_empty() {
-            segs.push(meta(", "));
-        }
+        sep(&mut segs, ", ");
         segs.push(link_seg(page, p.title.clone(), p.url.clone(), Role::Link));
         let said: Vec<String> = (p.status().map(str::to_owned).into_iter())
             .chain(p.others().map(|(name, v)| format!("{name}: {}", v.text())))
@@ -1258,13 +1231,8 @@ fn inline(page: &mut Page, heading: &str, segs: Vec<Seg>) {
 /// issues it closes.
 pub(super) fn pr_inline(page: &mut Page, icons: Icons, pr: &PrRef, d: &PrDetail, a: &PrActivity) {
     let mut segs = Vec::new();
-    let sep = |segs: &mut Vec<Seg>| {
-        if !segs.is_empty() {
-            segs.push(meta(" · "));
-        }
-    };
     for l in a.latest.iter().filter(|l| l.author != d.author) {
-        sep(&mut segs);
+        sep(&mut segs, " · ");
         let ((mark, role), _) = review_said(l.state);
         segs.push(Seg::new(format!("{mark} "), role));
         segs.push(login_seg(page, &l.author, Role::Link));
@@ -1275,7 +1243,7 @@ pub(super) fn pr_inline(page: &mut Page, icons: Icons, pr: &PrRef, d: &PrDetail,
         }
     }
     for r in &a.requested {
-        sep(&mut segs);
+        sep(&mut segs, " · ");
         let (name, target) = reviewer_link(&r.who);
         segs.push(Seg::new("● ", Role::Accent));
         segs.push(link_seg(page, name, target, Role::Link));
@@ -1288,9 +1256,7 @@ pub(super) fn pr_inline(page: &mut Page, icons: Icons, pr: &PrRef, d: &PrDetail,
     inline(page, "Reviewers", segs);
     let mut closes = Vec::new();
     for l in &a.closing {
-        if !closes.is_empty() {
-            closes.push(meta(", "));
-        }
+        sep(&mut closes, ", ");
         closes.extend(linked_segs(page, icons, &pr.repo, l));
     }
     inline(page, "Closes", closes);
@@ -1323,9 +1289,7 @@ pub(super) fn relations_inline(page: &mut Page, icons: Icons, d: &IssueDetail) {
         }
         let mut segs = Vec::new();
         for l in list {
-            if !segs.is_empty() {
-                segs.push(meta(", "));
-            }
+            sep(&mut segs, ", ");
             segs.extend(linked_segs(page, icons, &d.repo, l));
         }
         if list.left_out() > 0 {
@@ -1335,15 +1299,11 @@ pub(super) fn relations_inline(page: &mut Page, icons: Icons, d: &IssueDetail) {
     }
     let mut dev = Vec::new();
     for l in &d.closed_by {
-        if !dev.is_empty() {
-            dev.push(meta(", "));
-        }
+        sep(&mut dev, ", ");
         dev.extend(linked_segs(page, icons, &d.repo, l));
     }
     for b in &d.branches {
-        if !dev.is_empty() {
-            dev.push(meta(", "));
-        }
+        sep(&mut dev, ", ");
         let target = url::tree(&d.repo, b, "");
         dev.push(meta("⌥ "));
         dev.push(link_seg(page, b.clone(), target, Role::Link));

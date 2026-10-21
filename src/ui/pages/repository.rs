@@ -8,7 +8,7 @@ use super::*;
 pub fn repo_title(page: &mut Page, repo: &RepoId, overview: Option<&RepoOverview>) {
     let owner = login_seg(page, &repo.owner, Role::Link);
     let name = link_seg(page, repo.name.clone(), url::repo(repo), Role::Title);
-    let mut segs = vec![owner, Seg::new(" / ", Role::Meta), name];
+    let mut segs = vec![owner, meta(" / "), name];
     let mut right = Vec::new();
     if let Some(o) = overview {
         let s = &o.summary;
@@ -16,8 +16,7 @@ pub fn repo_title(page: &mut Page, repo: &RepoId, overview: Option<&RepoOverview
         let visibility = if s.private { "Private" } else { "Public" };
         segs.push(chip(visibility, Bg::SecondaryContainer));
         if s.archived {
-            segs.push(space());
-            segs.push(chip("Archived", Bg::TertiaryContainer));
+            tag(&mut segs, "Archived", Bg::TertiaryContainer);
         }
         let star = if o.starred { "★ Starred" } else { "☆ Star" };
         right.push(button(
@@ -40,7 +39,7 @@ pub fn repo_title(page: &mut Page, repo: &RepoId, overview: Option<&RepoOverview
             .map(|r| url::repo(&r))
             .unwrap_or_default();
         let parent = link_seg(page, parent.to_owned(), link, Role::Link);
-        page.line(vec![Seg::new("forked from ", Role::Meta), parent]);
+        page.line(vec![meta("forked from "), parent]);
     }
     page.blank();
 }
@@ -48,20 +47,19 @@ pub fn repo_title(page: &mut Page, repo: &RepoId, overview: Option<&RepoOverview
 /// The About facts: description, homepage, topics, counts.
 pub(super) fn about(page: &mut Page, repo: &RepoId, o: &RepoOverview, compact_layout: bool) {
     if !compact_layout {
-        page.line(vec![Seg::new("About", Role::Strong)]);
+        page.line(vec![strong("About")]);
         page.blank();
     }
     match &o.summary.description {
-        Some(d) => page.wrapped(vec![Seg::new(d.clone(), Role::Body)], 0, Frame::None),
-        None if !compact_layout => page.line(vec![Seg::new(
-            "No description, website, or topics provided.",
-            Role::Meta,
-        )]),
+        Some(d) => say(page, d.clone(), Role::Body),
+        None if !compact_layout => {
+            page.line(vec![meta("No description, website, or topics provided.")]);
+        }
         None => {}
     }
     if let Some(home) = &o.homepage {
         let link = link_seg(page, home.clone(), home.clone(), Role::Link);
-        page.wrapped(vec![Seg::new("↗ ", Role::Meta), link], 0, Frame::None);
+        page.wrapped(vec![meta("↗ "), link], 0, Frame::None);
     }
     if !o.topics.is_empty() {
         let mut topics = Vec::new();
@@ -82,7 +80,7 @@ pub(super) fn about(page: &mut Page, repo: &RepoId, o: &RepoOverview, compact_la
     }
     let mut facts = Vec::new();
     if let Some(license) = &o.license {
-        facts.push(Seg::new(format!("⚖ {license} license"), Role::Meta));
+        facts.push(meta(format!("⚖ {license} license")));
     }
     for (icon, n, what, tab) in [
         (
@@ -99,7 +97,7 @@ pub(super) fn about(page: &mut Page, repo: &RepoId, o: &RepoOverview, compact_la
         facts.push(link_seg(page, text, target, Role::Meta));
     }
     if let Some(language) = &o.summary.language {
-        facts.push(Seg::new(format!("● {language}"), Role::Meta));
+        facts.push(meta(format!("● {language}")));
     }
     let packages = format!("{}/packages", url::repo(repo));
     facts.push(link_seg(page, "⬢ Packages", packages, Role::Meta));
@@ -107,9 +105,7 @@ pub(super) fn about(page: &mut Page, repo: &RepoId, o: &RepoOverview, compact_la
     if compact_layout {
         let mut segs = Vec::new();
         for fact in facts {
-            if !segs.is_empty() {
-                segs.push(Seg::new("   ", Role::Meta));
-            }
+            sep(&mut segs, "   ");
             segs.push(fact);
         }
         page.wrapped(segs, 0, Frame::None);
@@ -135,7 +131,7 @@ pub(super) fn code_toolbar(
     let refs = top.filter(|o| o.branches > 0).map(|o| (o.branches, o.tags));
     // A commit's ID is shown short, as GitHub's branch button shows it.
     let shown = match crate::git::Oid::parse(rev) {
-        Ok(_) => crate::ui::text::short_sha(rev),
+        Ok(_) => short_sha(rev),
         Err(_) => rev,
     };
     let mut segs = vec![
@@ -197,11 +193,11 @@ pub(super) fn crumbs(
     )];
     let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
     for (i, part) in parts.iter().enumerate() {
-        segs.push(Seg::new(" / ", Role::Meta));
+        segs.push(meta(" / "));
         if i + 1 == parts.len() {
-            segs.push(Seg::new(*part, Role::Strong));
+            segs.push(strong(*part));
             if !last_is_file {
-                segs.push(Seg::new(" /", Role::Meta));
+                segs.push(meta(" /"));
             }
         } else {
             let sub = parts.get(..=i).unwrap_or_default().join("/");
@@ -238,7 +234,7 @@ pub(super) fn file_box(
     // GitHub's columns: name, the latest commit's message, its age.
     let name_w = entries
         .iter()
-        .map(|e| crate::ui::text::width(&e.name))
+        .map(|e| width(&e.name))
         .max()
         .unwrap_or(0)
         .min(usize::from(page.room(Frame::Body, 0)) / 3)
@@ -265,8 +261,8 @@ pub(super) fn file_box(
                     (url::blob(repo, rev, &e.path), Role::Body)
                 };
                 item(page, target, |page, link| {
-                    let name = crate::ui::text::truncate(&e.name, name_w - 4);
-                    let pad = name_w.saturating_sub(crate::ui::text::width(&name) + 2);
+                    let name = truncate(&e.name, name_w - 4);
+                    let pad = name_w.saturating_sub(width(&name) + 2);
                     let mut segs = vec![
                         Seg::new(format!("{icon} "), icon_role),
                         Seg::linked(name, role, link),
@@ -276,7 +272,7 @@ pub(super) fn file_box(
                     if let Some(c) = commits.and_then(|m| m.get(&e.name)) {
                         let commit = page.link(url::commit(repo, &c.oid));
                         segs.push(Seg::linked(c.headline.clone(), Role::Meta, commit));
-                        right.push(Seg::new(time::ago_iso(&c.date, now), Role::Meta));
+                        right.push(meta(time::ago_iso(&c.date, now)));
                     }
                     page.box_line(segs, right, 0);
                 });
@@ -289,7 +285,7 @@ pub(super) fn file_box(
                     "Latest commits are for the first {} entries; not the last {past}",
                     crate::api::browse::LAST_COMMIT_ENTRIES
                 );
-                body(page, vec![Seg::new(text, Role::Meta)]);
+                body(page, vec![meta(text)]);
             }
         }
     }
@@ -311,7 +307,7 @@ pub fn repo_code(
         page.blank();
     }
     if o.entries.is_empty() && o.default_branch.is_none() {
-        let title = Seg::new("This repository is empty.", Role::Strong);
+        let title = strong("This repository is empty.");
         empty_box(page, title, "Nothing has been pushed yet.");
         return;
     }
@@ -328,17 +324,14 @@ pub fn repo_code(
             );
             (
                 vec![author, Seg::new("  ", Role::Body), headline],
-                vec![Seg::new(
-                    format!(
-                        "{} · {}",
-                        crate::ui::text::short_sha(&c.oid),
-                        time::ago_iso(&c.date, now)
-                    ),
-                    Role::Meta,
-                )],
+                vec![meta(format!(
+                    "{} · {}",
+                    short_sha(&c.oid),
+                    time::ago_iso(&c.date, now)
+                ))],
             )
         }
-        None => (vec![Seg::new("Files", Role::Strong)], Vec::new()),
+        None => (vec![strong("Files")], Vec::new()),
     };
     let dir = Listing {
         repo,
@@ -373,12 +366,7 @@ pub fn repo_dir(page: &mut Page, dir: Listing<'_>, cx: PageCtx<'_>) {
     } else {
         path.rsplit('/').next().unwrap_or(path).to_owned()
     };
-    file_box(
-        page,
-        dir,
-        (vec![Seg::new(title, Role::Strong)], Vec::new()),
-        cx,
-    );
+    file_box(page, dir, (vec![strong(title)], Vec::new()), cx);
 }
 
 pub(super) fn release_chips(segs: &mut Vec<Seg>, r: &Release) {
@@ -388,23 +376,22 @@ pub(super) fn release_chips(segs: &mut Vec<Seg>, r: &Release) {
         (r.draft, "Draft", Bg::SecondaryContainer),
     ] {
         if on {
-            segs.push(space());
-            segs.push(chip(text, bg));
+            tag(segs, text, bg);
         }
     }
 }
 
 /// Who released it and when.
 pub(super) fn release_meta(r: &Release, now: u64) -> String {
-    let mut meta = r.tag.clone();
+    let mut subline = r.tag.clone();
     if let Some(author) = &r.author {
-        meta.push_str(&format!(" · {author}"));
+        subline.push_str(&format!(" · {author}"));
     }
     match &r.published_at {
-        Some(at) => meta.push_str(&format!(" released {}", time::ago_iso(at, now))),
-        None => meta.push_str(" · not published"),
+        Some(at) => subline.push_str(&format!(" released {}", time::ago_iso(at, now))),
+        None => subline.push_str(" · not published"),
     }
-    meta
+    subline
 }
 
 /// A repository's releases, newest first, each linked to its page.
@@ -414,7 +401,7 @@ pub fn releases(page: &mut Page, repo: &RepoId, list: Fetched<'_, Results<Releas
             let mut segs = vec![Seg::linked(r.name.clone(), Role::Link, link)];
             release_chips(&mut segs, r);
             body(page, segs);
-            body(page, vec![Seg::new(release_meta(r, now), Role::Meta)]);
+            body(page, vec![meta(release_meta(r, now))]);
         });
     });
 }
@@ -426,47 +413,38 @@ pub fn release(page: &mut Page, repo: &RepoId, r: &Release, now: u64) {
     release_chips(&mut title, r);
     page.wrapped(title, 0, Frame::None);
     let tag = link_seg(page, r.tag.clone(), url::tree(repo, &r.tag, ""), Role::Code);
-    let mut meta = vec![Seg::new("◇ ", Role::Meta), tag];
+    let mut subline = vec![meta("◇ "), tag];
     if let Some(author) = &r.author {
-        meta.push(Seg::new(" · ", Role::Meta));
-        meta.push(login_seg(page, author, Role::Strong));
+        subline.push(meta(" · "));
+        subline.push(login_seg(page, author, Role::Strong));
     }
     if let Some(at) = &r.published_at {
-        meta.push(Seg::new(
-            format!(" released {}", time::ago_iso(at, now)),
-            Role::Meta,
-        ));
+        subline.push(meta(format!(" released {}", time::ago_iso(at, now))));
     }
-    page.wrapped(meta, 0, Frame::None);
+    page.wrapped(subline, 0, Frame::None);
     page.blank();
     match &r.notes {
         Some(notes) => {
             let base = LinkBase::new(repo, &r.tag, "");
             markdown::render(page, notes, Some(&base), Frame::None);
         }
-        None => page.line(vec![Seg::new("No release notes.", Role::Meta)]),
+        None => page.line(vec![meta("No release notes.")]),
     }
     page.blank();
-    let title = vec![Seg::new(
-        format!("Assets  {}", count_of(&r.assets)),
-        Role::Strong,
-    )];
+    let title = counted("Assets", &r.assets);
     let hint = if r.assets.is_empty() {
         Vec::new()
     } else {
-        vec![Seg::new("↵ saves one", Role::Meta)]
+        vec![meta("↵ saves one")]
     };
     list_box(page, title, hint, &r.assets, "No assets.", |page, a| {
         let target = Link::Asset(a.name.clone());
         item(page, target, |page, link| {
-            let right = vec![Seg::new(
-                format!(
-                    "{} · {}",
-                    crate::ui::text::size(a.size),
-                    plural(a.downloads, "download")
-                ),
-                Role::Meta,
-            )];
+            let right = vec![meta(format!(
+                "{} · {}",
+                size(a.size),
+                plural(a.downloads, "download")
+            ))];
             page.box_line(
                 vec![Seg::linked(a.name.clone(), Role::Link, link)],
                 right,
@@ -482,13 +460,10 @@ pub fn tags(page: &mut Page, repo: &RepoId, list: Fetched<'_, Results<TagInfo>>,
         item(page, url::tree(repo, &t.name, ""), |page, link| {
             let mut right = Vec::new();
             if let Some(date) = &t.date {
-                right.push(Seg::new(time::ago_iso(date, now), Role::Meta));
+                right.push(meta(time::ago_iso(date, now)));
             }
             if let Some(oid) = &t.oid {
-                right.push(Seg::new(
-                    format!("  {}", crate::ui::text::short_sha(oid)),
-                    Role::Code,
-                ));
+                right.push(Seg::new(format!("  {}", short_sha(oid)), Role::Code));
             }
             page.box_line(
                 vec![Seg::linked(t.name.clone(), Role::Link, link)],
@@ -512,8 +487,7 @@ pub fn branches(
         item(page, url::tree(repo, &b.name, ""), |page, link| {
             let mut segs = vec![Seg::linked(b.name.clone(), Role::Link, link)];
             if b.default {
-                segs.push(space());
-                segs.push(chip("Default", Bg::SecondaryContainer));
+                tag(&mut segs, "Default", Bg::SecondaryContainer);
             }
             let mut right = Vec::new();
             if let Some((number, state)) = b.pr {
@@ -528,22 +502,22 @@ pub fn branches(
                     }),
                     Role::Link,
                 ));
-                right.push(Seg::new("  ", Role::Meta));
+                right.push(meta("  "));
             }
             if let Some(date) = &b.date {
-                right.push(Seg::new(time::ago_iso(date, now), Role::Meta));
+                right.push(meta(time::ago_iso(date, now)));
             }
             page.box_line(segs, right, 0);
-            let mut meta = Vec::new();
+            let mut subline = Vec::new();
             if let Some(oid) = &b.oid {
-                let sha = crate::ui::text::short_sha(oid);
-                meta.push(link_seg(page, sha, url::commit(repo, oid), Role::Code));
-                meta.push(Seg::new(" ", Role::Meta));
+                let sha = short_sha(oid);
+                subline.push(link_seg(page, sha, url::commit(repo, oid), Role::Code));
+                subline.push(meta(" "));
             }
             let what = [b.headline.as_deref(), b.author.as_ref().map(Person::name)];
             let text = what.into_iter().flatten().collect::<Vec<_>>().join(" · ");
-            meta.push(Seg::new(text, Role::Meta));
-            body(page, meta);
+            subline.push(meta(text));
+            body(page, subline);
         });
     });
 }
@@ -560,14 +534,11 @@ pub fn compare(page: &mut Page, repo: &RepoId, spec: &str, c: &Comparison, now: 
         vec![
             Seg::new("Comparing ", Role::Title),
             Seg::new(base.to_owned(), Role::Code),
-            Seg::new(
-                if spec.contains("..") && !spec.contains("...") {
-                    ".."
-                } else {
-                    "..."
-                },
-                Role::Meta,
-            ),
+            meta(if spec.contains("..") && !spec.contains("...") {
+                ".."
+            } else {
+                "..."
+            }),
             Seg::new(head.to_owned(), Role::Code),
         ],
         0,
@@ -583,7 +554,7 @@ pub fn compare(page: &mut Page, repo: &RepoId, spec: &str, c: &Comparison, now: 
             plural(c.behind, "commit")
         ),
     };
-    page.wrapped(vec![Seg::new(status, Role::Meta)], 0, Frame::None);
+    say(page, status, Role::Meta);
     let files = format!("{}#files", url::compare(repo, &c.from, &c.to));
     let changed = match c.files {
         1 => "1 file changed".to_owned(),
@@ -592,20 +563,16 @@ pub fn compare(page: &mut Page, repo: &RepoId, spec: &str, c: &Comparison, now: 
         n => format!("{n} files changed"),
     };
     let mut segs = vec![link_seg(page, format!("± {changed}"), files, Role::Link)];
-    segs.push(Seg::new("  ", Role::Meta));
+    segs.push(meta("  "));
     segs.extend(changes(c.additions, c.deletions));
     if c.files_capped {
         // The lines counted are those of the files GitHub listed.
-        segs.push(Seg::new(format!(" in the first {}", c.files), Role::Meta));
+        segs.push(meta(format!(" in the first {}", c.files)));
     }
     page.wrapped(segs, 0, Frame::None);
     page.blank();
     if c.commits.is_empty() {
-        empty_box(
-            page,
-            Seg::new("◷ Commits", Role::Meta),
-            "No commits between these.",
-        );
+        empty_box(page, meta("◷ Commits"), "No commits between these.");
         return;
     }
     commit_rows(page, repo, None, &c.commits, now);

@@ -25,7 +25,7 @@ use crate::theme::{Bg, Syntax};
 
 use crate::ui::markdown::{self, LinkBase};
 use crate::ui::page::{Frame, Link, Page, PageLine, Role, Seg, Tone};
-use crate::ui::text::{noun, short_sha};
+use crate::ui::text::{noun, short_sha, size, truncate, width};
 use crate::ui::{Fetched, Icons, cols, time};
 
 mod commits;
@@ -104,12 +104,61 @@ fn plural(n: u64, word: &str) -> String {
     format!("{} {}", compact(n), noun(n, word))
 }
 
+fn meta(text: impl Into<String>) -> Seg {
+    Seg::new(text, Role::Meta)
+}
+
+fn strong(text: impl Into<String>) -> Seg {
+    Seg::new(text, Role::Strong)
+}
+
+/// One line of text across the page, wrapped.
+fn say(page: &mut Page, text: impl Into<String>, role: Role) {
+    page.wrapped(vec![Seg::new(text, role)], 0, Frame::None);
+}
+
+/// A box title: `name  count`.
+fn counted<T>(name: &str, list: &impl Rows<T>) -> Vec<Seg> {
+    vec![strong(format!("{name}  {}", count_of(list)))]
+}
+
 fn chip(text: impl Into<String>, bg: Bg) -> Seg {
     Seg::new(format!(" {} ", text.into()), Role::Chip(bg))
 }
 
 fn space() -> Seg {
     Seg::new(" ", Role::Body)
+}
+
+/// A chip after what's already there.
+fn tag(segs: &mut Vec<Seg>, text: impl Into<String>, bg: Bg) {
+    segs.extend([space(), chip(text, bg)]);
+}
+
+/// `text` between parts: nothing before the first.
+fn sep(segs: &mut Vec<Seg>, text: &'static str) {
+    if !segs.is_empty() {
+        segs.push(meta(text));
+    }
+}
+
+/// A menu of links, `between` them: the one shown (`true`) strong, the
+/// others `idle`.
+fn nav_strip<T: Into<String>, L: Into<Link>>(
+    page: &mut Page,
+    between: &Seg,
+    idle: &Role,
+    tabs: impl IntoIterator<Item = (T, L, bool)>,
+) -> Vec<Seg> {
+    let mut segs = Vec::new();
+    for (text, target, on) in tabs {
+        if !segs.is_empty() {
+            segs.push(between.clone());
+        }
+        let role = if on { Role::Strong } else { idle.clone() };
+        segs.push(link_seg(page, text, target, role));
+    }
+    segs
 }
 
 fn labels(segs: &mut Vec<Seg>, labels: &Capped<Label>) {
@@ -126,7 +175,7 @@ fn labels(segs: &mut Vec<Seg>, labels: &Capped<Label>) {
 /// ` +3` after chips, for the ones GitHub has that weren't fetched.
 fn more_chips<T>(segs: &mut Vec<Seg>, list: &Capped<T>) {
     if list.left_out() > 0 {
-        segs.push(Seg::new(format!(" +{}", list.left_out()), Role::Meta));
+        segs.push(meta(format!(" +{}", list.left_out())));
     }
 }
 
@@ -138,6 +187,16 @@ fn link_seg(page: &mut Page, text: impl Into<String>, url: impl Into<Link>, role
 /// A login, linked to its profile.
 fn login_seg(page: &mut Page, login: &str, role: Role) -> Seg {
     link_seg(page, login.to_owned(), url::user(login), role)
+}
+
+/// Logins, each linked to its profile, `between` them.
+fn login_list<'a>(
+    page: &mut Page,
+    between: &'static str,
+    logins: impl IntoIterator<Item = &'a String>,
+) -> Vec<Seg> {
+    let tabs = logins.into_iter().map(|l| (l.clone(), url::user(l), false));
+    nav_strip(page, &meta(between), &Role::Link, tabs)
 }
 
 /// A commit's author or committer: linked to their profile only when
@@ -181,6 +240,31 @@ fn changes(additions: u64, deletions: u64) -> [Seg; 3] {
     ]
 }
 
+/// A line's number, `width` wide, in a code line's gutter.
+fn line_number(n: usize, width: usize) -> Seg {
+    Seg::new(format!("{n:>width$}  "), Role::Syntax(Syntax::Comment))
+}
+
+/// A numbered line of code in a box, its first `fixed` segments kept
+/// in place; a `marked` one is lit, and the page opens at the first, on
+/// the item that comes next. Returns where it starts.
+fn code_line(page: &mut Page, segs: Vec<Seg>, marked: bool, fixed: u8) -> usize {
+    if marked && page.jump.is_none() {
+        page.jump = Some(page.lines.len());
+        page.selects = Some(page.items.len());
+    }
+    let start = page.lines.len();
+    page.push(PageLine {
+        segs,
+        frame: Frame::Body,
+        tone: if marked { Tone::Marked } else { Tone::Code },
+        fixed,
+        ..PageLine::default()
+    });
+    page.numbered.push(page.items.len());
+    start
+}
+
 /// Gray bars where rows are still loading, as GitHub draws them.
 fn skeleton(page: &mut Page) {
     let room = usize::from(page.room(Frame::Body, 0));
@@ -205,12 +289,11 @@ pub fn loading_box(page: &mut Page, title: Vec<Seg>) {
 
 /// A flash banner across the page (errors), like GitHub's.
 pub fn flash(page: &mut Page, text: &str) {
-    let width = usize::from(page.room(Frame::None, 0));
-    for line in
-        crate::ui::page::wrap_segs(vec![Seg::new(text, Role::Body)], width.saturating_sub(4))
+    let room = usize::from(page.room(Frame::None, 0));
+    for line in crate::ui::page::wrap_segs(vec![Seg::new(text, Role::Body)], room.saturating_sub(4))
     {
         let text: String = line.iter().map(Seg::text).collect();
-        let pad = width.saturating_sub(crate::ui::text::width(&text) + 2);
+        let pad = room.saturating_sub(width(&text) + 2);
         page.line(vec![Seg::new(
             format!("  {text}{}", " ".repeat(pad)),
             Role::Chip(Bg::ErrorContainer),
@@ -225,7 +308,7 @@ fn body(page: &mut Page, segs: Vec<Seg>) {
 
 /// A box's empty state.
 fn empty_row(page: &mut Page, text: &str) {
-    body(page, vec![Seg::new(text, Role::Meta)]);
+    body(page, vec![meta(text)]);
 }
 
 /// A box holding only its empty state.
@@ -243,6 +326,18 @@ fn item(page: &mut Page, target: impl Into<Link>, build: impl FnOnce(&mut Page, 
     page.item(start, link);
 }
 
+/// [`item`] when there's a `target`, else just the lines.
+fn maybe_item<L: Into<Link>>(
+    page: &mut Page,
+    target: Option<L>,
+    build: impl FnOnce(&mut Page, Option<u32>),
+) {
+    match target {
+        Some(target) => item(page, target, |page, link| build(page, Some(link))),
+        None => build(page, None),
+    }
+}
+
 /// A file shown as Markdown, read as prose rather than as code.
 pub fn is_markdown(path: &str) -> bool {
     path.to_ascii_lowercase().ends_with(".md")
@@ -257,6 +352,48 @@ fn unique<'a>(names: impl IntoIterator<Item = &'a String>) -> Vec<String> {
         }
     }
     out
+}
+
+/// `word` with its first letter a capital.
+fn capitalized(word: &str) -> String {
+    let mut word = word.to_owned();
+    if let Some(first) = word.get_mut(..1) {
+        first.make_ascii_uppercase();
+    }
+    word
+}
+
+/// Words a filter doesn't know, said above its list: `Not filtered by
+/// “x”: {knows}`.
+fn ignored_note(page: &mut Page, ignored: &[String], knows: &str) {
+    if !ignored.is_empty() {
+        let words: Vec<String> = ignored.iter().map(|w| format!("“{w}”")).collect();
+        say(
+            page,
+            format!("Not filtered by {}: {knows}", words.join(", ")),
+            Role::Meta,
+        );
+    }
+}
+
+/// An advisory's references, a link each.
+fn references(page: &mut Page, refs: &[String]) {
+    if !refs.is_empty() {
+        aside_heading(page, "References");
+        for r in refs {
+            let link = link_seg(page, r.clone(), r.clone(), Role::Link);
+            page.wrapped(vec![link], 0, Frame::None);
+        }
+    }
+}
+
+/// `Affected < 1.2 · Patched 1.2`: the versions a vulnerability is in.
+fn affected(vulnerable: Option<&String>, patched: Option<&str>) -> String {
+    let patched = format!("Patched {}", patched.unwrap_or("in no version yet"));
+    match vulnerable {
+        Some(v) => format!("Affected {v} · {patched}"),
+        None => patched,
+    }
 }
 
 /// What a list in a box leaves out, said after its rows.
@@ -428,21 +565,13 @@ fn paged_list<T>(
     let Some(l) = list.show(page, &name.to_lowercase()) else {
         return;
     };
-    let title = format!("{name}  {}", count_of(l));
-    list_box(
-        page,
-        vec![Seg::new(title, Role::Strong)],
-        Vec::new(),
-        l,
-        empty,
-        row,
-    );
+    list_box(page, counted(name, l), Vec::new(), l, empty, row);
 }
 
 /// `prefix` then `segs` wrapped inside a box, continuation lines aligned
 /// after the prefix.
 fn hanging(page: &mut Page, prefix: Seg, segs: Vec<Seg>, frame: Frame) {
-    let width = cols(crate::ui::text::width(prefix.text()));
+    let width = cols(width(prefix.text()));
     let start = page.lines.len();
     page.wrapped(segs, width, frame);
     if let Some(first) = page.lines.get_mut(start) {
@@ -451,19 +580,13 @@ fn hanging(page: &mut Page, prefix: Seg, segs: Vec<Seg>, frame: Frame) {
     }
 }
 
-fn issue_icon(icons: Icons, state: Status) -> (String, Role) {
+fn issue_icon(icons: Icons, state: Status) -> (&'static str, Role) {
     let nerd = icons.nerd_font;
-    let pr = |s| icons.pr_state(s).into();
+    let pr = |s| icons.pr_state(s);
     match state {
-        Status::Issue(IssueState::Open) => {
-            (if nerd { "\u{f41b}" } else { "◉" }.into(), Role::Success)
-        }
-        Status::Issue(IssueState::Closed) => {
-            (if nerd { "\u{f41d}" } else { "✓" }.into(), Role::Accent)
-        }
-        Status::Issue(IssueState::NotPlanned) => {
-            (if nerd { "\u{f468}" } else { "⊘" }.into(), Role::Meta)
-        }
+        Status::Issue(IssueState::Open) => (if nerd { "\u{f41b}" } else { "◉" }, Role::Success),
+        Status::Issue(IssueState::Closed) => (if nerd { "\u{f41d}" } else { "✓" }, Role::Accent),
+        Status::Issue(IssueState::NotPlanned) => (if nerd { "\u{f468}" } else { "⊘" }, Role::Meta),
         Status::Pr(s @ PrState::Open) => (pr(s), Role::Success),
         Status::Pr(s @ PrState::Draft) => (pr(s), Role::Meta),
         Status::Pr(s @ PrState::Merged) => (pr(s), Role::Accent),
@@ -495,17 +618,17 @@ const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
+/// "Oct" for month 10.
+fn month_abbr(month: usize) -> Option<&'static str> {
+    MONTHS.get(month.checked_sub(1)?).copied()
+}
+
 /// `2026-10-01T…` → "Oct 1, 2026".
 fn day(iso: &str) -> String {
     let parts: Vec<&str> = iso.get(..10).unwrap_or(iso).split('-').collect();
     match parts.as_slice() {
         [y, m, d] => {
-            let month = m
-                .parse::<usize>()
-                .ok()
-                .and_then(|m| MONTHS.get(m.wrapping_sub(1)))
-                .copied()
-                .unwrap_or("?");
+            let month = m.parse().ok().and_then(month_abbr).unwrap_or("?");
             format!("{month} {}, {y}", d.trim_start_matches('0'))
         }
         _ => iso.to_owned(),
@@ -542,7 +665,7 @@ pub struct Listing<'a> {
 
 fn aside_heading(page: &mut Page, text: &str) {
     page.blank();
-    page.line(vec![Seg::new(text, Role::Strong)]);
+    page.line(vec![strong(text)]);
 }
 
 /// What a conversation leaves out: `… 12 more replies on GitHub (o)`.
@@ -561,7 +684,7 @@ fn earlier_here<T>(page: &mut Page, list: &Capped<T>, one: &str, many: &str) {
 fn left_out(page: &mut Page, n: u64, one: &str, many: &str) {
     if n > 0 {
         let text = left_out_text(n, one, many);
-        page.wrapped(vec![Seg::new(text, Role::Meta)], 2, Frame::None);
+        page.wrapped(vec![meta(text)], 2, Frame::None);
     }
 }
 
@@ -630,13 +753,12 @@ mod tests {
     /// profile, as GitHub shows them.
     #[test]
     fn a_commit_by_git_names_doesnt_link_them_as_profiles() {
-        let repo = RepoId::new("o", "r");
         let d = commit_by(
             Person::Git("Jane Doe".into()),
             Some(Person::Git("bob".into())),
         );
         let mut page = Page::new(100);
-        commit(&mut page, &repo, &d, "", 0);
+        commit(&mut page, &RepoId::new("o", "r"), &d, "", 0);
         let text: Vec<String> = page.lines.iter().map(PageLine::text).collect();
         assert!(text.iter().any(|l| l.contains("Jane Doe")), "{text:?}");
         assert_eq!(profile_links(&page), Vec::<String>::new());

@@ -128,7 +128,9 @@ impl State {
             "Search GitHub or go to a page",
             "",
         ));
-        if !self.chrome().tabs.is_empty() {
+        // Only the screen's own tabs count here, not the header's right.
+        let chrome = self.screen_chrome();
+        if !chrome.tabs.is_empty() {
             out.push(go(Action::NextTab, "Next tab", "tabs"));
             out.push(go(Action::PrevTab, "Previous tab", ""));
         }
@@ -141,7 +143,7 @@ impl State {
                 "The review at a glance: drafts, threads, reviewers",
                 "",
             );
-            if self.chrome().active == Some(n - 1) {
+            if chrome.active == Some(n - 1) {
                 glance.unavailable = Some("this is it".into());
             }
             out.push(glance);
@@ -385,9 +387,14 @@ impl State {
     /// lists decides, so which-key, the palette and the menu agree; moving
     /// and going places work everywhere.
     pub fn availability(&self, action: Action) -> Result<(), String> {
+        Self::availability_in(&self.doables(), action)
+    }
+
+    /// [`State::availability`], with the menu already built.
+    pub fn availability_in(doables: &[Doable], action: Action) -> Result<(), String> {
         use Action::*;
-        if let Some(d) = self.doables().into_iter().find(|d| d.action == action) {
-            return d.unavailable.map_or(Ok(()), Err);
+        if let Some(d) = doables.iter().find(|d| d.action == action) {
+            return d.unavailable.clone().map_or(Ok(()), Err);
         }
         let everywhere = action.moves()
             || Action::OPEN_TABS.contains(&action)

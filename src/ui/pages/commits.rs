@@ -48,10 +48,7 @@ pub(super) fn commit_rows(
             if !current_day.is_empty() {
                 page.box_bottom();
             }
-            page.box_top(
-                vec![Seg::new(format!("◷ Commits on {date}"), Role::Meta)],
-                Vec::new(),
-            );
+            page.box_top(vec![meta(format!("◷ Commits on {date}"))], Vec::new());
             current_day = date;
         }
         let commit = match pr {
@@ -61,12 +58,12 @@ pub(super) fn commit_rows(
         item(page, commit, |page, link| {
             page.box_line(
                 vec![Seg::linked(c.headline.clone(), Role::Strong, link)],
-                vec![Seg::new(crate::ui::text::short_sha(&c.oid), Role::Code)],
+                vec![Seg::new(short_sha(&c.oid), Role::Code)],
                 0,
             );
             let who = c.author.name();
             let committed = format!("{who} committed {}", time::ago_iso(&c.date, now));
-            body(page, vec![Seg::new(committed, Role::Meta)]);
+            body(page, vec![meta(committed)]);
         });
     }
     if !current_day.is_empty() {
@@ -90,21 +87,19 @@ pub fn commit_history(
     } else {
         format!("  {rev} · {path}")
     };
-    title.push(Seg::new(at, Role::Meta));
+    title.push(meta(at));
     page.wrapped(title, 0, Frame::None);
     page.blank();
     let Some(h) = history.show(page, "commits") else {
         return;
     };
     if h.items.is_empty() {
-        empty_box(page, Seg::new("◷ Commits", Role::Meta), "No commits here.");
+        empty_box(page, meta("◷ Commits"), "No commits here.");
         return;
     }
     commit_rows(page, repo, None, h, now);
 }
 
-/// A commit: its message, who and when, its parents, and a link to its
-/// files (`files` is that link's target).
 /// A pull request's commit: which of its commits it is, and links to the
 /// ones either side.
 pub struct PrCommitAt {
@@ -120,27 +115,22 @@ pub struct PrCommitAt {
 /// the previous and next commits.
 pub fn pr_commit_nav(page: &mut Page, at: &PrCommitAt) {
     let pr = link_seg(page, format!("#{}", at.number), at.pr.clone(), Role::Link);
-    let mut segs = vec![
-        Seg::new(format!("Commit {} of {} in ", at.n, at.of), Role::Meta),
-        pr,
-    ];
+    let mut segs = vec![meta(format!("Commit {} of {} in ", at.n, at.of)), pr];
     for (label, url) in [("‹ Previous", &at.previous), ("Next ›", &at.next)] {
-        segs.push(Seg::new("   ", Role::Meta));
+        segs.push(meta("   "));
         segs.push(match url {
             Some(url) => link_seg(page, label, url.clone(), Role::Link),
-            None => Seg::new(label, Role::Meta),
+            None => meta(label),
         });
     }
     page.line(segs);
     page.blank();
 }
 
+/// A commit: its message, who and when, its parents, and a link to its
+/// files (`files` is that link's target).
 pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now: u64) {
-    page.wrapped(
-        vec![Seg::new(d.headline.clone(), Role::Title)],
-        0,
-        Frame::None,
-    );
+    say(page, d.headline.clone(), Role::Title);
     if !d.body.is_empty() {
         page.blank();
         let base = LinkBase::new(repo, &d.oid, "");
@@ -149,18 +139,15 @@ pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now
     page.blank();
     let mut who = vec![
         person_seg(page, &d.author, Role::Strong),
-        Seg::new(
-            format!(" authored {}", time::ago_iso(&d.authored_at, now)),
-            Role::Meta,
-        ),
+        meta(format!(" authored {}", time::ago_iso(&d.authored_at, now))),
     ];
     if let Some(committer) = &d.committer {
-        who.push(Seg::new(" · ", Role::Meta));
+        who.push(meta(" · "));
         who.push(person_seg(page, committer, Role::Strong));
-        who.push(Seg::new(
-            format!(" committed {}", time::ago_iso(&d.committed_at, now)),
-            Role::Meta,
-        ));
+        who.push(meta(format!(
+            " committed {}",
+            time::ago_iso(&d.committed_at, now)
+        )));
     }
     match d.verified {
         Some(true) => who.extend([space(), chip("Verified", Bg::SuccessContainer)]),
@@ -168,29 +155,26 @@ pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now
         None => {}
     }
     page.wrapped(who, 0, Frame::None);
-    let mut ids = vec![Seg::new(
-        format!("commit {}", crate::ui::text::short_sha(&d.oid)),
-        Role::Meta,
-    )];
+    let mut ids = vec![meta(format!("commit {}", short_sha(&d.oid)))];
     if !d.parents.is_empty() {
         let noun = if d.parents.total() == 1 {
             "parent"
         } else {
             "parents"
         };
-        ids.push(Seg::new(format!(" · {noun} "), Role::Meta));
+        ids.push(meta(format!(" · {noun} ")));
         for (i, parent) in d.parents.iter().enumerate() {
             if i > 0 {
-                ids.push(Seg::new(" + ", Role::Meta));
+                ids.push(meta(" + "));
             }
-            let short = crate::ui::text::short_sha(parent);
+            let short = short_sha(parent);
             ids.push(link_seg(page, short, url::commit(repo, parent), Role::Code));
         }
         more_chips(&mut ids, &d.parents);
     }
     page.wrapped(ids, 0, Frame::None);
     page.blank();
-    page.box_top(vec![Seg::new("± Files changed", Role::Meta)], Vec::new());
+    page.box_top(vec![meta("± Files changed")], Vec::new());
     item(page, files, |page, link| {
         let what = match d.changed_files {
             Some(n) => plural(n, "file"),
@@ -198,7 +182,7 @@ pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now
         };
         let mut segs = vec![Seg::linked(what, Role::Link, link), space()];
         segs.extend(changes(d.additions, d.deletions));
-        page.box_line(segs, vec![Seg::new("↵ show the diff", Role::Meta)], 0);
+        page.box_line(segs, vec![meta("↵ show the diff")], 0);
     });
     page.box_bottom();
 }

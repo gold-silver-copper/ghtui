@@ -23,22 +23,14 @@ pub fn explore(
     topics: Fetched<'_, Topics>,
     cx: PageCtx<'_>,
 ) {
-    let mut tabs = Vec::new();
-    for s in Since::ALL {
-        if !tabs.is_empty() {
-            tabs.push(Seg::new(" · ", Role::Meta));
-        }
-        let role = if s == since { Role::Strong } else { Role::Link };
-        tabs.push(link_seg(page, s.label(), url::explore(language, s), role));
-    }
+    let tabs = Since::ALL
+        .into_iter()
+        .map(|s| (s.label(), url::explore(language, s), s == since));
+    let tabs = nav_strip(page, &meta(" · "), &Role::Link, tabs);
     page.wrapped(tabs, 0, Frame::None);
     languages(page, language, since);
     page.blank();
-    page.wrapped(
-        vec![Seg::new(not_trending(since), Role::Meta)],
-        0,
-        Frame::None,
-    );
+    say(page, not_trending(since), Role::Meta);
     page.blank();
     let repos = repos.pick(|r| match r {
         SearchResults::Repos(r) => Some(r),
@@ -62,7 +54,7 @@ pub fn explore(
         0 => t.topics.len().to_string(),
         n => format!("{} of {}", t.topics.len(), t.topics.len() as u64 + n),
     };
-    let title = vec![Seg::new(format!("Featured topics  {count}"), Role::Strong)];
+    let title = vec![strong(format!("Featured topics  {count}"))];
     list_box(
         page,
         title,
@@ -93,31 +85,22 @@ const LANGUAGES: [&str; 12] = [
 ];
 
 fn languages(page: &mut Page, language: Option<&str>, since: Since) {
-    let mut segs = vec![Seg::new("Language  ", Role::Meta)];
     let here = |l: Option<&str>| match (l, language) {
         (None, None) => true,
         (Some(l), Some(on)) => l.eq_ignore_ascii_case(on),
         _ => false,
     };
-    let add = |page: &mut Page, segs: &mut Vec<Seg>, l: Option<&str>| {
-        if segs.len() > 1 {
-            segs.push(Seg::new(" · ", Role::Meta));
-        }
-        let target = url::explore(l.map(str::to_lowercase).as_deref(), since);
-        let role = if here(l) { Role::Strong } else { Role::Link };
-        segs.push(link_seg(page, l.unwrap_or("Any"), target, role));
-    };
-    add(page, &mut segs, None);
-    for l in LANGUAGES {
-        add(page, &mut segs, Some(l));
-    }
-    if let Some(other) = language.filter(|l| !LANGUAGES.iter().any(|k| k.eq_ignore_ascii_case(l))) {
-        add(page, &mut segs, Some(other));
-    }
-    segs.push(Seg::new(
-        " · another: g/ github.com/trending/<language>",
-        Role::Meta,
-    ));
+    let other = language.filter(|l| !LANGUAGES.iter().any(|k| k.eq_ignore_ascii_case(l)));
+    let tabs = std::iter::once(None)
+        .chain(LANGUAGES.iter().copied().map(Some))
+        .chain(other.map(Some))
+        .map(|l| {
+            let target = url::explore(l.map(str::to_lowercase).as_deref(), since);
+            (l.unwrap_or("Any"), target, here(l))
+        });
+    let mut segs = vec![meta("Language  ")];
+    segs.extend(nav_strip(page, &meta(" · "), &Role::Link, tabs));
+    segs.push(meta(" · another: g/ github.com/trending/<language>"));
     page.wrapped(segs, 0, Frame::None);
 }
 
@@ -126,10 +109,10 @@ fn topic_row(page: &mut Page, topic: &Topic) {
     let target = url::topic(&topic.name);
     item(page, target, |page, link| {
         let mut segs = vec![Seg::linked(topic.title().to_owned(), Role::Link, link)];
-        segs.push(Seg::new(format!("  #{}", topic.name), Role::Meta));
+        segs.push(meta(format!("  #{}", topic.name)));
         page.box_line(segs, Vec::new(), 0);
         if let Some(d) = &topic.short_description {
-            page.wrapped(vec![Seg::new(d.clone(), Role::Meta)], 2, Frame::Body);
+            page.wrapped(vec![meta(d.clone())], 2, Frame::Body);
         }
     });
 }
@@ -139,12 +122,11 @@ fn topic_row(page: &mut Page, topic: &Topic) {
 pub fn topic(page: &mut Page, t: &Topic, repos: Fetched<'_, SearchResults>, now: u64) {
     let mut title = vec![Seg::new(t.title().to_owned(), Role::Title)];
     if t.featured {
-        title.push(space());
-        title.push(chip("Featured", Bg::SecondaryContainer));
+        tag(&mut title, "Featured", Bg::SecondaryContainer);
     }
     page.line(title);
     if let Some(d) = t.description.as_ref().or(t.short_description.as_ref()) {
-        page.wrapped(vec![Seg::new(d.clone(), Role::Body)], 0, Frame::None);
+        say(page, d.clone(), Role::Body);
     }
     let mut facts = Vec::new();
     if let Some(by) = &t.created_by {
@@ -157,21 +139,15 @@ pub fn topic(page: &mut Page, t: &Topic, repos: Fetched<'_, SearchResults>, now:
         facts.push(format!("☆ {}", plural(stars, "star")));
     }
     if !facts.is_empty() {
-        page.wrapped(
-            vec![Seg::new(facts.join(" · "), Role::Meta)],
-            0,
-            Frame::None,
-        );
+        say(page, facts.join(" · "), Role::Meta);
     }
     if !t.related.is_empty() {
-        let mut segs = vec![Seg::new("Related  ", Role::Meta)];
-        for (i, name) in t.related.iter().enumerate() {
-            if i > 0 {
-                segs.push(Seg::new(" · ", Role::Meta));
-            }
-            let target = url::topic(name);
-            segs.push(link_seg(page, format!("#{name}"), target, Role::Link));
-        }
+        let tabs = t
+            .related
+            .iter()
+            .map(|name| (format!("#{name}"), url::topic(name), false));
+        let mut segs = vec![meta("Related  ")];
+        segs.extend(nav_strip(page, &meta(" · "), &Role::Link, tabs));
         page.wrapped(segs, 0, Frame::None);
     }
     page.blank();
