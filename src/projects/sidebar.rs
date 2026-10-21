@@ -13,7 +13,7 @@ use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::{Kind, fuzzy_score};
 use crate::route::{Route, issues, pulls};
-use crate::state::{Cmd, State};
+use crate::state::{Cmds, State};
 use crate::ui::overlays::PaletteItem;
 
 use super::{At, On, Pick};
@@ -99,8 +99,7 @@ pub fn doable(state: &State) -> Option<Doable> {
 
 /// `,f` on an issue or pull request: its field to set, in the one
 /// project it's in, or first which project.
-#[must_use]
-pub fn act(state: &mut State) -> Vec<Cmd> {
+pub fn act(state: &mut State) -> Cmds {
     let (subject, projects) = match changeable(state) {
         Ok(found) => found,
         Err(why) => {

@@ -11,7 +11,7 @@ use crate::api::model::{PrRef, RepoId};
 use crate::data::DataKey;
 use crate::diff_screen::DiffOf;
 use crate::picker;
-use crate::state::{Cmd, Overlay, Screen, State};
+use crate::state::{Cmds, Overlay, Screen, State};
 
 /// Choices the completion list shows at most.
 pub const SHOWN: usize = 6;
@@ -19,8 +19,7 @@ pub const SHOWN: usize = 6;
 /// A paste: into the comment box or the review summary as it is, newlines
 /// and all; into a one-line box (a search, a filter, the palette, a
 /// picker) as one line.
-#[must_use]
-pub fn on_paste(state: &mut State, text: &str) -> Vec<Cmd> {
+pub fn on_paste(state: &mut State, text: &str) -> Cmds {
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
     let line = || {
         let lines: Vec<&str> = text.split('\n').filter(|l| !l.trim().is_empty()).collect();
@@ -58,7 +57,7 @@ pub fn on_paste(state: &mut State, text: &str) -> Vec<Cmd> {
         }
         _ => state.info("Nothing to paste into here: a paste goes into a comment or a box"),
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// The comment box's completion list: which choice is selected, and where
@@ -230,7 +229,7 @@ pub fn completions(state: &State) -> Option<Vec<Choice>> {
 /// A key in the comment box while its completion list shows: `⇥` or `↵`
 /// takes the choice, `↑` `↓` (or ctrl-p, ctrl-n) choose, `esc` closes the
 /// list. Any other key is the box's (`None`).
-pub fn on_compose_key(state: &mut State, key: KeyEvent) -> Option<Vec<Cmd>> {
+pub fn on_compose_key(state: &mut State, key: KeyEvent) -> Option<Cmds> {
     let choices = completions(state)?;
     let Some(Overlay::Compose(compose)) = &mut state.overlay else {
         return None;
@@ -256,16 +255,15 @@ pub fn on_compose_key(state: &mut State, key: KeyEvent) -> Option<Vec<Cmd>> {
         }
         _ => return None,
     }
-    Some(Vec::new())
+    Some(Cmds::new())
 }
 
 /// Asks GitHub who and what the repository on screen can mention, once a
 /// session (again after a failure, or a write), when a comment box opens.
-#[must_use]
-pub fn fetch_mentionable(state: &mut State) -> Vec<Cmd> {
+pub fn fetch_mentionable(state: &mut State) -> Cmds {
     match repo_here(state) {
         Some(repo) => state.ensure(DataKey::Mentionable(repo), false),
-        None => Vec::new(),
+        None => Cmds::new(),
     }
 }
 

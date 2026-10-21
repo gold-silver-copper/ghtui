@@ -6,7 +6,7 @@ use crate::route::issues;
 #[test]
 fn duplicate_fetches_are_suppressed() {
     let mut state = state();
-    let sections: Vec<Cmd> = (state.home.iter())
+    let sections: Cmds = (state.home.iter())
         .map(|s| fetch(s.search.clone().unwrap().key()))
         .collect();
     assert_eq!(state.load_visible(false), sections);

@@ -22,7 +22,7 @@ use crate::api::{ApiError, Polled};
 use crate::data::DataKey;
 use crate::diff_screen::{DiffOf, LastReview};
 use crate::keymap::Action;
-use crate::state::{Api, Cmd, Screen, State, Timer};
+use crate::state::{Api, Cmd, Cmds, Screen, State, Timer};
 use crate::ui::pages::PrTab;
 use crate::ui::text::{noun, short_sha};
 
@@ -251,8 +251,7 @@ pub fn watched(state: &State) -> Option<&PrRef> {
 
 /// Watches what's on screen, and schedules the next ask about it. Leaving
 /// a pull request forgets what was new on it: coming back is looking anew.
-#[must_use]
-pub fn schedule(state: &mut State) -> Vec<Cmd> {
+pub fn schedule(state: &mut State) -> Cmds {
     let here = watched(state).cloned();
     if state.watch.as_ref().map(|w| &w.pr) != here.as_ref() {
         if let Some(old) = state.watch.take() {
@@ -282,8 +281,7 @@ pub fn on_focus(state: &mut State, focused: bool) {
 
 /// Time to ask about the watched pull request (or page), if the timer is
 /// still its.
-#[must_use]
-pub fn on_timer(state: &mut State, id: u64) -> Vec<Cmd> {
+pub fn on_timer(state: &mut State, id: u64) -> Cmds {
     let Some(w) = state.watch.as_mut().filter(|w| w.pace.is(id)) else {
         return page::on_timer(state, id);
     };
@@ -295,10 +293,11 @@ pub fn on_timer(state: &mut State, id: u64) -> Vec<Cmd> {
         ]);
     }
     let asks = probes.into_iter().map(|probe| w.pace.ask(probe)).collect();
-    vec![Cmd::Api(Api::Poll {
+    Cmd::Api(Api::Poll {
         pr: w.pr.clone(),
         asks,
-    })]
+    })
+    .into()
 }
 
 /// A pull request's REST answer, as much as is read of it: serde skips
@@ -328,12 +327,11 @@ fn newest_comment(body: &str) -> Option<NodeId> {
 
 /// GitHub's answers to an ask: what changed is fetched again, and a push
 /// is said, with the way to see what it changed since your review.
-#[must_use]
 pub fn on_polled(
     state: &mut State,
     pr: &PrRef,
     answers: Vec<(Probe, Result<Polled, ApiError>)>,
-) -> Vec<Cmd> {
+) -> Cmds {
     // The conversation is fetched again where it's shown: on a page; and
     // every review, where they're listed.
     let page = match state.screen() {
@@ -359,7 +357,7 @@ pub fn on_polled(
     // When the pull request shown was last updated, likewise (a review).
     let updated = state.pr(pr).map(|d| d.updated_at.clone());
     let Some(w) = state.watch.as_mut().filter(|w| w.pr == *pr) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let (mut changed, mut threads, mut pushed) = (false, false, None);
     let mut needs: Vec<DataKey> = Vec::new();
@@ -416,7 +414,7 @@ pub fn on_polled(
         }
     }
     w.pace.settle(changed, MOST_MS);
-    let mut cmds: Vec<Cmd> = needs
+    let mut cmds: Cmds = needs
         .into_iter()
         .flat_map(|need| state.ensure(need, true))
         .collect();

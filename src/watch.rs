@@ -15,7 +15,7 @@ use crate::keymap::Action;
 use crate::nav::{Doable, row};
 use crate::picker::fuzzy_score;
 use crate::picker::{Choice, entry};
-use crate::state::{Cmd, Screen, State};
+use crate::state::{Cmds, Screen, State};
 use crate::work::{Cx, Failure, Job};
 
 /// Setting a subscription.
@@ -34,7 +34,7 @@ impl Job for Subscribe {
     }
 
     /// GitHub's answer: the subscription is read again until it shows it.
-    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
         match result {
             Ok(()) => {
                 state.info(said(&self.of, self.state));
@@ -62,7 +62,7 @@ impl Job for Subscribe {
                     format!("GitHub didn't change your subscription: {why}")
                 };
                 state.error(text);
-                Vec::new()
+                Cmds::new()
             }
         }
     }
@@ -137,8 +137,7 @@ pub fn subject(state: &State) -> Option<Watched> {
 }
 
 /// `,w`: the choices for what's here.
-#[must_use]
-pub fn open(state: &mut State) -> Vec<Cmd> {
+pub fn open(state: &mut State) -> Cmds {
     let Some(of) = subject(state) else {
         return state.just_say(
             "That works on an issue, a pull request, a discussion, or a repository's pages",

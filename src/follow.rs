@@ -8,7 +8,7 @@ use std::any::Any;
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::route::Route;
-use crate::state::{Cmd, State};
+use crate::state::{Cmds, State};
 
 /// What a page shows once GitHub has a change.
 pub trait Expectation: Any + std::fmt::Debug + Send + Sync {
@@ -24,8 +24,8 @@ pub trait Expectation: Any + std::fmt::Debug + Send + Sync {
     fn shown(&self, state: &State, route: &Route) -> Shown;
 
     /// Once it's shown: what follows.
-    fn then(&self, _state: &mut State, _route: &Route) -> Vec<Cmd> {
-        Vec::new()
+    fn then(&self, _state: &mut State, _route: &Route) -> Cmds {
+        Cmds::new()
     }
 }
 
@@ -102,17 +102,16 @@ pub fn poll(state: &mut State) -> Vec<DataKey> {
 
 /// After GitHub's data arrives: stops waiting for a change the page now
 /// shows, or follows it to the page it's on.
-#[must_use]
-pub fn follow(state: &mut State) -> Vec<Cmd> {
+pub fn follow(state: &mut State) -> Cmds {
     let Some(f) = following(state) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let polls = f.polls;
     match f.what.shown(state, &f.route) {
-        Shown::No => Vec::new(),
+        Shown::No => Cmds::new(),
         Shown::Yes => {
             let Some(f) = state.following.take() else {
-                return Vec::new();
+                return Cmds::new();
             };
             f.what.then(state, &f.route)
         }

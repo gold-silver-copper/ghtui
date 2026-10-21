@@ -11,7 +11,7 @@
 
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::state::{Cmd, State};
+use crate::state::{Cmds, State};
 
 /// What a feature adds.
 pub struct Feature {
@@ -22,12 +22,12 @@ pub struct Feature {
     /// own pages.
     pub takes: fn(&State, Action) -> bool,
     /// Does an action it owns or takes.
-    pub act: fn(&mut State, Action) -> Vec<Cmd>,
+    pub act: fn(&mut State, Action) -> Cmds,
     /// The menu's rows it adds on the screen.
     pub offers: fn(&State, &mut Vec<Doable>),
     /// After GitHub's data arrives or a page opens: brings what it keeps
     /// up to date with it.
-    pub follow: fn(&mut State) -> Vec<Cmd>,
+    pub follow: fn(&mut State) -> Cmds,
 }
 
 impl Feature {
@@ -35,9 +35,9 @@ impl Feature {
     pub const NONE: Feature = Feature {
         owns: &[],
         takes: |_, _| false,
-        act: |_, _| Vec::new(),
+        act: |_, _| Cmds::new(),
         offers: |_, _| {},
-        follow: |_| Vec::new(),
+        follow: |_| Cmds::new(),
     };
 }
 
@@ -80,7 +80,6 @@ pub fn offers(state: &State, out: &mut Vec<Doable>) {
 
 /// After GitHub's data arrives or a page opens: brings every feature up
 /// to date with it.
-#[must_use]
-pub fn follow(state: &mut State) -> Vec<Cmd> {
+pub fn follow(state: &mut State) -> Cmds {
     FEATURES.iter().flat_map(|f| (f.follow)(state)).collect()
 }

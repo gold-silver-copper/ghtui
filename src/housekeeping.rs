@@ -32,7 +32,7 @@ use crate::data::DataKey;
 use crate::follow::{Expectation, Shown, expect};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
-use crate::state::{Cmd, Screen, State};
+use crate::state::{Cmds, Screen, State};
 
 pub mod files;
 pub mod git;
@@ -377,8 +377,7 @@ fn refused(state: &State, repo: &RepoId, what: &str) -> Option<String> {
 }
 
 /// Opens a form's page, started again from what GitHub has.
-#[must_use]
-fn open(state: &mut State, of: FormOf) -> Vec<Cmd> {
+fn open(state: &mut State, of: FormOf) -> Cmds {
     let file = match &of {
         FormOf::File {
             repo, rev, path, ..
@@ -390,14 +389,14 @@ fn open(state: &mut State, of: FormOf) -> Vec<Cmd> {
         return compose(state);
     }
     state.forms.take::<Form>(&route);
-    let mut cmds = file.map_or_else(Vec::new, |file| state.ensure(file, true));
+    let mut cmds = file.map_or_else(Cmds::new, |file| state.ensure(file, true));
     cmds.extend(state.push(route));
     cmds.extend(follow(state));
     cmds
 }
 
 /// Your clone of `repo`, once known: `Err` while it's being looked for.
-fn clone_here(state: &mut State, repo: &RepoId) -> Result<Option<Clone>, Vec<Cmd>> {
+fn clone_here(state: &mut State, repo: &RepoId) -> Result<Option<Clone>, Cmds> {
     if let Some(clone) = state.clone_of(repo) {
         return Ok(clone.cloned());
     }
@@ -439,8 +438,7 @@ fn takes(state: &State, action: Action) -> bool {
 }
 
 /// Runs one of housekeeping's actions.
-#[must_use]
-fn act(state: &mut State, action: Action) -> Vec<Cmd> {
+fn act(state: &mut State, action: Action) -> Cmds {
     let route = state.route().cloned();
     match (action, route) {
         (Action::NewHere, Some(route)) => new_here(state, route),
@@ -497,8 +495,7 @@ fn act(state: &mut State, action: Action) -> Vec<Cmd> {
 }
 
 /// `,o`: a new label, milestone, branch, tag or file, by the page.
-#[must_use]
-fn new_here(state: &mut State, route: Route) -> Vec<Cmd> {
+fn new_here(state: &mut State, route: Route) -> Cmds {
     match route {
         Route::Issues(issues::Labels(repo)) => labels::open(state, &repo, None),
         Route::Issues(issues::Milestones { repo, .. })
@@ -533,7 +530,7 @@ pub const FORM: crate::forms::Kind = crate::forms::Kind {
     compose: |state, _| compose(state),
     row: |state, row| match (row, state.route().cloned()) {
         (Row::Field(field), Some(route)) => open_field(state, &route, *field),
-        _ => Vec::new(),
+        _ => Cmds::new(),
     },
     fill,
     submit,
@@ -546,10 +543,9 @@ pub const FORM: crate::forms::Kind = crate::forms::Kind {
 };
 
 /// `,s`, ctrl-s or a form's button.
-#[must_use]
-fn submit(state: &mut State) -> Vec<Cmd> {
+fn submit(state: &mut State) -> Cmds {
     let Some((route, of)) = here(state) else {
-        return Vec::new();
+        return Cmds::new();
     };
     match &of {
         FormOf::Label { repo, name } => labels::submit(state, &route, repo, name.as_deref()),
@@ -708,10 +704,9 @@ fn problem(state: &State, route: &Route, of: &FormOf) -> Option<String> {
 
 /// Brings housekeeping's form on screen up to date with what's arrived:
 /// filled in from GitHub's data once.
-#[must_use]
-fn follow(state: &mut State) -> Vec<Cmd> {
+fn follow(state: &mut State) -> Cmds {
     let Some((route, of)) = here(state) else {
-        return Vec::new();
+        return Cmds::new();
     };
     match &of {
         FormOf::Label { repo, name } => labels::follow(state, &route, repo, name.as_ref()),
@@ -903,10 +898,9 @@ fn loaded(b: Build<'_>, page: &mut Page, of: &FormOf) -> bool {
 // ---- the composer --------------------------------------------------------------------------
 
 /// `c`, or Enter on a form's text: the composer on it.
-#[must_use]
-fn compose(state: &mut State) -> Vec<Cmd> {
+fn compose(state: &mut State) -> Cmds {
     let Some((route, of)) = here(state) else {
-        return Vec::new();
+        return Cmds::new();
     };
     match of {
         FormOf::Milestone { .. } => {}
@@ -917,7 +911,7 @@ fn compose(state: &mut State) -> Vec<Cmd> {
         }
         _ => {
             // A form of rows: Enter sets the one selected.
-            return Vec::new();
+            return Cmds::new();
         }
     }
     let start = [ratatui_textarea::CursorMove::Jump(0, 0)];
@@ -1051,20 +1045,19 @@ fn check(route: &Route, field: Field, value: &str) -> Option<String> {
 }
 
 /// Opens a picker on a form's row (a yes-or-no row toggles instead).
-#[must_use]
-pub fn open_field(state: &mut State, route: &Route, field: Field) -> Vec<Cmd> {
+pub fn open_field(state: &mut State, route: &Route, field: Field) -> Cmds {
     if field.toggles() {
         form_mut(state, route).toggle(field);
-        return Vec::new();
+        return Cmds::new();
     }
     let pick = crate::picker::Kind::Housekeeping(Pick::Field(route.clone(), field));
     state.open_picker(pick)
 }
 
 /// What was chosen for a form's row.
-fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Vec<Cmd> {
+fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Cmds {
     let Row::Field(field) = *row else {
-        return Vec::new();
+        return Cmds::new();
     };
     let f = form_mut(state, route);
     f.set(field, value);
@@ -1080,7 +1073,7 @@ fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Vec<Cmd> 
     if field == Field::Path && new_file && blank && state.route() == Some(route) {
         return compose(state);
     }
-    Vec::new()
+    Cmds::new()
 }
 
 // ---- questions ----------------------------------------------------------------------
@@ -1144,8 +1137,7 @@ fn ask(
 }
 
 /// The question about `route` was answered.
-#[must_use]
-pub fn answer(state: &mut State, route: &Route, answer: Answer) -> Vec<Cmd> {
+pub fn answer(state: &mut State, route: &Route, answer: Answer) -> Cmds {
     match answer {
         Answer::Commit => files::commit(state, route),
         Answer::Delete(Subject::Label(repo, name)) => labels::delete(state, repo, name),

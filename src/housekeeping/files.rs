@@ -19,7 +19,7 @@ use super::{
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
-use crate::state::{Cmd, State};
+use crate::state::{Cmds, State};
 use crate::work::{self, Cx, Failure, Job};
 
 /// A file's commit; its form's page asked.
@@ -40,14 +40,13 @@ fn why_not(state: &State, repo: &RepoId) -> Option<String> {
 }
 
 /// `,e`, `,D` on a file, `,o` in a folder: the file's form.
-#[must_use]
 pub(super) fn open(
     state: &mut State,
     repo: RepoId,
     rev: String,
     path: String,
     change: FileChange,
-) -> Vec<Cmd> {
+) -> Cmds {
     if let Some(why) = why_not(state, &repo) {
         return state.just_say(why);
     }
@@ -84,10 +83,9 @@ fn looked<'a>(state: &'a State, of: &FormOf) -> Option<Result<&'a FileLook, &'a 
 
 /// Once the file is read from GitHub, fills the form and opens the
 /// composer on its text.
-#[must_use]
-pub(super) fn follow(state: &mut State, route: &Route, of: &FormOf) -> Vec<Cmd> {
+pub(super) fn follow(state: &mut State, route: &Route, of: &FormOf) -> Cmds {
     let Some((_, _, path, change)) = parts(of) else {
-        return Vec::new();
+        return Cmds::new();
     };
     if !form(state, route).values.contains_key(&Field::Path) {
         let f = form_mut(state, route);
@@ -98,7 +96,7 @@ pub(super) fn follow(state: &mut State, route: &Route, of: &FormOf) -> Vec<Cmd> 
         }
     }
     let Some(Ok(look)) = looked(state, of).filter(|_| !form(state, route).started) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let look = look.clone();
     let login = state.viewer.clone().unwrap_or_else(|| "patch".into());
@@ -112,14 +110,14 @@ pub(super) fn follow(state: &mut State, route: &Route, of: &FormOf) -> Vec<Cmd> 
         f.set(Field::Branch, format!("{login}-patch-1"));
     }
     if state.overlay.is_some() {
-        return Vec::new();
+        return Cmds::new();
     }
     match change {
         FileChange::New => super::open_field(state, route, Field::Path),
         FileChange::Edit if problem(state, route, of).is_none_or(|why| !why.contains("binary")) => {
             super::compose(state)
         }
-        _ => Vec::new(),
+        _ => Cmds::new(),
     }
 }
 
@@ -239,13 +237,12 @@ pub(super) fn branch_rows(state: &State, route: &Route, q: &str) -> crate::picke
 }
 
 /// `,s`: asks before committing, as GitHub's "Commit changes" does.
-#[must_use]
-pub(super) fn ask_commit(state: &mut State, route: &Route) -> Vec<Cmd> {
+pub(super) fn ask_commit(state: &mut State, route: &Route) -> Cmds {
     let Route::Housekeeping(of) = route else {
-        return Vec::new();
+        return Cmds::new();
     };
     let Some((repo, rev, was, change)) = parts(of) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let repo = repo.clone();
     if let Some(why) = problem(state, route, of) {
@@ -306,24 +303,23 @@ pub(super) fn ask_commit(state: &mut State, route: &Route) -> Vec<Cmd> {
         facts,
         vec![(button.into(), super::Answer::Commit)],
     );
-    Vec::new()
+    Cmds::new()
 }
 
 /// The commit asked for, sent.
-#[must_use]
-pub(super) fn commit(state: &mut State, route: &Route) -> Vec<Cmd> {
+pub(super) fn commit(state: &mut State, route: &Route) -> Cmds {
     let Route::Housekeeping(of) = route else {
-        return Vec::new();
+        return Cmds::new();
     };
     let Some((repo, rev, was, change)) = parts(of) else {
-        return Vec::new();
+        return Cmds::new();
     };
     if let Some(why) = problem(state, route, of) {
         return crate::forms::say(state, why);
     }
     let f = form(state, route);
     let Some(Ok(look)) = looked(state, of) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let now = path(&f).to_owned();
     let new_branch = f.get(Field::Branch).trim().to_owned();
@@ -461,14 +457,14 @@ impl Job for Commit {
     /// Committed: the file (a deleted one's folder) opens at the branch, and
     /// follows GitHub until it shows the change; a new branch is offered as a
     /// pull request.
-    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
         let Commit { route, write } = self;
         let route = &route;
         let Route::Housekeeping(of) = route else {
-            return Vec::new();
+            return Cmds::new();
         };
         let Some((repo, _, _, change)) = parts(of) else {
-            return Vec::new();
+            return Cmds::new();
         };
         let repo = repo.clone();
         if let Err(why) = result {
@@ -480,7 +476,7 @@ impl Job for Commit {
         } = *write;
         state.info(format!("Committed to {}", c.branch));
         if state.route() != Some(route) {
-            return Vec::new();
+            return Cmds::new();
         }
         let (page, text, path) = match (change, c.additions.first()) {
             (FileChange::Delete, _) | (_, None) => {
@@ -527,13 +523,12 @@ impl Job for Commit {
 }
 
 /// A new pull request from `branch`, into the default branch.
-#[must_use]
 pub(super) fn propose(
     state: &mut State,
     repo: RepoId,
     branch: String,
     base: Option<String>,
-) -> Vec<Cmd> {
+) -> Cmds {
     let route = Route::Pulls(pulls::NewPr(repo));
     let form = state.forms.edit::<crate::create::Form>(&route);
     form.head = Some(branch);

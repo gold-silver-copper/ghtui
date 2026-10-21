@@ -27,7 +27,7 @@ use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::fuzzy_score;
-use crate::state::{Cmd, Overlay, Screen, State};
+use crate::state::{Cmds, Overlay, Screen, State};
 use crate::ui::page::Link;
 use crate::work::{self, Cx, Failure, Job};
 
@@ -388,8 +388,7 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
 };
 
 /// Runs one of its actions, or a branch's checkout for the issue on screen.
-#[must_use]
-pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
+pub fn act(state: &mut State, action: Action) -> Cmds {
     crate::act::take(state, plan(state, action))
 }
 
@@ -399,8 +398,7 @@ fn pick(pick: Pick) -> Result<Step, String> {
     Ok(Step::Pick(crate::picker::Kind::Manage(pick)))
 }
 
-#[must_use]
-fn send(state: &mut State, change: Change, about: Subject) -> Vec<Cmd> {
+fn send(state: &mut State, change: Change, about: Subject) -> Cmds {
     crate::act::take(state, Ok(Step::Send(change, about)))
 }
 
@@ -1001,7 +999,7 @@ pub fn picker_key(
     state: &mut State,
     key: KeyEvent,
     rows: &mut [(PaletteItem, Option<crate::picker::Choice>)],
-) -> Option<Vec<Cmd>> {
+) -> Option<Cmds> {
     let Some(Overlay::Picker(p)) = &mut state.overlay else {
         return None;
     };
@@ -1031,7 +1029,7 @@ pub fn picker_key(
             let chosen = rows.get_mut(p.selected).and_then(|(_, c)| c.take());
             match chosen {
                 Some(crate::picker::Choice::Step(step)) => Some(crate::act::take(state, Ok(step))),
-                _ => Some(Vec::new()),
+                _ => Some(Cmds::new()),
             }
         }
         _ => None,
@@ -1040,16 +1038,15 @@ pub fn picker_key(
 
 /// Moves the sub-issue on picker row `selected` up or down, the selection
 /// with it.
-#[must_use]
 fn move_sub_issue(
     state: &mut State,
     at: &IssueAt,
     id: &NodeId,
     child: Option<IssueAt>,
     up: bool,
-) -> Vec<Cmd> {
+) -> Cmds {
     let Some(d) = issue(state, &at.repo, at.number) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let subs: Vec<IssueAt> = (d.sub_issues.iter())
         .map(|l| IssueAt {
@@ -1093,7 +1090,7 @@ fn move_sub_issue(
 /// a transfer, which answer with what they made, and a duplicate, which
 /// is chosen first. `None` sends it.
 #[must_use]
-pub fn confirmed(state: &mut State, change: &Change, about: &Subject) -> Option<Vec<Cmd>> {
+pub fn confirmed(state: &mut State, change: &Change, about: &Subject) -> Option<Cmds> {
     let Change::Manage(m) = change else {
         return None;
     };
@@ -1133,10 +1130,9 @@ pub fn confirmed(state: &mut State, change: &Change, about: &Subject) -> Option<
 
 /// After GitHub took a change: a branch made for an issue is offered to
 /// check out in your clone.
-#[must_use]
-pub fn after(state: &mut State, change: &Change) -> Vec<Cmd> {
+pub fn after(state: &mut State, change: &Change) -> Cmds {
     let Change::Manage(Manage::LinkBranch { repo, name, .. }) = change else {
-        return Vec::new();
+        return Cmds::new();
     };
     if let Some(None) = state.clone_of(repo) {
         return state.just_say(format!(
@@ -1173,19 +1169,18 @@ impl Starting {
 }
 
 /// ctrl-s in the composer: starts the discussion.
-#[must_use]
-pub fn start(state: &mut State, s: &Starting, text: &str) -> Vec<Cmd> {
+pub fn start(state: &mut State, s: &Starting, text: &str) -> Cmds {
     let (title, body) = crate::create::templates::split(text);
     let Some(Overlay::Compose(c)) = &mut state.overlay else {
-        return Vec::new();
+        return Cmds::new();
     };
     if title.is_empty() {
         c.sent.error = Some("Write its title on the first line".into());
-        return Vec::new();
+        return Cmds::new();
     }
     if body.trim().is_empty() {
         c.sent.error = Some("Write its text below the title".into());
-        return Vec::new();
+        return Cmds::new();
     }
     c.sent.sending = true;
     c.sent.error = None;
@@ -1234,7 +1229,7 @@ impl Job for Revert {
         Ok(cx.gh.revert(&self.id).await?)
     }
 
-    fn done(self, state: &mut State, result: Result<u64, Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<u64, Failure>) -> Cmds {
         let number = match result {
             Ok(number) => number,
             Err(why) => return refused(state, format!("GitHub refused the revert: {why}")),
@@ -1257,7 +1252,7 @@ impl Job for Transfer {
         Ok(cx.gh.transfer(&self.issue, &self.to).await?)
     }
 
-    fn done(self, state: &mut State, result: Result<IssueAt, Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<IssueAt, Failure>) -> Cmds {
         let (from, to) = match result {
             Ok(to) => (self.from, to),
             Err(why) => return refused(state, format!("GitHub refused the transfer: {why}")),
@@ -1275,7 +1270,7 @@ impl Job for Transfer {
         if state.route() == Some(&here) {
             state.replace(there, true, None)
         } else {
-            Vec::new()
+            Cmds::new()
         }
     }
 }
@@ -1289,7 +1284,7 @@ impl Job for Start {
         Ok(made.await?)
     }
 
-    fn done(self, state: &mut State, result: Result<u64, Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<u64, Failure>) -> Cmds {
         let number = match result {
             Ok(number) => number,
             Err(why) => {
@@ -1301,7 +1296,7 @@ impl Job for Start {
                     }
                     _ => state.error(text),
                 }
-                return Vec::new();
+                return Cmds::new();
             }
         };
         if let Some(Overlay::Compose(c)) = &state.overlay
@@ -1325,7 +1320,7 @@ fn close_confirm(state: &mut State) {
 
 /// Says why GitHub refused, in the confirmation that asked when it's
 /// still open.
-fn refused(state: &mut State, text: String) -> Vec<Cmd> {
+fn refused(state: &mut State, text: String) -> Cmds {
     match &mut state.overlay {
         Some(Overlay::Ask(c)) if c.sent.sending => {
             c.sent.sending = false;
@@ -1333,7 +1328,7 @@ fn refused(state: &mut State, text: String) -> Vec<Cmd> {
         }
         _ => state.error(text),
     }
-    Vec::new()
+    Cmds::new()
 }
 
 // ---- following GitHub ------------------------------------------------------------

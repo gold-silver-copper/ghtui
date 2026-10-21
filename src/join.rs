@@ -8,7 +8,7 @@ use crate::diff_job::JobId;
 use crate::diff_screen::{DiffOf, LastReview};
 use crate::keymap::Action;
 use crate::review;
-use crate::state::{Cmd, Git, Screen, State};
+use crate::state::{Cmd, Cmds, Git, Screen, State};
 use crate::ui::text::short_sha;
 
 /// What each piece of a diff's joined work last ran for: it runs again
@@ -45,9 +45,8 @@ impl<T> Joined<T> {
 }
 
 /// The joined work now due, for every diff and then for the one on screen.
-#[must_use]
-pub(crate) fn join(state: &mut State) -> Vec<Cmd> {
-    let mut cmds = Vec::new();
+pub(crate) fn join(state: &mut State) -> Cmds {
+    let mut cmds = Cmds::new();
     let shown = match state.screen() {
         Screen::Diff(screen) => Some(screen.of.clone()),
         Screen::Page(_) => None,

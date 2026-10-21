@@ -18,7 +18,7 @@ fn next_ask(s: &mut State) -> (Vec<Ask<Probe>>, u64) {
     }
 }
 
-fn answer_with(s: &mut State, answers: Vec<(Probe, Result<Polled, ApiError>)>) -> Vec<Cmd> {
+fn answer_with(s: &mut State, answers: Vec<(Probe, Result<Polled, ApiError>)>) -> Cmds {
     let what = s.page_watch.as_ref().expect("a watch").what.clone();
     update(s, Msg::Watched(what, answers))
 }

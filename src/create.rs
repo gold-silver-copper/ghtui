@@ -26,7 +26,7 @@ use crate::forms::{Answer, Fields, Sent, say};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
 use crate::picker::Choice;
-use crate::state::{Cmd, State};
+use crate::state::{Cmds, State};
 use crate::ui::form::Row;
 use crate::work::{self, Cx, Failure, Job};
 pub use page::build;
@@ -228,8 +228,7 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
 
 /// `,i` and `,p`: the repository's new issue or pull request page, with
 /// what was written there before.
-#[must_use]
-fn open(state: &mut State, pr: bool) -> Vec<Cmd> {
+fn open(state: &mut State, pr: bool) -> Cmds {
     let Some(repo) = state.route().and_then(Route::repo).cloned() else {
         return state.just_say("Open a repository first: a new issue or pull request goes in one");
     };
@@ -245,7 +244,7 @@ fn open(state: &mut State, pr: bool) -> Vec<Cmd> {
         return compose(state);
     }
     // The clone may have moved on since: its branch is looked at again.
-    let mut cmds = Vec::new();
+    let mut cmds = Cmds::new();
     if pr {
         cmds.extend(state.ensure(DataKey::Clone(repo.clone()), true));
         let form = state.forms.get::<Form>(&route);
@@ -262,7 +261,7 @@ fn open(state: &mut State, pr: bool) -> Vec<Cmd> {
 pub const FORM: crate::forms::Kind = crate::forms::Kind {
     compose: |state, _| compose(state),
     row: on_row,
-    fill: |_, _, _, _| Vec::new(),
+    fill: |_, _, _, _| Cmds::new(),
     submit,
     follow,
     offers,
@@ -270,9 +269,8 @@ pub const FORM: crate::forms::Kind = crate::forms::Kind {
 
 /// Brings the form on screen up to date with what's arrived: starts it,
 /// fills in what's known, asks for what's missing.
-#[must_use]
-fn follow(state: &mut State) -> Vec<Cmd> {
-    let mut cmds = Vec::new();
+fn follow(state: &mut State) -> Cmds {
+    let mut cmds = Cmds::new();
     let Some(route) = state.route().filter(|r| form_repo(r).is_some()).cloned() else {
         return cmds;
     };
@@ -308,10 +306,9 @@ fn follow(state: &mut State) -> Vec<Cmd> {
 }
 
 /// The composer, on the form on screen: `c`, or Enter on its text box.
-#[must_use]
-fn compose(state: &mut State) -> Vec<Cmd> {
+fn compose(state: &mut State) -> Cmds {
     let Some((route, form)) = here(state) else {
-        return Vec::new();
+        return Cmds::new();
     };
     if matches!(route, Route::Issues(issues::NewIssue(_))) && form.template.is_none() {
         return state.just_say("Choose a template first");
@@ -323,13 +320,12 @@ fn compose(state: &mut State) -> Vec<Cmd> {
 
 /// `,s`, ctrl-s in the composer, Enter on the form's button: makes the
 /// issue; for a pull request, asks first whether it's a draft.
-#[must_use]
-fn submit(state: &mut State) -> Vec<Cmd> {
+fn submit(state: &mut State) -> Cmds {
     let Some((route, form)) = here(state) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let Some(repo) = form_repo(&route).cloned() else {
-        return Vec::new();
+        return Cmds::new();
     };
     let (title, body) = templates::split(&form.text);
     let Some(d) = form_data(&state.data, &repo) else {
@@ -377,10 +373,9 @@ fn submit(state: &mut State) -> Vec<Cmd> {
 /// A new pull request's form: its base the default branch and its head
 /// the clone's, until they're chosen, and its text from the head's
 /// commits once they're in, unless you've written it.
-#[must_use]
-fn follow_pr(state: &mut State, route: &Route, repo: &RepoId) -> Vec<Cmd> {
+fn follow_pr(state: &mut State, route: &Route, repo: &RepoId) -> Cmds {
     let Some(d) = form_data(&state.data, repo) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let (default, template) = (d.default_branch.clone(), d.pr_template.clone());
     let checked_out = state
@@ -397,10 +392,10 @@ fn follow_pr(state: &mut State, route: &Route, repo: &RepoId) -> Vec<Cmd> {
         (form.base, form.head) = (base.clone(), head.clone());
     }
     let (Some(base), Some(head)) = (base, head) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let Some(key) = state.forms.shown::<Form>(route).head_key(repo) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let cmds = state.ensure(key.clone(), false);
     if filled != Some((base.clone(), head.clone()))
@@ -468,13 +463,12 @@ fn head_problem<'a>(state: &'a State, repo: &RepoId, form: &Form) -> Result<&'a 
 }
 
 /// Asks whether to open the pull request as a draft.
-#[must_use]
-fn ask_create(state: &mut State, route: &Route) -> Vec<Cmd> {
+fn ask_create(state: &mut State, route: &Route) -> Cmds {
     let Some(form) = state.forms.get::<Form>(route) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let Some(repo) = form_repo(route) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let hs = match head_problem(state, repo, form) {
         Ok(hs) => hs,
@@ -510,12 +504,11 @@ fn ask_create(state: &mut State, route: &Route) -> Vec<Cmd> {
     ];
     let title = format!("Open a pull request in {repo}?");
     crate::forms::ask(state, route.clone(), title, facts, choices);
-    Vec::new()
+    Cmds::new()
 }
 
 /// Asks before pushing the form's head branch from this clone.
-#[must_use]
-fn ask_push(state: &mut State) -> Vec<Cmd> {
+fn ask_push(state: &mut State) -> Cmds {
     let Some((route, form)) =
         here(state).filter(|(r, _)| matches!(r, Route::Pulls(pulls::NewPr(_))))
     else {
@@ -525,7 +518,7 @@ fn ask_push(state: &mut State) -> Vec<Cmd> {
         ));
     };
     let Some(repo) = form_repo(&route).cloned() else {
-        return Vec::new();
+        return Cmds::new();
     };
     let why = match (
         state.clone_of(&repo),
@@ -549,7 +542,7 @@ fn ask_push(state: &mut State) -> Vec<Cmd> {
         return state.just_say(why);
     }
     let Some(Ok(HeadState { local: Some(b), .. })) = form.head_state(state, &repo) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let upstream = if b.tracked { "" } else { " --set-upstream" };
     let mut facts = vec![(
@@ -580,18 +573,17 @@ fn ask_push(state: &mut State) -> Vec<Cmd> {
         facts,
         vec![("Push".into(), Answer::Push)],
     );
-    Vec::new()
+    Cmds::new()
 }
 
 /// A pull request's question was answered: push its branch (`None`), or
 /// make it, a draft or not.
-#[must_use]
-pub fn answer(state: &mut State, route: &Route, draft: Option<bool>) -> Vec<Cmd> {
+pub fn answer(state: &mut State, route: &Route, draft: Option<bool>) -> Cmds {
     let Some(form) = state.forms.get::<Form>(route) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let Some(repo) = form_repo(route).cloned() else {
-        return Vec::new();
+        return Cmds::new();
     };
     let head = form.head.clone().unwrap_or_default();
     let work: work::Work = match draft {
@@ -604,7 +596,7 @@ pub fn answer(state: &mut State, route: &Route, draft: Option<bool>) -> Vec<Cmd>
                 }
             };
             let Some(d) = form_data(&state.data, &repo) else {
-                return Vec::new();
+                return Cmds::new();
             };
             let (title, body) = templates::split(&form.text);
             let new = Submission::Pr(NewPr {
@@ -635,7 +627,7 @@ impl Job for Push {
         Ok(local::push(&c.top, &b.remote, branch, !b.tracked).await?)
     }
 
-    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
         let Push { repo, branch } = self;
         let route = Route::Pulls(pulls::NewPr(repo.clone()));
         match result {
@@ -644,13 +636,13 @@ impl Job for Push {
                 state.info(format!("Pushed {branch}"));
                 // Compared again, now GitHub has it.
                 if state.forms.get::<Form>(&route).is_none() {
-                    return Vec::new();
+                    return Cmds::new();
                 }
                 *state.forms.sent_mut(&route) = Sent::default();
                 let form = state.forms.edit::<Form>(&route);
                 form.filled_for = None;
                 let key = form.head_key(&repo);
-                key.map_or_else(Vec::new, |key| state.ensure(key, true))
+                key.map_or_else(Cmds::new, |key| state.ensure(key, true))
             }
             Err(err) => {
                 let text = format!("Couldn't push {branch}: {err}");
@@ -673,10 +665,10 @@ impl Job for Submit {
 
     /// GitHub made it (and its page opens in place of the form's) or said why
     /// not.
-    fn done(self, state: &mut State, result: Result<u64, Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<u64, Failure>) -> Cmds {
         let route = &self.route;
         let Some(repo) = form_repo(route).cloned() else {
-            return Vec::new();
+            return Cmds::new();
         };
         match result {
             Ok(number) => {
@@ -691,7 +683,7 @@ impl Job for Submit {
                 if state.route() == Some(route) {
                     return state.replace(page, true, None);
                 }
-                Vec::new()
+                Cmds::new()
             }
             Err(err) => {
                 tracing::warn!(%err, "creating failed");
@@ -709,15 +701,14 @@ impl Job for Submit {
 // ---- links, pickers and the menu ---------------------------------------------
 
 /// Enter on one of a form's rows.
-#[must_use]
-fn on_row(state: &mut State, row: &Row) -> Vec<Cmd> {
+fn on_row(state: &mut State, row: &Row) -> Cmds {
     match row {
         Row::Template(file) => choose_template(state, file),
         Row::Templates => {
             if let Some(form) = here_mut(state) {
                 form.template = None;
             }
-            Vec::new()
+            Cmds::new()
         }
         Row::Labels => open_pick(state, Pick::Labels),
         Row::Assignees => open_pick(state, Pick::Assignees),
@@ -725,22 +716,21 @@ fn on_row(state: &mut State, row: &Row) -> Vec<Cmd> {
         Row::Base => open_pick(state, Pick::Base),
         Row::Head => open_pick(state, Pick::Head),
         Row::Push => ask_push(state),
-        _ => Vec::new(),
+        _ => Cmds::new(),
     }
 }
 
 /// Starts the issue from template `file` (empty: a blank one): its title,
 /// text, labels and assignees, unless you've written your own text.
-#[must_use]
-fn choose_template(state: &mut State, file: &str) -> Vec<Cmd> {
+fn choose_template(state: &mut State, file: &str) -> Cmds {
     let Some((route, _)) = here(state) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let Some(repo) = form_repo(&route).cloned() else {
-        return Vec::new();
+        return Cmds::new();
     };
     let Some(d) = form_data(&state.data, &repo) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let form = state.forms.edit::<Form>(&route);
     let template = (form.chooser.as_ref())
@@ -803,13 +793,12 @@ pub enum Picked {
     Head(String),
 }
 
-#[must_use]
-fn open_pick(state: &mut State, pick: Pick) -> Vec<Cmd> {
+fn open_pick(state: &mut State, pick: Pick) -> Cmds {
     let Some((route, _)) = here(state) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let Some(repo) = form_repo(&route).cloned() else {
-        return Vec::new();
+        return Cmds::new();
     };
     let what = match pick {
         Pick::Labels => "labels",
@@ -924,10 +913,9 @@ pub fn picker_rows(state: &State, pick: Pick, q: &str) -> crate::picker::Rows {
 }
 
 /// Choosing one of a form picker's rows.
-#[must_use]
-pub fn pick(state: &mut State, picked: Picked) -> Vec<Cmd> {
+pub fn pick(state: &mut State, picked: Picked) -> Cmds {
     let Some(form) = here_mut(state) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let toggle = |list: &mut Vec<NodeId>, id: NodeId| match list.iter().position(|i| *i == id) {
         Some(at) => {

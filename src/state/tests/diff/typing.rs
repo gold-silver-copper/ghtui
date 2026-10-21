@@ -6,7 +6,7 @@ fn composer(s: &State) -> &Compose {
 }
 
 /// A comment box open on a line of o/r#7, with a thread alice wrote.
-fn composing() -> (State, PrRef, Vec<Cmd>) {
+fn composing() -> (State, PrRef, Cmds) {
     let (mut s, pr) = diff_state(120);
     let thread = thread("t", Some(1), false, false);
     diff_msg(&mut s, &pr, DiffMsg::ThreadsLoaded(Ok(vec![thread])));

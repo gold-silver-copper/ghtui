@@ -550,7 +550,7 @@ fn a_file_form_opened_from_a_page_reads_the_file() {
 }
 
 /// GitHub's src/main.rs on main, read for its form.
-fn read(s: &mut State) -> Vec<Cmd> {
+fn read(s: &mut State) -> Cmds {
     let file = DataKey::FileLook(ghtui(), "main".into(), "src/main.rs".into());
     fixtures::fetched(s, file, Data::from(look()))
 }

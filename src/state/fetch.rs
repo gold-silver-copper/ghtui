@@ -150,9 +150,8 @@ impl State {
     /// Fetches a page's data. The repository header shared by a repo's
     /// pages is only fetched when missing; Home's sections, also when
     /// they're old.
-    #[must_use]
-    pub fn ensure_route(&mut self, route: &Route, force: bool) -> Vec<Cmd> {
-        let mut cmds = Vec::new();
+    pub fn ensure_route(&mut self, route: &Route, force: bool) -> Cmds {
+        let mut cmds = Cmds::new();
         for key in self.needs(route) {
             let header = browse::is_header(route, &key);
             let aged = *route == Route::App(app::Home) && self.aged(&key);
@@ -161,8 +160,7 @@ impl State {
         cmds
     }
 
-    #[must_use]
-    pub fn ensure(&mut self, key: DataKey, force: bool) -> Vec<Cmd> {
+    pub fn ensure(&mut self, key: DataKey, force: bool) -> Cmds {
         let now = (self.clock)();
         let remote = self.data.entry(key.clone()).or_default();
         // What was still running is checked again whenever it's wanted
@@ -171,17 +169,16 @@ impl State {
         let cached = remote.data.is_none();
         let force = force || (running && !remote.extended);
         if !remote.begin(force) {
-            return Vec::new();
+            return Cmds::new();
         }
         remote.asked_at = Some(now);
-        vec![Cmd::Api(Api::Fetch { cached, key })]
+        Cmd::Api(Api::Fetch { cached, key }).into()
     }
 
     /// Fetches needed for the visible screen. `force` refreshes data we
     /// already have.
-    #[must_use]
-    pub fn load_visible(&mut self, force: bool) -> Vec<Cmd> {
-        let mut cmds = Vec::new();
+    pub fn load_visible(&mut self, force: bool) -> Cmds {
+        let mut cmds = Cmds::new();
         if self.viewer.is_none() && force {
             cmds.push(Cmd::Api(Api::FetchViewer));
         }

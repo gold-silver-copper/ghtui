@@ -9,7 +9,7 @@ use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
 use crate::route::{Dest, Route, Target};
-use crate::state::{Cmd, Screen, State};
+use crate::state::{Cmds, Screen, State};
 use crate::work::{self, Cx, Failure, Job};
 
 use super::Page;
@@ -48,8 +48,7 @@ fn detail<'a>(state: &'a State, at: &PackageRef) -> Option<&'a PackageDetail> {
 }
 
 /// `,D`: asks before deleting the version.
-#[must_use]
-pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
+pub fn ask_delete(state: &mut State) -> Cmds {
     let Some((at, id)) = chosen(state) else {
         return state.just_say("Select a version to delete");
     };
@@ -73,7 +72,7 @@ pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
         ));
     }
     let Some(route) = state.route().cloned() else {
-        return Vec::new();
+        return Cmds::new();
     };
     // A digest by its first twelve characters, as GitHub shows it.
     let name = match v.name.strip_prefix("sha256:") {
@@ -90,14 +89,13 @@ pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
             crate::forms::Answer::Site(super::Answer::DeleteVersion(id)),
         )],
     );
-    Vec::new()
+    Cmds::new()
 }
 
 /// Deletes version `id` of the package on `route`'s page, as asked.
-#[must_use]
-pub fn delete(state: &mut State, route: &Route, id: u64) -> Vec<Cmd> {
+pub fn delete(state: &mut State, route: &Route, id: u64) -> Cmds {
     let Route::Site(Page::Package { at, .. }) = route else {
-        return Vec::new();
+        return Cmds::new();
     };
     let name = (detail(state, at).and_then(|d| d.versions.items.iter().find(|v| v.id == id)))
         .map_or_else(|| id.to_string(), |v| v.name.clone());
@@ -119,10 +117,10 @@ impl Job for DeleteVersion {
 
     /// GitHub's answer: the package's page follows until the version is
     /// gone (from a version's own page, the package's).
-    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
         let d = self;
         let Some(route) = state.route().cloned() else {
-            return Vec::new();
+            return Cmds::new();
         };
         match result {
             Ok(()) => {

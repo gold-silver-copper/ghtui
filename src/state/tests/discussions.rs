@@ -12,7 +12,7 @@ fn about() -> Subject {
 }
 
 /// The discussion as GitHub has it, changed by `f`.
-fn deliver(s: &mut State, f: impl FnOnce(&mut DiscussionDetail)) -> Vec<Cmd> {
+fn deliver(s: &mut State, f: impl FnOnce(&mut DiscussionDetail)) -> Cmds {
     let mut d = fixtures::discussion();
     f(&mut d);
     let key = DataKey::Discussion(DiscussionsOf::Repo(ghtui()), 14603);

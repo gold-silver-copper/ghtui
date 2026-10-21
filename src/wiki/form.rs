@@ -19,7 +19,7 @@ use crate::follow::{Expectation, Shown};
 use crate::forms::{Fields, say};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
-use crate::state::{Cmd, State};
+use crate::state::{Cmds, State};
 use crate::work::{self, Cx, Failure, Job};
 
 /// Commits and pushes a wiki page; its form's page asked.
@@ -110,13 +110,12 @@ fn uneditable(state: &State) -> Option<String> {
 }
 
 /// `,e` on a wiki page: its form.
-#[must_use]
-pub fn open_edit(state: &mut State) -> Vec<Cmd> {
+pub fn open_edit(state: &mut State) -> Cmds {
     if let Some(why) = uneditable(state) {
         return state.just_say(why);
     }
     let Some((repo, w)) = shown(state) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let page = w.title.as_deref().map(crate::wiki::slug);
     let route = Route::Wiki(wiki::WikiEdit { repo, page });
@@ -128,8 +127,7 @@ pub fn open_edit(state: &mut State) -> Vec<Cmd> {
 }
 
 /// `,W`: a new page of the wiki on screen (or of the repository's).
-#[must_use]
-pub fn open_new(state: &mut State) -> Vec<Cmd> {
+pub fn open_new(state: &mut State) -> Cmds {
     let repo = match state.route() {
         Some(Route::Wiki(wiki::WikiEdit { page: None, .. })) => return compose(state),
         Some(route) => route.repo().cloned(),
@@ -148,19 +146,18 @@ pub fn open_new(state: &mut State) -> Vec<Cmd> {
 
 /// Brings the form on screen up to date: filled in from the page once
 /// it's read, then the composer opens on it.
-#[must_use]
-fn follow(state: &mut State) -> Vec<Cmd> {
+fn follow(state: &mut State) -> Cmds {
     let Some((route, repo, page, form)) = here(state) else {
-        return Vec::new();
+        return Cmds::new();
     };
     if form.started {
-        return Vec::new();
+        return Cmds::new();
     }
     let Some(w) = state
         .picked::<WikiPage>(&key(&repo, page.as_ref()))
         .cloned()
     else {
-        return Vec::new();
+        return Cmds::new();
     };
     let form = state.forms.edit::<Form>(&route);
     form.started = true;
@@ -173,14 +170,13 @@ fn follow(state: &mut State) -> Vec<Cmd> {
     if state.overlay.is_none() {
         return compose(state);
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// The composer, on the page.
-#[must_use]
-fn compose(state: &mut State) -> Vec<Cmd> {
+fn compose(state: &mut State) -> Cmds {
     let Some((route, _, page, form)) = here(state) else {
-        return Vec::new();
+        return Cmds::new();
     };
     if page.is_some() && form.page.is_none() {
         return state.just_say("The page hasn't loaded yet");
@@ -222,10 +218,9 @@ fn to_save(state: &State, repo: &RepoId, form: &Form) -> Result<crate::wiki::Sav
 }
 
 /// `,s`, ctrl-s or its button: commits and pushes the page.
-#[must_use]
-fn submit(state: &mut State) -> Vec<Cmd> {
+fn submit(state: &mut State) -> Cmds {
     let Some((route, repo, page, form)) = here(state) else {
-        return Vec::new();
+        return Cmds::new();
     };
     if page.is_some() && form.page.is_none() {
         return say(state, "The page hasn't loaded yet".into());
@@ -267,10 +262,10 @@ impl Job for Save {
 
     /// Saved: the page opens (back on it, when it's the page before), and
     /// follows GitHub until it shows the text saved.
-    fn done(self, state: &mut State, result: Result<String, Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<String, Failure>) -> Cmds {
         let route = &self.route;
         let Route::Wiki(wiki::WikiEdit { repo, .. }) = route else {
-            return Vec::new();
+            return Cmds::new();
         };
         match result {
             Ok(slug) => {
@@ -284,7 +279,7 @@ impl Job for Save {
                     None => format!("Created {}", slug.replace('-', " ")),
                 });
                 if state.route() != Some(route) {
-                    return Vec::new();
+                    return Cmds::new();
                 }
                 // Back on the page it was opened from, if it's that one.
                 let below = state.screens.below().and_then(|s| match s {
@@ -306,7 +301,7 @@ impl Job for Save {
                     })
                 });
                 let Route::Wiki(wiki::Wiki { page: name, .. }) = &page else {
-                    return Vec::new();
+                    return Cmds::new();
                 };
                 let shows = Saved(DataKey::Wiki(repo.clone(), name.clone()), text);
                 crate::follow::expect(state, page.clone(), shows);
@@ -320,8 +315,8 @@ impl Job for Save {
 /// What a wiki page's form does.
 pub const FORM: crate::forms::Kind = crate::forms::Kind {
     compose: |state, _| compose(state),
-    row: |_, _| Vec::new(),
-    fill: |_, _, _, _| Vec::new(),
+    row: |_, _| Cmds::new(),
+    fill: |_, _, _, _| Cmds::new(),
     submit,
     follow,
     offers,

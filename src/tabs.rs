@@ -11,7 +11,7 @@ use crate::ui::text::short_sha;
 
 use crate::diff_screen::{DiffOf, DiffPrefs, DiffScreen};
 use crate::nav::PageScreen;
-use crate::state::{Cmd, Screen, Screens, State};
+use crate::state::{Cmds, Screen, Screens, State};
 
 /// An open tab off screen: its history as it was left.
 pub struct Tab {
@@ -104,8 +104,7 @@ impl State {
 
     /// Opens `dest` in a new tab after this one, at its anchor. Pages in
     /// the browser just open there.
-    #[must_use]
-    pub fn open_tab(&mut self, Dest { target, anchor }: Dest) -> Vec<Cmd> {
+    pub fn open_tab(&mut self, Dest { target, anchor }: Dest) -> Cmds {
         let (first, mut cmds) = match target {
             Target::Page(route) => {
                 let route = self.followed(route);
@@ -115,7 +114,7 @@ impl State {
             Target::Files(of) => {
                 let mut screen = DiffScreen::new(of, DiffPrefs::fit(self.size.0));
                 screen.anchor = anchor;
-                (Screen::Diff(Box::new(screen)), Vec::new())
+                (Screen::Diff(Box::new(screen)), Cmds::new())
             }
             Target::External(_) => return self.go(target.into()),
         };
@@ -130,8 +129,7 @@ impl State {
     /// `T`: what's selected in a new tab. A page's selected link, the file
     /// the tree has selected, a diff's pull request or commit; with
     /// nothing selected, this page again.
-    #[must_use]
-    pub fn open_in_tab(&mut self) -> Vec<Cmd> {
+    pub fn open_in_tab(&mut self) -> Cmds {
         let dest = match self.screen() {
             Screen::Page(p) => match p.selected_link() {
                 Some(Link::Url(url)) => Dest::from_url(url),
@@ -174,8 +172,7 @@ impl State {
 
     /// Goes to tab `i` (from 0), showing what it had and refreshing what's
     /// stale, as going back does.
-    #[must_use]
-    pub fn switch_to_tab(&mut self, i: usize) -> Vec<Cmd> {
+    pub fn switch_to_tab(&mut self, i: usize) -> Cmds {
         if i >= self.tab_count() {
             return self.just_say(format!("No tab {} open", i + 1));
         }
@@ -188,8 +185,7 @@ impl State {
 
     /// What the command line asked for: on screen, or with tabs reopened,
     /// in a new tab after them.
-    #[must_use]
-    pub fn start_at(&mut self, dest: Dest) -> Vec<Cmd> {
+    pub fn start_at(&mut self, dest: Dest) -> Cmds {
         if self.tab_count() == 1 {
             return self.go(dest);
         }
@@ -216,8 +212,7 @@ impl State {
     }
 
     /// `]` and `[`: the next or previous open tab, wrapping around.
-    #[must_use]
-    pub fn step_open_tab(&mut self, forward: bool) -> Vec<Cmd> {
+    pub fn step_open_tab(&mut self, forward: bool) -> Cmds {
         let n = self.tab_count();
         if n == 1 {
             let open = self.first_key(crate::keymap::Action::OpenInTab);
@@ -233,8 +228,7 @@ impl State {
     }
 
     /// Closes the tab on screen, showing the next (or else the previous).
-    #[must_use]
-    pub fn close_tab(&mut self) -> Vec<Cmd> {
+    pub fn close_tab(&mut self) -> Cmds {
         let next = if self.after.is_empty() {
             self.before.pop()
         } else {

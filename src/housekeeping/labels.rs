@@ -14,7 +14,7 @@ use super::{
 };
 use crate::data::DataKey;
 use crate::keymap::Action;
-use crate::state::{Cmd, State};
+use crate::state::{Cmds, State};
 use crate::work::{self, Cx, Failure, Job};
 
 /// Makes or changes a label (`was`: its name before), or (no change)
@@ -63,8 +63,7 @@ pub(super) fn picked(state: &State) -> Option<&LabelInfo> {
 }
 
 /// `,o` or `,e`: the label's form.
-#[must_use]
-pub(super) fn open(state: &mut State, repo: &RepoId, name: Option<String>) -> Vec<Cmd> {
+pub(super) fn open(state: &mut State, repo: &RepoId, name: Option<String>) -> Cmds {
     if let Some(why) = refused(state, repo, "Changing labels") {
         return state.just_say(why);
     }
@@ -78,8 +77,7 @@ pub(super) fn open(state: &mut State, repo: &RepoId, name: Option<String>) -> Ve
 }
 
 /// `,e` on the labels page: the selected label's form.
-#[must_use]
-pub(super) fn edit(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
+pub(super) fn edit(state: &mut State, repo: &RepoId) -> Cmds {
     let Some(name) = picked(state).map(|l| l.name.clone()) else {
         return state.just_say("Select a label first");
     };
@@ -88,21 +86,20 @@ pub(super) fn edit(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
 
 /// Fills the form from the label once the list has it; a new one gets a
 /// colour of GitHub's.
-#[must_use]
 pub(super) fn follow(
     state: &mut State,
     route: &Route,
     repo: &RepoId,
     name: Option<&String>,
-) -> Vec<Cmd> {
+) -> Cmds {
     if form(state, route).started {
-        return Vec::new();
+        return Cmds::new();
     }
     let label = match name {
         Some(name) => {
             let Some(l) = list(state, repo).and_then(|l| l.items.iter().find(|l| l.name == *name))
             else {
-                return Vec::new();
+                return Cmds::new();
             };
             Some(l.clone())
         }
@@ -125,7 +122,7 @@ pub(super) fn follow(
     if name.is_none() && state.overlay.is_none() {
         return super::open_field(state, route, Field::Name);
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// `#rrggbb` (or without `#`, or `#rgb`) as GitHub keeps it.
@@ -182,13 +179,7 @@ pub(super) fn change(f: &Form) -> Result<LabelChange, String> {
 }
 
 /// Makes or saves the label: no question, as on GitHub.
-#[must_use]
-pub(super) fn submit(
-    state: &mut State,
-    route: &Route,
-    repo: &RepoId,
-    was: Option<&str>,
-) -> Vec<Cmd> {
+pub(super) fn submit(state: &mut State, route: &Route, repo: &RepoId, was: Option<&str>) -> Cmds {
     if let Some(why) = refused(state, repo, "Changing labels") {
         return crate::forms::say(state, why);
     }
@@ -218,8 +209,7 @@ pub(super) fn submit(
 }
 
 /// `,D` on the labels page: asks first, as GitHub does.
-#[must_use]
-pub(super) fn ask_delete(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
+pub(super) fn ask_delete(state: &mut State, repo: &RepoId) -> Cmds {
     if let Some(why) = refused(state, repo, "Changing labels") {
         return state.just_say(why);
     }
@@ -238,11 +228,10 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId) -> Vec<Cmd> {
         vec![(on, l.open > 0), ("It can't be brought back".into(), true)],
         vec![("Delete label".into(), super::Answer::Delete(subject))],
     );
-    Vec::new()
+    Cmds::new()
 }
 
-#[must_use]
-pub(super) fn delete(state: &mut State, repo: RepoId, name: String) -> Vec<Cmd> {
+pub(super) fn delete(state: &mut State, repo: RepoId, name: String) -> Cmds {
     crate::forms::sending(state);
     work::start(Save {
         repo,
@@ -266,7 +255,7 @@ impl Job for Save {
     }
 
     /// GitHub's answer: the labels page follows it until it shows the change.
-    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
         let work = self;
         let Save { repo, was, change } = work;
         let form = Route::Housekeeping(FormOf::Label {
@@ -283,10 +272,10 @@ impl Job for Save {
             (Some(c), None) => format!("Created the label {}", c.name),
             (Some(c), Some(_)) => format!("Saved the label {}", c.name),
             (None, Some(was)) => format!("Deleted the label {was}"),
-            (None, None) => return Vec::new(),
+            (None, None) => return Cmds::new(),
         };
         state.info(said);
-        let mut cmds = Vec::new();
+        let mut cmds = Cmds::new();
         // The form goes back to the labels page.
         if state.route() == Some(&form) {
             cmds.extend(state.back());

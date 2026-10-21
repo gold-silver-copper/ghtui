@@ -106,15 +106,14 @@ pub(crate) fn start_hints(state: &mut State, browser: bool) {
     })));
 }
 
-#[must_use]
-pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
+pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Cmds {
     let Some(Overlay::Hints(hints)) = &mut state.overlay else {
-        return Vec::new();
+        return Cmds::new();
     };
     match key.code {
         KeyCode::Backspace => {
             hints.typed.pop();
-            return Vec::new();
+            return Cmds::new();
         }
         KeyCode::Char(c) if c.is_ascii_lowercase() => hints.typed.push(c),
         // A capital follows the link in a new tab.
@@ -124,7 +123,7 @@ pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         }
         _ => {
             state.overlay = None;
-            return Vec::new();
+            return Cmds::new();
         }
     }
     let matching: Vec<(&HintLabel, (&Link, &Option<usize>))> = hints
@@ -152,7 +151,7 @@ pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
                 link => state.follow(&link),
             }
         }
-        _ => Vec::new(),
+        _ => Cmds::new(),
     }
 }
 

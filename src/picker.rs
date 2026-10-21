@@ -20,7 +20,7 @@ use crate::data::{Data, DataKey, Picked};
 use crate::keymap::Action;
 use crate::nav::new_input;
 use crate::review::apply_commit_choice;
-use crate::state::{Cmd, Overlay, Remote, Screen, State, apply};
+use crate::state::{Cmd, Cmds, Overlay, Remote, Screen, State, apply};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Kind {
@@ -282,8 +282,7 @@ fn message_rows(kept: &[(u64, Notice)], q: &str, now: u64) -> Rows {
 }
 
 impl State {
-    #[must_use]
-    pub fn open_picker(&mut self, kind: Kind) -> Vec<Cmd> {
+    pub fn open_picker(&mut self, kind: Kind) -> Cmds {
         let placeholder = match kind {
             Kind::Commands => "A command, owner/repo, owner/repo#123, @user, a URL, or a search",
             Kind::Files { .. } | Kind::DiffFiles => "Type a file name",
@@ -345,12 +344,11 @@ impl State {
             input,
             selected: 0,
         })));
-        need.map_or_else(Vec::new, |key| self.ensure(key, false))
+        need.map_or_else(Cmds::new, |key| self.ensure(key, false))
     }
 
     /// Go to file, or switch branches, for the code on screen.
-    #[must_use]
-    pub fn open_finder(&mut self, branches: bool) -> Vec<Cmd> {
+    pub fn open_finder(&mut self, branches: bool) -> Cmds {
         let (repo, rev, path, file) = match self.route() {
             Some(Route::Code(code::Tree { repo, rev, path })) => {
                 (repo.clone(), rev.clone(), path.clone(), false)
@@ -723,10 +721,9 @@ pub fn move_in_list(key: KeyEvent, selected: &mut usize, count: usize) -> bool {
     true
 }
 
-#[must_use]
-pub fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
+pub fn on_key(state: &mut State, key: KeyEvent) -> Cmds {
     let Some(Overlay::Picker(p)) = &state.overlay else {
-        return Vec::new();
+        return Cmds::new();
     };
     let mut rows = state.picker_rows(p);
     // Moving a sub-issue (alt-↑↓) before moving in the list.
@@ -734,10 +731,10 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         return cmds;
     }
     let Some(Overlay::Picker(p)) = &mut state.overlay else {
-        return Vec::new();
+        return Cmds::new();
     };
     if move_in_list(key, &mut p.selected, rows.len()) {
-        return Vec::new();
+        return Cmds::new();
     }
     if let Kind::Edit(_) = p.kind {
         return crate::edit::on_picker_key(state, key, rows);
@@ -771,11 +768,10 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             p.selected = 0;
         }
     }
-    Vec::new()
+    Cmds::new()
 }
 
-#[must_use]
-fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
+fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Cmds {
     match choice {
         Choice::Action(action) => apply(state, action),
         Choice::Go(target) => state.go(target),
@@ -785,12 +781,12 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
                 screen.cursor = Pos { file, row: 0 };
                 screen.top = screen.cursor;
             }
-            Vec::new()
+            Cmds::new()
         }
         Choice::Commits(pick) => apply_commit_choice(state, pick, mark),
         Choice::Copy(text) => {
             state.info("Copied the message");
-            vec![Cmd::Copy(text)]
+            Cmd::Copy(text).into()
         }
         Choice::Tab(i) => state.switch_to_tab(i),
         Choice::Line(line) => crate::code_nav::go_to_line(state, line),
@@ -803,7 +799,7 @@ fn choose(state: &mut State, choice: Choice, mark: Option<usize>) -> Vec<Cmd> {
             let what = format!("Renamed it “{title}”");
             state.edit_home(path, crate::home::Edit::Rename { at, title }, what)
         }
-        Choice::Edit(_) => Vec::new(),
+        Choice::Edit(_) => Cmds::new(),
         Choice::Step(step) => crate::act::take(state, Ok(step)),
     }
 }

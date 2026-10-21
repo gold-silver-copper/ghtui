@@ -22,7 +22,7 @@ use crate::follow::{Expectation, Shown};
 use crate::forms::{About, Answer, Ask};
 use crate::keymap::Action;
 use crate::nav;
-use crate::state::{Api, Cmd, Overlay, Screen, State};
+use crate::state::{Api, Cmd, Cmds, Overlay, Screen, State};
 use crate::work::{self, Cx, Failure};
 
 mod inbox;
@@ -109,7 +109,7 @@ pub struct Pending {
     action: Action,
     subject: Subject,
     route: Option<Route>,
-    then: fn(&mut State, Subject, Action) -> Vec<Cmd>,
+    then: fn(&mut State, Subject, Action) -> Cmds,
 }
 
 /// What an action does here.
@@ -145,17 +145,16 @@ pub enum Step {
 }
 
 /// Goes ahead with a planned step, or says why it can't.
-#[must_use]
-pub fn take(state: &mut State, planned: Result<Step, String>) -> Vec<Cmd> {
+pub fn take(state: &mut State, planned: Result<Step, String>) -> Cmds {
     match planned {
         Err(why) => state.just_say(why),
         Ok(Step::Send(change, about)) => {
             state.info(format!("{}…", doing(&change)));
-            vec![send(change, By::Act(about))]
+            send(change, By::Act(about)).into()
         }
         Ok(Step::Ask(ask)) => {
             state.overlay = Some(Overlay::Ask(ask));
-            Vec::new()
+            Cmds::new()
         }
         Ok(Step::Pick(kind)) => state.open_picker(kind),
         Ok(Step::Compose(target, text)) => state.compose(target, &text),
@@ -181,8 +180,7 @@ pub fn settled(state: &State) -> Result<(), String> {
 
 /// Runs one of [`ACTIONS`] on what's on screen, or on the selected row
 /// of a list.
-#[must_use]
-pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
+pub fn act(state: &mut State, action: Action) -> Cmds {
     let Some(subject) = subject(state, action) else {
         return state.just_say(elsewhere(action));
     };
@@ -192,14 +190,13 @@ pub fn act(state: &mut State, action: Action) -> Vec<Cmd> {
     let mut cmds = if row {
         state.ensure(subject.need(), false)
     } else {
-        Vec::new()
+        Cmds::new()
     };
     cmds.extend(act_on(state, subject, action));
     cmds
 }
 
-#[must_use]
-fn act_on(state: &mut State, subject: Subject, action: Action) -> Vec<Cmd> {
+fn act_on(state: &mut State, subject: Subject, action: Action) -> Cmds {
     let step = match plan_for(state, &subject, action) {
         Err(why) => Err(why),
         Ok(Plan::Ask(title, facts, choices)) => Ok(Step::Ask(Box::new(confirm(
@@ -215,13 +212,12 @@ fn act_on(state: &mut State, subject: Subject, action: Action) -> Vec<Cmd> {
 
 /// Loads what `action` is about, then does it (`then`), if you're still
 /// on the page: with what's loaded, or saying why it couldn't be.
-#[must_use]
 pub fn wait(
     state: &mut State,
     action: Action,
     subject: Subject,
-    then: fn(&mut State, Subject, Action) -> Vec<Cmd>,
-) -> Vec<Cmd> {
+    then: fn(&mut State, Subject, Action) -> Cmds,
+) -> Cmds {
     state.info(format!("Loading {}…", subject.name()));
     let need = subject.need();
     state.pending = Some(Pending {
@@ -851,15 +847,14 @@ fn run_plan(
 }
 
 /// The change chosen in a question about what an action changes.
-#[must_use]
-pub fn confirmed(state: &mut State, change: Change, about: Subject) -> Vec<Cmd> {
+pub fn confirmed(state: &mut State, change: Change, about: Subject) -> Cmds {
     // A revert or a transfer answers with what it made; a duplicate is
     // chosen first.
     if let Some(cmds) = crate::manage::confirmed(state, &change, &about) {
         return cmds;
     }
     crate::forms::sending(state);
-    vec![send(change, By::Confirm(about))]
+    send(change, By::Confirm(about)).into()
 }
 
 /// A change sent to GitHub, and what sent it.
@@ -881,7 +876,7 @@ impl work::Job for Changing {
         Ok(cx.gh.change(&self.change).await?)
     }
 
-    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
         on_changed(state, &self.change, self.by, result)
     }
 }
@@ -889,8 +884,7 @@ impl work::Job for Changing {
 /// GitHub's answer to a change, back to what sent it. Whatever was shown
 /// is fetched again (a write marks everything stale), so the page ends up
 /// as GitHub has it.
-#[must_use]
-fn on_changed(state: &mut State, change: &Change, by: By, result: Result<(), Failure>) -> Vec<Cmd> {
+fn on_changed(state: &mut State, change: &Change, by: By, result: Result<(), Failure>) -> Cmds {
     // The dialog or the composer that sent it, if it's still waiting.
     let sender = match (&by, &state.overlay) {
         (By::Confirm(_), Some(Overlay::Ask(c))) => {
@@ -908,7 +902,7 @@ fn on_changed(state: &mut State, change: &Change, by: By, result: Result<(), Fai
             }
             state.info(done(change));
             // The unread count follows, as the inbox does.
-            let mut cmds = Vec::new();
+            let mut cmds = Cmds::new();
             if notifies(change) {
                 cmds.extend(state.ensure(DataKey::Unread, true));
             }
@@ -925,7 +919,7 @@ fn on_changed(state: &mut State, change: &Change, by: By, result: Result<(), Fai
                     }
                 }
                 // It shows in its thread.
-                By::Reply(pr) => return vec![Cmd::Api(Api::FetchThreads(pr))],
+                By::Reply(pr) => return Cmd::Api(Api::FetchThreads(pr)).into(),
                 By::Compose | By::Star => {}
             }
             cmds.extend(state.load_visible(false));
@@ -942,7 +936,7 @@ fn on_changed(state: &mut State, change: &Change, by: By, result: Result<(), Fai
             }
             let text = failure(change, &err);
             // What was written comes back to edit.
-            let mut cmds = Vec::new();
+            let mut cmds = Cmds::new();
             if sender
                 && let Some(Overlay::Ask(confirm)) = &mut state.overlay
                 && let Some((target, written)) = confirm.back.take()
@@ -1002,7 +996,7 @@ impl Expectation for Shows {
 
     /// The rest of the page (a pull request's commits, or the list the
     /// row was on) follows too.
-    fn then(&self, state: &mut State, route: &Route) -> Vec<Cmd> {
+    fn then(&self, state: &mut State, route: &Route) -> Cmds {
         let mut cmds = state.ensure_route(route, true);
         // GitHub may count the unread later than it marks them.
         if notifies(&self.change) {
@@ -1126,9 +1120,8 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
 /// After GitHub's data arrives: runs an action that waited for what it's
 /// about, and plans an open confirmation again, so it says what's true
 /// now, or closes, saying why, if the change no longer applies.
-#[must_use]
-pub fn follow(state: &mut State) -> Vec<Cmd> {
-    let mut cmds = Vec::new();
+pub fn follow(state: &mut State) -> Cmds {
+    let mut cmds = Cmds::new();
     // An action asked for before what it's about loaded.
     if let Some(p) = state.pending.clone() {
         if state.route() != p.route.as_ref() {

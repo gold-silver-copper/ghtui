@@ -8,7 +8,7 @@ use std::future::Future;
 
 use crate::api::{ApiError, GitHub};
 use crate::diff_job::GitContext;
-use crate::state::{Cmd, State};
+use crate::state::{Cmd, Cmds, State};
 
 /// What a job runs with: GitHub, and where your clone and git's are.
 pub struct Cx {
@@ -28,12 +28,12 @@ pub trait Job: Clone + std::fmt::Debug + PartialEq + Eq + Send + Sync + 'static 
         Self::WRITES && result.is_ok()
     }
     fn run(&self, cx: &Cx) -> impl Future<Output = Result<Self::Out, Failure>> + Send;
-    fn done(self, state: &mut State, result: Result<Self::Out, Failure>) -> Vec<Cmd>;
+    fn done(self, state: &mut State, result: Result<Self::Out, Failure>) -> Cmds;
 }
 
 /// Starting `job`.
-pub fn start(job: impl Into<Work>) -> Vec<Cmd> {
-    vec![Cmd::Work(job.into())]
+pub fn start(job: impl Into<Work>) -> Cmds {
+    Cmd::Work(job.into()).into()
 }
 
 /// Why background work failed. Shows as GitHub's own words when GitHub
@@ -120,8 +120,7 @@ macro_rules! jobs {
                 }
             }
 
-            #[must_use]
-            pub fn apply(self, state: &mut State) -> Vec<Cmd> {
+            pub fn apply(self, state: &mut State) -> Cmds {
                 match self {
                     $(Done::$name(job, result) => job.done(state, result),)*
                 }

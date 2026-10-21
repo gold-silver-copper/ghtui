@@ -22,7 +22,7 @@ use crate::api::model::RepoId;
 use crate::api::{ApiError, Polled};
 use crate::data::DataKey;
 use crate::discuss::same_text;
-use crate::state::{Api, Cmd, Screen, State};
+use crate::state::{Api, Cmd, Cmds, Screen, State};
 use crate::ui::text::noun;
 
 use super::{Ask, MOST_MS, Pace};
@@ -256,8 +256,7 @@ impl PageWatch {
 
 /// Watches the page on screen, and schedules the next ask about it.
 /// Leaving a page forgets what was new on it.
-#[must_use]
-pub fn schedule(state: &mut State) -> Vec<Cmd> {
+pub fn schedule(state: &mut State) -> Cmds {
     let here = watched(state);
     if state.page_watch.as_ref().map(|w| &w.what) != here.as_ref() {
         // A job that ended stays followed until you leave it.
@@ -279,7 +278,7 @@ pub fn schedule(state: &mut State) -> Vec<Cmd> {
     let live = matches!(state.page_watch.as_ref(), Some(w) if watched_now(state, &w.what));
     match state.page_watch.as_mut() {
         Some(w) if live => w.pace.due(focused).into_iter().collect(),
-        _ => Vec::new(),
+        _ => Cmds::new(),
     }
 }
 
@@ -296,13 +295,12 @@ pub fn refocus(state: &mut State) {
 }
 
 /// Time to ask about the watched page, if the timer is still its.
-#[must_use]
-pub fn on_timer(state: &mut State, id: u64) -> Vec<Cmd> {
+pub fn on_timer(state: &mut State, id: u64) -> Cmds {
     let Some(what) = (state.page_watch.as_ref())
         .filter(|w| w.pace.is(id))
         .map(|w| w.what.clone())
     else {
-        return Vec::new();
+        return Cmds::new();
     };
     // A discussion is asked about in the repository it's in.
     let discussion_repo = match &what {
@@ -319,7 +317,7 @@ pub fn on_timer(state: &mut State, id: u64) -> Vec<Cmd> {
         _ => None,
     };
     let Some(w) = state.page_watch.as_mut() else {
-        return Vec::new();
+        return Cmds::new();
     };
     let probes = match &what {
         // A job that ended in a run still going: the run's end shows on it.
@@ -344,12 +342,12 @@ pub fn on_timer(state: &mut State, id: u64) -> Vec<Cmd> {
             // Not loaded yet: asked about next time.
             None => {
                 w.pace.idle();
-                return Vec::new();
+                return Cmds::new();
             }
         },
     };
     let asks: Vec<Ask<Probe>> = probes.into_iter().map(|p| w.pace.ask(p)).collect();
-    vec![Cmd::Api(Api::Watch { what, asks })]
+    Cmd::Api(Api::Watch { what, asks }).into()
 }
 
 /// Asks GitHub one probe's question, with the ETag of its last answer.
@@ -369,14 +367,13 @@ pub async fn ask(gh: &crate::api::GitHub, ask: &Ask<Probe>) -> Result<Polled, Ap
 }
 
 /// GitHub's answers about a watched page: what changed is fetched again.
-#[must_use]
 pub fn on_watched(
     state: &mut State,
     what: &Watched,
     answers: Vec<(Probe, Result<Polled, ApiError>)>,
-) -> Vec<Cmd> {
+) -> Cmds {
     let Some(w) = state.page_watch.as_mut().filter(|w| w.what == *what) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let mut fresh = Vec::new();
     for (probe, answer) in answers {
@@ -413,7 +410,7 @@ pub fn on_watched(
             .settle(any, if running { RUNNING_MS } else { MOST_MS });
     }
     if !any {
-        return Vec::new();
+        return Cmds::new();
     }
     // More pages loaded would go: say so instead.
     if extended {

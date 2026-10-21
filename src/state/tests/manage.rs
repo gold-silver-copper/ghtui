@@ -43,7 +43,7 @@ fn pick(s: &State) -> &Pick {
 }
 
 /// Runs the menu's row that `filter` finds.
-fn from_menu(s: &mut State, filter: &str) -> Vec<Cmd> {
+fn from_menu(s: &mut State, filter: &str) -> Cmds {
     press(s, "<Space>/");
     for c in filter.chars() {
         press(s, &c.to_string());

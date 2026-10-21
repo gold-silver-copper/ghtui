@@ -1,5 +1,10 @@
 //! Page data and key presses for tests.
 
+#![allow(
+    unused_must_use,
+    reason = "tests drive the state, and check only the commands they care about"
+)]
+
 use crate::api::ApiError;
 use crate::api::browse::{
     Advisory, AdvisoryPackage, Asset, Blame, BlameRange, Blob, BranchInfo, CheckItem, CheckOutcome,
@@ -27,7 +32,7 @@ use crate::act::By;
 use crate::api::change::Change;
 use crate::data::{Data, DataKey};
 use crate::diff_screen::DiffOf;
-use crate::state::{Api, Cmd, DiffMsg, Msg, State, update};
+use crate::state::{Api, Cmd, Cmds, DiffMsg, Msg, State, update};
 use crate::work::{Failure, Sent, Work};
 
 /// Asserts the status bar says `part`, as information.
@@ -53,8 +58,8 @@ fn shows(state: &State, kind: fn(String) -> Notice, part: &str) {
 
 /// Presses `keys` one after another, each a character or a named key
 /// (`"<Down><Down>"`, `"<Esc>/"`, `"<C-s>"`).
-pub(crate) fn press(state: &mut State, keys: &str) -> Vec<Cmd> {
-    let mut cmds = Vec::new();
+pub(crate) fn press(state: &mut State, keys: &str) -> Cmds {
+    let mut cmds = Cmds::new();
     let mut rest = keys;
     while let Some(c) = rest.chars().next() {
         let len = match rest.find('>') {
@@ -70,7 +75,7 @@ pub(crate) fn press(state: &mut State, keys: &str) -> Vec<Cmd> {
 }
 
 /// GitHub's answer to the one change `sent` holds.
-pub(crate) fn answer(state: &mut State, sent: &[Cmd], result: Result<(), ApiError>) -> Vec<Cmd> {
+pub(crate) fn answer(state: &mut State, sent: &[Cmd], result: Result<(), ApiError>) -> Cmds {
     let (change, by) = sent_change(sent);
     let (change, by) = (change.clone(), by.clone());
     changed(state, change, by, result)
@@ -148,7 +153,7 @@ pub(crate) fn changed(
     change: Change,
     by: By,
     result: Result<(), ApiError>,
-) -> Vec<Cmd> {
+) -> Cmds {
     let job = crate::act::Changing { change, by };
     done(state, job, result.map_err(Failure::from))
 }
@@ -178,11 +183,7 @@ pub(crate) fn sent<J: Sent>(cmds: &[Cmd]) -> J {
 }
 
 /// What came of `job`, delivered.
-pub(crate) fn done<J: Sent>(
-    state: &mut State,
-    job: J,
-    result: Result<J::Out, Failure>,
-) -> Vec<Cmd> {
+pub(crate) fn done<J: Sent>(state: &mut State, job: J, result: Result<J::Out, Failure>) -> Cmds {
     update(state, Msg::Done(job.answered(result)))
 }
 
@@ -192,7 +193,7 @@ pub(crate) fn failure(why: &str) -> Failure {
 }
 
 /// Delivers freshly fetched page data.
-pub(crate) fn fetched(state: &mut State, key: DataKey, data: Data) -> Vec<Cmd> {
+pub(crate) fn fetched(state: &mut State, key: DataKey, data: Data) -> Cmds {
     update(state, Msg::fetched(key, Ok(data)))
 }
 
@@ -227,7 +228,7 @@ pub(crate) fn pr_fetched(
     state: &mut State,
     pr: &PrRef,
     result: Result<PrDetail, ApiError>,
-) -> Vec<Cmd> {
+) -> Cmds {
     let key = DataKey::Pr(pr.clone());
     update(state, Msg::fetched(key, result.map(Data::from)))
 }
@@ -243,7 +244,7 @@ pub(crate) fn pr_cached(state: &mut State, pr: &PrRef, detail: PrDetail) {
 }
 
 /// Fills Home's section `i` with a search's results.
-pub(crate) fn section(state: &mut State, i: usize, results: SearchResults) -> Vec<Cmd> {
+pub(crate) fn section(state: &mut State, i: usize, results: SearchResults) -> Cmds {
     let search = state.home[i].search.clone().unwrap();
     fetched(state, search.key(), Data::from(results))
 }
@@ -276,7 +277,7 @@ pub(crate) fn found_pr(pr: &str, title: &str, state: PrState) -> IssueSummary {
 }
 
 /// Delivers a message for `pr`'s diff.
-pub(crate) fn diff_msg(state: &mut State, pr: &PrRef, msg: DiffMsg) -> Vec<Cmd> {
+pub(crate) fn diff_msg(state: &mut State, pr: &PrRef, msg: DiffMsg) -> Cmds {
     update(state, Msg::Diff(DiffOf::Pr(pr.clone()), msg))
 }
 
@@ -2431,7 +2432,7 @@ pub(crate) fn cloned(
     state: &mut State,
     repo: &crate::api::model::RepoId,
     clone: Option<crate::git::local::Clone>,
-) -> Vec<Cmd> {
+) -> Cmds {
     let key = DataKey::Clone(repo.clone());
     fetched(state, key, Data::Clone(clone.map(Box::new)))
 }

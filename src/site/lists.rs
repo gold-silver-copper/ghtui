@@ -12,7 +12,7 @@ use crate::nav::{Doable, row};
 use crate::picker::fuzzy_score;
 use crate::picker::{Choice, entry};
 use crate::route::{Route, people};
-use crate::state::{Cmd, State};
+use crate::state::{Cmds, State};
 use crate::work::{self, Cx, Failure, Job};
 
 use super::Page;
@@ -118,8 +118,7 @@ fn subject(state: &State) -> Option<RepoId> {
 
 /// `,B`: your lists, the ones with the repository checked. What GitHub
 /// has now, not what was read before.
-#[must_use]
-pub fn open(state: &mut State) -> Vec<Cmd> {
+pub fn open(state: &mut State) -> Cmds {
     let Some(repo) = subject(state) else {
         return state.just_say(Action::Lists.not_here());
     };
@@ -221,7 +220,7 @@ impl Job for SetLists {
     }
 
     /// GitHub's answer: your lists are read again until they show it.
-    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
         let work = self;
         match result {
             Ok(()) => {
@@ -240,7 +239,7 @@ impl Job for SetLists {
             }
             Err(why) => {
                 state.error(refused("change your lists", &why));
-                Vec::new()
+                Cmds::new()
             }
         }
     }
@@ -273,13 +272,12 @@ fn yours<'a>(state: &'a State, login: &str) -> Result<&'a ListPage, String> {
 }
 
 /// `,D` on one of your lists: asks first.
-#[must_use]
-pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
+pub fn ask_delete(state: &mut State) -> Cmds {
     let Some(route @ Route::Site(Page::StarList { .. })) = state.route().cloned() else {
-        return Vec::new();
+        return Cmds::new();
     };
     let Route::Site(Page::StarList { login, .. }) = &route else {
-        return Vec::new();
+        return Cmds::new();
     };
     let list = match yours(state, login) {
         Ok(l) => l.list.clone(),
@@ -305,17 +303,16 @@ pub fn ask_delete(state: &mut State) -> Vec<Cmd> {
             crate::forms::Answer::Site(super::Answer::DeleteList),
         )],
     );
-    Vec::new()
+    Cmds::new()
 }
 
 /// Deletes the list on `route`'s page, as asked.
-#[must_use]
-pub fn delete(state: &mut State, route: &Route) -> Vec<Cmd> {
+pub fn delete(state: &mut State, route: &Route) -> Cmds {
     let Route::Site(Page::StarList { login, slug }) = route else {
-        return Vec::new();
+        return Cmds::new();
     };
     let Ok(list) = yours(state, login).map(|l| l.list.clone()) else {
-        return Vec::new();
+        return Cmds::new();
     };
     crate::forms::sending(state);
     let delete = DeleteList {
@@ -335,7 +332,7 @@ impl Job for DeleteList {
     }
 
     /// GitHub's answer to deleting a list: your Stars follow until it's gone.
-    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
         let d = self;
         let route = Route::Site(Page::StarList {
             login: d.login.clone(),
@@ -346,7 +343,7 @@ impl Job for DeleteList {
                 crate::forms::close_sender(state, &route);
                 state.info(format!("Deleted the list “{}”", d.name));
                 if state.route() != Some(&route) {
-                    return Vec::new();
+                    return Cmds::new();
                 }
                 let stars = Route::People(people::User {
                     login: d.login.clone(),

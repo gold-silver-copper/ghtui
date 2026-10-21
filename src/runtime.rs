@@ -19,7 +19,7 @@ use crate::data::{self, DataKey};
 use crate::diff_job::{self, GitContext, JobControl, JobMsg, JobTx, RepoGit};
 use crate::diff_screen::DiffOf;
 use crate::review::EditPurpose;
-use crate::state::{Api, Cmd, DiffMsg, Git, Msg, Problem, State, apply_msg, timers};
+use crate::state::{Api, Cmd, Cmds, DiffMsg, Git, Msg, Problem, State, apply_msg, timers};
 use crate::view::view;
 use crate::work::Failure;
 
@@ -50,7 +50,7 @@ pub async fn run(
     gh: GitHub,
     git: GitContext,
     reviews: Result<Reviews, String>,
-    initial: Vec<Cmd>,
+    initial: Cmds,
     started: Instant,
 ) -> Result<()> {
     let (tx, rx) = mpsc::unbounded_channel::<Msg>();
@@ -95,7 +95,7 @@ async fn drive(
     mut state: State,
     effects: &mut Effects,
     mut rx: mpsc::UnboundedReceiver<Msg>,
-    initial: Vec<Cmd>,
+    initial: Cmds,
     started: Instant,
 ) -> Result<()> {
     let tx = effects.tx.clone();

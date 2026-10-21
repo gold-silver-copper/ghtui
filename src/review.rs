@@ -24,7 +24,7 @@ use crate::forms::Sent;
 use crate::keymap::Action;
 use crate::picker::{self, PickItem};
 use crate::route::{Route, pulls};
-use crate::state::{Api, Cmd, Git, OutdatedThread, Overlay, Screen, State};
+use crate::state::{Api, Cmd, Cmds, Git, OutdatedThread, Overlay, Screen, State};
 use crate::ui::page::{Link, ReviewLink};
 use crate::ui::pages::PrTab;
 use crate::work::{Cx, Failure, Job};
@@ -449,8 +449,7 @@ pub fn outdated_to_map(threads: &[ReviewThread]) -> Vec<OutdatedThread> {
 
 /// Applies the result of submitting a review: accepted drafts leave the
 /// local queue, rejected ones keep their text and GitHub's reason.
-#[must_use]
-pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcome) -> Vec<Cmd> {
+pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcome) -> Cmds {
     // GitHub couldn't be reached: the review and its drafts move to the
     // queue, to be sent when it's back.
     if let Some(review) = &outcome.unsent {
@@ -471,7 +470,7 @@ pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcom
             review.last_reviewed_head = head;
         }
     };
-    let mut cmds = vec![Cmd::Api(Api::FetchThreads(pr.clone()))];
+    let mut cmds = Cmds::from(Cmd::Api(Api::FetchThreads(pr.clone())));
     if let Some(diff) = state.diffs.get_mut(&DiffOf::Pr(pr.clone())) {
         let head = diff.head().map(|h| h.to_string());
         cmds.extend(diff.edit_review(pr, |i| apply(&mut i.review, head)));
@@ -511,17 +510,16 @@ pub(crate) fn on_submitted(state: &mut State, pr: &PrRef, outcome: &SubmitOutcom
     cmds
 }
 
-#[must_use]
 pub(crate) fn on_edited(
     state: &mut State,
     purpose: EditPurpose,
     result: Result<String, crate::work::Failure>,
-) -> Vec<Cmd> {
+) -> Cmds {
     let text = match result {
         Ok(text) => text,
         Err(err) => {
             state.error(format!("Couldn't run the editor: {err}"));
-            return Vec::new();
+            return Cmds::new();
         }
     };
     let theme = &state.theme;
@@ -564,7 +562,7 @@ pub(crate) fn on_edited(
             state.overlay = Some(Overlay::Compose(Box::new(compose)));
         }
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// How to get back to the whole PR, for notices.
@@ -575,8 +573,7 @@ pub(crate) fn all_changes(state: &State) -> String {
 
 /// Review actions on the diff screen: commenting, threads, drafts and
 /// submitting, and which changes are shown.
-#[must_use]
-pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
+pub(crate) fn review_action(state: &mut State, action: Action) -> Cmds {
     let viewer = state.viewer.clone();
     let Some((screen, diff)) = state.diff_parts() else {
         return state.just_say("The diff hasn't loaded yet");
@@ -592,7 +589,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         .cloned();
     let error = |state: &mut State, text: &str| {
         state.error(text);
-        Vec::new()
+        Cmds::new()
     };
     let in_range = diff.range().is_some();
     if in_range
@@ -629,15 +626,16 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 screen.restart();
                 let job = diff.job;
                 state.info("Loading the new push, to compare with your last review…");
-                return vec![Cmd::Git(Git::LoadDiff {
+                return Cmd::Git(Git::LoadDiff {
                     of: pr.into(),
                     job,
                     base,
                     range: None,
-                })];
+                })
+                .into();
             }
             let Some((screen, diff)) = state.diff_parts() else {
-                return Vec::new();
+                return Cmds::new();
             };
             let active = !diff.doc.since_active();
             if diff_screen::preserving_position(screen, diff, |d| d.doc.show_since(active)) {
@@ -654,25 +652,25 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 (LastReview::Unknown | LastReview::Failed(_), Some(login)) => {
                     diff.edit(|i| i.last_review = LastReview::Unknown);
                     state.info("Looking up your last review…");
-                    vec![Cmd::Api(Api::FetchLastReview { pr, login })]
+                    Cmd::Api(Api::FetchLastReview { pr, login }).into()
                 }
                 // Without a login, only the local record can say.
                 (LastReview::Unknown | LastReview::Failed(_), None) => {
                     diff.edit(|i| i.last_review = LastReview::None);
-                    Vec::new()
+                    Cmds::new()
                 }
                 (LastReview::None | LastReview::At(_), _) => {
                     if !diff.listed() {
                         state.info("Comparing once the diff has loaded");
                     }
-                    Vec::new()
+                    Cmds::new()
                 }
             }
         }
         Action::PickCommits => {
             if diff.inputs().commits.is_empty() {
                 state.info("Listing commits…");
-                return vec![Cmd::Git(Git::ListCommits(pr))];
+                return Cmd::Git(Git::ListCommits(pr)).into();
             }
             state.open_picker(picker::Kind::Commits { mark: None })
         }
@@ -700,7 +698,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
         {
             let pending = &diff.inputs().review.pending;
             let Some(target) = pending.iter().find(|d| d.id == id).map(place) else {
-                return Vec::new();
+                return Cmds::new();
             };
             state.compose(Target::Review(target), "")
         }
@@ -734,7 +732,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 return save;
             }
             let Some(file) = diff.doc.files().get(cursor.file) else {
-                return Vec::new();
+                return Cmds::new();
             };
             let path = file.meta.path().to_owned();
             state.compose(Target::Review(Comment::File { path, reason: None }), "")
@@ -756,7 +754,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             let original: Vec<String> = (start.line..=end.line)
                 .map(|line| text.line(LinePos { line, ..start }).to_owned())
                 .collect();
-            vec![Cmd::Edit {
+            Cmd::Edit {
                 text: original.join("\n") + "\n",
                 purpose: EditPurpose::Suggest {
                     path,
@@ -764,7 +762,8 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                     end,
                     original,
                 },
-            }]
+            }
+            .into()
         }
         Action::ResolveThread => {
             let Some(ann) = annotation else {
@@ -811,7 +810,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
             if let Some(at) = at {
                 diff.doc.toggle_thread(at);
             }
-            Vec::new()
+            Cmds::new()
         }
         Action::SubmitReview => {
             if diff.refs.is_none() {
@@ -821,7 +820,7 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
                 &state.theme,
                 pr.clone(),
             ))));
-            vec![Cmd::Api(Api::FetchPendingReview(pr))]
+            Cmd::Api(Api::FetchPendingReview(pr)).into()
         }
         _ => state.just_say(action.not_here()),
     }
@@ -829,14 +828,13 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Vec<Cmd> {
 
 /// Opens the composer on your draft `id`. From the Review tab, it opens
 /// Files changed on the draft first, where the composer goes.
-#[must_use]
-fn edit_draft(state: &mut State, pr: &PrRef, id: u64) -> Vec<Cmd> {
+fn edit_draft(state: &mut State, pr: &PrRef, id: u64) -> Cmds {
     let mut cmds = match state.screen() {
         Screen::Page(p) => match p.selected_link().cloned() {
             Some(link) => state.follow(&link),
-            None => Vec::new(),
+            None => Cmds::new(),
         },
-        Screen::Diff(_) => Vec::new(),
+        Screen::Diff(_) => Cmds::new(),
     };
     let of = DiffOf::Pr(pr.clone());
     let pending = state.diffs.get(&of).map(|d| &d.inputs().review.pending);
@@ -851,13 +849,12 @@ fn edit_draft(state: &mut State, pr: &PrRef, id: u64) -> Vec<Cmd> {
 }
 
 /// Deletes your draft `id`, which `ctrl-z` brings back.
-#[must_use]
-fn delete_draft(state: &mut State, pr: &PrRef, id: u64) -> Vec<Cmd> {
+fn delete_draft(state: &mut State, pr: &PrRef, id: u64) -> Cmds {
     let Some(diff) = state.diffs.get_mut(&DiffOf::Pr(pr.clone())) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let Some(at) = diff.inputs().review.pending.iter().position(|d| d.id == id) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let save = diff.edit_review(pr, |i| i.deleted = Some(i.review.pending.remove(at)));
     let undo = state.first_key(Action::UndoDelete);
@@ -866,10 +863,9 @@ fn delete_draft(state: &mut State, pr: &PrRef, id: u64) -> Vec<Cmd> {
 }
 
 /// Brings back the draft just deleted.
-#[must_use]
-fn restore_draft(state: &mut State, pr: &PrRef) -> Vec<Cmd> {
+fn restore_draft(state: &mut State, pr: &PrRef) -> Cmds {
     let Some(diff) = state.diffs.get_mut(&DiffOf::Pr(pr.clone())) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let Some(mut draft) = diff.edit(|i| i.deleted.take()) else {
         return state.just_say("No deleted draft to bring back");
@@ -927,16 +923,15 @@ pub fn takes(state: &State, action: Action) -> bool {
     }
 }
 
-#[must_use]
-fn draft_action(state: &mut State, action: Action) -> Vec<Cmd> {
+fn draft_action(state: &mut State, action: Action) -> Cmds {
     if action == Action::UndoDelete {
         return match review_tab(state).cloned() {
             Some(pr) => restore_draft(state, &pr),
-            None => Vec::new(),
+            None => Cmds::new(),
         };
     }
     let Some((pr, id)) = draft_here(state) else {
-        return Vec::new();
+        return Cmds::new();
     };
     match action {
         Action::EditComment => edit_draft(state, &pr, id),
@@ -966,31 +961,30 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
 
 /// Shows what `choice` picks: the whole PR, the changes since your last
 /// review, or a commit (from `mark` to it, if a range was marked).
-#[must_use]
 pub(crate) fn apply_commit_choice(
     state: &mut State,
     choice: PickItem,
     mark: Option<usize>,
-) -> Vec<Cmd> {
+) -> Cmds {
     let pr = match state.screen() {
         Screen::Diff(screen) => match screen.of.pr() {
             Some(pr) => pr.clone(),
-            None => return Vec::new(),
+            None => return Cmds::new(),
         },
-        Screen::Page(_) => return Vec::new(),
+        Screen::Page(_) => return Cmds::new(),
     };
     let Some(base) = state.pr_base(&pr) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let Some((screen, diff)) = state.diff_parts() else {
-        return Vec::new();
+        return Cmds::new();
     };
     let since = choice == PickItem::SinceReview;
     let range = match choice {
         // Already on the whole PR: only "since your review" changes.
         PickItem::All | PickItem::SinceReview if diff.range().is_none() => {
             if diff.doc.since_active() == since {
-                return Vec::new();
+                return Cmds::new();
             }
             return review_action(state, Action::ToggleSinceReview);
         }
@@ -1001,7 +995,7 @@ pub(crate) fn apply_commit_choice(
             // The picker's indices, into the list it showed.
             let commits = &diff.inputs().commits;
             let (Some(from), Some(to)) = (commits.get(first), commits.get(last)) else {
-                return Vec::new();
+                return Cmds::new();
             };
             let (from, to) = (&from.oid, &to.oid);
             let label = if first == last {
@@ -1022,23 +1016,23 @@ pub(crate) fn apply_commit_choice(
     diff.since_requested = since;
     let job = diff.job;
     screen.restart();
-    vec![Cmd::Git(Git::LoadDiff {
+    Cmd::Git(Git::LoadDiff {
         of: pr.into(),
         job,
         base,
         range: cmd_range,
-    })]
+    })
+    .into()
 }
 
 /// `ctrl-s` in the composer on a review's comment: drafts join the
 /// pending review (and are saved); replies post right away.
-#[must_use]
-pub(crate) fn save(state: &mut State, comment: Comment, body: String) -> Vec<Cmd> {
+pub(crate) fn save(state: &mut State, comment: Comment, body: String) -> Cmds {
     let Some((screen, diff)) = state.diff_parts() else {
-        return Vec::new();
+        return Cmds::new();
     };
     let Some(pr) = screen.of.pr().cloned() else {
-        return Vec::new();
+        return Cmds::new();
     };
     match comment {
         Comment::Reply { thread_id } => {
@@ -1047,7 +1041,7 @@ pub(crate) fn save(state: &mut State, comment: Comment, body: String) -> Vec<Cmd
                 thread: thread_id,
                 body,
             };
-            vec![crate::act::send(reply, crate::act::By::Reply(pr))]
+            crate::act::send(reply, crate::act::By::Reply(pr)).into()
         }
         Comment::Draft { id } => {
             let save = diff.edit_review(&pr, |i| {
@@ -1061,11 +1055,11 @@ pub(crate) fn save(state: &mut State, comment: Comment, body: String) -> Vec<Cmd
         }
         target @ (Comment::Line { .. } | Comment::File { .. }) => {
             let Some(head) = diff.head() else {
-                return Vec::new();
+                return Cmds::new();
             };
             let id = diff.inputs().review.next_draft_id();
             let Some(draft) = draft(&target, &body, id, &head) else {
-                return Vec::new();
+                return Cmds::new();
             };
             let save = diff.edit_review(&pr, |i| i.review.pending.push(draft));
             let count = diff.inputs().review.pending.len();
@@ -1080,13 +1074,12 @@ pub(crate) fn save(state: &mut State, comment: Comment, body: String) -> Vec<Cmd
     }
 }
 
-#[must_use]
-pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
+pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Cmds {
     let Some(Overlay::Submit(dialog)) = &mut state.overlay else {
-        return Vec::new();
+        return Cmds::new();
     };
     if dialog.sent.sending {
-        return Vec::new();
+        return Cmds::new();
     }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
@@ -1098,10 +1091,11 @@ pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         KeyCode::Tab => dialog.cycle(true),
         KeyCode::BackTab => dialog.cycle(false),
         KeyCode::Char('e') if ctrl => {
-            return vec![Cmd::Edit {
+            return Cmd::Edit {
                 purpose: EditPurpose::Summary,
                 text: dialog.input.lines().join("\n"),
-            }];
+            }
+            .into();
         }
         KeyCode::Char('s') if ctrl => return submit(state),
         KeyCode::Enter if dialog.quick => return submit(state),
@@ -1111,15 +1105,14 @@ pub(crate) fn on_submit_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
             dialog.input.input(key);
         }
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// Submits the review in the dialog, with your drafts, on the head they
 /// were written against: the diff's, or the pull request's from its page.
-#[must_use]
-fn submit(state: &mut State) -> Vec<Cmd> {
+fn submit(state: &mut State) -> Cmds {
     let Some(Overlay::Submit(dialog)) = &state.overlay else {
-        return Vec::new();
+        return Cmds::new();
     };
     let (event, body, pr, seen) = (
         dialog.event,
@@ -1141,11 +1134,11 @@ fn submit(state: &mut State) -> Vec<Cmd> {
         _ => None,
     };
     let Some(Overlay::Submit(dialog)) = &mut state.overlay else {
-        return Vec::new();
+        return Cmds::new();
     };
     let (None, Some(drafts), Some(head)) = (problem, drafts, head) else {
         dialog.sent.error = problem.map(Into::into);
-        return Vec::new();
+        return Cmds::new();
     };
     dialog.sent.sending = true;
     dialog.sent.error = None;
@@ -1162,13 +1155,12 @@ fn submit(state: &mut State) -> Vec<Cmd> {
 /// Opens the review dialog set to approve, from anywhere `pr` is on
 /// screen. Your saved drafts go with it; without its diff open, they're
 /// read from disk first.
-#[must_use]
-pub(crate) fn open_approve(state: &mut State, pr: PrRef) -> Vec<Cmd> {
+pub(crate) fn open_approve(state: &mut State, pr: PrRef) -> Cmds {
     let mut dialog = SubmitDialog::new(&state.theme, pr.clone());
     dialog.event = ReviewEvent::Approve;
     dialog.quick = true;
     state.overlay = Some(Overlay::Submit(Box::new(dialog)));
-    let mut cmds = vec![Cmd::Api(Api::FetchPendingReview(pr.clone()))];
+    let mut cmds = Cmds::from(Cmd::Api(Api::FetchPendingReview(pr.clone())));
     if !state.diffs.contains_key(&DiffOf::Pr(pr.clone())) {
         cmds.push(Cmd::LoadReview(pr));
     }
@@ -1196,14 +1188,14 @@ impl Job for SetViewed {
         Ok(cx.gh.set_viewed(id, &self.path, self.viewed).await?)
     }
 
-    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
         if let Err(err) = result {
             tracing::warn!(pr = %self.pr, %err, "viewed state update failed");
             let of = DiffOf::Pr(self.pr);
             diff_screen::edit(state, &of, |i| i.set_viewed(self.path, self.previous));
             state.error(format!("GitHub didn't save “viewed”: {err}"));
         }
-        Vec::new()
+        Cmds::new()
     }
 }
 
@@ -1223,13 +1215,13 @@ impl Job for Resolve {
         Ok(cx.gh.set_resolved(&self.thread, self.resolved).await?)
     }
 
-    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
         if let Err(err) = result {
             let of = DiffOf::Pr(self.pr);
             diff_screen::edit(state, &of, |i| i.set_resolved(&self.thread, !self.resolved));
             state.error(format!("GitHub didn't save that: {err}"));
         }
-        Vec::new()
+        Cmds::new()
     }
 }
 
@@ -1264,7 +1256,7 @@ impl Job for Submit {
         Ok(submit_review(&cx.gh, &self.pr, &self.head, review).await)
     }
 
-    fn done(self, state: &mut State, result: Result<SubmitOutcome, Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<SubmitOutcome, Failure>) -> Cmds {
         let outcome = result.unwrap_or_else(|err| SubmitOutcome {
             error: Some(format!("Couldn't submit: {err}")),
             ..SubmitOutcome::default()

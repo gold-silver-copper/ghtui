@@ -25,7 +25,7 @@ use crate::keymap::Action;
 use crate::notice::Notices;
 use crate::picker;
 use crate::review::annotations;
-use crate::state::{Cmd, DiffMsg, Git, Overlay, Problem, Remote, State};
+use crate::state::{Cmd, Cmds, DiffMsg, Git, Overlay, Problem, Remote, State};
 
 /// What GitHub says about your last submitted review of a PR.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -458,8 +458,7 @@ impl DiffState {
 
     /// Changes the review with `f`, shows the change, and saves it once
     /// the saved one has been read (saving before would overwrite it).
-    #[must_use]
-    pub fn edit_review(&mut self, pr: &PrRef, f: impl FnOnce(&mut DiffInputs)) -> Vec<Cmd> {
+    pub fn edit_review(&mut self, pr: &PrRef, f: impl FnOnce(&mut DiffInputs)) -> Cmds {
         self.edit(f);
         let i = &self.inputs;
         let save = || Cmd::SaveReview(pr.clone(), i.review.clone());
@@ -568,14 +567,13 @@ pub fn preserving_position<R>(
 
 /// Handles `action` on the diff screen. Those that don't work here say
 /// where they do.
-#[must_use]
 pub fn apply(
     screen: &mut DiffScreen,
     state: &mut DiffState,
     action: Action,
     content: Rect,
     notice: &mut Notices,
-) -> Vec<Cmd> {
+) -> Cmds {
     let lay = layout(content, &screen.prefs, &state.tree);
     let page = usize::from(lay.diff.height)
         .saturating_sub(2)
@@ -584,7 +582,7 @@ pub fn apply(
     let tree_focused = screen.focus == Pane::Tree && lay.tree.is_some();
     let before = (screen.top, screen.cursor, screen.shift);
     let scrolls = matches!(action, Action::ScrollLeft | Action::ScrollRight);
-    let mut cmds = Vec::new();
+    let mut cmds = Cmds::new();
     match action {
         Action::ToggleTree => {
             screen.prefs.tree_visible = !screen.prefs.tree_visible;
@@ -615,7 +613,7 @@ pub fn apply(
         }
         Action::ScrollLeft | Action::ScrollRight if screen.prefs.wrap => {
             notice.info("Long lines wrap: there's nothing to the side");
-            return Vec::new();
+            return Cmds::new();
         }
         Action::BySyntax => flip(
             &mut screen.prefs.by_syntax,
@@ -767,7 +765,7 @@ pub fn apply(
                     Some(_) if forward => "No more words on this line",
                     Some(_) => "No earlier word on this line",
                 });
-                return Vec::new();
+                return Cmds::new();
             };
             screen.word = Some(word.cols.start);
             // The word stays on screen: in split view, in its half.
@@ -911,7 +909,7 @@ pub fn apply(
         Action::SearchNext | Action::SearchPrev => {
             let Some(query) = screen.search.clone() else {
                 notice.info("No search yet");
-                return Vec::new();
+                return Cmds::new();
             };
             match state
                 .doc
@@ -1053,19 +1051,18 @@ fn go_to_match(screen: &mut DiffScreen, doc: &Doc, pos: Pos, query: &str) {
     }
 }
 
-#[must_use]
-fn toggle_viewed(screen: &mut DiffScreen, state: &mut DiffState, notice: &mut Notices) -> Vec<Cmd> {
+fn toggle_viewed(screen: &mut DiffScreen, state: &mut DiffState, notice: &mut Notices) -> Cmds {
     let Some(pr) = screen.of.pr().cloned() else {
         notice.info("Viewed files are a pull request's");
-        return Vec::new();
+        return Cmds::new();
     };
     let Some(viewed) = &state.inputs().viewed else {
         notice.error("Viewed state hasn't loaded from GitHub yet");
-        return Vec::new();
+        return Cmds::new();
     };
     let index = screen.cursor.file;
     let Some(file) = state.doc.files().get(index) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let (previous, path) = (file.viewed, file.meta.path().to_owned());
     let now = if previous == Viewed::Viewed {
@@ -1089,15 +1086,14 @@ fn toggle_viewed(screen: &mut DiffScreen, state: &mut DiffState, notice: &mut No
     crate::work::start(job)
 }
 
-#[must_use]
-fn toggle_reviewed(screen: &DiffScreen, state: &mut DiffState, notice: &mut Notices) -> Vec<Cmd> {
+fn toggle_reviewed(screen: &DiffScreen, state: &mut DiffState, notice: &mut Notices) -> Cmds {
     let Some(pr) = screen.of.pr().cloned() else {
         notice.info("Reviewed marks are a pull request's");
-        return Vec::new();
+        return Cmds::new();
     };
     let Some(block) = state.doc.block_at(screen.cursor) else {
         notice.info("Move to a changed line to mark it reviewed");
-        return Vec::new();
+        return Cmds::new();
     };
     let hash = block.hash.clone();
     state.edit_review(&pr, |i| {
@@ -1228,8 +1224,7 @@ fn anchor_pos(anchor: &str, state: &DiffState, pr: bool) -> Option<Option<Landin
 /// Applies view options, clamps positions, keeps the cursor visible (clear
 /// of the sticky header), syncs the tree with the diff, and asks the job to
 /// prioritize files that are on screen but not diffed yet.
-#[must_use]
-pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> Vec<Cmd> {
+pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> Cmds {
     let lay = layout(content, &screen.prefs, &state.tree);
     if lay.tree.is_none() {
         screen.focus = Pane::Diff;
@@ -1240,7 +1235,7 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
     }
     let doc = &state.doc;
     if doc.is_empty() {
-        return Vec::new();
+        return Cmds::new();
     }
     if let Some(anchor) = screen.anchor.take() {
         match anchor_pos(&anchor, state, screen.of.pr().is_some()) {
@@ -1317,15 +1312,14 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
         })
         .collect();
     if wanted.is_empty() {
-        return Vec::new();
+        return Cmds::new();
     }
     state.requested.extend(wanted.iter().copied());
-    vec![Cmd::Git(Git::Prioritize(screen.of.clone(), wanted))]
+    Cmd::Git(Git::Prioritize(screen.of.clone(), wanted)).into()
 }
 
 /// A message from a diff's current job.
-#[must_use]
-pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Vec<Cmd> {
+pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Cmds {
     match msg {
         JobMsg::Progress(line) => {
             if let Some(diff) = state.diffs.get_mut(of)
@@ -1376,7 +1370,7 @@ pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Vec<Cmd> {
             state.error(format!("Couldn't compare with your last review: {err}"));
         }
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// Changes `of`'s diff, if it's still open; on screen, keeping the cursor
@@ -1394,17 +1388,16 @@ pub(crate) fn edit(state: &mut State, of: &DiffOf, f: impl FnOnce(&mut DiffInput
 }
 
 /// A message for a diff screen.
-#[must_use]
-pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
+pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Cmds {
     if let DiffMsg::Job(job, msg) = msg {
         if state.diffs.get(of).is_some_and(|d| d.job == job) {
             return on_job(state, of, msg);
         }
-        return Vec::new();
+        return Cmds::new();
     }
     // The rest is about reviewing a pull request.
     let DiffOf::Pr(pr) = of.clone() else {
-        return Vec::new();
+        return Cmds::new();
     };
     match msg {
         DiffMsg::LastReview(result) => {
@@ -1487,7 +1480,7 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Vec<Cmd> {
             (Err(err), _) => tracing::warn!(%pr, %err, "couldn't read the pending review"),
         },
     }
-    Vec::new()
+    Cmds::new()
 }
 
 #[cfg(test)]

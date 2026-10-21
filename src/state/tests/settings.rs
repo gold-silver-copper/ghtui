@@ -24,7 +24,7 @@ pub(super) fn on(at: SettingsPage) -> State {
     s
 }
 
-fn deliver(s: &mut State, at: SettingsPage, data: Settings) -> Vec<Cmd> {
+fn deliver(s: &mut State, at: SettingsPage, data: Settings) -> Cmds {
     fetched(s, DataKey::Settings(ghtui(), at), Data::from(data))
 }
 

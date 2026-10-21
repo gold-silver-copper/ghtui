@@ -116,7 +116,7 @@ pub(crate) fn mergeable(f: impl FnOnce(&mut PrDetail)) -> PrDetail {
 }
 
 /// GitHub's answer for [`pr`]: [`mergeable`], changed by `f`.
-pub(crate) fn pr_shows(s: &mut State, f: impl FnOnce(&mut PrDetail)) -> Vec<Cmd> {
+pub(crate) fn pr_shows(s: &mut State, f: impl FnOnce(&mut PrDetail)) -> Cmds {
     fixtures::pr_fetched(s, &pr(), Ok(mergeable(f)))
 }
 
@@ -131,7 +131,7 @@ pub(crate) fn pr_with(f: impl FnOnce(&mut PrDetail)) -> State {
 pub(crate) fn issue_shows(
     s: &mut State,
     f: impl FnOnce(&mut crate::api::browse::IssueDetail),
-) -> Vec<Cmd> {
+) -> Cmds {
     let mut d = fixtures::issue();
     f(&mut d);
     let key = DataKey::Issue(ghtui(), 14);

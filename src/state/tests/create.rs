@@ -14,7 +14,7 @@ use crate::ui::form::Row;
 
 /// The repository's page, then `keys` (`,i` or `,p`), with what the form
 /// can have delivered.
-fn form(action: Action) -> (State, Vec<Cmd>) {
+fn form(action: Action) -> (State, Cmds) {
     let mut s = with_repo();
     let cmds = act(&mut s, action);
     let form = Data::from(crate::fixtures::new_form());
@@ -146,7 +146,7 @@ fn local_branch(on_github: Option<&str>) -> Branch {
 }
 
 /// Where `fix-parser` stands against main.
-fn head(s: &mut State, on_github: Option<&str>) -> Vec<Cmd> {
+fn head(s: &mut State, on_github: Option<&str>) -> Cmds {
     let hs = HeadState {
         local: Some(local_branch(on_github)),
         commits: vec![commit(
@@ -168,7 +168,7 @@ fn compare() -> DataKey {
 }
 
 /// A new pull request inside a clone, on branch `fix-parser`.
-fn in_clone() -> (State, Vec<Cmd>) {
+fn in_clone() -> (State, Cmds) {
     let (mut s, cmds) = form(Action::NewPr);
     assert!(fixtures::asks(&cmds, &DataKey::Clone(ghtui())), "{cmds:?}");
     let clone = Clone {

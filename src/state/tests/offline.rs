@@ -7,7 +7,7 @@ use crate::offline::queue::{Entry, Op, Status, Told, Write};
 use crate::offline::{Cmd as Off, Msg as OffMsg};
 use crate::route::app;
 
-fn offline(state: &mut State, msg: OffMsg) -> Vec<Cmd> {
+fn offline(state: &mut State, msg: OffMsg) -> Cmds {
     update(state, Msg::Offline(msg))
 }
 

@@ -1,6 +1,11 @@
 //! Behaviour through `update`: keys pressed, data delivered, and the
 //! commands, pages and status line that follow. No I/O and no runtime.
 
+#![allow(
+    unused_must_use,
+    reason = "tests drive the state, and check only the commands they care about"
+)]
+
 use super::*;
 use crate::api::browse::{IssueKind, IssueState, PrState, SearchKind, SearchResults, Status};
 use crate::api::change::Change;
@@ -50,7 +55,7 @@ fn with_prs(n: u64) -> State {
 }
 
 /// Runs an action that has no default key (it's in the menu).
-pub(super) fn act(state: &mut State, action: Action) -> Vec<Cmd> {
+pub(super) fn act(state: &mut State, action: Action) -> Cmds {
     let mut cmds = apply(state, action);
     state.sync_page();
     cmds.extend(state.settle_diff());
@@ -76,7 +81,7 @@ fn selected_text(state: &State) -> String {
 }
 
 /// Fires the watch's next timer: what that sends, and how long it waited.
-fn next_watch(s: &mut State) -> (Vec<Cmd>, u64) {
+fn next_watch(s: &mut State) -> (Cmds, u64) {
     let timer = timers(s).into_iter().find_map(|cmd| match cmd {
         Cmd::Timer(Timer::Watch(id), ms) => Some((id, ms)),
         _ => None,
@@ -99,8 +104,7 @@ fn fetch(key: DataKey) -> Cmd {
 }
 
 /// Commands other than saving visits.
-#[must_use]
-fn fetches(cmds: Vec<Cmd>) -> Vec<Cmd> {
+fn fetches(cmds: Cmds) -> Cmds {
     cmds.into_iter()
         .filter(|c| !matches!(c, Cmd::Api(Api::SaveVisits(_))))
         .collect()
@@ -120,8 +124,7 @@ fn blob(rev: &str, path: &str) -> Route {
     Route::blob(ghtui(), rev.to_owned(), path.to_owned())
 }
 
-#[must_use]
-fn click(state: &mut State, x: u16, y: u16) -> Vec<Cmd> {
+fn click(state: &mut State, x: u16, y: u16) -> Cmds {
     update(
         state,
         Msg::Mouse(MouseEvent {

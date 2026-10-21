@@ -15,7 +15,7 @@ use crate::data::DataKey;
 use crate::forms::Answer;
 use crate::keymap::Action;
 use crate::picker::{Choice, entry};
-use crate::state::{Cmd, Screen, State};
+use crate::state::{Cmds, Screen, State};
 use crate::ui::page::Link;
 use crate::work::{self, Cx, Failure, Job};
 
@@ -60,7 +60,7 @@ impl Job for Save {
         Ok(saved.await?)
     }
 
-    fn done(self, state: &mut State, result: Result<u64, Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<u64, Failure>) -> Cmds {
         match result {
             Ok(size) => {
                 let size = crate::ui::text::size(size);
@@ -69,7 +69,7 @@ impl Job for Save {
             }
             Err(why) => state.error(format!("Couldn't save {}: {why}", self.of.name)),
         }
-        Vec::new()
+        Cmds::new()
     }
 }
 
@@ -84,10 +84,10 @@ impl Job for Upload {
             .await?)
     }
 
-    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
         if let Err(why) = result {
             state.error(format!("GitHub didn't take {}: {why}", self.of.name));
-            return Vec::new();
+            return Cmds::new();
         }
         state.info(format!("Uploaded {}", self.of.name));
         follow(state, self.of, true)
@@ -102,7 +102,7 @@ impl Job for Delete {
         Ok(cx.gh.delete_asset(&of.repo, of.id, &of.name).await?)
     }
 
-    fn done(self, state: &mut State, result: Result<(), Failure>) -> Vec<Cmd> {
+    fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
         let of = self.0;
         if let Err(why) = result {
             return crate::forms::say(state, format!("GitHub didn't delete {}: {why}", of.name));
@@ -145,8 +145,7 @@ pub fn selected(state: &State) -> Option<String> {
 }
 
 /// `↵` on an asset: where to save it.
-#[must_use]
-pub fn open(state: &mut State, name: &str) -> Vec<Cmd> {
+pub fn open(state: &mut State, name: &str) -> Cmds {
     let Some(of) = of(state, name) else {
         return state.just_say("The release hasn't loaded yet");
     };
@@ -154,8 +153,7 @@ pub fn open(state: &mut State, name: &str) -> Vec<Cmd> {
 }
 
 /// `,U`: a file to upload.
-#[must_use]
-pub fn open_upload(state: &mut State) -> Vec<Cmd> {
+pub fn open_upload(state: &mut State) -> Cmds {
     if !matches!(
         state.route(),
         Some(Route::Releases(releases::Release { .. }))
@@ -166,7 +164,7 @@ pub fn open_upload(state: &mut State) -> Vec<Cmd> {
         return state.just_say(why);
     }
     let Some(of) = of(state, "") else {
-        return Vec::new();
+        return Cmds::new();
     };
     state.open_picker(crate::picker::Kind::Upload(of))
 }
@@ -267,13 +265,12 @@ pub fn upload_rows(state: &State, of: &Of, q: &str) -> crate::picker::Rows {
 
 /// Choosing a row: saving, or uploading.
 /// `,D` on an asset: asks first, as GitHub does.
-#[must_use]
-pub fn ask_delete(state: &mut State, name: &str) -> Vec<Cmd> {
+pub fn ask_delete(state: &mut State, name: &str) -> Cmds {
     let Some((repo, tag, r)) = super::shown(state) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let Some(a) = asset(r, name) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let facts = vec![(
         format!(
@@ -294,14 +291,13 @@ pub fn ask_delete(state: &mut State, name: &str) -> Vec<Cmd> {
         facts,
         vec![("Delete asset".into(), Answer::DeleteAsset(name.to_owned()))],
     );
-    Vec::new()
+    Cmds::new()
 }
 
 /// Deletes the asset asked about.
-#[must_use]
-pub fn delete(state: &mut State, name: &str) -> Vec<Cmd> {
+pub fn delete(state: &mut State, name: &str) -> Cmds {
     let Some(of) = of(state, name) else {
-        return Vec::new();
+        return Cmds::new();
     };
     crate::forms::sending(state);
     work::start(Delete(of))
@@ -309,13 +305,13 @@ pub fn delete(state: &mut State, name: &str) -> Vec<Cmd> {
 
 /// The release's page, if it's on screen, follows GitHub until it shows
 /// the asset there (or gone).
-fn follow(state: &mut State, of: Of, there: bool) -> Vec<Cmd> {
+fn follow(state: &mut State, of: Of, there: bool) -> Cmds {
     let route = Route::Releases(releases::Release {
         repo: of.repo.clone(),
         tag: of.tag.clone(),
     });
     if state.route() != Some(&route) {
-        return Vec::new();
+        return Cmds::new();
     }
     let what = super::Expected::Asset {
         repo: of.repo,

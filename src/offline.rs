@@ -20,7 +20,7 @@ use crate::api::change::Change;
 use crate::api::model::PrRef;
 use crate::keymap::Action;
 use crate::route::{Dest, Route, app};
-use crate::state::{Cmd as Do, Overlay, Screen, State, Timer};
+use crate::state::{Cmd as Do, Cmds, Overlay, Screen, State, Timer};
 use crate::ui::page::Link;
 
 pub use page::{build, queued_here};
@@ -86,8 +86,7 @@ impl Offline {
     }
 }
 
-#[must_use]
-pub fn on_msg(state: &mut State, msg: Msg) -> Vec<Do> {
+pub fn on_msg(state: &mut State, msg: Msg) -> Cmds {
     // Pages show whether GitHub can be reached, the queue and what's
     // kept; not how often it's asked.
     if !matches!(msg, Msg::Probed(_)) {
@@ -100,13 +99,13 @@ pub fn on_msg(state: &mut State, msg: Msg) -> Vec<Do> {
         }
         Msg::Reach(None) => {
             if state.offline.since.take().is_none() {
-                return Vec::new();
+                return Cmds::new();
             }
             state.info("GitHub is back");
-            let mut cmds = vec![
+            let mut cmds = Cmds::from(vec![
                 Do::Offline(Cmd::Queue(queue::Op::Flush)),
                 Do::Offline(Cmd::Keep(keep::Op::Now)),
-            ];
+            ]);
             cmds.extend(state.load_visible(false));
             return cmds;
         }
@@ -116,7 +115,7 @@ pub fn on_msg(state: &mut State, msg: Msg) -> Vec<Do> {
             let wait = off.probe.map_or(PROBE_FIRST, |w| (w * 2).min(PROBE_MOST));
             off.probe = Some(wait);
             if off.since.is_some() {
-                return vec![Do::Timer(Timer::Probe, wait)];
+                return Do::Timer(Timer::Probe, wait).into();
             }
         }
         Msg::Queue(queue::Told::All(entries)) => state.offline.queue = entries,
@@ -131,26 +130,25 @@ pub fn on_msg(state: &mut State, msg: Msg) -> Vec<Do> {
         }
         Msg::Kept(kept, cache) => (state.offline.kept, state.offline.cache) = (kept, cache),
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// The first probe after GitHub went away.
-fn schedule(state: &mut State) -> Vec<Do> {
+fn schedule(state: &mut State) -> Cmds {
     if state.offline.probe.is_some() {
-        return Vec::new();
+        return Cmds::new();
     }
     state.offline.probe = Some(PROBE_FIRST);
-    vec![Do::Timer(Timer::Probe, PROBE_FIRST)]
+    Do::Timer(Timer::Probe, PROBE_FIRST).into()
 }
 
 /// It's time to ask whether GitHub's back.
-#[must_use]
-pub fn on_timer(state: &mut State) -> Vec<Do> {
+pub fn on_timer(state: &mut State) -> Cmds {
     if state.offline.since.is_none() {
         state.offline.probe = None;
-        return Vec::new();
+        return Cmds::new();
     }
-    vec![Do::Offline(Cmd::Probe)]
+    Do::Offline(Cmd::Probe).into()
 }
 
 /// Queues a change GitHub couldn't be reached for, if it can wait:
@@ -163,7 +161,7 @@ pub fn queue_change(
     by: &By,
     err: &crate::work::Failure,
     sender: bool,
-) -> Option<Vec<Do>> {
+) -> Option<Cmds> {
     let Some(ApiError::Offline(_)) = err.api() else {
         return None;
     };
@@ -180,7 +178,7 @@ pub fn queue_change(
         "GitHub can't be reached: {} is queued, to send when it's back",
         write.what().to_lowercase()
     ));
-    Some(vec![add(state, write, route)])
+    Some(add(state, write, route).into())
 }
 
 /// A review GitHub couldn't be reached for: queued, its comments with it.
@@ -284,8 +282,7 @@ fn takes(state: &State, action: Action) -> bool {
     }
 }
 
-#[must_use]
-pub fn act(state: &mut State, action: Action) -> Vec<Do> {
+pub fn act(state: &mut State, action: Action) -> Cmds {
     match action {
         Action::Offline if state.route() == Some(&Route::App(app::Offline)) => {
             state.just_say("This is the Offline page")
@@ -302,13 +299,13 @@ pub fn act(state: &mut State, action: Action) -> Vec<Do> {
         Action::UndoDelete => match state.offline.discarded.take() {
             Some(entry) => {
                 state.info(format!("Brought back: {}", entry.write.what()));
-                vec![Do::Offline(Cmd::Queue(queue::Op::Add(Box::new(entry))))]
+                Do::Offline(Cmd::Queue(queue::Op::Add(Box::new(entry)))).into()
             }
-            None => Vec::new(),
+            None => Cmds::new(),
         },
         _ => {
             let Some(entry) = selected(state).cloned() else {
-                return Vec::new();
+                return Cmds::new();
             };
             on_entry(state, action, entry)
         }
@@ -316,20 +313,20 @@ pub fn act(state: &mut State, action: Action) -> Vec<Do> {
 }
 
 /// `action` on a queued write's row.
-fn on_entry(state: &mut State, action: Action, entry: queue::Entry) -> Vec<Do> {
+fn on_entry(state: &mut State, action: Action, entry: queue::Entry) -> Cmds {
     let what = entry.write.what();
     match action {
         Action::Copy => match entry.write.text() {
             Some(text) => {
                 state.info(format!("Copied the text of {}", what.to_lowercase()));
-                vec![Do::Copy(text)]
+                Do::Copy(text).into()
             }
             None => state.just_say(format!("{what} has no text to copy")),
         },
         Action::Rerun => match entry.status {
             queue::Status::Refused(_) | queue::Status::Unsure(_) => {
                 state.info(format!("Sending again: {what}"));
-                vec![Do::Offline(Cmd::Queue(queue::Op::Retry(entry.id)))]
+                Do::Offline(Cmd::Queue(queue::Op::Retry(entry.id))).into()
             }
             queue::Status::Queued | queue::Status::Sending => {
                 state.just_say(format!("{what} is queued already"))
@@ -343,14 +340,14 @@ fn on_entry(state: &mut State, action: Action, entry: queue::Entry) -> Vec<Do> {
             state.info(format!("Threw away: {what} · {undo} brings it back"));
             let id = entry.id;
             state.offline.discarded = Some(entry);
-            vec![Do::Offline(Cmd::Queue(queue::Op::Discard(id)))]
+            Do::Offline(Cmd::Queue(queue::Op::Discard(id))).into()
         }
-        _ => Vec::new(),
+        _ => Cmds::new(),
     }
 }
 
 /// Keeps the repository on screen to read offline, or stops.
-fn keep(state: &mut State) -> Vec<Do> {
+fn keep(state: &mut State) -> Cmds {
     let Some(repo) = state.route().and_then(Route::repo).cloned() else {
         return state.just_say("Keep offline works on a repository's pages");
     };
@@ -362,14 +359,13 @@ fn keep(state: &mut State) -> Vec<Do> {
     } else {
         state.info(format!("Keeping {repo} to read offline: fetching it ahead"));
     }
-    vec![Do::Offline(Cmd::Keep(keep::Op::Toggle(repo)))]
+    Do::Offline(Cmd::Keep(keep::Op::Toggle(repo))).into()
 }
 
 /// Following a queued write's row: its page (from the Offline page).
-#[must_use]
-pub fn follow(state: &mut State, id: u64) -> Vec<Do> {
+pub fn follow(state: &mut State, id: u64) -> Cmds {
     let Some(entry) = state.offline.queue.iter().find(|e| e.id == id) else {
-        return Vec::new();
+        return Cmds::new();
     };
     let here = state.route().map(Route::url);
     if entry.page.is_empty() || here.as_deref() == Some(entry.page.as_str()) {

@@ -446,12 +446,11 @@ impl Answer {
 }
 
 /// The question about `route` was answered.
-#[must_use]
 pub fn answer(
     state: &mut crate::state::State,
     route: &crate::route::Route,
     answer: Answer,
-) -> Vec<crate::state::Cmd> {
+) -> crate::state::Cmds {
     match answer {
         Answer::DeleteList => lists::delete(state, route),
         Answer::DeleteVersion(id) => packages::delete(state, route, id),
@@ -528,8 +527,7 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
 };
 
 /// `,D` here.
-#[must_use]
-pub fn ask_delete(state: &mut crate::state::State) -> Vec<crate::state::Cmd> {
+pub fn ask_delete(state: &mut crate::state::State) -> crate::state::Cmds {
     match state.route() {
         Some(crate::route::Route::Site(Page::StarList { .. })) => lists::ask_delete(state),
         _ => packages::ask_delete(state),

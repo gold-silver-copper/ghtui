@@ -29,7 +29,7 @@ use crate::diff_screen::{self, Pane};
 use crate::keymap::Action;
 use crate::picker::{fuzzy_score, move_in_list};
 use crate::route::{self, Dest, Route, Target};
-use crate::state::{Api, Cmd, Overlay, Remote, Screen, State, apply};
+use crate::state::{Api, Cmd, Cmds, Overlay, Remote, Screen, State, apply};
 
 /// Rows `j`/`k` scroll when there's no row to move to nearby.
 const STEP: isize = 3;

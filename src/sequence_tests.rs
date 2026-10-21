@@ -10,6 +10,11 @@
 //! gh-dash's history is full of these: crashes on empty or missing data,
 //! duplicate rows after a quick refresh, the wrong row acted on.
 
+#![allow(
+    unused_must_use,
+    reason = "tests drive the state, and check only the commands they care about"
+)]
+
 use crate::route::{Route, code, search};
 use std::collections::{HashMap, HashSet};
 

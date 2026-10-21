@@ -5,7 +5,7 @@ use crate::route::{app, issues, runs, search};
 
 /// Handles a message and settles the screen.
 #[cfg(test)]
-pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
+pub fn update(state: &mut State, msg: Msg) -> Cmds {
     let mut cmds = apply_msg(state, msg);
     cmds.extend(state.settle());
     cmds
@@ -13,8 +13,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
 
 /// Handles a message without settling the screen: the runtime handles a
 /// burst of background results, then settles once.
-#[must_use]
-pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
+pub fn apply_msg(state: &mut State, msg: Msg) -> Cmds {
     // What's followed until GitHub shows it is checked when data comes
     // in. A page opened from cached data alone brings no data: its forms
     // still need filling in.
@@ -72,9 +71,8 @@ pub fn apply_msg(state: &mut State, msg: Msg) -> Vec<Cmd> {
 
 /// Timers the screen needs after an update: a new notice expiring, the
 /// spinner's next frame while something loads. The runtime calls this.
-#[must_use]
-pub fn timers(state: &mut State) -> Vec<Cmd> {
-    let mut cmds = Vec::from_iter(state.notices.timer(state.clock));
+pub fn timers(state: &mut State) -> Cmds {
+    let mut cmds = Cmds::from_iter(state.notices.timer(state.clock));
     if state.busy().is_some() && !state.spinning {
         state.spinning = true;
         cmds.push(Cmd::Timer(Timer::Spin, 90));
@@ -96,8 +94,7 @@ pub fn timers(state: &mut State) -> Vec<Cmd> {
 /// How often what's running on screen is fetched again.
 pub(super) const LIVE_MS: u64 = 5_000;
 
-#[must_use]
-pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
+pub(super) fn handle(state: &mut State, msg: Msg) -> Cmds {
     match msg {
         Msg::Diff(of, msg) => return diff_screen::update(state, &of, msg),
         Msg::Done(done) => return done.apply(state),
@@ -141,7 +138,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 && remote.error.is_none()
                 && let Some(after) = remote.ask_more()
             {
-                return vec![Cmd::Api(Api::FetchMore { key, after })];
+                return Cmd::Api(Api::FetchMore { key, after }).into();
             }
             // GitHub redirects an issue number that's a pull request.
             if is_pr
@@ -161,7 +158,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         }
         Msg::FetchedMore(key, after, result, source) => {
             let Some(remote) = (state.data.get_mut(&key)).filter(|r| r.more == Some(after)) else {
-                return Vec::new();
+                return Cmds::new();
             };
             remote.more = None;
             remote.changed();
@@ -184,7 +181,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         }
         Msg::Timer(Timer::Live) => {
             state.live = false;
-            let mut cmds = Vec::new();
+            let mut cmds = Cmds::new();
             let mut needs = state.running_here();
             needs.extend(crate::follow::poll(state));
             for need in needs {
@@ -201,7 +198,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         // Settling rebuilds the page if a time it shows has moved on.
         Msg::Timer(Timer::Minute) => {
             state.minute = (state.clock)();
-            return vec![Cmd::Timer(Timer::Minute, 60_000)];
+            return Cmd::Timer(Timer::Minute, 60_000).into();
         }
         Msg::SuggestDue(q) => {
             if let Some(Overlay::Search(sb)) = &state.overlay
@@ -228,14 +225,13 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Offline(msg) => return crate::offline::on_msg(state, msg),
         Msg::Timer(Timer::Probe) => return crate::offline::on_timer(state),
     }
-    Vec::new()
+    Cmds::new()
 }
 
-#[must_use]
-pub(super) fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
+pub(super) fn on_key(state: &mut State, key: KeyEvent) -> Cmds {
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         state.quit = crate::compose::may_discard(state, "ctrl-c", "quit and discard");
-        return Vec::new();
+        return Cmds::new();
     }
     match &mut state.overlay {
         Some(Overlay::Picker(_)) => return picker::on_key(state, key),
@@ -252,7 +248,7 @@ pub(super) fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
     // that (the messages list keeps it).
     let dismissing = matches!(state.notices.dismiss(), Some(Notice::Error(_)));
     if dismissing && key.code == KeyCode::Esc {
-        return Vec::new();
+        return Cmds::new();
     }
     let key = crate::keymap::Key::from(key);
     match state.keymap.resolve(key, state.contexts()) {
@@ -268,15 +264,14 @@ pub(super) fn on_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
                     state.info(format!("{shown}: not bound here · {menu} shows what is"));
                 }
             }
-            Vec::new()
+            Cmds::new()
         }
     }
 }
 
-#[must_use]
-pub(super) fn on_search_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
+pub(super) fn on_search_key(state: &mut State, key: KeyEvent) -> Cmds {
     let Some(Overlay::Find(input)) = &mut state.overlay else {
-        return Vec::new();
+        return Cmds::new();
     };
     match key.code {
         KeyCode::Esc => state.overlay = None,
@@ -295,14 +290,13 @@ pub(super) fn on_search_key(state: &mut State, key: KeyEvent) -> Vec<Cmd> {
         }
         _ => nav::type_into(input, key),
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// Runs `action`. The actions every screen shares are here; the rest go to
 /// the screen's own handler, which says where an action works when it
 /// doesn't work there.
-#[must_use]
-pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
+pub fn apply(state: &mut State, action: Action) -> Cmds {
     // On the diff: whether a search or a selection is active.
     let diff = match state.screen() {
         Screen::Diff(screen) => Some(screen.search.is_some() || screen.selection.is_some()),
@@ -398,12 +392,11 @@ pub fn apply(state: &mut State, action: Action) -> Vec<Cmd> {
         _ if diff.is_some() => return diff_action(state, action),
         _ => return nav::page_action(state, action),
     }
-    Vec::new()
+    Cmds::new()
 }
 
 /// Actions on the diff screen: reviewing, and the rest on the diff itself.
-#[must_use]
-pub(super) fn diff_action(state: &mut State, action: Action) -> Vec<Cmd> {
+pub(super) fn diff_action(state: &mut State, action: Action) -> Cmds {
     let content = state.layout().content;
     let on_annotation = match (state.screen(), state.diff()) {
         (Screen::Diff(screen), Some(diff)) => {
@@ -435,13 +428,13 @@ pub(super) fn diff_action(state: &mut State, action: Action) -> Vec<Cmd> {
         ..
     } = &mut *state;
     let Screen::Diff(screen) = screens.last_mut() else {
-        return Vec::new();
+        return Cmds::new();
     };
     match diffs.get_mut(&screen.of) {
         Some(diff) => diff_screen::apply(screen, diff, action, content, notices),
         None => {
             notices.info("The diff hasn't loaded yet");
-            Vec::new()
+            Cmds::new()
         }
     }
 }
