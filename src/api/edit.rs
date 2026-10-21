@@ -6,6 +6,7 @@
 use crate::schema::schema;
 use serde::{Deserialize, Serialize};
 
+use crate::api::change::mutations;
 use crate::api::client::{ApiError, GitHub};
 use crate::api::model::{Capped, NodeId, RepoId, count};
 use crate::api::queries::{NumberVariables, NumberVariablesFields, fragments, nodes};
@@ -167,11 +168,14 @@ pub struct Requested {
     pub left_out: u64,
 }
 
+/// The node IDs of `list`.
+fn ids(list: &[Named]) -> Vec<cynic::Id> {
+    list.iter().map(|n| n.id.gql()).collect()
+}
+
 impl GitHub {
     /// Makes `edit` on GitHub.
     pub async fn edit(&self, edit: &Edit) -> Result<(), ApiError> {
-        use cynic::MutationBuilder;
-        let ids = |list: &[Named]| list.iter().map(|n| n.id.gql()).collect::<Vec<_>>();
         match edit {
             Edit::Body { of, id, body } => {
                 let vars = BodyVariables {
@@ -179,27 +183,19 @@ impl GitHub {
                     body: body.clone(),
                 };
                 match of {
-                    Written::Issue => self.mutate(UpdateIssueBody::build(vars)).await.map(drop),
-                    Written::Pr => self.mutate(UpdatePrBody::build(vars)).await.map(drop),
-                    Written::IssueComment => {
-                        self.mutate(UpdateIssueComment::build(vars)).await.map(drop)
-                    }
-                    Written::ReviewComment => self
-                        .mutate(UpdateReviewComment::build(vars))
-                        .await
-                        .map(drop),
-                    Written::Review => self.mutate(UpdateReview::build(vars)).await.map(drop),
+                    Written::Issue => self.run::<UpdateIssueBody, _>(vars).await,
+                    Written::Pr => self.run::<UpdatePrBody, _>(vars).await,
+                    Written::IssueComment => self.run::<UpdateIssueComment, _>(vars).await,
+                    Written::ReviewComment => self.run::<UpdateReviewComment, _>(vars).await,
+                    Written::Review => self.run::<UpdateReview, _>(vars).await,
                 }
             }
             Edit::Delete { of, id } => {
                 let vars = EditIdVariables { id: id.gql() };
                 match of {
-                    Written::ReviewComment => self
-                        .mutate(DeleteReviewComment::build(vars))
-                        .await
-                        .map(drop),
-                    Written::Review => self.mutate(DeleteReview::build(vars)).await.map(drop),
-                    _ => self.mutate(DeleteIssueComment::build(vars)).await.map(drop),
+                    Written::ReviewComment => self.run::<DeleteReviewComment, _>(vars).await,
+                    Written::Review => self.run::<DeleteReview, _>(vars).await,
+                    _ => self.run::<DeleteIssueComment, _>(vars).await,
                 }
             }
             Edit::Title { pr, id, title } => {
@@ -208,9 +204,9 @@ impl GitHub {
                     title: title.clone(),
                 };
                 if *pr {
-                    self.mutate(UpdatePrTitle::build(vars)).await.map(drop)
+                    self.run::<UpdatePrTitle, _>(vars).await
                 } else {
-                    self.mutate(UpdateIssueTitle::build(vars)).await.map(drop)
+                    self.run::<UpdateIssueTitle, _>(vars).await
                 }
             }
             Edit::React {
@@ -223,9 +219,9 @@ impl GitHub {
                     content: *content,
                 };
                 if *on {
-                    self.mutate(AddReaction::build(vars)).await.map(drop)
+                    self.run::<AddReaction, _>(vars).await
                 } else {
-                    self.mutate(RemoveReaction::build(vars)).await.map(drop)
+                    self.run::<RemoveReaction, _>(vars).await
                 }
             }
             Edit::Labels {
@@ -233,42 +229,16 @@ impl GitHub {
                 add,
                 remove,
             } => {
-                if !add.is_empty() {
-                    let vars = AddVariables {
-                        subject: subject.gql(),
-                        ids: Some(ids(add)),
-                    };
-                    self.mutate(AddLabels::build(vars)).await?;
-                }
-                if !remove.is_empty() {
-                    let vars = RemoveVariables {
-                        subject: subject.gql(),
-                        ids: ids(remove),
-                    };
-                    self.mutate(RemoveLabels::build(vars)).await?;
-                }
-                Ok(())
+                self.add_remove::<AddLabels, RemoveLabels>(subject, add, remove)
+                    .await
             }
             Edit::Assignees {
                 subject,
                 add,
                 remove,
             } => {
-                if !add.is_empty() {
-                    let vars = AddVariables {
-                        subject: subject.gql(),
-                        ids: Some(ids(add)),
-                    };
-                    self.mutate(AddAssignees::build(vars)).await?;
-                }
-                if !remove.is_empty() {
-                    let vars = RemoveVariables {
-                        subject: subject.gql(),
-                        ids: ids(remove),
-                    };
-                    self.mutate(RemoveAssignees::build(vars)).await?;
-                }
-                Ok(())
+                self.add_remove::<AddAssignees, RemoveAssignees>(subject, add, remove)
+                    .await
             }
             Edit::Reviewers {
                 pr,
@@ -276,13 +246,13 @@ impl GitHub {
                 teams,
                 bots,
             } => {
-                let op = RequestReviews::build(ReviewersVariables {
+                self.run::<RequestReviews, _>(ReviewersVariables {
                     pr: pr.gql(),
                     users: Some(ids(users)),
                     teams: Some(ids(teams)),
                     bots: Some(ids(bots)),
-                });
-                self.mutate(op).await.map(drop)
+                })
+                .await
             }
             Edit::Milestone { pr, id, milestone } => {
                 let vars = MilestoneVariables {
@@ -290,12 +260,43 @@ impl GitHub {
                     milestone: milestone.as_ref().map(|m| m.id.gql()),
                 };
                 if *pr {
-                    self.mutate(SetPrMilestone::build(vars)).await.map(drop)
+                    self.run::<SetPrMilestone, _>(vars).await
                 } else {
-                    self.mutate(SetIssueMilestone::build(vars)).await.map(drop)
+                    self.run::<SetIssueMilestone, _>(vars).await
                 }
             }
         }
+    }
+
+    /// Adds `add` to what `subject` has with `A`, and takes `remove` off
+    /// with `R`; an empty list sends nothing.
+    async fn add_remove<A, R>(
+        &self,
+        subject: &NodeId,
+        add: &[Named],
+        remove: &[Named],
+    ) -> Result<(), ApiError>
+    where
+        A: cynic::MutationBuilder<AddVariables> + serde::de::DeserializeOwned,
+        R: cynic::MutationBuilder<RemoveVariables> + serde::de::DeserializeOwned,
+    {
+        if !add.is_empty() {
+            let ids = Some(ids(add));
+            self.run::<A, _>(AddVariables {
+                subject: subject.gql(),
+                ids,
+            })
+            .await?;
+        }
+        if !remove.is_empty() {
+            let ids = ids(remove);
+            self.run::<R, _>(RemoveVariables {
+                subject: subject.gql(),
+                ids,
+            })
+            .await?;
+        }
+        Ok(())
     }
 
     /// Issue or pull request `number`'s sidebar, and what its repository
@@ -646,137 +647,26 @@ pub struct MilestoneVariables {
     pub milestone: Option<cynic::Id>,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "BodyVariables")]
-pub struct UpdateIssueBody {
-    #[arguments(input: { id: $id, body: $body })]
-    pub update_issue: Option<UpdateIssuePayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "BodyVariables")]
-pub struct UpdatePrBody {
-    #[arguments(input: { pullRequestId: $id, body: $body })]
-    pub update_pull_request: Option<UpdatePrPayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "BodyVariables")]
-pub struct UpdateIssueComment {
-    #[arguments(input: { id: $id, body: $body })]
-    pub update_issue_comment: Option<UpdateIssueCommentPayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "BodyVariables")]
-pub struct UpdateReviewComment {
-    #[arguments(input: { pullRequestReviewCommentId: $id, body: $body })]
-    pub update_pull_request_review_comment: Option<UpdateReviewCommentPayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "EditIdVariables")]
-pub struct DeleteIssueComment {
-    #[arguments(input: { id: $id })]
-    pub delete_issue_comment: Option<DeleteIssueCommentPayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "EditIdVariables")]
-pub struct DeleteReviewComment {
-    #[arguments(input: { id: $id })]
-    pub delete_pull_request_review_comment: Option<DeleteReviewCommentPayload>,
-}
-
-/// A review's summary.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "BodyVariables")]
-pub struct UpdateReview {
-    #[arguments(input: { pullRequestReviewId: $id, body: $body })]
-    pub update_pull_request_review: Option<UpdateReviewPayload>,
-}
-
-/// Your pending review, thrown away with its comments.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "EditIdVariables")]
-pub struct DeleteReview {
-    #[arguments(input: { pullRequestReviewId: $id })]
-    pub delete_pull_request_review: Option<DeleteReviewPayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "TitleVariables")]
-pub struct UpdateIssueTitle {
-    #[arguments(input: { id: $id, title: $title })]
-    pub update_issue: Option<UpdateIssuePayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "TitleVariables")]
-pub struct UpdatePrTitle {
-    #[arguments(input: { pullRequestId: $id, title: $title })]
-    pub update_pull_request: Option<UpdatePrPayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "ReactVariables")]
-pub struct AddReaction {
-    #[arguments(input: { subjectId: $subject, content: $content })]
-    pub add_reaction: Option<AddReactionPayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "ReactVariables")]
-pub struct RemoveReaction {
-    #[arguments(input: { subjectId: $subject, content: $content })]
-    pub remove_reaction: Option<RemoveReactionPayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "AddVariables")]
-pub struct AddLabels {
-    #[arguments(input: { labelableId: $subject, labelIds: $ids })]
-    pub add_labels_to_labelable: Option<AddLabelsPayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "RemoveVariables")]
-pub struct RemoveLabels {
-    #[arguments(input: { labelableId: $subject, labelIds: $ids })]
-    pub remove_labels_from_labelable: Option<RemoveLabelsPayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "AddVariables")]
-pub struct AddAssignees {
-    #[arguments(input: { assignableId: $subject, assigneeIds: $ids })]
-    pub add_assignees_to_assignable: Option<AddAssigneesPayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "RemoveVariables")]
-pub struct RemoveAssignees {
-    #[arguments(input: { assignableId: $subject, assigneeIds: $ids })]
-    pub remove_assignees_from_assignable: Option<RemoveAssigneesPayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "ReviewersVariables")]
-pub struct RequestReviews {
-    #[arguments(input: { pullRequestId: $pr, userIds: $users, teamIds: $teams, botIds: $bots })]
-    pub request_reviews: Option<RequestReviewsPayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "MilestoneVariables")]
-pub struct SetIssueMilestone {
-    #[arguments(input: { id: $id, milestoneId: $milestone })]
-    pub update_issue: Option<UpdateIssuePayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "MilestoneVariables")]
-pub struct SetPrMilestone {
-    #[arguments(input: { pullRequestId: $id, milestoneId: $milestone })]
-    pub update_pull_request: Option<UpdatePrPayload>,
+mutations! {
+    UpdateIssueBody("BodyVariables") update_issue: UpdateIssuePayload { id: $id, body: $body }
+    UpdatePrBody("BodyVariables") update_pull_request: UpdatePrPayload { pullRequestId: $id, body: $body }
+    UpdateIssueComment("BodyVariables") update_issue_comment: UpdateIssueCommentPayload { id: $id, body: $body }
+    UpdateReviewComment("BodyVariables") update_pull_request_review_comment: UpdateReviewCommentPayload { pullRequestReviewCommentId: $id, body: $body }
+    DeleteIssueComment("EditIdVariables") delete_issue_comment: DeleteIssueCommentPayload { id: $id }
+    DeleteReviewComment("EditIdVariables") delete_pull_request_review_comment: DeleteReviewCommentPayload { id: $id }
+    /// A review's summary.
+    UpdateReview("BodyVariables") update_pull_request_review: UpdateReviewPayload { pullRequestReviewId: $id, body: $body }
+    /// Your pending review, thrown away with its comments.
+    DeleteReview("EditIdVariables") delete_pull_request_review: DeleteReviewPayload { pullRequestReviewId: $id }
+    UpdateIssueTitle("TitleVariables") update_issue: UpdateIssuePayload { id: $id, title: $title }
+    UpdatePrTitle("TitleVariables") update_pull_request: UpdatePrPayload { pullRequestId: $id, title: $title }
+    AddReaction("ReactVariables") add_reaction: AddReactionPayload { subjectId: $subject, content: $content }
+    RemoveReaction("ReactVariables") remove_reaction: RemoveReactionPayload { subjectId: $subject, content: $content }
+    AddLabels("AddVariables") add_labels_to_labelable: AddLabelsPayload { labelableId: $subject, labelIds: $ids }
+    RemoveLabels("RemoveVariables") remove_labels_from_labelable: RemoveLabelsPayload { labelableId: $subject, labelIds: $ids }
+    AddAssignees("AddVariables") add_assignees_to_assignable: AddAssigneesPayload { assignableId: $subject, assigneeIds: $ids }
+    RemoveAssignees("RemoveVariables") remove_assignees_from_assignable: RemoveAssigneesPayload { assignableId: $subject, assigneeIds: $ids }
+    RequestReviews("ReviewersVariables") request_reviews: RequestReviewsPayload { pullRequestId: $pr, userIds: $users, teamIds: $teams, botIds: $bots }
+    SetIssueMilestone("MilestoneVariables") update_issue: UpdateIssuePayload { id: $id, milestoneId: $milestone }
+    SetPrMilestone("MilestoneVariables") update_pull_request: UpdatePrPayload { pullRequestId: $id, milestoneId: $milestone }
 }
