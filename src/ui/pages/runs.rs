@@ -22,7 +22,7 @@ pub fn checks(page: &mut Page, checks: Fetched<'_, Checks>, now: u64) {
     };
     let sha = crate::ui::text::short_sha(&c.oid);
     if c.items.is_empty() {
-        let title = Seg::new(format!("✓ Checks on {sha}"), Role::Meta);
+        let title = meta(format!("✓ Checks on {sha}"));
         empty_box(page, title, "No checks ran on this commit.");
         return;
     }
@@ -38,16 +38,16 @@ pub fn checks(page: &mut Page, checks: Fetched<'_, Checks>, now: u64) {
         let n = c.items.iter().filter(|i| i.outcome == outcome).count();
         if n > 0 {
             if !summary.is_empty() {
-                summary.push(Seg::new(" · ", Role::Meta));
+                summary.push(meta(" · "));
             }
             let (mark, role) = outcome_mark(outcome);
             summary.push(Seg::new(format!("{mark} {n} {word}"), role));
         }
     }
-    summary.push(Seg::new(format!("   on {sha}"), Role::Meta));
+    summary.push(meta(format!("   on {sha}")));
     if c.items.left_out() > 0 {
         let shown = format!(" · {} shown", count_of(&c.items));
-        summary.push(Seg::new(shown, Role::Meta));
+        summary.push(meta(shown));
     }
     page.wrapped(summary, 0, Frame::None);
     page.blank();
@@ -64,7 +64,7 @@ pub fn checks(page: &mut Page, checks: Fetched<'_, Checks>, now: u64) {
     }
     groups.sort_by_key(|(g, checks)| (checks.first().map(|c| c.outcome), *g));
     for (group, checks) in groups {
-        page.box_top(vec![Seg::new(group.to_owned(), Role::Meta)], Vec::new());
+        page.box_top(vec![meta(group.to_owned())], Vec::new());
         for (n, check) in checks.into_iter().enumerate() {
             if n > 0 {
                 page.box_rule();
@@ -85,15 +85,15 @@ pub(super) fn check_row(page: &mut Page, check: &CheckItem, now: u64) {
         }
         _ => None,
     };
-    let right = took.map_or_else(Vec::new, |t| vec![Seg::new(t, Role::Meta)]);
+    let right = took.map_or_else(Vec::new, |t| vec![meta(t)]);
     let row = |page: &mut Page, link: Option<u32>| {
         let name = match link {
             Some(link) => Seg::linked(check.name.clone(), Role::Strong, link),
-            None => Seg::new(check.name.clone(), Role::Strong),
+            None => strong(check.name.clone()),
         };
         page.box_line(vec![Seg::new(format!("{mark} "), role), name], right, 0);
         if let Some(summary) = check.summary.as_ref().filter(|_| !page.compact) {
-            body(page, vec![Seg::new(format!("  {summary}"), Role::Meta)]);
+            body(page, vec![meta(format!("  {summary}"))]);
         }
     };
     match &check.url {
@@ -130,11 +130,11 @@ pub(super) fn annotation_rows(
         let row = |page: &mut Page, link: Option<u32>| {
             let place = match link {
                 Some(link) => Seg::linked(a.place(), Role::Link, link),
-                None => Seg::new(a.place(), Role::Meta),
+                None => meta(a.place()),
             };
             let mut segs = vec![Seg::new(format!("{mark} "), role), place];
             if !a.title.is_empty() {
-                segs.push(Seg::new(format!("  {}", a.title), Role::Strong));
+                segs.push(strong(format!("  {}", a.title)));
             }
             page.box_line(segs, Vec::new(), indent);
             // Under a check, its first line; on its own page, all of it.
@@ -157,7 +157,7 @@ pub(super) fn annotation_rows(
         let text = format!("… {more} more {}", noun(more, "annotation"));
         let segs = match run {
             Some(url) => vec![link_seg(page, text, url.to_owned(), Role::Link)],
-            None => vec![Seg::new(text, Role::Meta)],
+            None => vec![meta(text)],
         };
         page.box_line(segs, Vec::new(), indent);
     }
@@ -196,33 +196,26 @@ pub(super) fn outcome_title(page: &mut Page, title: String, outcome: CheckOutcom
 pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64) {
     outcome_title(page, format!("{} #{}", run.name, run.number), run.outcome);
     if !run.title.is_empty() {
-        page.wrapped(
-            vec![Seg::new(run.title.clone(), Role::Body)],
-            0,
-            Frame::None,
-        );
+        say(page, run.title.clone(), Role::Body);
     }
-    let mut meta = vec![Seg::new(format!("{} · ", run.event), Role::Meta)];
+    let mut subline = vec![meta(format!("{} · ", run.event))];
     if let Some(branch) = &run.branch {
-        meta.push(link_seg(
+        subline.push(link_seg(
             page,
             branch.clone(),
             url::tree(repo, branch, ""),
             Role::Code,
         ));
-        meta.push(Seg::new(" · ", Role::Meta));
+        subline.push(meta(" · "));
     }
     let sha = crate::ui::text::short_sha(&run.sha);
-    meta.push(link_seg(page, sha, url::commit(repo, &run.sha), Role::Code));
+    subline.push(link_seg(page, sha, url::commit(repo, &run.sha), Role::Code));
     if let Some(actor) = &run.actor {
-        meta.push(Seg::new(" · ", Role::Meta));
-        meta.push(login_seg(page, actor, Role::Strong));
+        subline.push(meta(" · "));
+        subline.push(login_seg(page, actor, Role::Strong));
     }
     if let Some(at) = &run.started_at {
-        meta.push(Seg::new(
-            format!(" · started {}", time::ago_iso(at, now)),
-            Role::Meta,
-        ));
+        subline.push(meta(format!(" · started {}", time::ago_iso(at, now))));
     }
     if let Some(d) = took(
         run.started_at.as_ref(),
@@ -232,9 +225,9 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
     )
     .filter(|_| run.outcome != CheckOutcome::Pending)
     {
-        meta.push(Seg::new(format!(" · took {d}"), Role::Meta));
+        subline.push(meta(format!(" · took {d}")));
     }
-    page.wrapped(meta, 0, Frame::None);
+    page.wrapped(subline, 0, Frame::None);
     let file = run.path.rsplit('/').next().unwrap_or(&run.path).to_owned();
     let mut facts = Vec::new();
     if !file.is_empty() {
@@ -243,21 +236,18 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
             url::repo(repo),
             url::encode_path(&file)
         );
-        facts.push(Seg::new("Workflow ", Role::Meta));
+        facts.push(meta("Workflow "));
         facts.push(link_seg(page, file, workflow, Role::Link));
-        facts.push(Seg::new("   ", Role::Meta));
+        facts.push(meta("   "));
     }
     if run.attempt > 1 {
-        facts.push(Seg::new(format!("Attempt {}   ", run.attempt), Role::Meta));
+        facts.push(meta(format!("Attempt {}   ", run.attempt)));
     }
     page.wrapped(facts, 0, Frame::None);
     page.blank();
     let mut jobs = run.jobs.clone();
     jobs.sort_by(|a, b| (a.outcome, &a.name).cmp(&(b.outcome, &b.name)));
-    let title = vec![Seg::new(
-        format!("Jobs  {}", count_of(&run.jobs)),
-        Role::Strong,
-    )];
+    let title = counted("Jobs", &run.jobs);
     // A run just started (or re-run) has no jobs until GitHub queues them.
     let none = if run.outcome == CheckOutcome::Pending {
         "Waiting for GitHub to queue its jobs…"
@@ -279,7 +269,7 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
                 job.outcome,
                 now,
             )
-            .map_or_else(Vec::new, |t| vec![Seg::new(t, Role::Meta)]);
+            .map_or_else(Vec::new, |t| vec![meta(t)]);
             let segs = vec![
                 Seg::new(format!("{mark} "), role),
                 Seg::linked(job.name.clone(), Role::Strong, link),
@@ -297,31 +287,22 @@ fn artifacts(page: &mut Page, list: &Capped<Artifact>, now: u64) {
         return;
     }
     page.blank();
-    let title = vec![Seg::new(
-        format!("Artifacts  {}", count_of(list)),
-        Role::Strong,
-    )];
-    let right = vec![Seg::new("↵ saves one", Role::Meta)];
+    let title = counted("Artifacts", list);
+    let right = vec![meta("↵ saves one")];
     list_box(page, title, right, list, "", |page, a| {
         let when = match (&a.expires_at, a.expired) {
             (_, true) => "expired".to_owned(),
             (Some(at), false) => format!("expires {}", time::until_iso(at, now)),
             (None, false) => String::new(),
         };
-        let right = vec![Seg::new(
-            format!("{}  {when}", crate::ui::text::size(a.size)),
-            Role::Meta,
-        )];
+        let right = vec![meta(format!("{}  {when}", crate::ui::text::size(a.size)))];
         let target = Link::Artifact {
             id: a.id,
             name: a.name.clone(),
         };
         item(page, target, |page, link| {
             let role = if a.expired { Role::Meta } else { Role::Strong };
-            let segs = vec![
-                Seg::new("▤ ", Role::Meta),
-                Seg::linked(a.name.clone(), role, link),
-            ];
+            let segs = vec![meta("▤ "), Seg::linked(a.name.clone(), role, link)];
             page.box_line(segs, right, 0);
         });
     });
@@ -442,9 +423,9 @@ pub(super) fn strip_escapes(text: &str) -> String {
 pub fn log_seg(text: &str) -> Seg {
     let text = &strip_escapes(text);
     if let Some(group) = text.strip_prefix("##[group]") {
-        Seg::new(format!("▾ {group}"), Role::Strong)
+        strong(format!("▾ {group}"))
     } else if text.starts_with("##[endgroup]") || text.starts_with("##[end-action ") {
-        Seg::new("", Role::Meta)
+        meta("")
     } else if let Some(action) = text.strip_prefix("##[start-action ") {
         // A composite action's own step: `display=Its name;id=…]`.
         let display = action
@@ -452,15 +433,15 @@ pub fn log_seg(text: &str) -> Seg {
             .find_map(|field| field.strip_prefix("display="))
             .unwrap_or(action)
             .trim_end_matches(']');
-        Seg::new(format!("▾ {display}"), Role::Strong)
+        strong(format!("▾ {display}"))
     } else if let Some(error) = text.strip_prefix("##[error]") {
         Seg::new(error.to_owned(), Role::Removed)
     } else if let Some(warning) = text.strip_prefix("##[warning]") {
         Seg::new(warning.to_owned(), Role::Accent)
     } else if let Some(notice) = text.strip_prefix("##[notice]") {
-        Seg::new(notice.to_owned(), Role::Strong)
+        strong(notice.to_owned())
     } else if let Some(debug) = text.strip_prefix("##[debug]") {
-        Seg::new(debug.to_owned(), Role::Meta)
+        meta(debug.to_owned())
     } else if let Some(command) = text
         .strip_prefix("##[command]")
         .or_else(|| text.strip_prefix("[command]"))
@@ -484,9 +465,9 @@ pub fn job(
     now: u64,
 ) {
     outcome_title(page, job.name.clone(), job.outcome);
-    let mut meta = Vec::new();
+    let mut subline = Vec::new();
     let run = format!("{}/actions/runs/{}", url::repo(repo), job.run_id);
-    meta.push(link_seg(
+    subline.push(link_seg(
         page,
         format!("{} #{}", job.run.name, job.run.number),
         run.clone(),
@@ -494,12 +475,12 @@ pub fn job(
     ));
     if job.run.attempt > 1 {
         let of = format!(" · attempt {} of {}", job.attempt, job.run.attempt);
-        meta.push(Seg::new(of, Role::Meta));
+        subline.push(meta(of));
     }
     if let Some(rerun) = job.run.rerun {
-        meta.push(Seg::new(" · ", Role::Meta));
+        subline.push(meta(" · "));
         let target = format!("{run}/job/{rerun}");
-        meta.push(link_seg(page, "its re-run", target, Role::Link));
+        subline.push(link_seg(page, "its re-run", target, Role::Link));
     }
     if let Some(d) = took(
         job.started_at.as_ref(),
@@ -507,18 +488,15 @@ pub fn job(
         job.outcome,
         now,
     ) {
-        meta.push(Seg::new(format!(" · {d}"), Role::Meta));
+        subline.push(meta(format!(" · {d}")));
     }
     if job.outcome != CheckOutcome::Pending && job.run.outcome == CheckOutcome::Pending {
-        meta.push(Seg::new(" · its run is still going", Role::Meta));
+        subline.push(meta(" · its run is still going"));
     }
-    page.wrapped(meta, 0, Frame::None);
+    page.wrapped(subline, 0, Frame::None);
     page.blank();
     if !job.annotations.is_empty() {
-        let title = vec![Seg::new(
-            format!("Annotations  {}", count_of(&job.annotations)),
-            Role::Strong,
-        )];
+        let title = counted("Annotations", &job.annotations);
         page.box_top(title, Vec::new());
         annotation_rows(page, &job.annotations, None, 0);
         page.box_bottom();
@@ -535,14 +513,8 @@ pub fn job(
         Ok(log) if !log.running => Some(step_lines(job, &log.cut, &log.text)),
         _ => None,
     };
-    let title = vec![Seg::new(
-        format!("Steps  {}", job.steps.len()),
-        Role::Strong,
-    )];
-    let right = vec![Seg::new(
-        format!("{} searches the log", at.keys.filter),
-        Role::Meta,
-    )];
+    let title = vec![strong(format!("Steps  {}", job.steps.len()))];
+    let right = vec![meta(format!("{} searches the log", at.keys.filter))];
     page.box_top(title, right);
     // GitHub drops an old job's steps; its log may be gone too.
     if job.steps.is_empty() {
@@ -611,7 +583,7 @@ pub fn job(
                 step.outcome,
                 now,
             )
-            .map_or_else(Vec::new, |t| vec![Seg::new(t, Role::Meta)]);
+            .map_or_else(Vec::new, |t| vec![meta(t)]);
             let segs = vec![
                 Seg::new(format!("{mark} "), role),
                 Seg::linked(step.name.clone(), Role::Strong, link),
@@ -645,7 +617,7 @@ pub fn job(
                 Err(why) => why.clone(),
                 Ok(_) => RUNNING_LOG.to_owned(),
             };
-            body(page, vec![Seg::new(text, Role::Meta)]);
+            body(page, vec![meta(text)]);
             continue;
         }
         // Where the page opens: the first search match; else the line a
@@ -673,7 +645,7 @@ pub fn job(
             page.jump.get_or_insert(page.lines.len());
             let text =
                 format!("Line {l} is in the part of the log too long to load: open it on GitHub.");
-            body(page, vec![Seg::new(text, Role::Meta)]);
+            body(page, vec![meta(text)]);
         }
         if cut > 0 {
             let lines = format!("{cut} earlier {}", noun(cut as u64, "line"));
@@ -682,7 +654,7 @@ pub fn job(
             } else {
                 format!("… {lines} weren't loaded, so aren't searched (they're on GitHub)")
             };
-            body(page, vec![Seg::new(text, Role::Meta)]);
+            body(page, vec![meta(text)]);
         }
         let width = shown.last().map_or(1, |(i, _)| (i + 1).to_string().len());
         // Each line is a row, as a file's are: `y` copies its link.
@@ -793,8 +765,8 @@ pub(super) fn run_list(
                     .updated_at
                     .as_ref()
                     .filter(|_| run.outcome != CheckOutcome::Pending);
-                let right = took(start, end, run.outcome, now)
-                    .map_or_else(Vec::new, |t| vec![Seg::new(t, Role::Meta)]);
+                let right =
+                    took(start, end, run.outcome, now).map_or_else(Vec::new, |t| vec![meta(t)]);
                 page.box_line(
                     vec![
                         Seg::new(format!("{mark} "), role),
@@ -803,17 +775,17 @@ pub(super) fn run_list(
                     right,
                     0,
                 );
-                let mut meta = format!("{} #{} · {}", run.workflow, run.number, run.event);
+                let mut subline = format!("{} #{} · {}", run.workflow, run.number, run.event);
                 if let Some(b) = &run.branch {
-                    meta.push_str(&format!(" · {b}"));
+                    subline.push_str(&format!(" · {b}"));
                 }
                 if let Some(a) = &run.actor {
-                    meta.push_str(&format!(" · {a}"));
+                    subline.push_str(&format!(" · {a}"));
                 }
                 if let Some(at) = &run.created_at {
-                    meta.push_str(&format!(" · {}", time::ago_iso(at, now)));
+                    subline.push_str(&format!(" · {}", time::ago_iso(at, now)));
                 }
-                body(page, vec![Seg::new(meta, Role::Meta)]);
+                body(page, vec![meta(subline)]);
             },
         );
     });
@@ -845,19 +817,12 @@ pub fn dispatch_form(page: &mut Page, v: &DispatchView<'_>) {
         0,
         Frame::None,
     );
-    page.wrapped(
-        vec![Seg::new(v.path.to_owned(), Role::Code)],
-        0,
-        Frame::None,
-    );
+    say(page, v.path.to_owned(), Role::Code);
     page.blank();
-    page.box_top(
-        vec![Seg::new("Use workflow from", Role::Strong)],
-        Vec::new(),
-    );
+    page.box_top(vec![strong("Use workflow from")], Vec::new());
     item(page, Link::Form(Row::Ref), |page, link| {
         let segs = vec![
-            Seg::new("Branch  ", Role::Meta),
+            meta("Branch  "),
             Seg::linked(format!("{} ▾", v.git_ref), Role::Code, link),
         ];
         page.box_line(segs, Vec::new(), 0);
@@ -867,13 +832,13 @@ pub fn dispatch_form(page: &mut Page, v: &DispatchView<'_>) {
     let inputs = match &v.inputs {
         Ok(inputs) => *inputs,
         Err(why) => {
-            page.wrapped(vec![Seg::new(why.clone(), Role::Meta)], 0, Frame::None);
+            say(page, why.clone(), Role::Meta);
             return;
         }
     };
     if !inputs.is_empty() {
-        let title = vec![Seg::new(format!("Inputs  {}", inputs.len()), Role::Strong)];
-        let right = vec![Seg::new("↵ sets one", Role::Meta)];
+        let title = vec![strong(format!("Inputs  {}", inputs.len()))];
+        let right = vec![meta("↵ sets one")];
         page.box_top(title, right);
         for (n, input) in inputs.iter().enumerate() {
             if n > 0 {
@@ -906,7 +871,7 @@ pub fn dispatch_form(page: &mut Page, v: &DispatchView<'_>) {
                     };
                     page.box_line(segs, vec![Seg::new(shown, Role::Code)], 0);
                     if !input.description.is_empty() {
-                        let text = Seg::new(input.description.clone(), Role::Meta);
+                        let text = meta(input.description.clone());
                         page.box_line(vec![text], Vec::new(), 2);
                     }
                 },
@@ -916,11 +881,7 @@ pub fn dispatch_form(page: &mut Page, v: &DispatchView<'_>) {
         page.blank();
     }
     if let Some(error) = v.error {
-        page.wrapped(
-            vec![Seg::new(error.to_owned(), Role::Error)],
-            0,
-            Frame::None,
-        );
+        say(page, error.to_owned(), Role::Error);
     }
     item(page, Link::Form(Row::Save), |page, link| {
         let label = if v.sending {
@@ -930,10 +891,7 @@ pub fn dispatch_form(page: &mut Page, v: &DispatchView<'_>) {
         };
         let segs = vec![
             Seg::linked(label, Role::Link, link),
-            Seg::new(
-                format!("   ↵ or {} runs it on {}", v.run_key, v.git_ref),
-                Role::Meta,
-            ),
+            meta(format!("   ↵ or {} runs it on {}", v.run_key, v.git_ref)),
         ];
         page.line(segs);
     });

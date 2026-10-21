@@ -30,14 +30,14 @@ pub fn projects(
             if !p.public {
                 segs.extend([space(), chip("Private", Bg::SecondaryContainer)]);
             }
-            let right = vec![Seg::new(format!("#{}", p.number), Role::Meta)];
+            let right = vec![meta(format!("#{}", p.number))];
             page.box_line(segs, right, 0);
-            let mut meta = plural(p.items, "item");
-            meta.push_str(&format!(" · updated {}", time::ago_iso(&p.updated_at, now)));
+            let mut subline = plural(p.items, "item");
+            subline.push_str(&format!(" · updated {}", time::ago_iso(&p.updated_at, now)));
             if !p.description.is_empty() {
-                meta = format!("{} · {meta}", p.description);
+                subline = format!("{} · {subline}", p.description);
             }
-            body(page, vec![Seg::new(meta, Role::Meta)]);
+            body(page, vec![meta(subline)]);
         });
     });
 }
@@ -72,14 +72,14 @@ pub fn project_view(
         (Layout::Board, Some(field)) => board(page, &at, field, cx),
         (Layout::Board, None) => {
             let note = "This board has no single-select or iteration field for its columns: it shows as a table.";
-            page.wrapped(vec![Seg::new(note, Role::Meta)], 0, Frame::None);
+            say(page, note, Role::Meta);
             table(page, &at, shown, cx);
         }
         (Layout::Roadmap, _) => match p.roadmap_dates() {
             Some(dates) => roadmap(page, &at, shown, dates, cx),
             None => {
                 let note = "This roadmap has no date or iteration field to place its items by: it shows as a table.";
-                page.wrapped(vec![Seg::new(note, Role::Meta)], 0, Frame::None);
+                say(page, note, Role::Meta);
                 table(page, &at, shown, cx);
             }
         },
@@ -108,11 +108,7 @@ fn heading(page: &mut Page, p: &Project) {
     }
     page.wrapped(title, 0, Frame::None);
     if !p.description.is_empty() {
-        page.wrapped(
-            vec![Seg::new(p.description.clone(), Role::Body)],
-            0,
-            Frame::None,
-        );
+        say(page, p.description.clone(), Role::Body);
     }
 }
 
@@ -157,10 +153,10 @@ fn about(p: &Project, view: &ProjectView, column: Option<&ProjectField>) -> Vec<
             p.items.items.len()
         ));
     }
-    let mut segs = vec![Seg::new(said.join(" · "), Role::Meta)];
+    let mut segs = vec![meta(said.join(" · "))];
     if !view.filter.is_empty() {
         segs.extend([
-            Seg::new(" · filtered by ", Role::Meta),
+            meta(" · filtered by "),
             Seg::new(view.filter.clone(), Role::Code),
         ]);
     }
@@ -184,11 +180,7 @@ fn board(page: &mut Page, at: &Spot<'_>, field: &ProjectField, cx: PageCtx<'_>) 
     for lane in &lanes {
         page.blank();
         let count = plural(lane.items.len() as u64, "item");
-        let title = vec![
-            Seg::new("▾ ", Role::Meta),
-            group_chip(lane),
-            Seg::new(format!("  {count}"), Role::Meta),
-        ];
+        let title = vec![meta("▾ "), group_chip(lane), meta(format!("  {count}"))];
         page.wrapped(title, 0, Frame::None);
         columns(page, at, field, &lane.items, &shown, cx);
     }
@@ -236,19 +228,14 @@ fn column(
 ) {
     let title = vec![
         group_chip(column),
-        Seg::new(format!("  {}", column.items.len()), Role::Meta),
+        meta(format!("  {}", column.items.len())),
     ];
     // The description only where it fits beside the title and count,
     // which matter more.
     let room = usize::from(page.room(Frame::Top, 0));
     let taken = title.iter().map(|s| width(s.text())).sum::<usize>() + 6;
     let about = option_description(field, column).filter(|d| taken + width(d) <= room);
-    page.box_top(
-        title,
-        about
-            .map(|d| vec![Seg::new(d, Role::Meta)])
-            .unwrap_or_default(),
-    );
+    page.box_top(title, about.map(|d| vec![meta(d)]).unwrap_or_default());
     if column.items.is_empty() {
         empty_row(page, "No items");
     }
@@ -267,9 +254,9 @@ fn archived(page: &mut Page, at: &Spot<'_>, cx: PageCtx<'_>) {
     if a.items.is_empty() {
         return;
     }
-    let title = vec![Seg::new(format!("Archived  {}", a.total), Role::Strong)];
+    let title = vec![strong(format!("Archived  {}", a.total))];
     let hint = format!("{} restores one", cx.keys.archive);
-    page.box_top(title, vec![Seg::new(hint, Role::Meta)]);
+    page.box_top(title, vec![meta(hint)]);
     for it in &a.items {
         let (icon, role) = item_icon(it, cx.icons);
         let place = match &it.content {
@@ -277,7 +264,7 @@ fn archived(page: &mut Page, at: &Spot<'_>, cx: PageCtx<'_>) {
             ItemContent::Draft(_) => "Draft".to_owned(),
             ItemContent::Redacted => String::new(),
         };
-        let right = vec![Seg::new(place, Role::Meta)];
+        let right = vec![meta(place)];
         match item_link(at.project, at.view, it) {
             Some(target) => item(page, target, |page, link| {
                 let segs = vec![
@@ -289,7 +276,7 @@ fn archived(page: &mut Page, at: &Spot<'_>, cx: PageCtx<'_>) {
             None => {
                 let segs = vec![
                     Seg::new(format!("{icon} "), role.clone()),
-                    Seg::new(it.title().to_owned(), Role::Meta),
+                    meta(it.title().to_owned()),
                 ];
                 page.box_line(segs, right, 0);
             }
@@ -301,7 +288,7 @@ fn archived(page: &mut Page, at: &Spot<'_>, cx: PageCtx<'_>) {
             "more archived item",
             "more archived items",
         );
-        page.box_line(vec![Seg::new(more, Role::Meta)], Vec::new(), 0);
+        page.box_line(vec![meta(more)], Vec::new(), 0);
     }
     page.box_bottom();
 }
@@ -368,33 +355,33 @@ fn card(
     cx: PageCtx<'_>,
 ) {
     let (icon, role) = item_icon(it, cx.icons);
-    let mut meta = Vec::new();
+    let mut subline = Vec::new();
     match &it.content {
         ItemContent::Issue(l, _) | ItemContent::Pr(l, _) => {
-            meta.push(Seg::new(format!("{}#{}", l.repo, l.number), Role::Meta));
+            subline.push(meta(format!("{}#{}", l.repo, l.number)));
         }
-        ItemContent::Draft(_) => meta.push(Seg::new("Draft", Role::Meta)),
+        ItemContent::Draft(_) => subline.push(meta("Draft")),
         ItemContent::Redacted => {}
     }
     for field in fields {
         let value = value_segs(it, field);
         if !value.is_empty() {
-            if !meta.is_empty() {
-                meta.push(Seg::new(" · ", Role::Meta));
+            if !subline.is_empty() {
+                subline.push(meta(" · "));
             }
-            meta.extend(value);
+            subline.extend(value);
         }
     }
     let Some(link) = item_link(at.project, at.view, it) else {
-        let segs = vec![Seg::new(it.title().to_owned(), Role::Meta)];
+        let segs = vec![meta(it.title().to_owned())];
         hanging(page, Seg::new(format!("{icon} "), role), segs, Frame::Body);
         return;
     };
     item(page, link, |page, link| {
         let segs = vec![Seg::linked(it.title().to_owned(), Role::Strong, link)];
         hanging(page, Seg::new(format!("{icon} "), role), segs, Frame::Body);
-        if !meta.is_empty() && !page.compact {
-            page.wrapped(meta, 2, Frame::Body);
+        if !subline.is_empty() && !page.compact {
+            page.wrapped(subline, 2, Frame::Body);
         }
     });
 }
@@ -406,7 +393,7 @@ fn value_segs(it: &ProjectItem, field: &ProjectField) -> Vec<Seg> {
         ItemContent::Issue(l, _) | ItemContent::Pr(l, _) => Some(l),
         _ => None,
     };
-    let text = |s: String| vec![Seg::new(s, Role::Meta)];
+    let text = |s: String| vec![meta(s)];
     match &field.kind {
         FieldKind::Title | FieldKind::Other => Vec::new(),
         FieldKind::Assignees => {
@@ -524,32 +511,23 @@ fn table(page: &mut Page, at: &Spot<'_>, view: &ProjectView, cx: PageCtx<'_>) {
     let one = groups.len() == 1 && view.group.is_none();
     for group in &groups {
         let title = if one {
-            vec![Seg::new(
-                format!("Items  {}", group.items.len()),
-                Role::Strong,
-            )]
+            vec![strong(format!("Items  {}", group.items.len()))]
         } else {
-            vec![
-                group_chip(group),
-                Seg::new(format!("  {}", group.items.len()), Role::Meta),
-            ]
+            vec![group_chip(group), meta(format!("  {}", group.items.len()))]
         };
         let right = if hidden > 0 {
-            vec![Seg::new(
-                format!(
-                    "{} more {} past the edge",
-                    hidden,
-                    noun(hidden as u64, "field")
-                ),
-                Role::Meta,
-            )]
+            vec![meta(format!(
+                "{} more {} past the edge",
+                hidden,
+                noun(hidden as u64, "field")
+            ))]
         } else {
             Vec::new()
         };
         page.box_top(title, right);
-        let mut header = vec![Seg::new(pad("Title", title_width + 2), Role::Meta)];
+        let mut header = vec![meta(pad("Title", title_width + 2))];
         for (field, w) in &columns {
-            header.push(Seg::new(pad(&truncate(&field.name, *w), w + 2), Role::Meta));
+            header.push(meta(pad(&truncate(&field.name, *w), w + 2)));
         }
         page.box_line(header, Vec::new(), 0);
         page.box_rule();
@@ -620,7 +598,7 @@ fn roadmap(page: &mut Page, at: &Spot<'_>, view: &ProjectView, dates: Dates<'_>,
     let note = format!(
         "On a timeline by {by} ({scale}); GitHub's API doesn't say which fields the view uses, so these are its first date fields."
     );
-    page.wrapped(vec![Seg::new(note, Role::Meta)], 0, Frame::None);
+    say(page, note, Role::Meta);
     let groups = match view.group.as_ref().and_then(|id| at.p.field(id)) {
         Some(field) => grouped(field, &items),
         None => vec![Group {
@@ -633,19 +611,13 @@ fn roadmap(page: &mut Page, at: &Spot<'_>, view: &ProjectView, dates: Dates<'_>,
     let status = at.p.fields.iter().find(|f| f.name == "Status");
     for group in &groups {
         let title = if view.group.is_none() {
-            vec![Seg::new(
-                format!("Items  {}", group.items.len()),
-                Role::Strong,
-            )]
+            vec![strong(format!("Items  {}", group.items.len()))]
         } else {
-            vec![
-                group_chip(group),
-                Seg::new(format!("  {}", group.items.len()), Role::Meta),
-            ]
+            vec![group_chip(group), meta(format!("  {}", group.items.len()))]
         };
         page.box_top(title, Vec::new());
-        let mut header = vec![Seg::new(" ".repeat(title_width + 2), Role::Meta)];
-        header.push(Seg::new(line.months(), Role::Meta));
+        let mut header = vec![meta(" ".repeat(title_width + 2))];
+        header.push(meta(line.months()));
         page.box_line(header, Vec::new(), 0);
         page.box_rule();
         if group.items.is_empty() {
@@ -728,7 +700,7 @@ impl Timeline {
     /// column marked where it's free.
     fn bar(&self, span: Option<(i64, i64)>, color: Option<&str>) -> Vec<Seg> {
         let Some((start, end)) = span else {
-            return vec![Seg::new("no dates", Role::Meta)];
+            return vec![meta("no dates")];
         };
         let (Some(a), Some(b)) = (self.column(start), self.column(end)) else {
             return Vec::new();
@@ -738,14 +710,14 @@ impl Timeline {
             let text: String = (from..to)
                 .map(|c| if Some(c) == today { '┊' } else { ' ' })
                 .collect();
-            Seg::new(text, Role::Meta)
+            meta(text)
         };
         let mut segs = vec![gap(0, a)];
         let said = dates(start, end);
         let len = width(&said);
         let mut end_col = b + 1;
         if a == b && start == end {
-            segs.push(Seg::new("◆", Role::Strong));
+            segs.push(strong("◆"));
         } else if len + 2 <= b - a + 1 {
             let text = format!(" {}", pad(&said, b - a));
             segs.push(Seg::new(text, Role::Label(hex(color).to_owned())));
@@ -759,7 +731,7 @@ impl Timeline {
         // The dates after the bar, where they fit.
         if b + 2 + len <= self.width {
             segs.push(gap(b + 1, b + 2));
-            segs.push(Seg::new(said, Role::Meta));
+            segs.push(meta(said));
             end_col = b + 2 + len;
         }
         segs.push(gap(end_col, self.width));
@@ -824,7 +796,7 @@ fn roadmap_row(
         Some(target) => item(page, target, |page, link| {
             line(page, Seg::linked(title.clone(), Role::Strong, link));
         }),
-        None => line(page, Seg::new(title.clone(), Role::Meta)),
+        None => line(page, meta(title.clone())),
     }
 }
 
@@ -872,7 +844,7 @@ fn row(
         Some(target) => item(page, target, |page, link| {
             line(page, Seg::linked(title.clone(), Role::Strong, link));
         }),
-        None => line(page, Seg::new(title.clone(), Role::Meta)),
+        None => line(page, meta(title.clone())),
     }
 }
 
@@ -885,7 +857,7 @@ fn more(page: &mut Page, items: &Results<ProjectItem>) {
         Rest::OnGitHub(n) | Rest::At(n, _) => {
             page.blank();
             let text = left_out_text(n, "more item", "more items");
-            return page.line(vec![Seg::new(text, Role::Meta)]);
+            return page.line(vec![meta(text)]);
         }
         Rest::NextPage { total } => {
             let of = total.map_or_else(
@@ -915,14 +887,11 @@ pub fn project_item(
     let Some(it) = p.item(number) else {
         let link = link_seg(page, p.title.clone(), back, Role::Link);
         let why = "This item isn't among those loaded from ";
-        page.wrapped(vec![Seg::new(why, Role::Meta), link], 0, Frame::None);
-        page.wrapped(
-            vec![Seg::new(
-                "It may be further down the view, past Load more, or no longer in it.",
-                Role::Meta,
-            )],
-            0,
-            Frame::None,
+        page.wrapped(vec![meta(why), link], 0, Frame::None);
+        say(
+            page,
+            "It may be further down the view, past Load more, or no longer in it.",
+            Role::Meta,
         );
         return;
     };
@@ -940,10 +909,10 @@ pub fn project_item(
         title.extend([space(), chip("Archived", Bg::TertiaryContainer)]);
     }
     hanging(page, Seg::new(format!("{icon} "), role), title, Frame::None);
-    let mut place = vec![Seg::new("In ", Role::Meta)];
+    let mut place = vec![meta("In ")];
     place.push(link_seg(page, p.title.clone(), back, Role::Link));
     if let ItemContent::Issue(l, _) | ItemContent::Pr(l, _) = &it.content {
-        place.push(Seg::new(" · ", Role::Meta));
+        place.push(meta(" · "));
         let name = format!("{}#{}", l.repo, l.number);
         place.push(link_seg(page, name, l.url.clone(), Role::Link));
     }
@@ -959,12 +928,12 @@ pub fn project_item(
         .map(|(f, _)| width(&f.name))
         .max()
         .unwrap_or(0);
-    page.box_top(vec![Seg::new("Fields", Role::Strong)], Vec::new());
+    page.box_top(vec![strong("Fields")], Vec::new());
     if fields.is_empty() {
         empty_row(page, "No fields set.");
     }
     for (field, value) in fields {
-        let mut segs = vec![Seg::new(pad(&field.name, name_width + 2), Role::Meta)];
+        let mut segs = vec![meta(pad(&field.name, name_width + 2))];
         // The pane names a field once: its value alone.
         segs.extend(match &field.kind {
             FieldKind::Text | FieldKind::Number | FieldKind::Date | FieldKind::Iteration(_) => {
@@ -978,7 +947,7 @@ pub fn project_item(
     if let ItemContent::Draft(d) = &it.content {
         page.blank();
         if d.body.trim().is_empty() {
-            page.line(vec![Seg::new("No description provided.", Role::Meta)]);
+            page.line(vec![meta("No description provided.")]);
         } else {
             markdown::render(page, &d.body, None, Frame::None);
         }

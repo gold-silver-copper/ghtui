@@ -64,10 +64,7 @@ impl Conversation<'_> {
         let who = login_seg(page, author, Role::Strong);
         let ago = time::ago_iso(when, self.now);
         let right = Vec::from_iter(chip);
-        page.box_top(
-            vec![who, Seg::new(format!(" {verb} {ago}"), Role::Meta)],
-            right,
-        );
+        page.box_top(vec![who, meta(format!(" {verb} {ago}"))], right);
         if body.trim().is_empty() {
             empty_row(page, "No description provided.");
         } else {
@@ -125,7 +122,7 @@ impl Conversation<'_> {
             item(page, fold, |page, link| {
                 let segs = vec![
                     Seg::linked(format!("▾ {hidden}"), Role::Link, link),
-                    Seg::new(" · ↵ folds it", Role::Meta),
+                    meta(" · ↵ folds it"),
                 ];
                 page.add(Frame::None, 2, segs, Vec::new());
             });
@@ -135,13 +132,10 @@ impl Conversation<'_> {
         item(page, fold, |page, link| {
             let who = login_seg(page, &c.author, Role::Strong);
             let ago = time::ago_iso(&c.created_at, self.now);
-            page.box_top(
-                vec![who, Seg::new(format!(" {verb} {ago}"), Role::Meta)],
-                Vec::new(),
-            );
+            page.box_top(vec![who, meta(format!(" {verb} {ago}"))], Vec::new());
             let segs = vec![
                 Seg::linked(format!("▸ {hidden}"), Role::Link, link),
-                Seg::new(" · ↵ shows it", Role::Meta),
+                meta(" · ↵ shows it"),
             ];
             body(page, segs);
             page.box_bottom();
@@ -177,7 +171,7 @@ pub(super) fn reaction_chips(page: &mut Page, reactions: &[Reaction]) {
 
 /// The line between timeline entries.
 pub(super) fn connector(page: &mut Page) {
-    page.add(Frame::None, 3, vec![Seg::new("│", Role::Meta)], Vec::new());
+    page.add(Frame::None, 3, vec![meta("│")], Vec::new());
 }
 
 /// The comment box at the end of a conversation.
@@ -207,14 +201,14 @@ pub(super) fn people(
 ) {
     aside_heading(page, heading);
     if logins.is_empty() && more.is_none() {
-        page.wrapped(vec![Seg::new(none, Role::Meta)], 0, Frame::None);
+        say(page, none, Role::Meta);
     }
     for login in logins {
         let login = login_seg(page, login, Role::Link);
         page.wrapped(vec![login], 0, Frame::None);
     }
     if let Some(more) = more {
-        page.wrapped(vec![Seg::new(more, Role::Meta)], 0, Frame::None);
+        say(page, more, Role::Meta);
     }
 }
 
@@ -233,14 +227,14 @@ pub(super) fn milestone_aside(page: &mut Page, repo: &RepoId, m: Option<&Milesto
             let title = link_seg(page, m.title.clone(), target, Role::Link);
             page.wrapped(vec![title], 0, Frame::None);
         }
-        None => page.line(vec![Seg::new("No milestone", Role::Meta)]),
+        None => page.line(vec![meta("No milestone")]),
     }
 }
 
 pub(super) fn label_list(page: &mut Page, l: &Capped<Label>) {
     aside_heading(page, "Labels");
     if l.is_empty() {
-        page.line(vec![Seg::new("None yet", Role::Meta)]);
+        page.line(vec![meta("None yet")]);
     } else {
         let mut segs = Vec::new();
         labels(&mut segs, l);
@@ -276,7 +270,7 @@ pub fn issue(
     page.wrapped(
         vec![
             Seg::new(d.title.clone(), Role::Title),
-            Seg::new(format!("  #{}", d.number), Role::Meta),
+            meta(format!("  #{}", d.number)),
         ],
         0,
         Frame::None,
@@ -286,14 +280,11 @@ pub fn issue(
         state_chip(Status::Issue(d.state), icons),
         Seg::new("  ", Role::Body),
         author,
-        Seg::new(
-            format!(
-                " opened this issue {} · {}",
-                time::ago_iso(&d.created_at, now),
-                plural(d.comment_count, "comment")
-            ),
-            Role::Meta,
-        ),
+        meta(format!(
+            " opened this issue {} · {}",
+            time::ago_iso(&d.created_at, now),
+            plural(d.comment_count, "comment")
+        )),
     ];
     if d.pinned {
         segs.push(Seg::new("  ", Role::Body));
@@ -307,7 +298,7 @@ pub fn issue(
         labels(&mut segs, &d.labels);
         if let Some(m) = &d.milestone {
             let target = format!("{}/milestone/{}", url::repo(&d.repo), m.number);
-            segs.push(Seg::new("  ", Role::Meta));
+            segs.push(meta("  "));
             segs.push(link_seg(page, format!("◷ {}", m.title), target, Role::Link));
         }
     }
@@ -316,10 +307,10 @@ pub fn issue(
         page.rule(0, Frame::None);
     }
     if !aside && !d.assignees.is_empty() {
-        let mut segs = vec![Seg::new("Assignees: ", Role::Meta)];
+        let mut segs = vec![meta("Assignees: ")];
         for (i, a) in d.assignees.iter().enumerate() {
             if i > 0 {
-                segs.push(Seg::new(", ", Role::Meta));
+                segs.push(meta(", "));
             }
             segs.push(login_seg(page, a, Role::Link));
         }
@@ -379,7 +370,7 @@ pub fn discussions(
             if all { Role::Strong } else { Role::Link },
         ));
         for c in &l.categories {
-            segs.push(Seg::new(" · ", Role::Meta));
+            segs.push(meta(" · "));
             let target = format!("{base}/categories/{}", c.slug);
             let role = if category == Some(c.slug.as_str()) {
                 Role::Strong
@@ -393,10 +384,7 @@ pub fn discussions(
         page.blank();
     }
     let r = &l.results;
-    let title = vec![Seg::new(
-        format!("Discussions  {}", count_of(r)),
-        Role::Strong,
-    )];
+    let title = counted("Discussions", r);
     list_box(
         page,
         title,
@@ -411,7 +399,7 @@ pub fn discussions(
                     segs.push(chip("✓ Answered", Bg::SuccessContainer));
                 }
                 body(page, segs);
-                let meta = format!(
+                let subline = format!(
                     "#{} · {} · {} · {} · ▲ {} · updated {}",
                     d.number,
                     d.category,
@@ -420,7 +408,7 @@ pub fn discussions(
                     d.upvotes,
                     time::ago_iso(&d.updated_at, now)
                 );
-                body(page, vec![Seg::new(meta, Role::Meta)]);
+                body(page, vec![meta(subline)]);
             });
         },
     );
@@ -440,7 +428,7 @@ pub fn discussion(
     page.wrapped(
         vec![
             Seg::new(d.title.clone(), Role::Title),
-            Seg::new(format!("  #{}", d.number), Role::Meta),
+            meta(format!("  #{}", d.number)),
         ],
         0,
         Frame::None,
@@ -466,14 +454,11 @@ pub fn discussion(
         segs.push(space());
         segs.push(chip(locked_said(locked), Bg::TertiaryContainer));
     }
-    segs.push(Seg::new(
-        format!(
-            "  ▲ {} · {}",
-            d.upvotes,
-            plural(d.comments.total(), "comment")
-        ),
-        Role::Meta,
-    ));
+    segs.push(meta(format!(
+        "  ▲ {} · {}",
+        d.upvotes,
+        plural(d.comments.total(), "comment")
+    )));
     page.wrapped(segs, 0, Frame::None);
     page.rule(0, Frame::None);
     let talk = Conversation {
@@ -517,10 +502,10 @@ pub fn discussion(
         let mut segs = vec![Seg::new("✓ ", Role::Success)];
         match &d.answer_by {
             Some(by) => {
-                segs.push(Seg::new("Answer selected by ", Role::Meta));
+                segs.push(meta("Answer selected by "));
                 segs.push(login_seg(page, by, Role::Strong));
             }
-            None => segs.push(Seg::new("Answer selected", Role::Meta)),
+            None => segs.push(meta("Answer selected")),
         }
         page.add(Frame::None, 2, segs, Vec::new());
         comment(page, answer, false);

@@ -11,10 +11,7 @@ fn list_url(login: &str, list: &StarList) -> String {
 
 /// What a list is: its count, and whether it's private.
 fn about(list: &StarList) -> Vec<Seg> {
-    let mut segs = vec![Seg::new(
-        format!("  {}", plural(list.count, "repository")),
-        Role::Meta,
-    )];
+    let mut segs = vec![meta(format!("  {}", plural(list.count, "repository")))];
     if list.private {
         segs.push(space());
         segs.push(chip("Private", Bg::SecondaryContainer));
@@ -26,7 +23,7 @@ fn about(list: &StarList) -> Vec<Seg> {
 pub fn star_lists(page: &mut Page, login: &str, lists: Fetched<'_, Capped<StarList>>) {
     // Nothing while they load: most people have none.
     let failed = |page: &mut Page, why: &str| {
-        empty_box(page, Seg::new("Lists", Role::Strong), why);
+        empty_box(page, strong("Lists"), why);
         page.blank();
     };
     let Some(lists) = lists.show_with(page, "the lists", |_| {}, failed) else {
@@ -35,17 +32,14 @@ pub fn star_lists(page: &mut Page, login: &str, lists: Fetched<'_, Capped<StarLi
     if lists.is_empty() {
         return;
     }
-    let title = vec![Seg::new(
-        format!("Lists  {}", count_of(lists)),
-        Role::Strong,
-    )];
+    let title = counted("Lists", lists);
     list_box(page, title, Vec::new(), lists, "", |page, list| {
         item(page, list_url(login, list), |page, link| {
             let mut segs = vec![Seg::linked(list.name.clone(), Role::Link, link)];
             segs.extend(about(list));
             page.box_line(segs, Vec::new(), 0);
             if let Some(d) = &list.description {
-                page.wrapped(vec![Seg::new(d.clone(), Role::Meta)], 2, Frame::Body);
+                page.wrapped(vec![meta(d.clone())], 2, Frame::Body);
             }
         });
     });
@@ -58,19 +52,16 @@ pub fn star_list(page: &mut Page, login: &str, l: &ListPage, now: u64) {
     title.extend(about(&l.list));
     page.line(title);
     if let Some(d) = &l.list.description {
-        page.wrapped(vec![Seg::new(d.clone(), Role::Body)], 0, Frame::None);
+        say(page, d.clone(), Role::Body);
     }
     let by = vec![
-        Seg::new("A list of ", Role::Meta),
+        meta("A list of "),
         login_seg(page, login, Role::Link),
-        Seg::new("'s stars", Role::Meta),
+        meta("'s stars"),
     ];
     page.wrapped(by, 0, Frame::None);
     page.blank();
-    let title = vec![Seg::new(
-        format!("Repositories  {}", count_of(&l.repos)),
-        Role::Strong,
-    )];
+    let title = counted("Repositories", &l.repos);
     list_box(
         page,
         title,

@@ -16,7 +16,7 @@ pub fn notifications(page: &mut Page, query: &str, inbox: Fetched<'_, Inbox>, cx
             "Not filtered by {}: notifications filter by is:unread, is:read, reason: and repo:",
             words.join(", ")
         );
-        page.wrapped(vec![Seg::new(text, Role::Meta)], 0, Frame::None);
+        say(page, text, Role::Meta);
     }
     page.blank();
     let Some(inbox) = inbox.show(page, "your notifications") else {
@@ -41,7 +41,7 @@ pub fn notifications(page: &mut Page, query: &str, inbox: Fetched<'_, Inbox>, cx
     } else {
         "No notifications match this filter."
     };
-    let count = vec![Seg::new(count_of(l), Role::Meta)];
+    let count = vec![meta(count_of(l))];
     list_box(page, title, count, l, empty, |page, n| {
         item(page, n.url.clone(), |page, link| {
             let (mark, role) = if n.unread {
@@ -52,14 +52,14 @@ pub fn notifications(page: &mut Page, query: &str, inbox: Fetched<'_, Inbox>, cx
             page.box_line(
                 vec![
                     Seg::new(mark, Role::Accent),
-                    Seg::new(format!("{} ", subject_icon(&n.kind, icons)), Role::Meta),
+                    meta(format!("{} ", subject_icon(&n.kind, icons))),
                     Seg::linked(n.title.clone(), role, link),
                 ],
-                vec![Seg::new(time::ago_iso(&n.updated_at, now), Role::Meta)],
+                vec![meta(time::ago_iso(&n.updated_at, now))],
                 0,
             );
-            let meta = format!("{} · {}", n.repo, reason_label(&n.reason));
-            page.box_line(vec![Seg::new(meta, Role::Meta)], Vec::new(), 4);
+            let subline = format!("{} · {}", n.repo, reason_label(&n.reason));
+            page.box_line(vec![meta(subline)], Vec::new(), 4);
         });
     });
     // The filter applies after fetching, and the search stopped short.
@@ -70,7 +70,7 @@ pub fn notifications(page: &mut Page, query: &str, inbox: Fetched<'_, Inbox>, cx
             l.items.len()
         );
         page.blank();
-        page.wrapped(vec![Seg::new(text, Role::Meta)], 0, Frame::None);
+        say(page, text, Role::Meta);
     }
 }
 

@@ -43,7 +43,7 @@ fn settings_nav(page: &mut Page, repo: &RepoId, on: SettingsPage) {
     let mut segs = Vec::new();
     for item in SettingsPage::MENU {
         if !segs.is_empty() {
-            segs.push(Seg::new(" · ", Role::Meta));
+            segs.push(meta(" · "));
         }
         let role = if item == on.menu() {
             Role::Strong
@@ -69,13 +69,10 @@ pub fn settings_page(
 ) {
     settings_nav(page, repo, at);
     if !admin {
-        page.wrapped(
-            vec![Seg::new(
-                format!("You don't administer {repo}: GitHub shows its settings only to admins."),
-                Role::Meta,
-            )],
-            0,
-            Frame::None,
+        say(
+            page,
+            format!("You don't administer {repo}: GitHub shows its settings only to admins."),
+            Role::Meta,
         );
         page.blank();
     }
@@ -95,10 +92,7 @@ pub fn settings_page(
 /// A box's `Add` button, with its key.
 fn add_button(page: &mut Page, text: &str, keys: SettingKeys<'_>) -> Vec<Seg> {
     let link = Link::Setting(SettingLink::Add);
-    vec![
-        button(page, text, link),
-        Seg::new(format!(" {}", keys.add), Role::Meta),
-    ]
+    vec![button(page, text, link), meta(format!(" {}", keys.add))]
 }
 
 impl<T> Rows<T> for Listed<T> {
@@ -123,15 +117,12 @@ fn listed<T>(
     empty: &str,
     row: impl FnMut(&mut Page, &T),
 ) {
-    let title = vec![Seg::new(
-        format!("{name}  {}", count_of(list)),
-        Role::Strong,
-    )];
+    let title = counted(name, list);
     list_box(page, title, right, list, empty, row);
 }
 
 fn general(page: &mut Page, repo: &RepoId, g: &General, keys: SettingKeys<'_>) {
-    page.box_top(vec![Seg::new("General", Role::Strong)], Vec::new());
+    page.box_top(vec![strong("General")], Vec::new());
     let mut visibility = g.visibility.clone();
     if let Some(first) = visibility.get_mut(..1) {
         first.make_ascii_uppercase();
@@ -151,26 +142,20 @@ fn general(page: &mut Page, repo: &RepoId, g: &General, keys: SettingKeys<'_>) {
     ] {
         body(
             page,
-            vec![
-                Seg::new(format!("{name:<14}  "), Role::Meta),
-                Seg::new(value, Role::Body),
-            ],
+            vec![meta(format!("{name:<14}  ")), Seg::new(value, Role::Body)],
         );
     }
     page.box_bottom();
     page.blank();
     if !g.admin {
-        page.wrapped(
-            vec![Seg::new(
-                "You don't administer it: GitHub shows its settings only to admins.",
-                Role::Meta,
-            )],
-            0,
-            Frame::None,
+        say(
+            page,
+            "You don't administer it: GitHub shows its settings only to admins.",
+            Role::Meta,
         );
         return;
     }
-    page.box_top(vec![Seg::new("Danger zone", Role::Strong)], Vec::new());
+    page.box_top(vec![strong("Danger zone")], Vec::new());
     let (label, about) = if g.archived {
         (
             "Unarchive this repository",
@@ -185,10 +170,10 @@ fn general(page: &mut Page, repo: &RepoId, g: &General, keys: SettingKeys<'_>) {
     item(page, Link::Setting(SettingLink::Archive), |page, link| {
         page.box_line(
             vec![Seg::linked(label, Role::Strong, link)],
-            vec![Seg::new(keys.toggle.to_owned(), Role::Meta)],
+            vec![meta(keys.toggle.to_owned())],
             0,
         );
-        body(page, vec![Seg::new(about, Role::Meta)]);
+        body(page, vec![meta(about)]);
     });
     page.box_rule();
     item(
@@ -201,10 +186,7 @@ fn general(page: &mut Page, repo: &RepoId, g: &General, keys: SettingKeys<'_>) {
             );
             body(
                 page,
-                vec![Seg::new(
-                    "On github.com only: ghtui never deletes a repository",
-                    Role::Meta,
-                )],
+                vec![meta("On github.com only: ghtui never deletes a repository")],
             );
         },
     );
@@ -252,10 +234,7 @@ fn rule_meta(r: &Rule) -> String {
 }
 
 fn branches(page: &mut Page, b: &Branches, keys: SettingKeys<'_>) {
-    let title = vec![Seg::new(
-        format!("Branch protection rules  {}", count_of(&b.rules)),
-        Role::Strong,
-    )];
+    let title = counted("Branch protection rules", &b.rules);
     let right = add_button(page, "Add rule", keys);
     list_box(
         page,
@@ -276,10 +255,10 @@ fn branches(page: &mut Page, b: &Branches, keys: SettingKeys<'_>) {
                     };
                     page.box_line(
                         vec![Seg::linked(r.form.pattern.clone(), Role::Strong, link)],
-                        vec![Seg::new(applies, Role::Meta)],
+                        vec![meta(applies)],
                         0,
                     );
-                    body(page, vec![Seg::new(rule_meta(r), Role::Meta)]);
+                    body(page, vec![meta(rule_meta(r))]);
                 },
             );
         },
@@ -288,14 +267,11 @@ fn branches(page: &mut Page, b: &Branches, keys: SettingKeys<'_>) {
     let rulesets = match &b.rulesets {
         Ok(r) => r,
         Err(why) => {
-            empty_box(page, Seg::new("Rulesets", Role::Strong), &format!("{why}."));
+            empty_box(page, strong("Rulesets"), &format!("{why}."));
             return;
         }
     };
-    let title = vec![Seg::new(
-        format!("Rulesets  {}", rulesets.len()),
-        Role::Strong,
-    )];
+    let title = vec![strong(format!("Rulesets  {}", rulesets.len()))];
     let empty = "No rulesets. They're made on github.com; here they're turned on and off.";
     list_box(
         page,
@@ -318,13 +294,13 @@ fn branches(page: &mut Page, b: &Branches, keys: SettingKeys<'_>) {
                         vec![chip(r.enforcement.label(), bg)],
                         0,
                     );
-                    let mut meta = format!("{} ruleset", r.target);
+                    let mut subline = format!("{} ruleset", r.target);
                     if let Some(org) = &r.org {
-                        meta.push_str(&format!(" · from {org}"));
+                        subline.push_str(&format!(" · from {org}"));
                     } else {
-                        meta.push_str(&format!(" · {} turns it on or off", keys.toggle));
+                        subline.push_str(&format!(" · {} turns it on or off", keys.toggle));
                     }
-                    body(page, vec![Seg::new(meta, Role::Meta)]);
+                    body(page, vec![meta(subline)]);
                 },
             );
         },
@@ -373,7 +349,7 @@ fn access(page: &mut Page, a: &Access, keys: SettingKeys<'_>, now: u64) {
                 page.box_line(
                     vec![Seg::linked(format!("@{}", i.login), Role::Strong, link)],
                     vec![
-                        Seg::new(format!("{when}  "), Role::Meta),
+                        meta(format!("{when}  ")),
                         chip(i.permission.name(), Bg::SecondaryContainer),
                     ],
                     0,
@@ -382,16 +358,13 @@ fn access(page: &mut Page, a: &Access, keys: SettingKeys<'_>, now: u64) {
         },
     );
     page.blank();
-    page.wrapped(
-        vec![Seg::new(
-            format!(
-                "{} changes the selected one's role, {} removes them",
-                keys.edit, keys.delete
-            ),
-            Role::Meta,
-        )],
-        0,
-        Frame::None,
+    say(
+        page,
+        format!(
+            "{} changes the selected one's role, {} removes them",
+            keys.edit, keys.delete
+        ),
+        Role::Meta,
     );
 }
 
@@ -434,14 +407,14 @@ fn hooks(page: &mut Page, list: &Listed<Hook>, keys: SettingKeys<'_>, now: u64) 
                     vec![active_chip(h.form.active)],
                     0,
                 );
-                let meta = format!(
+                let subline = format!(
                     "{} · {} · {} · changed {}",
                     events(h),
                     h.form.content_type,
                     last_said(h),
                     time::ago_iso(&h.updated_at, now)
                 );
-                body(page, vec![Seg::new(meta, Role::Meta)]);
+                body(page, vec![meta(subline)]);
             },
         );
     });
@@ -449,11 +422,7 @@ fn hooks(page: &mut Page, list: &Listed<Hook>, keys: SettingKeys<'_>, now: u64) 
 
 fn hook(page: &mut Page, h: &HookPage, keys: SettingKeys<'_>, now: u64) {
     let hook = &h.hook;
-    page.wrapped(
-        vec![Seg::new(hook.form.url.clone(), Role::Title)],
-        0,
-        Frame::None,
-    );
+    say(page, hook.form.url.clone(), Role::Title);
     let ssl = if hook.form.verify_ssl {
         "SSL verified"
     } else {
@@ -464,33 +433,30 @@ fn hook(page: &mut Page, h: &HookPage, keys: SettingKeys<'_>, now: u64) {
     } else {
         "no secret"
     };
-    let meta = format!(
+    let subline = format!(
         "  {} · {} · {ssl} · {secret} · {}",
         events(hook),
         hook.form.content_type,
         last_said(hook)
     );
     page.wrapped(
-        vec![active_chip(hook.form.active), Seg::new(meta, Role::Meta)],
+        vec![active_chip(hook.form.active), meta(subline)],
         0,
         Frame::None,
     );
-    page.wrapped(
-        vec![Seg::new(
-            format!(
-                "{} edits it, {} turns it on or off, {} deletes it",
-                keys.edit, keys.toggle, keys.delete
-            ),
-            Role::Meta,
-        )],
-        0,
-        Frame::None,
+    say(
+        page,
+        format!(
+            "{} edits it, {} turns it on or off, {} deletes it",
+            keys.edit, keys.toggle, keys.delete
+        ),
+        Role::Meta,
     );
     page.blank();
-    let right = vec![Seg::new(
-        format!("{} redelivers the selected one", keys.redeliver),
-        Role::Meta,
-    )];
+    let right = vec![meta(format!(
+        "{} redelivers the selected one",
+        keys.redeliver
+    ))];
     let none = "Nothing delivered yet.";
     listed(
         page,
@@ -513,22 +479,19 @@ fn hook(page: &mut Page, h: &HookPage, keys: SettingKeys<'_>, now: u64) {
                         Some(action) => format!("{}.{action}", d.event),
                         None => d.event.clone(),
                     };
-                    let mut right = vec![Seg::new(format!("{} {}", d.code, d.status), Role::Meta)];
+                    let mut right = vec![meta(format!("{} {}", d.code, d.status))];
                     if d.redelivery {
-                        right.insert(0, Seg::new("redelivery · ", Role::Meta));
+                        right.insert(0, meta("redelivery · "));
                     }
                     page.box_line(
                         vec![
                             Seg::new(format!("{mark} "), role),
                             Seg::linked(event, Role::Strong, link),
-                            Seg::new(
-                                format!(
-                                    "  {} · {}",
-                                    short(&d.guid),
-                                    time::ago_iso(&d.delivered_at, now)
-                                ),
-                                Role::Meta,
-                            ),
+                            meta(format!(
+                                "  {} · {}",
+                                short(&d.guid),
+                                time::ago_iso(&d.delivered_at, now)
+                            )),
                         ],
                         right,
                         0,
@@ -580,19 +543,21 @@ fn deploy_keys(page: &mut Page, list: &Listed<DeployKey>, keys: SettingKeys<'_>,
                     vec![access],
                     0,
                 );
-                let mut meta = format!(
+                let mut subline = format!(
                     "{} · added {}",
                     key_text(k),
                     time::ago_iso(&k.created_at, now)
                 );
                 if let Some(by) = &k.added_by {
-                    meta.push_str(&format!(" by {by}"));
+                    subline.push_str(&format!(" by {by}"));
                 }
                 match &k.last_used {
-                    Some(at) => meta.push_str(&format!(" · last used {}", time::ago_iso(at, now))),
-                    None => meta.push_str(" · never used"),
+                    Some(at) => {
+                        subline.push_str(&format!(" · last used {}", time::ago_iso(at, now)))
+                    }
+                    None => subline.push_str(" · never used"),
                 }
-                body(page, vec![Seg::new(meta, Role::Meta)]);
+                body(page, vec![meta(subline)]);
             });
         },
     );

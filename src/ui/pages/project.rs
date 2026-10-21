@@ -37,16 +37,16 @@ pub fn advisories(
                 space(),
                 Seg::linked(a.summary.clone(), Role::Strong, link),
             ];
-            hanging(page, Seg::new("", Role::Meta), segs, Frame::Body);
-            let mut meta = a.ghsa.clone();
+            hanging(page, meta(""), segs, Frame::Body);
+            let mut subline = a.ghsa.clone();
             if let Some(at) = &a.published_at {
-                meta.push_str(&format!(" · published {}", time::ago_iso(at, now)));
+                subline.push_str(&format!(" · published {}", time::ago_iso(at, now)));
             }
             let packages = unique(a.packages.iter().map(|p| &p.name));
             if !packages.is_empty() {
-                meta.push_str(&format!(" · {}", packages.join(", ")));
+                subline.push_str(&format!(" · {}", packages.join(", ")));
             }
-            body(page, vec![Seg::new(meta, Role::Meta)]);
+            body(page, vec![meta(subline)]);
         });
     });
 }
@@ -54,47 +54,32 @@ pub fn advisories(
 /// A security advisory: what's affected and fixed, how severe, and its
 /// description, credits and references.
 pub fn advisory(page: &mut Page, a: &Advisory, now: u64) {
-    page.wrapped(
-        vec![Seg::new(a.summary.clone(), Role::Title)],
-        0,
-        Frame::None,
-    );
+    say(page, a.summary.clone(), Role::Title);
     let mut segs = vec![severity_chip(a.severity)];
     if a.withdrawn_at.is_some() {
         segs.push(space());
         segs.push(chip("Withdrawn", Bg::SecondaryContainer));
     }
-    let mut meta = format!("  {}", a.ghsa);
+    let mut subline = format!("  {}", a.ghsa);
     if let Some(cve) = &a.cve {
-        meta.push_str(&format!(" · {cve}"));
+        subline.push_str(&format!(" · {cve}"));
     }
     if let Some(at) = &a.published_at {
-        meta.push_str(&format!(" · published {}", time::ago_iso(at, now)));
+        subline.push_str(&format!(" · published {}", time::ago_iso(at, now)));
     }
     if let Some(at) = &a.updated_at {
-        meta.push_str(&format!(" · updated {}", time::ago_iso(at, now)));
+        subline.push_str(&format!(" · updated {}", time::ago_iso(at, now)));
     }
-    segs.push(Seg::new(meta, Role::Meta));
+    segs.push(meta(subline));
     page.wrapped(segs, 0, Frame::None);
     if let Some((score, vector)) = &a.cvss {
-        page.wrapped(
-            vec![Seg::new(format!("CVSS {score}  {vector}"), Role::Meta)],
-            0,
-            Frame::None,
-        );
+        say(page, format!("CVSS {score}  {vector}"), Role::Meta);
     }
     if !a.cwes.is_empty() {
-        page.wrapped(
-            vec![Seg::new(a.cwes.join(" · "), Role::Meta)],
-            0,
-            Frame::None,
-        );
+        say(page, a.cwes.join(" · "), Role::Meta);
     }
     page.blank();
-    let title = vec![Seg::new(
-        format!("Affected packages  {}", a.packages.len()),
-        Role::Strong,
-    )];
+    let title = vec![strong(format!("Affected packages  {}", a.packages.len()))];
     list_box(
         page,
         title,
@@ -102,8 +87,8 @@ pub fn advisory(page: &mut Page, a: &Advisory, now: u64) {
         &Whole(&a.packages),
         "None listed.",
         |page, p| {
-            let right = vec![Seg::new(p.ecosystem.clone(), Role::Meta)];
-            page.box_line(vec![Seg::new(p.name.clone(), Role::Strong)], right, 0);
+            let right = vec![meta(p.ecosystem.clone())];
+            page.box_line(vec![strong(p.name.clone())], right, 0);
             let mut facts = Vec::new();
             if let Some(v) = &p.vulnerable {
                 facts.push(format!("Affected {v}"));
@@ -112,7 +97,7 @@ pub fn advisory(page: &mut Page, a: &Advisory, now: u64) {
                 "Patched {}",
                 p.patched.as_deref().unwrap_or("in no version yet")
             ));
-            body(page, vec![Seg::new(facts.join(" · "), Role::Meta)]);
+            body(page, vec![meta(facts.join(" · "))]);
         },
     );
     if !a.description.trim().is_empty() {
@@ -121,10 +106,10 @@ pub fn advisory(page: &mut Page, a: &Advisory, now: u64) {
     }
     if !a.credits.is_empty() {
         page.blank();
-        let mut segs = vec![Seg::new("Credits  ", Role::Strong)];
+        let mut segs = vec![strong("Credits  ")];
         for (i, login) in a.credits.iter().enumerate() {
             if i > 0 {
-                segs.push(Seg::new(", ", Role::Meta));
+                segs.push(meta(", "));
             }
             segs.push(login_seg(page, login, Role::Link));
         }
@@ -161,18 +146,18 @@ pub(super) fn wiki_links(text: &str) -> String {
 pub fn wiki(page: &mut Page, repo: &RepoId, w: &WikiPage) {
     let base = LinkBase::wiki(repo);
     if let (Some(title), Some(text)) = (&w.title, &w.text) {
-        page.wrapped(vec![Seg::new(title.clone(), Role::Title)], 0, Frame::None);
+        say(page, title.clone(), Role::Title);
         page.rule(0, Frame::None);
         if w.markdown {
             markdown::render(page, &wiki_links(text), Some(&base), Frame::None);
         } else {
             for line in text.lines() {
-                page.wrapped(vec![Seg::new(line.to_owned(), Role::Body)], 0, Frame::None);
+                say(page, line.to_owned(), Role::Body);
             }
         }
         page.blank();
     }
-    let title = vec![Seg::new(format!("Pages  {}", w.pages.len()), Role::Strong)];
+    let title = vec![strong(format!("Pages  {}", w.pages.len()))];
     list_box(
         page,
         title,
@@ -228,7 +213,7 @@ pub fn deployments(
             role(environment.is_none()),
         )];
         for env in &l.environments {
-            segs.push(Seg::new(" · ", Role::Meta));
+            segs.push(meta(" · "));
             segs.push(link_seg(
                 page,
                 env.clone(),
@@ -241,10 +226,7 @@ pub fn deployments(
         page.blank();
     }
     let r = &l.results;
-    let title = vec![Seg::new(
-        format!("Deployments  {}", count_of(r)),
-        Role::Strong,
-    )];
+    let title = counted("Deployments", r);
     list_box(page, title, Vec::new(), r, "No deployments.", |page, d| {
         let target = d
             .log_url
@@ -255,15 +237,15 @@ pub fn deployments(
             let segs = vec![
                 Seg::new(format!("{mark} "), role),
                 Seg::linked(d.environment.clone(), Role::Strong, link),
-                Seg::new(format!("  {}", d.state), Role::Meta),
+                meta(format!("  {}", d.state)),
             ];
-            let right = vec![Seg::new(time::ago_iso(&d.created_at, now), Role::Meta)];
+            let right = vec![meta(time::ago_iso(&d.created_at, now))];
             page.box_line(segs, right, 0);
             let sha = crate::ui::text::short_sha(&d.oid);
-            let mut meta = vec![link_seg(page, sha, url::commit(repo, &d.oid), Role::Code)];
+            let mut subline = vec![link_seg(page, sha, url::commit(repo, &d.oid), Role::Code)];
             if let Some(branch) = &d.branch {
-                meta.push(Seg::new(" · ", Role::Meta));
-                meta.push(link_seg(
+                subline.push(meta(" · "));
+                subline.push(link_seg(
                     page,
                     branch.clone(),
                     url::tree(repo, branch, ""),
@@ -271,14 +253,14 @@ pub fn deployments(
                 ));
             }
             if let Some(who) = &d.creator {
-                meta.push(Seg::new(" · ", Role::Meta));
-                meta.push(login_seg(page, who, Role::Meta));
+                subline.push(meta(" · "));
+                subline.push(login_seg(page, who, Role::Meta));
             }
             if let Some(at) = &d.environment_url {
-                meta.push(Seg::new(" · ", Role::Meta));
-                meta.push(link_seg(page, at.clone(), at.clone(), Role::Link));
+                subline.push(meta(" · "));
+                subline.push(link_seg(page, at.clone(), at.clone(), Role::Link));
             }
-            body(page, meta);
+            body(page, subline);
         });
     });
 }
@@ -290,11 +272,11 @@ pub(super) fn progress(m: &MilestoneInfo) -> Vec<Seg> {
     let filled = usize::try_from(percent / 10).unwrap_or(0);
     vec![
         Seg::new("▰".repeat(filled), Role::Success),
-        Seg::new("▱".repeat(10 - filled), Role::Meta),
-        Seg::new(
-            format!("  {percent}% · {} open · {} closed", m.open, m.done),
-            Role::Meta,
-        ),
+        meta("▱".repeat(10 - filled)),
+        meta(format!(
+            "  {percent}% · {} open · {} closed",
+            m.open, m.done
+        )),
     ]
 }
 
@@ -332,31 +314,24 @@ pub fn milestones(
         format!("{base}?state=closed"),
         role(closed),
     );
-    page.wrapped(
-        vec![open, Seg::new(" · ", Role::Meta), shut],
-        0,
-        Frame::None,
-    );
+    page.wrapped(vec![open, meta(" · "), shut], 0, Frame::None);
     page.blank();
     let r = &l.results;
-    let title = vec![Seg::new(
-        format!("Milestones  {}", count_of(r)),
-        Role::Strong,
-    )];
+    let title = counted("Milestones", r);
     list_box(page, title, Vec::new(), r, "No milestones.", |page, m| {
         let target = format!("{}/milestone/{}", url::repo(repo), m.number);
         item(page, target, |page, link| {
-            let right = vec![Seg::new(due(m), Role::Meta)];
+            let right = vec![meta(due(m))];
             page.box_line(
                 vec![Seg::linked(m.title.clone(), Role::Strong, link)],
                 right,
                 0,
             );
             let mut segs = progress(m);
-            segs.push(Seg::new(
-                format!(" · updated {}", time::ago_iso(&m.updated_at, now)),
-                Role::Meta,
-            ));
+            segs.push(meta(format!(
+                " · updated {}",
+                time::ago_iso(&m.updated_at, now)
+            )));
             body(page, segs);
             if let Some(first) = m.description.lines().find(|l| !l.trim().is_empty()) {
                 body(page, vec![Seg::new(first.trim().to_owned(), Role::Body)]);
@@ -369,7 +344,7 @@ pub fn milestones(
 /// pull requests.
 pub fn milestone(page: &mut Page, repo: &RepoId, d: &MilestoneDetail, icons: Icons, now: u64) {
     let m = &d.info;
-    page.wrapped(vec![Seg::new(m.title.clone(), Role::Title)], 0, Frame::None);
+    say(page, m.title.clone(), Role::Title);
     let state = if m.closed {
         chip("Closed", Bg::TertiaryContainer)
     } else {
@@ -380,11 +355,7 @@ pub fn milestone(page: &mut Page, repo: &RepoId, d: &MilestoneDetail, icons: Ico
         Some(at) if m.closed => day(at),
         _ => due(m),
     };
-    page.wrapped(
-        vec![state, Seg::new(format!("  {when}"), Role::Meta)],
-        0,
-        Frame::None,
-    );
+    page.wrapped(vec![state, meta(format!("  {when}"))], 0, Frame::None);
     page.wrapped(progress(m), 0, Frame::None);
     if !m.description.trim().is_empty() {
         page.blank();
@@ -393,10 +364,7 @@ pub fn milestone(page: &mut Page, repo: &RepoId, d: &MilestoneDetail, icons: Ico
     }
     page.blank();
     let r = &d.items;
-    let title = vec![Seg::new(
-        format!("Issues and pull requests  {}", count_of(r)),
-        Role::Strong,
-    )];
+    let title = counted("Issues and pull requests", r);
     let empty = if d.unsearchable {
         "GitHub's search can't look up a title with quotes: open them on GitHub."
     } else {

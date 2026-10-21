@@ -131,10 +131,6 @@ fn event_line(page: &mut Page, (icon, role): (&str, Role), segs: Vec<Seg>) {
     }
 }
 
-fn meta(text: impl Into<String>) -> Seg {
-    Seg::new(text.into(), Role::Meta)
-}
-
 /// `#12 Title`, linked, with its state's icon.
 fn linked_segs(page: &mut Page, icons: Icons, here: &RepoId, l: &Linked) -> Vec<Seg> {
     let (icon, role) = issue_icon(icons, l.status());
@@ -318,7 +314,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
                         (" removed this from the ", " milestone")
                     };
                     segs.push(meta(verb));
-                    segs.push(Seg::new(title.clone(), Role::Strong));
+                    segs.push(strong(title.clone()));
                     segs.push(meta(to));
                 }
             }
@@ -333,13 +329,13 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
                 }
                 What::ProjectStatus { from, to } if from.is_empty() => {
                     segs.push(meta(" set its status in a project to "));
-                    segs.push(Seg::new(to.clone(), Role::Strong));
+                    segs.push(strong(to.clone()));
                 }
                 What::ProjectStatus { from, to } => {
                     segs.push(meta(" moved this in a project from "));
-                    segs.push(Seg::new(from.clone(), Role::Strong));
+                    segs.push(strong(from.clone()));
                     segs.push(meta(" to "));
-                    segs.push(Seg::new(to.clone(), Role::Strong));
+                    segs.push(strong(to.clone()));
                 }
                 _ => {}
             }
@@ -398,7 +394,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
             segs.push(meta(" changed the title "));
             segs.push(Seg::new(from.clone(), Role::Strike));
             segs.push(space());
-            segs.push(Seg::new(to.clone(), Role::Strong));
+            segs.push(strong(to.clone()));
         }
         What::ReadyForReview | What::ConvertedToDraft => {
             icon = ("◌", Role::Meta);
@@ -541,17 +537,17 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
             match (from, to) {
                 (Some(from), Some(to)) => {
                     segs.push(meta(" changed the issue type from "));
-                    segs.push(Seg::new(from.clone(), Role::Strong));
+                    segs.push(strong(from.clone()));
                     segs.push(meta(" to "));
-                    segs.push(Seg::new(to.clone(), Role::Strong));
+                    segs.push(strong(to.clone()));
                 }
                 (None, Some(to)) => {
                     segs.push(meta(" added the issue type "));
-                    segs.push(Seg::new(to.clone(), Role::Strong));
+                    segs.push(strong(to.clone()));
                 }
                 (Some(from), None) => {
                     segs.push(meta(" removed the issue type "));
-                    segs.push(Seg::new(from.clone(), Role::Strong));
+                    segs.push(strong(from.clone()));
                 }
                 (None, None) => segs.push(meta(" changed the issue type")),
             }
@@ -844,10 +840,7 @@ fn thread(page: &mut Page, place: &Place<'_>, t: &ReviewThread, marks: Marks<'_>
         if t.resolved {
             let said = super::review::first_line(&first.body, page.room(Frame::Body, 2));
             page.box_line(
-                vec![
-                    Seg::new(format!("{}: ", first.author), Role::Strong),
-                    meta(said),
-                ],
+                vec![strong(format!("{}: ", first.author)), meta(said)],
                 Vec::new(),
                 2,
             );
@@ -863,7 +856,7 @@ fn thread(page: &mut Page, place: &Place<'_>, t: &ReviewThread, marks: Marks<'_>
             }
             let verb = if n == 0 { "" } else { " replied" };
             let mut segs = vec![
-                Seg::new(c.author.clone(), Role::Strong),
+                strong(c.author.clone()),
                 meta(format!("{verb} {}", time::ago_iso(&c.created_at, now))),
             ];
             if n > 0 && marks.threads.contains(&c.id) {
@@ -925,10 +918,7 @@ fn git_lines(page: &mut Page, t: &ReviewThread, lines: &LinesAt<'_>) -> bool {
         };
         let code = crate::ui::text::truncate(&code.replace('\t', "    "), room);
         page.push(PageLine {
-            segs: vec![
-                Seg::new(format!("{n:>width$} │ "), Role::Meta),
-                Seg::new(code, Role::Code),
-            ],
+            segs: vec![meta(format!("{n:>width$} │ ")), Seg::new(code, Role::Code)],
             indent: 2,
             right: Vec::new(),
             frame: Frame::Body,
@@ -983,7 +973,7 @@ pub(super) fn reviewers_aside(
     aside_heading(page, "Reviewers");
     let latest: Vec<&Latest> = latest.iter().filter(|l| l.author != author).collect();
     if latest.is_empty() && requested.is_empty() {
-        page.wrapped(vec![meta("No reviews")], 0, Frame::None);
+        say(page, "No reviews", Role::Meta);
     }
     for l in latest {
         let ((mark, role), what) = match l.state {
@@ -1026,7 +1016,7 @@ pub(super) fn reviewers_aside(
     }
     if requested.left_out() > 0 {
         let more = format!("and {} more asked, unnamed", requested.left_out());
-        page.wrapped(vec![meta(more)], 0, Frame::None);
+        say(page, more, Role::Meta);
     }
 }
 
@@ -1042,7 +1032,7 @@ pub(super) fn linked_aside(
 ) {
     aside_heading(page, heading);
     if list.is_empty() {
-        page.wrapped(vec![meta(none)], 0, Frame::None);
+        say(page, none, Role::Meta);
     }
     for l in list {
         let segs = linked_segs(page, icons, here, l);
@@ -1050,7 +1040,7 @@ pub(super) fn linked_aside(
     }
     if list.left_out() > 0 {
         let more = left_out_text(list.left_out(), "more", "more");
-        page.wrapped(vec![meta(more)], 0, Frame::None);
+        say(page, more, Role::Meta);
     }
 }
 
@@ -1064,7 +1054,7 @@ pub(super) fn relations_aside(page: &mut Page, icons: Icons, d: &IssueDetail) {
     }
     aside_heading(page, "Development");
     if d.closed_by.is_empty() && d.branches.is_empty() {
-        page.wrapped(vec![meta("No pull requests or branches")], 0, Frame::None);
+        say(page, "No pull requests or branches", Role::Meta);
     }
     for l in &d.closed_by {
         let segs = linked_segs(page, icons, &d.repo, l);
@@ -1124,7 +1114,7 @@ pub fn commit_comments(
         0 => "No comments yet".to_owned(),
         n => format!("Comments · {n}"),
     };
-    page.line(vec![Seg::new(title, Role::Strong)]);
+    page.line(vec![strong(title)]);
     for c in comments {
         connector(page);
         let at = c.path.as_ref().map(|path| {
@@ -1176,11 +1166,11 @@ pub fn pinned_issues(page: &mut Page, repo: &RepoId, pinned: &Capped<Linked>, ic
     if pinned.is_empty() {
         return;
     }
-    page.box_top(vec![Seg::new("Pinned issues", Role::Strong)], Vec::new());
+    page.box_top(vec![strong("Pinned issues")], Vec::new());
     for l in pinned {
         item(page, l.url(), |page, _| {
             let segs = linked_segs(page, icons, repo, l);
-            hanging(page, Seg::new("⚲ ", Role::Meta), segs, Frame::Body);
+            hanging(page, meta("⚲ "), segs, Frame::Body);
         });
     }
     page.box_bottom();
@@ -1194,14 +1184,14 @@ pub(super) fn projects_aside(page: &mut Page, projects: Fetched<'_, Capped<InPro
     aside_heading(page, "Projects");
     #[expect(clippy::disallowed_methods, reason = "said in the sidebar's row")]
     match projects.text("the projects") {
-        Ok(list) if list.is_empty() => page.wrapped(vec![meta("None yet")], 0, Frame::None),
+        Ok(list) if list.is_empty() => say(page, "None yet", Role::Meta),
         Ok(list) => {
             for p in list {
                 let title = link_seg(page, p.title.clone(), p.url.clone(), Role::Link);
                 let mut segs = vec![meta("▦ "), title];
                 if let Some(status) = p.status() {
                     segs.push(meta(" · "));
-                    segs.push(Seg::new(status.to_owned(), Role::Strong));
+                    segs.push(strong(status.to_owned()));
                 }
                 page.wrapped(segs, 2, Frame::None);
                 let others: Vec<String> = (p.others())
@@ -1213,10 +1203,10 @@ pub(super) fn projects_aside(page: &mut Page, projects: Fetched<'_, Capped<InPro
             }
             if list.left_out() > 0 {
                 let more = left_out_text(list.left_out(), "more", "more");
-                page.wrapped(vec![meta(more)], 0, Frame::None);
+                say(page, more, Role::Meta);
             }
         }
-        Err(why) => page.wrapped(vec![meta(why)], 0, Frame::None),
+        Err(why) => say(page, why, Role::Meta),
     }
 }
 

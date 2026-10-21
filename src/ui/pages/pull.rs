@@ -34,33 +34,30 @@ pub(super) fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
     };
     let mut segs = vec![
         author,
-        Seg::new(wants, Role::Meta),
+        meta(wants),
         chip(&d.base_ref, Bg::PrimaryContainer),
-        Seg::new(" from ", Role::Meta),
+        meta(" from "),
         chip(head, Bg::PrimaryContainer),
     ];
     if d.head_gone {
-        segs.push(Seg::new(" · branch deleted", Role::Meta));
+        segs.push(meta(" · branch deleted"));
     }
     page.wrapped(segs, 0, Frame::None);
-    let mut meta = Vec::from(changes(d.additions, d.deletions));
-    meta.push(Seg::new(
-        format!(
-            " · opened {} · updated {}",
-            time::ago_iso(&d.created_at, now),
-            time::ago_iso(&d.updated_at, now)
-        ),
-        Role::Meta,
-    ));
+    let mut subline = Vec::from(changes(d.additions, d.deletions));
+    subline.push(meta(format!(
+        " · opened {} · updated {}",
+        time::ago_iso(&d.created_at, now),
+        time::ago_iso(&d.updated_at, now)
+    )));
     if let Some(locked) = d.locked {
-        meta.push(Seg::new("  ", Role::Meta));
-        meta.push(chip(
+        subline.push(meta("  "));
+        subline.push(chip(
             super::conversation::locked_said(locked),
             Bg::TertiaryContainer,
         ));
     }
-    labels(&mut meta, &d.labels);
-    page.wrapped(meta, 0, Frame::None);
+    labels(&mut subline, &d.labels);
+    page.wrapped(subline, 0, Frame::None);
     page.rule(0, Frame::None);
 }
 
@@ -164,7 +161,7 @@ pub(super) fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons,
         body(
             page,
             vec![
-                Seg::new(format!("{}  ", icons.external()), Role::Meta),
+                meta(format!("{}  ", icons.external())),
                 Seg::linked(review, Role::Link, link),
             ],
         );
@@ -260,10 +257,7 @@ pub fn pr_conversation(
         }
         aside_heading(side, "Size");
         let mut size = Vec::from(changes(d.additions, d.deletions));
-        size.push(Seg::new(
-            format!(" in {}", plural(d.changed_files, "file")),
-            Role::Meta,
-        ));
+        size.push(meta(format!(" in {}", plural(d.changed_files, "file"))));
         side.wrapped(size, 0, Frame::None);
     });
     pr_summary(page, pr, d, now);
@@ -290,7 +284,7 @@ pub fn pr_conversation(
     );
     let Some(a) = activity.show_or(page, "the conversation", |page| {
         connector(page);
-        page.line(vec![Seg::new("   Loading the conversation…", Role::Meta)]);
+        page.line(vec![meta("   Loading the conversation…")]);
     }) else {
         return;
     };
@@ -330,7 +324,7 @@ pub fn actions(
             "Not filtered by {}: runs filter by workflow:, branch:, is:, event: and actor:",
             words.join(", ")
         );
-        page.wrapped(vec![Seg::new(text, Role::Meta)], 0, Frame::None);
+        say(page, text, Role::Meta);
     }
     page.blank();
     let empty = if query.is_empty() {

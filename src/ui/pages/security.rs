@@ -18,7 +18,7 @@ pub fn security_nav(page: &mut Page, repo: &RepoId, on: Option<AlertKind>) {
         role(on.is_none()),
     )];
     for kind in AlertKind::ALL {
-        segs.push(Seg::new(" · ", Role::Meta));
+        segs.push(meta(" · "));
         let target = format!("{base}/{}", kind.slug());
         segs.push(link_seg(page, kind.name(), target, role(on == Some(kind))));
     }
@@ -70,25 +70,25 @@ fn file_link(page: &mut Page, repo: &RepoId, path: &str, lines: (u32, u32), at: 
 
 /// Where an alert is, said briefly for its row.
 fn row_meta(a: &Alert, now: u64) -> String {
-    let mut meta = format!("#{}", a.number);
+    let mut subline = format!("#{}", a.number);
     match &a.detail {
         Detail::Dependency(d) => {
-            meta.push_str(&format!(" · {} ({})", d.package, d.ecosystem));
+            subline.push_str(&format!(" · {} ({})", d.package, d.ecosystem));
             if !d.manifest.is_empty() {
-                meta.push_str(&format!(" · {}", d.manifest));
+                subline.push_str(&format!(" · {}", d.manifest));
             }
         }
         Detail::Code(c) => {
             if let (Some(path), Some((line, _))) = (&c.path, c.lines) {
-                meta.push_str(&format!(" · {path}:{line}"));
+                subline.push_str(&format!(" · {path}:{line}"));
             }
             if !c.tool.is_empty() {
-                meta.push_str(&format!(" · {}", c.tool));
+                subline.push_str(&format!(" · {}", c.tool));
             }
         }
         Detail::Secret(s) => {
             if let Some(SecretLocation::File { path, lines, .. }) = s.locations.first() {
-                meta.push_str(&format!(" · {path}:{}", lines.0));
+                subline.push_str(&format!(" · {path}:{}", lines.0));
             }
         }
     }
@@ -101,9 +101,9 @@ fn row_meta(a: &Alert, now: u64) -> String {
         (None, None) => Some(format!("opened {}", time::ago_iso(&a.created_at, now))),
     };
     if let Some(when) = when {
-        meta.push_str(&format!(" · {when}"));
+        subline.push_str(&format!(" · {when}"));
     }
-    meta
+    subline
 }
 
 /// A repository's alerts of one kind, filtered as GitHub's list is.
@@ -140,17 +140,14 @@ pub fn alerts(
     };
     let ignored = crate::api::security::filter(kind, query).ignored;
     if !ignored.is_empty() {
-        page.wrapped(
-            vec![Seg::new(
-                format!(
-                    "Not a filter of {}: {}",
-                    kind.alerts().to_lowercase(),
-                    ignored.join(" ")
-                ),
-                Role::Meta,
-            )],
-            0,
-            Frame::None,
+        say(
+            page,
+            format!(
+                "Not a filter of {}: {}",
+                kind.alerts().to_lowercase(),
+                ignored.join(" ")
+            ),
+            Role::Meta,
         );
         page.blank();
     }
@@ -180,7 +177,7 @@ pub fn alerts(
                 vec![state_chip(a.state)]
             };
             page.box_line(segs, right, 0);
-            body(page, vec![Seg::new(row_meta(a, now), Role::Meta)]);
+            body(page, vec![meta(row_meta(a, now))]);
         });
     });
 }
@@ -189,34 +186,34 @@ pub fn alerts(
 /// closed it and why.
 pub fn alert(page: &mut Page, repo: &RepoId, a: &Alert, cx: PageCtx<'_>) {
     let now = cx.now;
-    page.wrapped(vec![Seg::new(a.title.clone(), Role::Title)], 0, Frame::None);
+    say(page, a.title.clone(), Role::Title);
     let mut segs = vec![state_chip(a.state)];
     if let Some(chip) = severity(a) {
         segs.push(space());
         segs.push(chip);
     }
-    let mut meta = format!(
+    let mut subline = format!(
         "  {} alert #{} · opened {}",
         a.kind().name(),
         a.number,
         time::ago_iso(&a.created_at, now)
     );
     if let Some(at) = &a.fixed_at {
-        meta.push_str(&format!(" · fixed {}", time::ago_iso(at, now)));
+        subline.push_str(&format!(" · fixed {}", time::ago_iso(at, now)));
     }
-    segs.push(Seg::new(meta, Role::Meta));
+    segs.push(meta(subline));
     page.wrapped(segs, 0, Frame::None);
     if let Some(c) = &a.closing {
-        let mut segs = vec![Seg::new("Closed", Role::Strong)];
+        let mut segs = vec![strong("Closed")];
         if let Some(by) = &c.by {
-            segs.push(Seg::new(" by ", Role::Meta));
+            segs.push(meta(" by "));
             segs.push(login_seg(page, by, Role::Link));
         }
         if let Some(at) = &c.at {
-            segs.push(Seg::new(format!(" {}", time::ago_iso(at, now)), Role::Meta));
+            segs.push(meta(format!(" {}", time::ago_iso(at, now))));
         }
         if let Some(reason) = a.reason_label() {
-            segs.push(Seg::new(format!(" · {reason}"), Role::Meta));
+            segs.push(meta(format!(" · {reason}")));
         }
         page.wrapped(segs, 0, Frame::None);
         if let Some(comment) = &c.comment {
@@ -232,10 +229,7 @@ pub fn alert(page: &mut Page, repo: &RepoId, a: &Alert, cx: PageCtx<'_>) {
 }
 
 fn dependency(page: &mut Page, repo: &RepoId, d: &crate::api::security::Dependency) {
-    let title = vec![Seg::new(
-        format!("{} ({})", d.package, d.ecosystem),
-        Role::Strong,
-    )];
+    let title = vec![strong(format!("{} ({})", d.package, d.ecosystem))];
     page.box_top(title, Vec::new());
     let mut facts = Vec::new();
     if let Some(v) = &d.vulnerable {
@@ -259,7 +253,7 @@ fn dependency(page: &mut Page, repo: &RepoId, d: &crate::api::security::Dependen
         about.push(r);
     }
     if !about.is_empty() {
-        where_.push(Seg::new(format!(" · {}", about.join(", ")), Role::Meta));
+        where_.push(meta(format!(" · {}", about.join(", "))));
     }
     if !where_.is_empty() {
         body(page, where_);
@@ -284,22 +278,21 @@ fn dependency(page: &mut Page, repo: &RepoId, d: &crate::api::security::Dependen
             body(
                 page,
                 vec![
-                    Seg::new("Dependabot's pull request ", Role::Meta),
+                    meta("Dependabot's pull request "),
                     link,
-                    Seg::new(format!(" · {state}"), Role::Meta),
+                    meta(format!(" · {state}")),
                 ],
             );
         }
         Some(Update::Failed { title, body: why }) => {
             body(
                 page,
-                vec![Seg::new(
-                    format!("Dependabot couldn't open a pull request: {title}"),
-                    Role::Meta,
-                )],
+                vec![meta(format!(
+                    "Dependabot couldn't open a pull request: {title}"
+                ))],
             );
             if let Some(first) = why.lines().find(|l| !l.trim().is_empty()) {
-                body(page, vec![Seg::new(first.trim().to_owned(), Role::Meta)]);
+                body(page, vec![meta(first.trim().to_owned())]);
             }
         }
         None => {}
@@ -313,10 +306,10 @@ fn dependency(page: &mut Page, repo: &RepoId, d: &crate::api::security::Dependen
         Role::Link,
     )];
     if let Some(cve) = &d.cve {
-        ids.push(Seg::new(format!(" · {cve}"), Role::Meta));
+        ids.push(meta(format!(" · {cve}")));
     }
     if !d.cwes.is_empty() {
-        ids.push(Seg::new(format!(" · {}", d.cwes.join(" · ")), Role::Meta));
+        ids.push(meta(format!(" · {}", d.cwes.join(" · "))));
     }
     page.wrapped(ids, 0, Frame::None);
     if !d.description.trim().is_empty() {
@@ -333,9 +326,9 @@ fn dependency(page: &mut Page, repo: &RepoId, d: &crate::api::security::Dependen
 }
 
 fn code(page: &mut Page, repo: &RepoId, c: &crate::api::security::CodeAlert) {
-    let mut title = vec![Seg::new(c.rule.clone(), Role::Strong)];
+    let mut title = vec![strong(c.rule.clone())];
     if !c.tool.is_empty() {
-        title.push(Seg::new(format!("  {}", c.tool), Role::Meta));
+        title.push(meta(format!("  {}", c.tool)));
     }
     page.box_top(title, Vec::new());
     if !c.message.is_empty() {
@@ -349,26 +342,19 @@ fn code(page: &mut Page, repo: &RepoId, c: &crate::api::security::CodeAlert) {
                 .as_deref()
                 .map(|r| r.strip_prefix("refs/heads/").unwrap_or(r))
                 .map_or_else(String::new, |r| format!(" on {r}"));
-            segs.push(Seg::new(
-                format!("{on} at {}", crate::ui::text::short_sha(at)),
-                Role::Meta,
-            ));
+            segs.push(meta(format!("{on} at {}", crate::ui::text::short_sha(at))));
             body(page, segs);
         }
-        (Some(path), ..) => body(page, vec![Seg::new(path.clone(), Role::Meta)]),
+        (Some(path), ..) => body(page, vec![meta(path.clone())]),
         _ => {}
     }
     if !c.tags.is_empty() {
-        body(page, vec![Seg::new(c.tags.join(" · "), Role::Meta)]);
+        body(page, vec![meta(c.tags.join(" · "))]);
     }
     page.box_bottom();
     if !c.rule_description.is_empty() {
         page.blank();
-        page.wrapped(
-            vec![Seg::new(c.rule_description.clone(), Role::Body)],
-            0,
-            Frame::None,
-        );
+        say(page, c.rule_description.clone(), Role::Body);
     }
     if !c.help.trim().is_empty() {
         page.blank();
@@ -377,7 +363,7 @@ fn code(page: &mut Page, repo: &RepoId, c: &crate::api::security::CodeAlert) {
 }
 
 fn secret(page: &mut Page, repo: &RepoId, s: &crate::api::security::SecretAlert) {
-    let title = vec![Seg::new(s.secret_type.clone(), Role::Strong)];
+    let title = vec![strong(s.secret_type.clone())];
     let right = match s.validity.as_deref() {
         Some("active") => vec![chip("Active", Bg::ErrorContainer)],
         Some("inactive") => vec![chip("Inactive", Bg::SecondaryContainer)],
@@ -392,7 +378,7 @@ fn secret(page: &mut Page, repo: &RepoId, s: &crate::api::security::SecretAlert)
         facts.push(format!("Pushed past push protection by @{by}"));
     }
     if !facts.is_empty() {
-        body(page, vec![Seg::new(facts.join(" · "), Role::Meta)]);
+        body(page, vec![meta(facts.join(" · "))]);
     }
     if s.locations.is_empty() {
         empty_row(page, "No locations listed.");
@@ -406,29 +392,20 @@ fn secret(page: &mut Page, repo: &RepoId, s: &crate::api::security::SecretAlert)
             } => {
                 let segs = vec![
                     file_link(page, repo, path, *lines, commit),
-                    Seg::new(
-                        format!(" at {}", crate::ui::text::short_sha(commit)),
-                        Role::Meta,
-                    ),
+                    meta(format!(" at {}", crate::ui::text::short_sha(commit))),
                 ];
                 body(page, segs);
             }
             SecretLocation::Other(what) => {
-                body(
-                    page,
-                    vec![Seg::new(format!("Found in: {what}"), Role::Meta)],
-                );
+                body(page, vec![meta(format!("Found in: {what}"))]);
             }
         }
     }
     page.box_bottom();
     page.blank();
-    page.wrapped(
-        vec![Seg::new(
-            "The secret itself isn't shown: revoke it where it was issued, then close the alert as revoked.",
-            Role::Meta,
-        )],
-        0,
-        Frame::None,
+    say(
+        page,
+        "The secret itself isn't shown: revoke it where it was issued, then close the alert as revoked.",
+        Role::Meta,
     );
 }

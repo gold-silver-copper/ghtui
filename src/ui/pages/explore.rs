@@ -26,7 +26,7 @@ pub fn explore(
     let mut tabs = Vec::new();
     for s in Since::ALL {
         if !tabs.is_empty() {
-            tabs.push(Seg::new(" · ", Role::Meta));
+            tabs.push(meta(" · "));
         }
         let role = if s == since { Role::Strong } else { Role::Link };
         tabs.push(link_seg(page, s.label(), url::explore(language, s), role));
@@ -34,11 +34,7 @@ pub fn explore(
     page.wrapped(tabs, 0, Frame::None);
     languages(page, language, since);
     page.blank();
-    page.wrapped(
-        vec![Seg::new(not_trending(since), Role::Meta)],
-        0,
-        Frame::None,
-    );
+    say(page, not_trending(since), Role::Meta);
     page.blank();
     let repos = repos.pick(|r| match r {
         SearchResults::Repos(r) => Some(r),
@@ -62,7 +58,7 @@ pub fn explore(
         0 => t.topics.len().to_string(),
         n => format!("{} of {}", t.topics.len(), t.topics.len() as u64 + n),
     };
-    let title = vec![Seg::new(format!("Featured topics  {count}"), Role::Strong)];
+    let title = vec![strong(format!("Featured topics  {count}"))];
     list_box(
         page,
         title,
@@ -93,7 +89,7 @@ const LANGUAGES: [&str; 12] = [
 ];
 
 fn languages(page: &mut Page, language: Option<&str>, since: Since) {
-    let mut segs = vec![Seg::new("Language  ", Role::Meta)];
+    let mut segs = vec![meta("Language  ")];
     let here = |l: Option<&str>| match (l, language) {
         (None, None) => true,
         (Some(l), Some(on)) => l.eq_ignore_ascii_case(on),
@@ -101,7 +97,7 @@ fn languages(page: &mut Page, language: Option<&str>, since: Since) {
     };
     let add = |page: &mut Page, segs: &mut Vec<Seg>, l: Option<&str>| {
         if segs.len() > 1 {
-            segs.push(Seg::new(" · ", Role::Meta));
+            segs.push(meta(" · "));
         }
         let target = url::explore(l.map(str::to_lowercase).as_deref(), since);
         let role = if here(l) { Role::Strong } else { Role::Link };
@@ -114,10 +110,7 @@ fn languages(page: &mut Page, language: Option<&str>, since: Since) {
     if let Some(other) = language.filter(|l| !LANGUAGES.iter().any(|k| k.eq_ignore_ascii_case(l))) {
         add(page, &mut segs, Some(other));
     }
-    segs.push(Seg::new(
-        " · another: g/ github.com/trending/<language>",
-        Role::Meta,
-    ));
+    segs.push(meta(" · another: g/ github.com/trending/<language>"));
     page.wrapped(segs, 0, Frame::None);
 }
 
@@ -126,10 +119,10 @@ fn topic_row(page: &mut Page, topic: &Topic) {
     let target = url::topic(&topic.name);
     item(page, target, |page, link| {
         let mut segs = vec![Seg::linked(topic.title().to_owned(), Role::Link, link)];
-        segs.push(Seg::new(format!("  #{}", topic.name), Role::Meta));
+        segs.push(meta(format!("  #{}", topic.name)));
         page.box_line(segs, Vec::new(), 0);
         if let Some(d) = &topic.short_description {
-            page.wrapped(vec![Seg::new(d.clone(), Role::Meta)], 2, Frame::Body);
+            page.wrapped(vec![meta(d.clone())], 2, Frame::Body);
         }
     });
 }
@@ -144,7 +137,7 @@ pub fn topic(page: &mut Page, t: &Topic, repos: Fetched<'_, SearchResults>, now:
     }
     page.line(title);
     if let Some(d) = t.description.as_ref().or(t.short_description.as_ref()) {
-        page.wrapped(vec![Seg::new(d.clone(), Role::Body)], 0, Frame::None);
+        say(page, d.clone(), Role::Body);
     }
     let mut facts = Vec::new();
     if let Some(by) = &t.created_by {
@@ -157,17 +150,13 @@ pub fn topic(page: &mut Page, t: &Topic, repos: Fetched<'_, SearchResults>, now:
         facts.push(format!("☆ {}", plural(stars, "star")));
     }
     if !facts.is_empty() {
-        page.wrapped(
-            vec![Seg::new(facts.join(" · "), Role::Meta)],
-            0,
-            Frame::None,
-        );
+        say(page, facts.join(" · "), Role::Meta);
     }
     if !t.related.is_empty() {
-        let mut segs = vec![Seg::new("Related  ", Role::Meta)];
+        let mut segs = vec![meta("Related  ")];
         for (i, name) in t.related.iter().enumerate() {
             if i > 0 {
-                segs.push(Seg::new(" · ", Role::Meta));
+                segs.push(meta(" · "));
             }
             let target = url::topic(name);
             segs.push(link_seg(page, format!("#{name}"), target, Role::Link));

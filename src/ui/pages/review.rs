@@ -43,7 +43,7 @@ pub fn pr_review(
 /// head marked), then who is asked and hasn't yet (code owners marked).
 /// A review opens its page; someone asked, their profile.
 fn reviewers(page: &mut Page, pr: &PrRef, d: &PrDetail, activity: Fetched<'_, PrActivity>) {
-    let title = Seg::new("Reviewers", Role::Strong);
+    let title = strong("Reviewers");
     let loading = |page: &mut Page| empty_box(page, title.clone(), "Loading…");
     let Some(a) = activity.show_or(page, "the reviews", loading) else {
         return;
@@ -63,15 +63,15 @@ fn reviewers(page: &mut Page, pr: &PrRef, d: &PrDetail, activity: Fetched<'_, Pr
             let mut segs = vec![
                 Seg::new(format!("{mark}  "), role),
                 Seg::linked(l.author.clone(), Role::Link, link),
-                Seg::new(format!(" {what}"), Role::Meta),
+                meta(format!(" {what}")),
             ];
             let stale = l.state == ReviewState::Approved
                 && l.commit.as_deref().is_some_and(|c| c != d.head_oid);
             if stale {
-                segs.push(Seg::new(" · before the last push", Role::Meta));
+                segs.push(meta(" · before the last push"));
             }
             for team in &l.for_teams {
-                segs.push(Seg::new(format!(" · for {team}"), Role::Meta));
+                segs.push(meta(format!(" · for {team}")));
             }
             body(page, segs);
         });
@@ -89,7 +89,7 @@ fn reviewers(page: &mut Page, pr: &PrRef, d: &PrDetail, activity: Fetched<'_, Pr
                 vec![
                     Seg::new("●  ", Role::Accent),
                     Seg::linked(name, Role::Link, link),
-                    Seg::new(what, Role::Meta),
+                    meta(what),
                 ],
             );
         });
@@ -109,7 +109,7 @@ fn reviewers(page: &mut Page, pr: &PrRef, d: &PrDetail, activity: Fetched<'_, Pr
 /// its page.
 fn all_reviews(page: &mut Page, pr: &PrRef, d: &PrDetail, glance: Glance<'_>, now: u64) {
     let heading = "Reviews";
-    let loading = |page: &mut Page| empty_box(page, Seg::new(heading, Role::Strong), "Loading…");
+    let loading = |page: &mut Page| empty_box(page, strong(heading), "Loading…");
     let Some(reviews) = glance.reviews.show_or(page, "the reviews", loading) else {
         return;
     };
@@ -117,7 +117,7 @@ fn all_reviews(page: &mut Page, pr: &PrRef, d: &PrDetail, glance: Glance<'_>, no
         0 => heading.to_owned(),
         n => format!("{heading} · {n}"),
     };
-    page.box_top(vec![Seg::new(title, Role::Strong)], Vec::new());
+    page.box_top(vec![strong(title)], Vec::new());
     if reviews.is_empty() {
         empty_row(page, "None yet.");
     }
@@ -132,18 +132,15 @@ fn all_reviews(page: &mut Page, pr: &PrRef, d: &PrDetail, glance: Glance<'_>, no
             let mut segs = vec![
                 Seg::new(format!("{mark}  "), role),
                 Seg::linked(r.author.clone(), Role::Link, link),
-                Seg::new(format!(" {what}"), Role::Meta),
+                meta(format!(" {what}")),
             ];
             if glance.new_reviews.contains(&id) {
                 segs.push(space());
                 segs.push(chip("New", Bg::TertiaryContainer));
             }
-            let mut right = vec![Seg::new(time::ago_iso(&r.at, now), Role::Meta)];
+            let mut right = vec![meta(time::ago_iso(&r.at, now))];
             if r.comments > 0 {
-                right.insert(
-                    0,
-                    Seg::new(format!("{} · ", plural(r.comments, "comment")), Role::Meta),
-                );
+                right.insert(0, meta(format!("{} · ", plural(r.comments, "comment"))));
             }
             page.box_line(segs, right, 0);
             let mut on = Vec::new();
@@ -153,12 +150,12 @@ fn all_reviews(page: &mut Page, pr: &PrRef, d: &PrDetail, glance: Glance<'_>, no
                 } else {
                     format!("on {}", short_sha(c))
                 };
-                on.push(Seg::new(at, Role::Meta));
+                on.push(meta(at));
             }
             let said = first_line(&r.body, page.room(Frame::Body, 0));
             if !said.is_empty() {
                 if !on.is_empty() {
-                    on.push(Seg::new(" · ", Role::Meta));
+                    on.push(meta(" · "));
                 }
                 on.push(Seg::new(said, Role::Body));
             }
@@ -204,7 +201,7 @@ pub fn pr_reviewed(
         } else {
             "Loading the review…"
         };
-        page.wrapped(vec![Seg::new(what, Role::Meta)], 0, Frame::None);
+        say(page, what, Role::Meta);
         return;
     };
     let talk = Conversation {
@@ -229,7 +226,7 @@ pub fn pr_reviewed(
     let Some(commit) = &r.commit else {
         return;
     };
-    page.box_top(vec![Seg::new("Its changes", Role::Strong)], Vec::new());
+    page.box_top(vec![strong("Its changes")], Vec::new());
     let reviewed = Link::Review(ReviewLink::AsReviewed {
         pr: pr.clone(),
         commit: commit.clone(),
@@ -274,8 +271,8 @@ pub(super) fn place(path: &str, line: Option<u32>) -> String {
 /// Your drafts, in file order, each opening its line in Files changed.
 pub(super) fn review_drafts(page: &mut Page, pr: &PrRef, drafts: Option<&[DraftComment]>) {
     let title = |n: usize| match n {
-        0 => Seg::new("Your drafts", Role::Strong),
-        n => Seg::new(format!("Your drafts · {n}"), Role::Strong),
+        0 => strong("Your drafts"),
+        n => strong(format!("Your drafts · {n}")),
     };
     let Some(drafts) = drafts else {
         empty_box(page, title(0), "Reading your drafts…");
@@ -288,7 +285,7 @@ pub(super) fn review_drafts(page: &mut Page, pr: &PrRef, drafts: Option<&[DraftC
     }
     let mut drafts = Vec::from_iter(drafts);
     drafts.sort_by_key(|d| (&d.path, d.line));
-    let right = vec![Seg::new("not submitted yet", Role::Meta)];
+    let right = vec![meta("not submitted yet")];
     page.box_top(vec![title(drafts.len())], right);
     for (n, draft) in drafts.into_iter().enumerate() {
         if n > 0 {
@@ -327,7 +324,7 @@ pub(super) fn open_threads(
 ) {
     let heading = "Unresolved threads";
     let loading = |page: &mut Page| {
-        empty_box(page, Seg::new(heading, Role::Strong), "Loading…");
+        empty_box(page, strong(heading), "Loading…");
     };
     let Some(threads) = threads.show_or(page, "the review threads", loading) else {
         return;
@@ -339,8 +336,8 @@ pub(super) fn open_threads(
         0 => heading.to_owned(),
         n => format!("{heading} · {n}"),
     };
-    let right = (resolved > 0).then(|| Seg::new(format!("{resolved} resolved"), Role::Meta));
-    page.box_top(vec![Seg::new(title, Role::Strong)], Vec::from_iter(right));
+    let right = (resolved > 0).then(|| meta(format!("{resolved} resolved")));
+    page.box_top(vec![strong(title)], Vec::from_iter(right));
     if open.is_empty() {
         empty_row(page, "None.");
     }
@@ -358,28 +355,25 @@ pub(super) fn open_threads(
             let at = place(&thread.path, line);
             let mut segs = vec![match link {
                 Some(link) => Seg::linked(at, Role::Link, link),
-                None => Seg::new(at, Role::Strong),
+                None => strong(at),
             }];
             if thread.outdated {
-                segs.push(Seg::new(" ", Role::Meta));
+                segs.push(meta(" "));
                 segs.push(chip("Outdated", Bg::ContainerHigh));
             }
             if thread.comments.iter().any(|c| fresh.contains(&c.id)) {
-                segs.push(Seg::new(" ", Role::Meta));
+                segs.push(meta(" "));
                 segs.push(chip("New", Bg::TertiaryContainer));
             }
             let mut said = Vec::new();
             if let Some(c) = first {
                 said.push(login_seg(page, &c.author, Role::Meta));
                 let ago = time::ago_iso(&c.created_at, now);
-                said.push(Seg::new(format!(" · {ago}"), Role::Meta));
+                said.push(meta(format!(" · {ago}")));
             }
             let replies = thread.comments.total().saturating_sub(1);
             if replies > 0 {
-                said.push(Seg::new(
-                    format!(" · {}", plural(replies, "reply")),
-                    Role::Meta,
-                ));
+                said.push(meta(format!(" · {}", plural(replies, "reply"))));
             }
             page.box_line(segs, said, 0);
             let text = first.map(|c| first_line(&c.body, page.room(Frame::Body, 0)));

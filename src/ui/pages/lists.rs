@@ -21,7 +21,7 @@ pub(super) fn repo_row(page: &mut Page, r: &RepoSummary, now: u64, show_owner: b
                 segs.push(chip(text, Bg::SecondaryContainer));
             }
         }
-        let right = vec![Seg::new(format!("☆ {}", compact(r.stars)), Role::Meta)];
+        let right = vec![meta(format!("☆ {}", compact(r.stars)))];
         page.box_line(segs, right, 0);
         if page.compact {
             return;
@@ -29,17 +29,17 @@ pub(super) fn repo_row(page: &mut Page, r: &RepoSummary, now: u64, show_owner: b
         if let Some(d) = &r.description {
             page.wrapped(vec![Seg::new(d.clone(), Role::Body)], 0, Frame::Body);
         }
-        let mut meta = Vec::new();
+        let mut subline = Vec::new();
         if let Some(lang) = &r.language {
-            meta.push(Seg::new("● ", Role::Accent));
-            meta.push(Seg::new(format!("{lang}   "), Role::Meta));
+            subline.push(Seg::new("● ", Role::Accent));
+            subline.push(meta(format!("{lang}   ")));
         }
-        meta.push(Seg::new(format!("⑂ {}", compact(r.forks)), Role::Meta));
+        subline.push(meta(format!("⑂ {}", compact(r.forks))));
         if let Some(p) = &r.pushed_at {
             let updated = format!("   Updated {}", time::ago_iso(p, now));
-            meta.push(Seg::new(updated, Role::Meta));
+            subline.push(meta(updated));
         }
-        body(page, meta);
+        body(page, subline);
     });
 }
 
@@ -95,7 +95,7 @@ pub(super) fn issue_row_to(
                 Seg::new(format!("{icon} "), role),
                 Seg::linked(i.title.clone(), Role::Strong, link),
             ];
-            let mut right = vec![Seg::new(format!("{place}  "), Role::Meta)];
+            let mut right = vec![meta(format!("{place}  "))];
             right.extend(issue_signals(i, icons));
             page.box_line(segs, right, 0);
             return;
@@ -110,7 +110,7 @@ pub(super) fn issue_row_to(
             ("opened", &i.created_at)
         };
         let when = format!("{place} {verb} {} by {}", time::ago_iso(at, now), i.author);
-        let mut meta = vec![Seg::new(when, Role::Meta)];
+        let mut subline = vec![meta(when)];
         if let IssueKind::Pr {
             review, approvals, ..
         } = i.kind
@@ -121,14 +121,14 @@ pub(super) fn issue_row_to(
                     ReviewDecision::ChangesRequested => ("Changes requested", Role::Error),
                     ReviewDecision::ReviewRequired => ("Review required", Role::Meta),
                 };
-                meta.extend([Seg::new(" · ", Role::Meta), Seg::new(text, role)]);
+                subline.extend([meta(" · "), Seg::new(text, role)]);
             }
             if approvals > 0 {
                 let text = format!(" · {}", plural(approvals, "approval"));
-                meta.push(Seg::new(text, Role::Meta));
+                subline.push(meta(text));
             }
         }
-        page.box_line(meta, issue_signals(i, icons), 2);
+        page.box_line(subline, issue_signals(i, icons), 2);
     });
 }
 
@@ -148,10 +148,7 @@ pub(super) fn issue_signals(i: &IssueSummary, icons: Icons) -> Vec<Seg> {
         right.push(Seg::new(format!("{}  ", icons.checks(checks)), role));
     }
     if i.comments > 0 {
-        right.push(Seg::new(
-            format!("{} {}", icons.comment(), i.comments),
-            Role::Meta,
-        ));
+        right.push(meta(format!("{} {}", icons.comment(), i.comments)));
     }
     right
 }
@@ -160,7 +157,7 @@ pub(super) fn user_row(page: &mut Page, u: &UserSummary) {
     item(page, url::user(&u.login), |page, link| {
         let mut segs = vec![Seg::linked(u.login.clone(), Role::Link, link)];
         if let Some(name) = &u.name {
-            segs.push(Seg::new(format!("  {name}"), Role::Strong));
+            segs.push(strong(format!("  {name}")));
         }
         if u.is_org {
             segs.push(space());
@@ -168,7 +165,7 @@ pub(super) fn user_row(page: &mut Page, u: &UserSummary) {
         }
         body(page, segs);
         if let Some(bio) = u.bio.as_ref().filter(|_| !page.compact) {
-            page.wrapped(vec![Seg::new(bio.clone(), Role::Meta)], 0, Frame::Body);
+            page.wrapped(vec![meta(bio.clone())], 0, Frame::Body);
         }
     });
 }
@@ -329,16 +326,17 @@ pub fn search(
         SearchKind::Commits => "commit",
         SearchKind::Code => "code",
     };
-    let searching = |page: &mut Page| loading_box(page, vec![Seg::new("Searching…", Role::Meta)]);
+    let searching = |page: &mut Page| loading_box(page, vec![meta("Searching…")]);
     let Some(results) = results.show_or(page, "results", searching) else {
         return;
     };
     let (total, shown) = results.counts();
     page.box_top(
-        vec![Seg::new(
-            format!("{} {what} {}", compact(total), noun(total, "result")),
-            Role::Strong,
-        )],
+        vec![strong(format!(
+            "{} {what} {}",
+            compact(total),
+            noun(total, "result")
+        ))],
         Vec::new(),
     );
     if shown == 0 {
@@ -360,7 +358,7 @@ pub fn search(
                     segs.push(chip("✓ Answered", Bg::SuccessContainer));
                 }
                 body(page, segs);
-                let meta = format!(
+                let subline = format!(
                     "{}#{} · {} · {} · {} · updated {}",
                     hit.repo,
                     d.number,
@@ -369,7 +367,7 @@ pub fn search(
                     plural(d.comments, "comment"),
                     time::ago_iso(&d.updated_at, now)
                 );
-                body(page, vec![Seg::new(meta, Role::Meta)]);
+                body(page, vec![meta(subline)]);
             });
         }),
         SearchResults::Commits(r) => box_rows(page, r, |page, hit| {
@@ -381,13 +379,13 @@ pub fn search(
                     right,
                     0,
                 );
-                let meta = format!(
+                let subline = format!(
                     "{} · {} committed {}",
                     hit.repo,
                     c.author.name(),
                     time::ago_iso(&c.date, now)
                 );
-                body(page, vec![Seg::new(meta, Role::Meta)]);
+                body(page, vec![meta(subline)]);
             });
         }),
         SearchResults::Code(r) => box_rows(page, r, |page, hit| {
@@ -400,7 +398,7 @@ pub fn search(
                     Vec::new(),
                     0,
                 );
-                body(page, vec![Seg::new(hit.repo.to_string(), Role::Meta)]);
+                body(page, vec![meta(hit.repo.to_string())]);
             });
             for (n, text) in &hit.lines {
                 item(page, format!("{file}#L{n}"), |page, link| {

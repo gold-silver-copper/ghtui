@@ -101,18 +101,14 @@ pub fn write_form(page: &mut Page, v: &WriteFormView<'_>) {
         };
         page.line(vec![
             Seg::linked(format!(" {} ", v.button), role, link),
-            Seg::new(format!("  {}", v.save_key), Role::Meta),
+            meta(format!("  {}", v.save_key)),
         ]);
         if let Some(why) = &v.why_not {
-            page.wrapped(vec![Seg::new(why.clone(), Role::Meta)], 0, Frame::None);
+            say(page, why.clone(), Role::Meta);
         }
     });
     if let Some(error) = v.error {
-        page.wrapped(
-            vec![Seg::new(error.to_owned(), Role::Error)],
-            0,
-            Frame::None,
-        );
+        say(page, error.to_owned(), Role::Error);
     }
 }
 
@@ -125,7 +121,7 @@ fn form_row(page: &mut Page, row: &FormRow) {
         }
     };
     let segs = |link| {
-        let mut segs = vec![Seg::new(format!("{:<12}", row.name), Role::Strong)];
+        let mut segs = vec![strong(format!("{:<12}", row.name))];
         segs.push(value(link));
         for (name, color) in &row.chips {
             segs.push(Seg::new(format!(" {name} "), Role::Label(color.clone())));
@@ -148,7 +144,7 @@ fn text_box(page: &mut Page, b: &TextBox<'_>, v: &WriteFormView<'_>) {
         Some(_) => format!("↵ renames · {} writes", v.write),
         None => format!("{} writes", v.write),
     };
-    let right = vec![Seg::new(right, Role::Meta)];
+    let right = vec![meta(right)];
     let title_start = page.lines.len();
     let title_link = match rename {
         Some((_, target)) => page.link(Link::Form(target.clone())),

@@ -17,9 +17,9 @@ pub(super) fn team_row(page: &mut Page, org: &str, t: &TeamSummary) {
                 plural(t.members, "member"),
                 plural(t.repos, "repository")
             );
-            page.box_line(segs, vec![Seg::new(counts, Role::Meta)], 0);
+            page.box_line(segs, vec![meta(counts)], 0);
             if !t.description.is_empty() {
-                body(page, vec![Seg::new(t.description.clone(), Role::Meta)]);
+                body(page, vec![meta(t.description.clone())]);
             }
         },
     );
@@ -42,7 +42,7 @@ pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
     let t = &d.team;
     let mut title = vec![
         link_seg(page, format!("@{org}"), url::user(org), Role::Link),
-        Seg::new(" / ", Role::Meta),
+        meta(" / "),
         Seg::new(t.name.clone(), Role::Title),
     ];
     if t.secret {
@@ -51,28 +51,18 @@ pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
     }
     page.wrapped(title, 0, Frame::None);
     if !t.description.is_empty() {
-        page.wrapped(
-            vec![Seg::new(t.description.clone(), Role::Body)],
-            0,
-            Frame::None,
-        );
+        say(page, t.description.clone(), Role::Body);
     }
     if let Some(parent) = &d.parent {
         let target = format!("{}/orgs/{org}/teams/{}", url::base(), parent.slug);
         let link = link_seg(page, parent.name.clone(), target, Role::Link);
-        page.wrapped(vec![Seg::new("Part of ", Role::Meta), link], 0, Frame::None);
+        page.wrapped(vec![meta("Part of "), link], 0, Frame::None);
     }
     page.blank();
-    let title = vec![Seg::new(
-        format!("Members  {}", count_of(&d.members)),
-        Role::Strong,
-    )];
+    let title = counted("Members", &d.members);
     list_box(page, title, Vec::new(), &d.members, "No members.", user_row);
     page.blank();
-    let title = vec![Seg::new(
-        format!("Repositories  {}", count_of(&d.repos)),
-        Role::Strong,
-    )];
+    let title = counted("Repositories", &d.repos);
     list_box(
         page,
         title,
@@ -81,24 +71,21 @@ pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
         "No repositories.",
         |page, r| {
             item(page, url::repo(&r.repo), |page, link| {
-                let right = vec![Seg::new(format!("★ {}", compact(r.stars)), Role::Meta)];
+                let right = vec![meta(format!("★ {}", compact(r.stars)))];
                 page.box_line(
                     vec![Seg::linked(r.repo.to_string(), Role::Link, link)],
                     right,
                     0,
                 );
                 if !r.description.is_empty() {
-                    body(page, vec![Seg::new(r.description.clone(), Role::Meta)]);
+                    body(page, vec![meta(r.description.clone())]);
                 }
             });
         },
     );
     if !d.children.is_empty() {
         page.blank();
-        let title = vec![Seg::new(
-            format!("Child teams  {}", count_of(&d.children)),
-            Role::Strong,
-        )];
+        let title = counted("Child teams", &d.children);
         list_box(page, title, Vec::new(), &d.children, "", |page, c| {
             team_row(page, org, c);
         });
@@ -116,7 +103,7 @@ pub fn gist(page: &mut Page, g: &Gist, now: u64) {
             format!("{}/{owner}", url::gists()),
             Role::Link,
         ));
-        title.push(Seg::new(" / ", Role::Meta));
+        title.push(meta(" / "));
     }
     title.push(Seg::new(first.to_owned(), Role::Title));
     if !g.public {
@@ -124,29 +111,25 @@ pub fn gist(page: &mut Page, g: &Gist, now: u64) {
         title.push(chip("Secret", Bg::SecondaryContainer));
     }
     page.wrapped(title, 0, Frame::None);
-    let meta = format!(
+    let subline = format!(
         "created {} · updated {} · {} · {}",
         time::ago_iso(&g.created_at, now),
         time::ago_iso(&g.updated_at, now),
         plural(g.files.len() as u64, "file"),
         plural(g.comments, "comment"),
     );
-    page.wrapped(vec![Seg::new(meta, Role::Meta)], 0, Frame::None);
+    say(page, subline, Role::Meta);
     if !g.description.is_empty() {
-        page.wrapped(
-            vec![Seg::new(g.description.clone(), Role::Body)],
-            0,
-            Frame::None,
-        );
+        say(page, g.description.clone(), Role::Body);
     }
     for f in &g.files {
         page.blank();
-        let mut info = vec![Seg::new(f.name.clone(), Role::Strong)];
+        let mut info = vec![strong(f.name.clone())];
         let mut facts = vec![crate::ui::text::size(f.size)];
         if let Some(language) = &f.language {
             facts.push(language.clone());
         }
-        info.push(Seg::new(format!("  {}", facts.join(" · ")), Role::Meta));
+        info.push(meta(format!("  {}", facts.join(" · "))));
         page.box_top(info, Vec::new());
         match &f.text {
             Some(text) if is_markdown(&f.name) => {
@@ -175,10 +158,7 @@ pub fn gist(page: &mut Page, g: &Gist, now: u64) {
             None => empty_row(page, "Too large to show here: open it on GitHub."),
         }
         if f.truncated {
-            body(
-                page,
-                vec![Seg::new("Only the beginning is shown.", Role::Meta)],
-            );
+            body(page, vec![meta("Only the beginning is shown.")]);
         }
         page.box_bottom();
     }
@@ -192,18 +172,18 @@ pub fn gists(page: &mut Page, login: &str, list: Fetched<'_, Results<GistSummary
             format!("{}/{login}/{}", url::gists(), g.id),
             |page, link| {
                 let name = g.files.first().cloned().unwrap_or_else(|| g.id.clone());
-                let right = vec![Seg::new(time::ago_iso(&g.updated_at, now), Role::Meta)];
+                let right = vec![meta(time::ago_iso(&g.updated_at, now))];
                 page.box_line(vec![Seg::linked(name, Role::Strong, link)], right, 0);
                 if !g.description.is_empty() {
                     body(page, vec![Seg::new(g.description.clone(), Role::Body)]);
                 }
-                let meta = format!(
+                let subline = format!(
                     "{} · {} · ★ {}",
                     plural(g.files.len() as u64, "file"),
                     plural(g.comments, "comment"),
                     compact(g.stars)
                 );
-                body(page, vec![Seg::new(meta, Role::Meta)]);
+                body(page, vec![meta(subline)]);
             },
         );
     });
@@ -240,7 +220,7 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
     match &p.name {
         Some(name) => {
             segs.push(Seg::new(name.clone(), Role::Title));
-            segs.push(Seg::new(format!("  {}", p.login), Role::Meta));
+            segs.push(meta(format!("  {}", p.login)));
         }
         None => segs.push(Seg::new(p.login.clone(), Role::Title)),
     }
@@ -254,31 +234,28 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
     }
     page.line(segs);
     if let Some(status) = &p.status {
-        page.wrapped(vec![Seg::new(status.clone(), Role::Meta)], 0, Frame::None);
+        say(page, status.clone(), Role::Meta);
     }
     if let Some(bio) = &p.bio {
-        page.wrapped(vec![Seg::new(bio.clone(), Role::Body)], 0, Frame::None);
+        say(page, bio.clone(), Role::Body);
     }
     let mut facts = Vec::new();
     if let (Some(followers), Some(following)) = (p.followers, p.following) {
-        facts.push(Seg::new(
-            format!(
-                "⚇ {} · {} following",
-                plural(followers, "follower"),
-                compact(following)
-            ),
-            Role::Meta,
-        ));
+        facts.push(meta(format!(
+            "⚇ {} · {} following",
+            plural(followers, "follower"),
+            compact(following)
+        )));
     }
     // Spaced apart, with nothing before the first.
     let gap = |segs: &Vec<Seg>| if segs.is_empty() { "" } else { "   " };
     for (icon, value) in [("◆ ", &p.company), ("⌖ ", &p.location), ("", &p.pronouns)] {
         if let Some(v) = value {
-            facts.push(Seg::new(format!("{}{icon}{v}", gap(&facts)), Role::Meta));
+            facts.push(meta(format!("{}{icon}{v}", gap(&facts))));
         }
     }
     if let Some(site) = &p.website {
-        facts.push(Seg::new(format!("{}↗ ", gap(&facts)), Role::Meta));
+        facts.push(meta(format!("{}↗ ", gap(&facts))));
         facts.push(link_seg(page, site.clone(), site.clone(), Role::Link));
     }
     if !facts.is_empty() {
@@ -286,17 +263,17 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
     }
     let mut links = Vec::new();
     for (shown, target) in &p.socials {
-        links.push(Seg::new(format!("{}↗ ", gap(&links)), Role::Meta));
+        links.push(meta(format!("{}↗ ", gap(&links))));
         links.push(link_seg(page, shown.clone(), target.clone(), Role::Link));
     }
     if !links.is_empty() {
         page.wrapped(links, 0, Frame::None);
     }
     if !p.orgs.is_empty() {
-        let mut orgs = vec![Seg::new("Organizations  ", Role::Meta)];
+        let mut orgs = vec![meta("Organizations  ")];
         for (i, org) in p.orgs.iter().enumerate() {
             if i > 0 {
-                orgs.push(Seg::new(" · ", Role::Meta));
+                orgs.push(meta(" · "));
             }
             orgs.push(login_seg(page, org, Role::Link));
         }
@@ -312,7 +289,7 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
         } else {
             (format!("{0}/{0}", p.login), "README.md")
         };
-        let title = Seg::new(format!("{repo} / {path}"), Role::Meta);
+        let title = meta(format!("{repo} / {path}"));
         page.box_top(vec![title], Vec::new());
         if let Some(repo) = RepoId::parse(&repo) {
             let base = LinkBase::new(&repo, "HEAD", path);
@@ -339,13 +316,13 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
                     (title, sort, false, "No public repositories yet.")
                 }
                 _ => {
-                    let sort = Seg::new("Recently starred", Role::Meta);
+                    let sort = meta("Recently starred");
                     let title = format!("Starred  {}", compact(p.star_count));
                     (title, sort, true, "Nothing starred yet.")
                 }
             };
             if let Some(r) = repos.show(page, "repositories") {
-                let title = vec![Seg::new(title, Role::Strong)];
+                let title = vec![strong(title)];
                 list_box(page, title, vec![sort], r, empty, |page, repo| {
                     repo_row(page, repo, now, show_owner);
                 });
@@ -372,7 +349,7 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
     } else {
         ("Pinned", p.pinned.clone(), true)
     };
-    let title = vec![Seg::new(title, Role::Strong)];
+    let title = vec![strong(title)];
     list_box(
         page,
         title,
@@ -392,8 +369,8 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
     if p.is_org {
         page.blank();
         let title = vec![
-            Seg::new("People", Role::Strong),
-            Seg::new(format!("  {}", compact(p.people.total())), Role::Meta),
+            strong("People"),
+            meta(format!("  {}", compact(p.people.total()))),
         ];
         page.box_top(title, Vec::new());
         if p.people.is_empty() {
@@ -402,7 +379,7 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
             let mut people = Vec::new();
             for (i, login) in p.people.iter().enumerate() {
                 if i > 0 {
-                    people.push(Seg::new(" · ", Role::Meta));
+                    people.push(meta(" · "));
                 }
                 people.push(login_seg(page, login, Role::Link));
             }
@@ -415,10 +392,10 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
         let languages = top_languages(&p.repos);
         if !languages.is_empty() {
             page.blank();
-            let mut segs = vec![Seg::new("Top languages  ", Role::Strong)];
+            let mut segs = vec![strong("Top languages  ")];
             for (lang, n) in languages {
                 segs.push(Seg::new("● ", Role::Accent));
-                segs.push(Seg::new(format!("{lang} {n}   "), Role::Meta));
+                segs.push(meta(format!("{lang} {n}   ")));
             }
             page.wrapped(segs, 0, Frame::None);
         }
@@ -454,7 +431,7 @@ pub(super) fn contribution_graph(page: &mut Page, c: &Contributions) {
         thousands(c.total),
         noun(c.total, "contribution")
     );
-    page.line(vec![Seg::new(title, Role::Strong)]);
+    page.line(vec![strong(title)]);
     let room = usize::from(page.room(Frame::None, 0)).saturating_sub(LABELS);
     let weeks = c
         .weeks
@@ -478,7 +455,7 @@ pub(super) fn contribution_graph(page: &mut Page, c: &Contributions) {
         last = month;
     }
     let months: String = " ".repeat(LABELS).chars().chain(row).collect();
-    page.line(vec![Seg::new(months, Role::Meta)]);
+    page.line(vec![meta(months)]);
     for day in 0..7 {
         let label = match day {
             1 => "Mon ",
@@ -486,18 +463,18 @@ pub(super) fn contribution_graph(page: &mut Page, c: &Contributions) {
             5 => "Fri ",
             _ => "    ",
         };
-        let mut segs = vec![Seg::new(label, Role::Meta)];
+        let mut segs = vec![meta(label)];
         for week in weeks {
             segs.push(match week.days.get(day) {
                 Some(&level) => Seg::new("■", Role::Heat(level.min(4))),
-                None => Seg::new(" ", Role::Meta),
+                None => meta(" "),
             });
         }
         page.line(segs);
     }
-    let mut legend = vec![Seg::new(format!("{}Less ", " ".repeat(LABELS)), Role::Meta)];
+    let mut legend = vec![meta(format!("{}Less ", " ".repeat(LABELS)))];
     legend.extend((0..=4).map(|level| Seg::new("■", Role::Heat(level))));
-    legend.push(Seg::new(" More", Role::Meta));
+    legend.push(meta(" More"));
     page.line(legend);
 }
 
@@ -513,9 +490,9 @@ pub(super) fn at_least(n: u64, word: &str, short: bool) -> String {
 }
 
 pub(super) fn contribution_activity(page: &mut Page, c: &Contributions) {
-    page.line(vec![Seg::new("Contribution activity", Role::Strong)]);
+    page.line(vec![strong("Contribution activity")]);
     if c.activity.is_empty() {
-        page.line(vec![Seg::new("No recent activity.", Role::Meta)]);
+        page.line(vec![meta("No recent activity.")]);
         return;
     }
     for m in &c.activity {
@@ -537,9 +514,9 @@ pub(super) fn contribution_activity(page: &mut Page, c: &Contributions) {
                     Role::Link,
                 );
                 page.line(vec![
-                    Seg::new("    ", Role::Meta),
+                    meta("    "),
                     name,
-                    Seg::new(format!("  {}", plural(*n, "commit")), Role::Meta),
+                    meta(format!("  {}", plural(*n, "commit"))),
                 ]);
             }
         }
@@ -570,11 +547,7 @@ pub(super) fn contribution_activity(page: &mut Page, c: &Contributions) {
                 };
                 let place = format!("{}#{}", item.repo, item.number);
                 let link = link_seg(page, item.title.clone(), target, Role::Link);
-                page.wrapped(
-                    vec![Seg::new(format!("{place}  "), Role::Meta), link],
-                    4,
-                    Frame::None,
-                );
+                page.wrapped(vec![meta(format!("{place}  ")), link], 4, Frame::None);
             }
         }
     }
@@ -584,9 +557,8 @@ pub(super) fn contribution_activity(page: &mut Page, c: &Contributions) {
         .any(|s| s.is_some())
     {
         page.blank();
-        page.line(vec![Seg::new(
+        page.line(vec![meta(
             "Counts with + are at least that: GitHub has more",
-            Role::Meta,
         )]);
     }
 }

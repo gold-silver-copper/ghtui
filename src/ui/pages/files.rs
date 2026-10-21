@@ -23,7 +23,7 @@ pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
     code_toolbar(page, repo, rev, path, true, None, keys);
     let size = crate::ui::text::size(blob.size);
     let Some(text) = &blob.text else {
-        let title = Seg::new(size, Role::Meta);
+        let title = meta(size);
         empty_box(
             page,
             title,
@@ -39,8 +39,8 @@ pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
     let blame = url::blame(repo, rev, path);
     let blame = link_seg(page, "Blame", blame, Role::Link);
     let raw = link_seg(page, "Raw", url::raw(repo, rev, path), Role::Link);
-    let right = vec![blame, Seg::new("  ", Role::Meta), raw];
-    page.box_top(vec![Seg::new(info, Role::Meta)], right);
+    let right = vec![blame, meta("  "), raw];
+    page.box_top(vec![meta(info)], right);
     if is_markdown(path) {
         let base = LinkBase::new(repo, rev, path);
         markdown::render(page, text, Some(&base), Frame::Body);
@@ -104,17 +104,13 @@ pub fn blame(
         return;
     };
     let Some(text) = &blob.text else {
-        empty_box(
-            page,
-            Seg::new("Blame", Role::Meta),
-            "Binary file not shown.",
-        );
+        empty_box(page, meta("Blame"), "Binary file not shown.");
         return;
     };
     let file = link_seg(page, "File", url::blob(repo, rev, path), Role::Link);
     let commits = unique(blame.ranges.iter().map(|r| &r.commit.oid)).len() as u64;
     let info = format!("Blame · {}", plural(commits, "commit"));
-    page.box_top(vec![Seg::new(info, Role::Meta)], vec![file]);
+    page.box_top(vec![meta(info)], vec![file]);
     let lines = markdown::highlighted_file(text, crate::diff::Language::from_path(path));
     let width = lines.len().to_string().len();
     let is_marked = |n: usize| marked.is_some_and(|(a, b)| (a as usize..=b as usize).contains(&n));
@@ -152,10 +148,10 @@ pub fn blame(
                         url::commit(repo, &c.oid),
                         Role::Code,
                     ),
-                    Seg::new(
-                        format!(" {author:<author_w$} {:>8}  ", time::ago_iso(&c.date, now)),
-                        Role::Meta,
-                    ),
+                    meta(format!(
+                        " {author:<author_w$} {:>8}  ",
+                        time::ago_iso(&c.date, now)
+                    )),
                 ];
                 if message_w >= 8 {
                     let message = crate::ui::text::truncate(&c.headline, message_w);
@@ -163,7 +159,7 @@ pub fn blame(
                 }
                 gutter
             }
-            _ => vec![Seg::new(" ".repeat(gutter_w), Role::Meta)],
+            _ => vec![meta(" ".repeat(gutter_w))],
         };
         let fixed = gutter.len() + 1;
         gutter.push(Seg::new(

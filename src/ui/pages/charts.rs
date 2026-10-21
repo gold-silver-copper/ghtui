@@ -81,18 +81,16 @@ pub fn columns(page: &mut Page, values: &[u64], width: usize, height: usize) {
         };
         body(
             page,
-            vec![
-                Seg::new(format!("{axis}│"), Role::Meta),
-                Seg::new(line, Role::Accent),
-            ],
+            vec![meta(format!("{axis}│")), Seg::new(line, Role::Accent)],
         );
     }
     body(
         page,
-        vec![Seg::new(
-            format!("{}└{}", label(0), "─".repeat(values.len() * width.max(1))),
-            Role::Meta,
-        )],
+        vec![meta(format!(
+            "{}└{}",
+            label(0),
+            "─".repeat(values.len() * width.max(1))
+        ))],
     );
 }
 
@@ -102,10 +100,11 @@ pub fn column_dates(page: &mut Page, columns: usize, first: &str, last: &str) {
     let gap = room.saturating_sub(crate::ui::text::width(last)).max(1);
     body(
         page,
-        vec![Seg::new(
-            format!("{}{first}{}{last}", " ".repeat(8), " ".repeat(gap)),
-            Role::Meta,
-        )],
+        vec![meta(format!(
+            "{}{first}{}{last}",
+            " ".repeat(8),
+            " ".repeat(gap)
+        ))],
     );
 }
 

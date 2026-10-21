@@ -50,7 +50,7 @@ pub fn home(page: &mut Page, sections: &[HomeSection<'_>], icons: Icons, now: u6
     page.line(vec![inbox]);
     page.blank();
     if sections.is_empty() {
-        page.box_top(vec![Seg::new("Home", Role::Strong)], Vec::new());
+        page.box_top(vec![strong("Home")], Vec::new());
         empty_row(
             page,
             "No sections. Add a search from its list (in the Space menu), or as [[home]] in config.toml.",
@@ -63,8 +63,8 @@ pub fn home(page: &mut Page, sections: &[HomeSection<'_>], icons: Icons, now: u6
         }
         page.anchor(format!("section-{i}"));
         let title = |count: Option<String>| {
-            let mut t = vec![Seg::new(section.title.to_owned(), Role::Strong)];
-            t.extend(count.map(|c| Seg::new(format!("  {c}"), Role::Meta)));
+            let mut t = vec![strong(section.title.to_owned())];
+            t.extend(count.map(|c| meta(format!("  {c}"))));
             t
         };
         let failed = |page: &mut Page, why: &str| {

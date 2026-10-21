@@ -104,6 +104,24 @@ fn plural(n: u64, word: &str) -> String {
     format!("{} {}", compact(n), noun(n, word))
 }
 
+fn meta(text: impl Into<String>) -> Seg {
+    Seg::new(text, Role::Meta)
+}
+
+fn strong(text: impl Into<String>) -> Seg {
+    Seg::new(text, Role::Strong)
+}
+
+/// One line of text across the page, wrapped.
+fn say(page: &mut Page, text: impl Into<String>, role: Role) {
+    page.wrapped(vec![Seg::new(text, role)], 0, Frame::None);
+}
+
+/// A box title: `name  count`.
+fn counted<T>(name: &str, list: &impl Rows<T>) -> Vec<Seg> {
+    vec![strong(format!("{name}  {}", count_of(list)))]
+}
+
 fn chip(text: impl Into<String>, bg: Bg) -> Seg {
     Seg::new(format!(" {} ", text.into()), Role::Chip(bg))
 }
@@ -126,7 +144,7 @@ fn labels(segs: &mut Vec<Seg>, labels: &Capped<Label>) {
 /// ` +3` after chips, for the ones GitHub has that weren't fetched.
 fn more_chips<T>(segs: &mut Vec<Seg>, list: &Capped<T>) {
     if list.left_out() > 0 {
-        segs.push(Seg::new(format!(" +{}", list.left_out()), Role::Meta));
+        segs.push(meta(format!(" +{}", list.left_out())));
     }
 }
 
@@ -225,7 +243,7 @@ fn body(page: &mut Page, segs: Vec<Seg>) {
 
 /// A box's empty state.
 fn empty_row(page: &mut Page, text: &str) {
-    body(page, vec![Seg::new(text, Role::Meta)]);
+    body(page, vec![meta(text)]);
 }
 
 /// A box holding only its empty state.
@@ -428,15 +446,7 @@ fn paged_list<T>(
     let Some(l) = list.show(page, &name.to_lowercase()) else {
         return;
     };
-    let title = format!("{name}  {}", count_of(l));
-    list_box(
-        page,
-        vec![Seg::new(title, Role::Strong)],
-        Vec::new(),
-        l,
-        empty,
-        row,
-    );
+    list_box(page, counted(name, l), Vec::new(), l, empty, row);
 }
 
 /// `prefix` then `segs` wrapped inside a box, continuation lines aligned
@@ -542,7 +552,7 @@ pub struct Listing<'a> {
 
 fn aside_heading(page: &mut Page, text: &str) {
     page.blank();
-    page.line(vec![Seg::new(text, Role::Strong)]);
+    page.line(vec![strong(text)]);
 }
 
 /// What a conversation leaves out: `… 12 more replies on GitHub (o)`.
@@ -561,7 +571,7 @@ fn earlier_here<T>(page: &mut Page, list: &Capped<T>, one: &str, many: &str) {
 fn left_out(page: &mut Page, n: u64, one: &str, many: &str) {
     if n > 0 {
         let text = left_out_text(n, one, many);
-        page.wrapped(vec![Seg::new(text, Role::Meta)], 2, Frame::None);
+        page.wrapped(vec![meta(text)], 2, Frame::None);
     }
 }
 
