@@ -503,8 +503,7 @@ fn ask_create(state: &mut State, route: &Route) -> Cmds {
         ),
     ];
     let title = format!("Open a pull request in {repo}?");
-    crate::forms::ask(state, route.clone(), title, facts, choices);
-    Cmds::new()
+    crate::forms::ask(state, route.clone(), title, facts, choices)
 }
 
 /// Asks before pushing the form's head branch from this clone.
@@ -572,8 +571,7 @@ fn ask_push(state: &mut State) -> Cmds {
         title,
         facts,
         vec![("Push".into(), Answer::Push)],
-    );
-    Cmds::new()
+    )
 }
 
 /// A pull request's question was answered: push its branch (`None`), or

@@ -290,8 +290,7 @@ pub fn ask_delete(state: &mut State, name: &str) -> Cmds {
         format!("Delete {name}?"),
         facts,
         vec![("Delete asset".into(), Answer::DeleteAsset(name.to_owned()))],
-    );
-    Cmds::new()
+    )
 }
 
 /// Deletes the asset asked about.

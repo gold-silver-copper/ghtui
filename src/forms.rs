@@ -578,9 +578,10 @@ pub(crate) fn ask(
     title: String,
     facts: Vec<(String, bool)>,
     choices: Vec<(String, Answer)>,
-) {
+) -> Cmds {
     let ask = Ask::new(About::Form(route), title, facts, choices);
     state.overlay = Some(Overlay::Ask(Box::new(ask)));
+    Cmds::new()
 }
 
 /// Keys in the question: choose, go ahead, or cancel.

@@ -203,8 +203,7 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId) -> Cmds {
         title,
         vec![(on, false), ("It can't be brought back".into(), true)],
         vec![("Delete milestone".into(), super::Answer::Delete(subject))],
-    );
-    Cmds::new()
+    )
 }
 
 pub(super) fn delete(state: &mut State, repo: RepoId, number: u64) -> Cmds {

@@ -88,8 +88,7 @@ pub fn ask_delete(state: &mut State) -> Cmds {
             "Delete version".into(),
             crate::forms::Answer::Site(super::Answer::DeleteVersion(id)),
         )],
-    );
-    Cmds::new()
+    )
 }
 
 /// Deletes version `id` of the package on `route`'s page, as asked.

@@ -302,8 +302,7 @@ pub(super) fn ask_commit(state: &mut State, route: &Route) -> Cmds {
         title,
         facts,
         vec![(button.into(), super::Answer::Commit)],
-    );
-    Cmds::new()
+    )
 }
 
 /// The commit asked for, sent.
@@ -507,7 +506,7 @@ impl Job for Commit {
         );
         if c.from.is_some() {
             let propose = super::Answer::Propose(repo, c.branch.clone(), base);
-            ask(
+            cmds.extend(ask(
                 state,
                 format!("Open a pull request for {}?", c.branch),
                 vec![(
@@ -515,7 +514,7 @@ impl Job for Commit {
                     false,
                 )],
                 vec![("Open a pull request".into(), propose)],
-            );
+            ));
         }
         cmds.extend(super::follow(state));
         cmds

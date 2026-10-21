@@ -454,8 +454,7 @@ fn submit(state: &mut State) -> Cmds {
             ("Create secret gist".into(), Answer::Gist { public: false }),
             ("Create public gist".into(), Answer::Gist { public: true }),
         ],
-    );
-    Cmds::new()
+    )
 }
 
 /// Makes the new gist, secret or public.
@@ -505,8 +504,7 @@ pub fn ask_delete(state: &mut State) -> Cmds {
         "Delete this gist?".into(),
         vec![(format!("{what}: it can't be brought back"), true)],
         vec![("Delete gist".into(), Answer::DeleteGist)],
-    );
-    Cmds::new()
+    )
 }
 
 /// Deletes the gist on `route`'s page.

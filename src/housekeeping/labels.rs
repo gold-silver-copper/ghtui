@@ -227,8 +227,7 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId) -> Cmds {
         format!("Delete the label {}?", l.name),
         vec![(on, l.open > 0), ("It can't be brought back".into(), true)],
         vec![("Delete label".into(), super::Answer::Delete(subject))],
-    );
-    Cmds::new()
+    )
 }
 
 pub(super) fn delete(state: &mut State, repo: RepoId, name: String) -> Cmds {

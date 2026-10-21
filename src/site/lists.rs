@@ -302,8 +302,7 @@ pub fn ask_delete(state: &mut State) -> Cmds {
             "Delete list".into(),
             crate::forms::Answer::Site(super::Answer::DeleteList),
         )],
-    );
-    Cmds::new()
+    )
 }
 
 /// Deletes the list on `route`'s page, as asked.

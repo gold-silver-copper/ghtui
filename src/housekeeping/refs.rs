@@ -258,8 +258,7 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId, kind: RefKind) -> Cmd
         title,
         facts,
         vec![(format!("Delete {}", kind.noun()), delete)],
-    );
-    Cmds::new()
+    )
 }
 
 /// Once GitHub says whether the branch asked about is protected: its

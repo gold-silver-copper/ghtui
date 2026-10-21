@@ -1129,11 +1129,12 @@ fn ask(
     title: String,
     facts: Vec<(String, bool)>,
     choices: Vec<(String, Answer)>,
-) {
+) -> Cmds {
     if let Some(route) = state.route().cloned() {
         let ask = question(route, title, facts, choices);
         state.overlay = Some(crate::state::Overlay::Ask(ask));
     }
+    Cmds::new()
 }
 
 /// The question about `route` was answered.

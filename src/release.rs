@@ -670,8 +670,7 @@ fn submit(state: &mut State) -> Cmds {
         (publish.into(), Answer::Release { draft: false }),
         (draft.into(), Answer::Release { draft: true }),
     ];
-    crate::forms::ask(state, route, question, facts, choices);
-    Cmds::new()
+    crate::forms::ask(state, route, question, facts, choices)
 }
 
 /// Saves the release: published, or a draft.
@@ -730,8 +729,7 @@ pub fn ask_delete(state: &mut State) -> Cmds {
     let title = format!("Delete the release {}?", r.name);
     let route = Route::Releases(releases::Release { repo, tag });
     let choices = vec![("Delete release".into(), Answer::DeleteRelease)];
-    crate::forms::ask(state, route, title, facts, choices);
-    Cmds::new()
+    crate::forms::ask(state, route, title, facts, choices)
 }
 
 /// The release on `route`'s page was asked to go: deletes it.
@@ -936,7 +934,7 @@ impl Job for Delete {
         if !tagged {
             return cmds;
         }
-        crate::forms::ask(
+        cmds.extend(crate::forms::ask(
             state,
             route,
             format!("Delete the tag {tag} as well?"),
@@ -953,7 +951,7 @@ impl Job for Delete {
                 (format!("Delete the tag {tag}"), Answer::DeleteTag),
                 ("Keep the tag".into(), Answer::KeepTag),
             ],
-        );
+        ));
         cmds
     }
 }

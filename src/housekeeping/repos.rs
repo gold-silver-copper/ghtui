@@ -294,7 +294,7 @@ impl Job for Make {
         };
         state.info(format!("Created {}", made.full_name));
         let on_form = state.route() == Some(route);
-        let cmds = opened(state, route, &made).unwrap_or_default();
+        let mut cmds = opened(state, route, &made).unwrap_or_default();
         // Offered as GitHub's page offers it: its clone command, run here.
         let Some(repo) = made.repo().filter(|_| on_form) else {
             return cmds;
@@ -307,12 +307,12 @@ impl Job for Make {
         );
         let url = made.clone_url.clone();
         let clone = super::Answer::Clone { url, dir };
-        ask(
+        cmds.extend(ask(
             state,
             format!("Clone {repo}?"),
             vec![(fact, false)],
             vec![("Clone it".into(), clone)],
-        );
+        ));
         cmds
     }
 }
