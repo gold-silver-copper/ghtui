@@ -758,10 +758,7 @@ mod tests {
     async fn github() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let d = dir.path();
-        git(d, &["init", "-q", "-b", "main"]).await;
-        for (key, value) in [("user.name", "Ann"), ("user.email", "ann@example.com")] {
-            git(d, &["config", key, value]).await;
-        }
+        crate::git::fixture::origin(d).await;
         let me = "1+ann@users.noreply.github.com";
         write(
             d,
@@ -793,20 +790,7 @@ mod tests {
 
     /// A partial clone of "GitHub", as the cache keeps.
     async fn partial(github: &Path) -> (tempfile::TempDir, Repo) {
-        let cache = tempfile::tempdir().unwrap();
-        git(github, &["config", "uploadpack.allowFilter", "true"]).await;
-        git(github, &["config", "uploadpack.allowAnySHA1InWant", "true"]).await;
-        let url = format!("file://{}", github.display());
-        let repo = Repo::open_cache(
-            cache.path(),
-            "o",
-            "r",
-            &url,
-            crate::git::credentials::Credentials::Ambient,
-            &|_| {},
-        )
-        .await
-        .unwrap();
+        let (cache, repo) = crate::git::fixture::cache_clone(github).await;
         assert!(repo.partial);
         (cache, repo)
     }

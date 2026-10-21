@@ -925,6 +925,7 @@ mod tests {
         assert!(!by_git(&history, Some("Y3Vyc29y")), "GitHub's own cursor");
     }
 
+    use crate::git::fixture::{cache_clone, commit, origin};
     use crate::git::set_up as git;
 
     /// Pages read from the cache's clone at the commit GitHub's branch is
@@ -934,28 +935,13 @@ mod tests {
     async fn pages_read_from_the_clone_at_github_s_commit() {
         let github = tempfile::tempdir().unwrap();
         let g = github.path();
-        git(g, &["init", "-q", "-b", "main"]).await;
-        for (key, value) in [
-            ("user.name", "Ann"),
-            ("user.email", "ann@example.com"),
-            ("uploadpack.allowFilter", "true"),
-            ("uploadpack.allowAnySHA1InWant", "true"),
-        ] {
-            git(g, &["config", key, value]).await;
-        }
-        std::fs::write(g.join("a.txt"), "one\n").unwrap();
-        git(g, &["add", "a.txt"]).await;
-        git(g, &["commit", "-q", "-m", "First"]).await;
-        let cache = tempfile::tempdir().unwrap();
-        let url = format!("file://{}", g.display());
-        let credentials = crate::git::credentials::Credentials::Ambient;
-        Repo::open_cache(cache.path(), "o", "r", &url, credentials.clone(), &|_| {})
-            .await
-            .unwrap();
+        origin(g).await;
+        commit(g, &[("a.txt", "one\n")], "First").await;
+        let (cache, _) = cache_clone(g).await;
         let elsewhere = tempfile::tempdir().unwrap();
         let local = Local::new(GitContext {
             cache_root: cache.path().to_owned(),
-            credentials,
+            credentials: crate::git::credentials::Credentials::Ambient,
             cwd: elsewhere.path().to_owned(),
         });
         let gh = GitHub::new(
@@ -967,10 +953,7 @@ mod tests {
         let blob = |path: &str| DataKey::Blob(repo.clone(), "main".into(), path.into());
 
         // GitHub moved on since the clone was made.
-        std::fs::write(g.join("b.txt"), "two\n").unwrap();
-        git(g, &["add", "b.txt"]).await;
-        git(g, &["commit", "-q", "-m", "Second"]).await;
-        let head = Oid::parse(git(g, &["rev-parse", "main"]).await.trim()).unwrap();
+        let head = Oid::parse(&commit(g, &[("b.txt", "two\n")], "Second").await).unwrap();
         let (data, from) = local.fetch(&gh, &blob("b.txt"), None).await;
         let Ok(Data::Blob(b)) = data else {
             panic!("{data:?}")
@@ -1037,22 +1020,12 @@ mod tests {
     async fn offline_the_clone_reads_at_the_branch_github_last_listed() {
         let github = tempfile::tempdir().unwrap();
         let g = github.path().join("r.git");
-        std::fs::create_dir(&g).unwrap();
-        git(&g, &["init", "-q", "-b", "main"]).await;
-        git(&g, &["config", "uploadpack.allowFilter", "true"]).await;
-        std::fs::write(g.join("a.txt"), "one\n").unwrap();
-        git(&g, &["add", "a.txt"]).await;
-        let who = ["-c", "user.name=Ann", "-c", "user.email=ann@example.com"];
-        git(&g, &[&who[..], &["commit", "-q", "-m", "First"]].concat()).await;
-        let cache = tempfile::tempdir().unwrap();
-        let url = format!("file://{}", g.display());
-        let credentials = crate::git::credentials::Credentials::Ambient;
-        Repo::open_cache(cache.path(), "o", "r", &url, credentials.clone(), &|_| {})
-            .await
-            .unwrap();
+        origin(&g).await;
+        commit(&g, &[("a.txt", "one\n")], "First").await;
+        let (cache, _) = cache_clone(&g).await;
         let context = GitContext {
             cache_root: cache.path().to_owned(),
-            credentials,
+            credentials: crate::git::credentials::Credentials::Ambient,
             cwd: cache.path().to_owned(),
         };
         let store = crate::store::Store::open(&cache.path().join("cache.redb"));

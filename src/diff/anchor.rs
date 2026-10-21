@@ -148,16 +148,16 @@ pub fn parse_patch_headers(patch: &str) -> Vec<HunkRange> {
         .collect()
 }
 
-/// Maps a line of `old` to the same line in `new`, if it survived
-/// unchanged. `None` means it changed or was removed: the comment stays
-/// outdated.
-pub fn map_line(old: &Text, new: &Text, line: u32) -> Option<u32> {
+/// Where each line of `old` that survived unchanged is in `new`. A line
+/// missing from the map changed or was removed: its comment stays outdated.
+pub fn line_map(old: &Text, new: &Text) -> std::collections::HashMap<u32, u32> {
     align(old, new, Algorithm::Histogram, Whitespace::Exact)
         .into_iter()
-        .find_map(|l| match l {
-            DiffLine::Context { old, new } if old == line => Some(new),
+        .filter_map(|l| match l {
+            DiffLine::Context { old, new } => Some((old, new)),
             _ => None,
         })
+        .collect()
 }
 
 #[cfg(test)]
@@ -254,9 +254,10 @@ mod tests {
     fn maps_lines_forward_when_unchanged() {
         let old = Text::new(b"a\nb\nc\nd\n");
         let new = Text::new(b"z\na\nb\nC\nd\n");
-        assert_eq!(map_line(&old, &new, 1), Some(2));
-        assert_eq!(map_line(&old, &new, 4), Some(5));
-        assert_eq!(map_line(&old, &new, 3), None, "changed: stays outdated");
-        assert_eq!(map_line(&old, &new, 9), None);
+        let map = line_map(&old, &new);
+        assert_eq!(map.get(&1), Some(&2));
+        assert_eq!(map.get(&4), Some(&5));
+        assert_eq!(map.get(&3), None, "changed: stays outdated");
+        assert_eq!(map.get(&9), None);
     }
 }

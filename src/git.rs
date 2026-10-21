@@ -158,10 +158,63 @@ pub(crate) async fn run(dir: Option<&Path>, args: &[&str]) -> Result<String, Git
     stdout(&git(dir).args(args).output().await?, &args.join(" "))
 }
 
-/// Runs git in `dir` to set a test's repositories up.
+/// Runs git in `dir` to set a test's repositories up, isolated from the
+/// user's configuration (signing, hooks, aliases).
 #[cfg(test)]
 pub(crate) async fn set_up(dir: &Path, args: &[&str]) -> String {
-    run(Some(dir), args).await.unwrap()
+    let mut cmd = git(Some(dir));
+    cmd.args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    stdout(&cmd.output().await.unwrap(), &args.join(" ")).unwrap()
+}
+
+/// Tests' "GitHub" repositories and the cache's clones of them.
+#[cfg(test)]
+pub(crate) mod fixture {
+    use std::path::Path;
+
+    use super::set_up as git;
+    use crate::git::repo::Repo;
+
+    /// A repository on `main` in `dir`, committing as Ann, that serves
+    /// partial clones and objects by ID as GitHub does.
+    pub(crate) async fn origin(dir: &Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        git(dir, &["init", "-q", "-b", "main"]).await;
+        for (key, value) in [
+            ("user.name", "Ann"),
+            ("user.email", "ann@example.com"),
+            ("uploadpack.allowFilter", "true"),
+            ("uploadpack.allowAnySHA1InWant", "true"),
+        ] {
+            git(dir, &["config", key, value]).await;
+        }
+    }
+
+    /// Writes `files` and commits everything in `dir`; the new HEAD.
+    pub(crate) async fn commit(dir: &Path, files: &[(&str, &str)], message: &str) -> String {
+        for (path, text) in files {
+            let file = dir.join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, text).unwrap();
+        }
+        git(dir, &["add", "-A"]).await;
+        git(dir, &["commit", "-q", "-m", message]).await;
+        git(dir, &["rev-parse", "HEAD"]).await.trim().to_owned()
+    }
+
+    /// The cache's partial clone of `origin`, as `o/r`, in a directory of
+    /// its own.
+    pub(crate) async fn cache_clone(origin: &Path) -> (tempfile::TempDir, Repo) {
+        let cache = tempfile::tempdir().unwrap();
+        let url = format!("file://{}", origin.display());
+        let credentials = crate::git::credentials::Credentials::Ambient;
+        let repo = Repo::open_cache(cache.path(), "o", "r", &url, credentials, &|_| {})
+            .await
+            .unwrap();
+        (cache, repo)
+    }
 }
 
 /// What `git <what>` printed, or its complaint if it failed.

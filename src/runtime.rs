@@ -374,14 +374,7 @@ impl Effects {
                 };
                 spawn_guarded(&self.tx, replies, |tx| async move {
                     let (repo, reader) = git;
-                    let mut mapped = Vec::new();
-                    for t in threads {
-                        let to = diff_job::map_outdated(
-                            &repo, &reader, &head, &t.path, &t.commit, t.line,
-                        )
-                        .await;
-                        mapped.push((t.thread, to));
-                    }
+                    let mapped = diff_job::map_outdated(&repo, &reader, &head, &threads).await;
                     let msg = DiffMsg::Job(job, JobMsg::Mapped(mapped));
                     let _ = tx.send(Msg::Diff(pr.into(), msg));
                 });

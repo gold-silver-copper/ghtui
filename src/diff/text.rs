@@ -81,17 +81,20 @@ impl Text {
         n.checked_sub(1).map_or("", |i| self.line(i as usize))
     }
 
+    /// Offset just past line `i`'s terminator.
+    pub(crate) fn line_end(&self, i: usize) -> u32 {
+        self.lines
+            .get(i + 1)
+            .map_or(sat_u32(self.source.len()), |next| next.0)
+    }
+
     /// Line `i` as the diff compares it: content plus terminator, so a
     /// CRLF↔LF or missing-final-newline change counts as a change, as in git.
-    pub(crate) fn token(&self, i: usize) -> String {
-        let mut t = self.line(i).to_owned();
-        if self.crlf.get(i) == Some(&true) {
-            t.push('\r');
-        }
-        if i + 1 < self.len() || !self.missing_final_newline {
-            t.push('\n');
-        }
-        t
+    pub(crate) fn token(&self, i: usize) -> &str {
+        self.lines
+            .get(i)
+            .and_then(|&(a, _)| self.source.get(a as usize..self.line_end(i) as usize))
+            .unwrap_or_default()
     }
 }
 

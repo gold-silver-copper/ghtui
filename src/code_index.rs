@@ -641,19 +641,8 @@ mod tests {
     use super::*;
     use crate::git::credentials::Credentials;
 
+    use crate::git::fixture::{commit, origin};
     use crate::git::set_up as git;
-
-    async fn commit(dir: &Path, files: &[(&str, &str)]) -> String {
-        for (path, text) in files {
-            let path = dir.join(path);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, text).unwrap();
-        }
-        git(dir, &["add", "."]).await;
-        let who = ["-c", "user.name=a", "-c", "user.email=a@b"];
-        git(dir, &[&who[..], &["commit", "-qm", "x"]].concat()).await;
-        git(dir, &["rev-parse", "HEAD"]).await.trim().to_owned()
-    }
 
     /// Indexes your clone at `clone`, kept in `cache`.
     fn indexer(cache: &Path, clone: &Path, limits: Limits) -> Indexer {
@@ -758,8 +747,7 @@ mod tests {
     async fn indexes_a_clone_at_a_commit_and_moves_on_incrementally() {
         let tmp = tempfile::tempdir().unwrap();
         let (clone, cache) = (tmp.path().join("clone"), tmp.path().join("cache"));
-        std::fs::create_dir(&clone).unwrap();
-        git(&clone, &["init", "-q", "-b", "main"]).await;
+        origin(&clone).await;
         git(
             &clone,
             &["remote", "add", "origin", "git@github.com:o/r.git"],
@@ -772,6 +760,7 @@ mod tests {
                 ("tools/b.py", "def gamma():\n    pass\n"),
                 ("README.md", "# alpha\n"),
             ],
+            "x",
         )
         .await;
 
@@ -789,7 +778,7 @@ mod tests {
         assert!(cache.join("code-index/o/r").join(&first).exists());
 
         // Another run of ghtui, a commit later: one file read.
-        let second = commit(&clone, &[("tools/b.py", "def delta():\n    pass\n")]).await;
+        let second = commit(&clone, &[("tools/b.py", "def delta():\n    pass\n")], "x").await;
         let snap = built(&indexer(&cache, &clone, LIMITS), &second, "src/a.rs").await;
         assert_eq!(snap.index.read, 1);
         assert_eq!(found(&snap, "gamma"), []);

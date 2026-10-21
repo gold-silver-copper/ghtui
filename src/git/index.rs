@@ -232,31 +232,17 @@ fn parse_hit(line: &str, prefix: &str) -> Option<Hit> {
 mod tests {
     use super::*;
 
-    use crate::git::set_up as git;
-
     /// A repository with a commit of two Rust files and a binary one.
     async fn repo() -> (tempfile::TempDir, Repo, Oid) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path();
-        git(path, &["init", "-q", "-b", "main"]).await;
-        std::fs::create_dir(path.join("src")).unwrap();
-        std::fs::write(path.join("src/a.rs"), "fn run() {}\nfn rung() { run() }\n").unwrap();
-        std::fs::write(path.join("b.rs"), "// run, run\nfn other() {}\n").unwrap();
-        std::fs::write(path.join("bin"), b"run\0\x01").unwrap();
-        git(path, &["add", "."]).await;
-        git(
-            path,
-            &[
-                "-c",
-                "user.name=a",
-                "-c",
-                "user.email=a@b",
-                "commit",
-                "-qm",
-                "x",
-            ],
-        )
-        .await;
+        let files = [
+            ("src/a.rs", "fn run() {}\nfn rung() { run() }\n"),
+            ("b.rs", "// run, run\nfn other() {}\n"),
+            ("bin", "run\0\x01"),
+        ];
+        crate::git::fixture::origin(path).await;
+        crate::git::fixture::commit(path, &files, "x").await;
         let repo = Repo::open_local(path, "origin").await.unwrap();
         let head = repo.rev_parse("HEAD").await.unwrap();
         (dir, repo, head)

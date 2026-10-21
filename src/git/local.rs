@@ -279,27 +279,16 @@ pub async fn checkout(
 mod tests {
     use super::*;
 
+    use crate::git::fixture::{commit, origin};
     use crate::git::set_up as git;
-
-    /// A repository with one commit, as a known person.
-    async fn repo(dir: &Path) {
-        git(dir, &["init", "-q", "-b", "main"]).await;
-        for (key, value) in [("user.name", "T"), ("user.email", "t@example.com")] {
-            git(dir, &["config", key, value]).await;
-        }
-        std::fs::write(dir.join("a.txt"), "one\n").unwrap();
-        git(dir, &["add", "a.txt"]).await;
-        git(dir, &["commit", "-q", "-m", "First"]).await;
-    }
 
     /// "GitHub" (a repository with pull request 7's head) and a clone of it.
     async fn github_and_clone() -> (tempfile::TempDir, tempfile::TempDir) {
         let github = tempfile::tempdir().unwrap();
-        repo(github.path()).await;
+        origin(github.path()).await;
+        commit(github.path(), &[("a.txt", "one\n")], "First").await;
         git(github.path(), &["switch", "-q", "-c", "feature"]).await;
-        std::fs::write(github.path().join("b.txt"), "two\n").unwrap();
-        git(github.path(), &["add", "b.txt"]).await;
-        git(github.path(), &["commit", "-q", "-m", "Add b\n\nBecause."]).await;
+        commit(github.path(), &[("b.txt", "two\n")], "Add b\n\nBecause.").await;
         git(
             github.path(),
             &["update-ref", "refs/pull/7/head", "feature"],
