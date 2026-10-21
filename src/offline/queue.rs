@@ -396,10 +396,9 @@ pub fn start(
     let (ops, mut rx) = mpsc::unbounded_channel::<Op>();
     let store = gh.store().clone();
     tokio::spawn(async move {
-        let tell = |told: Told| {
+        let mut tell = |told: Told| {
             let _ = tx.send(crate::state::Msg::Offline(crate::offline::Msg::Queue(told)));
         };
-        let mut tell = tell;
         let mut queue = match tokio::task::spawn_blocking(move || Queue::load(store)).await {
             Ok(queue) => queue,
             Err(err) => {

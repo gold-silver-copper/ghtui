@@ -63,7 +63,7 @@ impl Limits {
 }
 
 /// A repository kept offline, and how keeping it went.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Kept {
     pub repo: RepoId,
     /// When it was last fetched ahead to the end.
@@ -82,22 +82,6 @@ pub struct Kept {
     /// It's being fetched now.
     #[serde(skip)]
     pub busy: bool,
-}
-
-impl Kept {
-    fn new(repo: RepoId) -> Self {
-        Self {
-            repo,
-            refreshed: None,
-            issues: 0,
-            pulls: 0,
-            discussions: 0,
-            clone: None,
-            problem: None,
-            seen: BTreeMap::new(),
-            busy: false,
-        }
-    }
 }
 
 /// What the keeper is asked.
@@ -187,7 +171,10 @@ impl Keeper {
                     self.due.retain(|r| *r != repo);
                 }
                 None => {
-                    self.kept.push(Kept::new(repo.clone()));
+                    self.kept.push(Kept {
+                        repo: repo.clone(),
+                        ..Kept::default()
+                    });
                     self.due.push(repo);
                 }
             },

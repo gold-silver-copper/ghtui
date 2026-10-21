@@ -238,11 +238,11 @@ pub(crate) fn save_rows(
     vec![(row, Some(Choice::Step(step)))]
 }
 
-/// Places in code that match `q`, best first; all of them in order
-/// before anything is typed.
 /// Places in code listed at once.
 const CODE_ROWS: usize = 1000;
 
+/// Places in code that match `q`, best first; all of them in order
+/// before anything is typed.
 fn code_rows(rows: &[(PaletteItem, Choice)], q: &str) -> Rows {
     let hits: Vec<_> = (rows.iter().enumerate())
         .filter_map(|(i, (item, choice))| {
@@ -428,8 +428,6 @@ impl State {
         }
     }
 
-    /// Palette entries: somewhere to go, what you can do here (the menu's
-    /// order first), and searching GitHub.
     /// What's on screen is numbered lines: a file, a blame, a job's log
     /// or a diff.
     fn shows_lines(&self) -> bool {
@@ -443,6 +441,8 @@ impl State {
         }
     }
 
+    /// Palette entries: somewhere to go, what you can do here (the menu's
+    /// order first), and searching GitHub.
     pub fn commands(&self, input: &str) -> Rows {
         let mut out = Vec::new();
         // vim's way out, first.
@@ -500,11 +500,9 @@ impl State {
                 && crate::nav::availability_in(&doables, **a).is_ok()
         }));
         let mut actions: Vec<(usize, Action)> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         for a in order {
-            if a == Action::CommandPalette
-                || (quit_first && a == Action::Quit)
-                || actions.iter().any(|(_, b)| *b == a)
-            {
+            if a == Action::CommandPalette || (quit_first && a == Action::Quit) || !seen.insert(a) {
                 continue;
             }
             let by_name = fuzzy_score(input, &a.name().replace('_', " "));

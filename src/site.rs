@@ -25,7 +25,8 @@ use crate::ui::pages::url as links;
 use crate::browse::{Build, Width};
 use crate::chrome::{Chrome, Section};
 use crate::data::DataKey;
-use crate::state::State;
+use crate::keymap::Action;
+use crate::state::{Cmds, State};
 use crate::ui::pages::{InsightsTab, ProfileTab};
 
 /// One of these pages.
@@ -94,7 +95,7 @@ impl Family for Page {
             Page::Explore { .. } | Page::Topic(_) => Route::App(app::Home),
             Page::StarList { login, .. } => Route::People(people::User {
                 login: login.clone(),
-                tab: crate::ui::pages::ProfileTab::Stars,
+                tab: ProfileTab::Stars,
             }),
             Page::Packages(PackagesOf::Owner(login)) => Route::user(login),
             Page::Package { at, version: None } => {
@@ -128,7 +129,6 @@ impl Family for Page {
     }
 
     fn needs(&self) -> Vec<DataKey> {
-        let data = |key| key;
         let header = |repo: &RepoId| DataKey::Repo(repo.clone());
         let paged = self.paged();
         match self {
@@ -140,10 +140,10 @@ impl Family for Page {
                     InsightsTab::Traffic => DataKey::Traffic(repo.clone()),
                     InsightsTab::Dependencies => DataKey::Dependencies(repo.clone()),
                 };
-                vec![header(repo), data(own)]
+                vec![header(repo), own]
             }
-            Page::Explore { .. } => paged.into_iter().chain([data(DataKey::Featured)]).collect(),
-            Page::Topic(name) => std::iter::once(data(DataKey::Topic(name.to_lowercase())))
+            Page::Explore { .. } => paged.into_iter().chain([DataKey::Featured]).collect(),
+            Page::Topic(name) => std::iter::once(DataKey::Topic(name.to_lowercase()))
                 .chain(paged)
                 .collect(),
             Page::StarList { login, .. } => {
@@ -151,7 +151,7 @@ impl Family for Page {
                 std::iter::once(profile).chain(paged).collect()
             }
             Page::Packages(of) => {
-                let own = data(DataKey::Packages(of.clone()));
+                let own = DataKey::Packages(of.clone());
                 match of {
                     PackagesOf::Repo(repo) => vec![header(repo), own],
                     PackagesOf::Owner(login) => {
@@ -188,7 +188,7 @@ impl Family for Page {
         let explore = || {
             Target::Page(Route::Site(Page::Explore {
                 language: None,
-                since: crate::api::explore::Since::default(),
+                since: Since::default(),
             }))
         };
         let user = |login: &str| Some(Target::Page(Route::user(login)));
@@ -294,7 +294,7 @@ impl Family for Page {
             Page::Package { at, version } => {
                 let f = b.get(&DataKey::Package(at.clone()));
                 if let Some(d) = f.show(page, "the package") {
-                    let delete = b.state.first_key(crate::keymap::Action::DeleteComment);
+                    let delete = b.state.first_key(Action::DeleteComment);
                     pages::package(page, d, *version, &delete, now);
                 }
             }
@@ -332,27 +332,23 @@ pub fn parse(segments: &[&str], param: impl Fn(&str) -> Option<String>) -> Optio
         ["orgs" | "users", login, "packages"] if valid(login) => {
             Page::Packages(PackagesOf::Owner((*login).to_owned()))
         }
-        // A package's owner is as its repository's is: one a repository
-        // path accepts.
-        ["orgs" | "users", login, "packages", kind, "package", name] if owner(login) => {
+        // A package (`…/package/<name>`), or one of its versions
+        // (`…/<name>/<id>`). Its owner is as its repository's is: one a
+        // repository path accepts.
+        ["orgs" | "users", login, "packages", kind, a, b] if owner(login) => {
+            let (name, version) = match *a {
+                "package" => (b, None),
+                _ => (a, Some(b.parse().ok()?)),
+            };
             Page::Package {
                 at: PackageRef {
                     owner: (*login).to_owned(),
                     kind: Kind::from_slug(kind)?,
                     name: (*name).to_owned(),
                 },
-                version: None,
+                version,
             }
         }
-        // One of its versions.
-        ["orgs" | "users", login, "packages", kind, name, id] if owner(login) => Page::Package {
-            at: PackageRef {
-                owner: (*login).to_owned(),
-                kind: Kind::from_slug(kind)?,
-                name: (*name).to_owned(),
-            },
-            version: Some(id.parse().ok()?),
-        },
         [login] if param("tab").as_deref() == Some("packages") && valid(login) => {
             Page::Packages(PackagesOf::Owner((*login).to_owned()))
         }
@@ -446,11 +442,7 @@ impl Answer {
 }
 
 /// The question about `route` was answered.
-pub fn answer(
-    state: &mut crate::state::State,
-    route: &crate::route::Route,
-    answer: Answer,
-) -> crate::state::Cmds {
+pub fn answer(state: &mut State, route: &Route, answer: Answer) -> Cmds {
     match answer {
         Answer::DeleteList => lists::delete(state, route),
         Answer::DeleteVersion(id) => packages::delete(state, route, id),
@@ -484,52 +476,34 @@ impl Pick {
     }
 }
 
-pub fn rows(state: &crate::state::State, pick: &Pick, q: &str) -> crate::picker::Rows {
+pub fn rows(state: &State, pick: &Pick, q: &str) -> crate::picker::Rows {
     match pick {
         Pick::Lists(repo) => lists::rows(state, repo, q),
     }
 }
 
-/// The menu's rows on these pages.
-pub fn doables(
-    state: &crate::state::State,
-    route: &crate::route::Route,
-    out: &mut Vec<crate::nav::Doable>,
-) {
-    lists::doables(state, route, out);
-    packages::doables(state, route, out);
-}
-
 /// What the site's pages add: your starred lists, and deleting a list or
-/// a package's version on its page.
+/// a package's version on its page (`,D`).
 pub const FEATURE: crate::features::Feature = crate::features::Feature {
-    owns: &[crate::keymap::Action::Lists],
+    owns: &[Action::Lists],
     takes: |state, action| {
-        action == crate::keymap::Action::DeleteComment
+        action == Action::DeleteComment
             && matches!(
                 state.route(),
-                Some(crate::route::Route::Site(
-                    Page::Package { .. } | Page::StarList { .. }
-                ))
+                Some(Route::Site(Page::Package { .. } | Page::StarList { .. }))
             )
     },
-    act: |state, action| match action {
-        crate::keymap::Action::Lists => lists::open(state),
-        _ => ask_delete(state),
+    act: |state, action| match (action, state.route()) {
+        (Action::Lists, _) => lists::open(state),
+        (_, Some(Route::Site(Page::StarList { .. }))) => lists::ask_delete(state),
+        _ => packages::ask_delete(state),
     },
     offers: |state, out| {
         if let Some(route) = state.route() {
-            doables(state, route, out);
+            lists::doables(state, route, out);
+            packages::doables(state, route, out);
         }
         out.extend(lists::doable(state));
     },
     ..crate::features::Feature::NONE
 };
-
-/// `,D` here.
-pub fn ask_delete(state: &mut crate::state::State) -> crate::state::Cmds {
-    match state.route() {
-        Some(crate::route::Route::Site(Page::StarList { .. })) => lists::ask_delete(state),
-        _ => packages::ask_delete(state),
-    }
-}

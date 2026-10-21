@@ -221,19 +221,18 @@ impl Job for SetLists {
 
     /// GitHub's answer: your lists are read again until they show it.
     fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
-        let work = self;
         match result {
             Ok(()) => {
-                state.info(work.said());
+                state.info(self.said());
                 if let Some(route) = state.route().cloned() {
                     let what = Expected::Membership {
-                        repo: work.repo.clone(),
-                        list: work.list.clone(),
-                        add: work.add,
+                        repo: self.repo.clone(),
+                        list: self.list,
+                        add: self.add,
                     };
                     crate::follow::expect(state, route, what);
                 }
-                let mut cmds = state.ensure(DataKey::MyLists(work.repo), true);
+                let mut cmds = state.ensure(DataKey::MyLists(self.repo), true);
                 cmds.extend(state.load_visible(false));
                 cmds
             }
@@ -258,8 +257,7 @@ fn refused(what: &str, why: &Failure) -> String {
 
 /// The list on screen, if it's yours.
 fn yours<'a>(state: &'a State, login: &str) -> Result<&'a ListPage, String> {
-    let route = state.route().cloned();
-    let list = route
+    let list = (state.route())
         .and_then(|r| r.family().paged())
         .and_then(|k| state.picked::<ListPage>(&k));
     let Some(list) = list else {
@@ -273,17 +271,14 @@ fn yours<'a>(state: &'a State, login: &str) -> Result<&'a ListPage, String> {
 
 /// `,D` on one of your lists: asks first.
 pub fn ask_delete(state: &mut State) -> Cmds {
-    let Some(route @ Route::Site(Page::StarList { .. })) = state.route().cloned() else {
+    let Some(route @ Route::Site(Page::StarList { login, .. })) = state.route() else {
         return Cmds::new();
     };
-    let Route::Site(Page::StarList { login, .. }) = &route else {
-        return Cmds::new();
-    };
-    let list = match yours(state, login) {
-        Ok(l) => l.list.clone(),
-        Err(why) => {
-            return state.just_say(format!("Can't delete the list: {why}"));
-        }
+    let list = yours(state, login).map(|l| l.list.clone());
+    let route = route.clone();
+    let list = match list {
+        Ok(list) => list,
+        Err(why) => return state.just_say(format!("Can't delete the list: {why}")),
     };
     let n = list.count;
     let facts = vec![(

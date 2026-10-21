@@ -83,7 +83,7 @@ impl Search {
     }
 }
 
-/// The config key for a kind of list, and what it calls one.
+/// The config key for a kind of list.
 fn kind_key(kind: SearchKind) -> Option<&'static str> {
     match kind {
         SearchKind::Pulls => Some("pulls"),
@@ -389,7 +389,7 @@ impl State {
                 keys.push(key);
             }
         }
-        keys.into_iter().collect()
+        keys
     }
 
     /// The repositories Home's sections list, for the search box.
@@ -577,9 +577,7 @@ pub fn unavailable(state: &State, action: Action) -> Option<String> {
 pub fn act(state: &mut State, action: Action) -> Cmds {
     let (path, plan) = match plan(state, action) {
         Ok((path, plan)) => (path.to_owned(), plan),
-        Err(why) => {
-            return state.just_say(why);
-        }
+        Err(why) => return state.just_say(why),
     };
     let (edit, what) = match plan {
         Plan::Title(titling, name) => {

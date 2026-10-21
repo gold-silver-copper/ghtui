@@ -124,7 +124,6 @@ fn here(state: &State) -> Option<Here<'_>> {
     })
 }
 
-/// Whether `action` is the discussion's on screen to do.
 /// What discussions add: their own actions on a discussion's pages.
 pub const FEATURE: crate::features::Feature = crate::features::Feature {
     takes,
@@ -133,6 +132,7 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
     ..crate::features::Feature::NONE
 };
 
+/// Whether `action` is the discussion's on screen to do.
 fn takes(state: &State, action: Action) -> bool {
     ACTIONS.contains(&action) && here(state).is_some()
 }

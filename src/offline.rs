@@ -257,7 +257,6 @@ fn selected(state: &State) -> Option<&queue::Entry> {
     state.offline.queue.iter().find(|e| e.id == *id)
 }
 
-/// Whether `action` is offline's here.
 /// What working offline adds: its own actions, and on the Offline page
 /// and while GitHub can't be reached, others' (refreshing, copying).
 pub const FEATURE: crate::features::Feature = crate::features::Feature {
@@ -268,6 +267,7 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
     ..crate::features::Feature::NONE
 };
 
+/// Whether `action` is offline's here.
 fn takes(state: &State, action: Action) -> bool {
     match action {
         Action::Refresh => state.offline.since.is_some(),
