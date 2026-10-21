@@ -1440,9 +1440,7 @@ pub fn discussion_close(
     };
     let id = d.id.clone();
     match d.closed {
-        None if !d.can_close => {
-            Err("GitHub doesn't let you close it: that takes its author or triage access".into())
-        }
+        None if !d.can_close => Err(crate::act::CANT_CLOSE.into()),
         None => {
             let choices = (DiscussionReason::ALL.into_iter())
                 .map(|reason| {
@@ -1455,7 +1453,7 @@ pub fn discussion_close(
                 .collect();
             Ok(Some((format!("Close “{}”?", d.title), Vec::new(), choices)))
         }
-        Some(_) if !d.can_reopen => Err("GitHub doesn't let you reopen it".into()),
+        Some(_) if !d.can_reopen => Err(crate::act::CANT_REOPEN.into()),
         Some(_) => {
             let reopen = Change::Manage(Manage::ReopenDiscussion { discussion: id });
             Ok(Some((
