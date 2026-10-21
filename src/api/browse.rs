@@ -4,6 +4,8 @@
 //! The wire types are typed against GitHub's schema; the models after them
 //! are what the app renders and caches.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::api::edit::{Editable, SidebarPermits, WireReactionGroup, reactions};
@@ -394,28 +396,28 @@ pub enum SearchResults {
     Code(Results<CodeHit>),
 }
 
+/// `$e` of whichever kind of results `$s` holds, as `$r`.
+macro_rules! each_kind {
+    ($s:expr, $r:ident => $e:expr) => {
+        match $s {
+            SearchResults::Repos($r) => $e,
+            SearchResults::Issues($r) => $e,
+            SearchResults::Users($r) => $e,
+            SearchResults::Discussions($r) => $e,
+            SearchResults::Commits($r) => $e,
+            SearchResults::Code($r) => $e,
+        }
+    };
+}
+
 impl SearchResults {
     /// How many there are in all, and how many are here.
     pub fn counts(&self) -> (u64, usize) {
-        match self {
-            SearchResults::Repos(r) => (r.total, r.items.len()),
-            SearchResults::Issues(r) => (r.total, r.items.len()),
-            SearchResults::Users(r) => (r.total, r.items.len()),
-            SearchResults::Discussions(r) => (r.total, r.items.len()),
-            SearchResults::Commits(r) => (r.total, r.items.len()),
-            SearchResults::Code(r) => (r.total, r.items.len()),
-        }
+        each_kind!(self, r => (r.total, r.items.len()))
     }
 
     pub fn next(&self) -> Option<&str> {
-        match self {
-            SearchResults::Repos(r) => r.next.as_deref(),
-            SearchResults::Issues(r) => r.next.as_deref(),
-            SearchResults::Users(r) => r.next.as_deref(),
-            SearchResults::Discussions(r) => r.next.as_deref(),
-            SearchResults::Commits(r) => r.next.as_deref(),
-            SearchResults::Code(r) => r.next.as_deref(),
-        }
+        each_kind!(self, r => r.next.as_deref())
     }
 }
 
@@ -1524,16 +1526,26 @@ pub(crate) fn checks(oid: String, contexts: Capped<RollupContext>) -> Checks {
 /// every run in the rollup; GitHub shows only the newest. One not started
 /// yet is the newest.
 fn latest_runs(items: Vec<CheckItem>) -> Vec<CheckItem> {
-    let newness = |i: &CheckItem| (i.started_at.is_none(), i.started_at.clone());
+    use std::collections::hash_map::{Entry, HashMap};
+    fn newness(i: &CheckItem) -> (bool, Option<&str>) {
+        (i.started_at.is_none(), i.started_at.as_deref())
+    }
+    // Where each check is kept, so the first-seen order stays.
+    let mut at: HashMap<(String, String), usize> = HashMap::new();
     let mut out: Vec<CheckItem> = Vec::new();
     for item in items {
-        match out
-            .iter_mut()
-            .find(|o| o.group == item.group && o.name == item.name)
-        {
-            Some(kept) if newness(&item) > newness(kept) => *kept = item,
-            Some(_) => {}
-            None => out.push(item),
+        match at.entry((item.group.clone(), item.name.clone())) {
+            Entry::Occupied(e) => {
+                if let Some(kept) = out.get_mut(*e.get())
+                    && newness(&item) > newness(kept)
+                {
+                    *kept = item;
+                }
+            }
+            Entry::Vacant(e) => {
+                e.insert(out.len());
+                out.push(item);
+            }
         }
     }
     out
@@ -2708,12 +2720,9 @@ impl wire_branches::Branch {
             ),
             None => (None, None, None, None),
         };
-        let name = self.name.as_str();
+        let (name, full) = (self.name.as_str(), repo.to_string());
         let ours = |p: &wire_branches::Pr| {
-            p.head_ref_name == name
-                && p.repository
-                    .name_with_owner
-                    .eq_ignore_ascii_case(&repo.to_string())
+            p.head_ref_name == name && p.repository.name_with_owner.eq_ignore_ascii_case(&full)
         };
         let pr = self
             .associated_pull_requests
@@ -3908,19 +3917,21 @@ pub enum ContributionLevel {
     FourthQuartile,
 }
 
+// A profile's contributions of each kind, and how many there are.
+fragments! {
+    counted:
+    CommitContributions = "CreatedCommitContributionConnection" => WireCommitContribution,
+    PrContributions = "CreatedPullRequestContributionConnection" => WirePrContribution,
+    IssueContributions = "CreatedIssueContributionConnection" => WireIssueContribution,
+    ReviewContributions = "CreatedPullRequestReviewContributionConnection" => WireReviewContribution,
+}
+
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "CommitContributionsByRepository")]
 pub struct WireRepoCommits {
     pub repository: RepositoryName,
     #[arguments(first: 100)]
     pub contributions: CommitContributions,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CreatedCommitContributionConnection")]
-pub struct CommitContributions {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<WireCommitContribution>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -3931,13 +3942,6 @@ pub struct WireCommitContribution {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CreatedPullRequestContributionConnection")]
-pub struct PrContributions {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<WirePrContribution>>>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "CreatedPullRequestContribution")]
 pub struct WirePrContribution {
     pub occurred_at: DateTime,
@@ -3945,24 +3949,10 @@ pub struct WirePrContribution {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CreatedIssueContributionConnection")]
-pub struct IssueContributions {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<WireIssueContribution>>>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "CreatedIssueContribution")]
 pub struct WireIssueContribution {
     pub occurred_at: DateTime,
     pub issue: ContributedIssue,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CreatedPullRequestReviewContributionConnection")]
-pub struct ReviewContributions {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<WireReviewContribution>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -4013,19 +4003,8 @@ impl WireContributions {
                 Some(Week { start, days })
             })
             .collect();
-        let month = |at: &DateTime| at.0.get(..7).unwrap_or_default().to_owned();
-        let mut months: Vec<MonthActivity> = Vec::new();
-        let mut found = Vec::new();
+        let mut months: BTreeMap<String, MonthActivity> = BTreeMap::new();
         let mut short = Short::default();
-        // A list cut short has all of its kind from its oldest month on;
-        // in that month and before, there may be more.
-        let cut = |total: i32, list: &[DateTime]| {
-            let oldest = list.iter().min_by(|a, b| a.0.cmp(&b.0));
-            oldest
-                .filter(|_| usize::try_from(total).unwrap_or_default() > list.len())
-                .map(month)
-        };
-        let later = |a: Option<String>, b: Option<String>| a.max(b);
         if usize::try_from(self.total_repositories_with_contributed_commits).unwrap_or_default()
             > self.commit_contributions_by_repository.len()
         {
@@ -4035,19 +4014,15 @@ impl WireContributions {
         for repo in self.commit_contributions_by_repository {
             let contributions: Vec<WireCommitContribution> =
                 nodes(repo.contributions.nodes).collect();
-            let at: Vec<DateTime> = contributions
-                .iter()
-                .map(|c| c.occurred_at.clone())
-                .collect();
-            short.commits = later(short.commits, cut(repo.contributions.total_count, &at));
+            let at = contributions.iter().map(|c| &c.occurred_at);
+            short.commits = short.commits.max(cut(repo.contributions.total_count, at));
+            let name = repo.repository.name_with_owner;
             for c in contributions {
-                found.push((
-                    month(&c.occurred_at),
-                    Event::Commits(
-                        repo.repository.name_with_owner.clone(),
-                        count(c.commit_count),
-                    ),
-                ));
+                let (m, n) = (month_of(&mut months, &c.occurred_at), count(c.commit_count));
+                match m.commits.iter_mut().find(|(r, _)| *r == name) {
+                    Some((_, total)) => *total += n,
+                    None => m.commits.push((name.clone(), n)),
+                }
             }
         }
         let item = |repo: RepositoryName, number: i32, title: String| Contributed {
@@ -4058,82 +4033,36 @@ impl WireContributions {
         let pulls: Vec<_> = nodes(self.pull_request_contributions.nodes).collect();
         let issues: Vec<_> = nodes(self.issue_contributions.nodes).collect();
         let reviews: Vec<_> = nodes(self.pull_request_review_contributions.nodes).collect();
-        short.pulls = cut(
-            self.pull_request_contributions.total_count,
-            &pulls
-                .iter()
-                .map(|p| p.occurred_at.clone())
-                .collect::<Vec<_>>(),
-        );
-        short.issues = cut(
-            self.issue_contributions.total_count,
-            &issues
-                .iter()
-                .map(|i| i.occurred_at.clone())
-                .collect::<Vec<_>>(),
-        );
-        short.reviews = cut(
-            self.pull_request_review_contributions.total_count,
-            &reviews
-                .iter()
-                .map(|r| r.occurred_at.clone())
-                .collect::<Vec<_>>(),
-        );
+        let total = self.pull_request_contributions.total_count;
+        short.pulls = cut(total, pulls.iter().map(|p| &p.occurred_at));
+        let total = self.issue_contributions.total_count;
+        short.issues = cut(total, issues.iter().map(|i| &i.occurred_at));
+        let total = self.pull_request_review_contributions.total_count;
+        short.reviews = cut(total, reviews.iter().map(|r| &r.occurred_at));
         for p in pulls {
             let pr = p.pull_request;
-            found.push((
-                month(&p.occurred_at),
-                Event::Pull(item(pr.repository, pr.number, pr.title)),
-            ));
+            let c = item(pr.repository, pr.number, pr.title);
+            month_of(&mut months, &p.occurred_at).pulls.push(c);
         }
         for i in issues {
             let issue = i.issue;
-            found.push((
-                month(&i.occurred_at),
-                Event::Issue(item(issue.repository, issue.number, issue.title)),
-            ));
+            let c = item(issue.repository, issue.number, issue.title);
+            month_of(&mut months, &i.occurred_at).issues.push(c);
         }
         for r in reviews {
             let pr = r.pull_request;
-            found.push((
-                month(&r.occurred_at),
-                Event::Review(item(pr.repository, pr.number, pr.title)),
-            ));
-        }
-        for (key, event) in found {
-            let i = match months.iter().position(|m| m.month == key) {
-                Some(i) => i,
-                None => {
-                    months.push(MonthActivity {
-                        month: key,
-                        ..MonthActivity::default()
-                    });
-                    months.len() - 1
-                }
-            };
-            let Some(m) = months.get_mut(i) else {
-                continue;
-            };
-            match event {
-                Event::Commits(repo, n) => match m.commits.iter_mut().find(|(r, _)| *r == repo) {
-                    Some((_, total)) => *total += n,
-                    None => m.commits.push((repo, n)),
-                },
-                Event::Pull(c) => m.pulls.push(c),
-                Event::Issue(c) => m.issues.push(c),
-                Event::Review(c) => {
-                    if !m
-                        .reviews
-                        .iter()
-                        .any(|r| r.repo == c.repo && r.number == c.number)
-                    {
-                        m.reviews.push(c);
-                    }
-                }
+            let c = item(pr.repository, pr.number, pr.title);
+            let m = month_of(&mut months, &r.occurred_at);
+            if !m
+                .reviews
+                .iter()
+                .any(|r| r.repo == c.repo && r.number == c.number)
+            {
+                m.reviews.push(c);
             }
         }
-        months.sort_by(|a, b| b.month.cmp(&a.month));
-        months.truncate(ACTIVITY_MONTHS);
+        let mut months: Vec<MonthActivity> =
+            months.into_values().rev().take(ACTIVITY_MONTHS).collect();
         for m in &mut months {
             m.commits
                 .sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
@@ -4147,12 +4076,31 @@ impl WireContributions {
     }
 }
 
-/// One contribution, before it's filed under its month.
-enum Event {
-    Commits(String, u64),
-    Pull(Contributed),
-    Issue(Contributed),
-    Review(Contributed),
+/// The `YYYY-MM` a contribution is filed under.
+fn month(at: &DateTime) -> String {
+    at.0.get(..7).unwrap_or_default().to_owned()
+}
+
+/// The month `at` is in, filed the first time it's asked for.
+fn month_of<'m>(
+    months: &'m mut BTreeMap<String, MonthActivity>,
+    at: &DateTime,
+) -> &'m mut MonthActivity {
+    let key = month(at);
+    months.entry(key.clone()).or_insert_with(|| MonthActivity {
+        month: key,
+        ..MonthActivity::default()
+    })
+}
+
+/// A list cut short has all of its kind from its oldest month on; in that
+/// month and before, there may be more: that month, if `total` says so.
+fn cut<'a>(total: i32, at: impl Iterator<Item = &'a DateTime>) -> Option<String> {
+    let at: Vec<&DateTime> = at.collect();
+    let oldest = at.iter().min_by(|a, b| a.0.cmp(&b.0));
+    oldest
+        .filter(|_| usize::try_from(total).unwrap_or_default() > at.len())
+        .map(|a| month(a))
 }
 
 #[derive(cynic::QueryVariables, Debug)]

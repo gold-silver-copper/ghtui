@@ -351,12 +351,16 @@ impl Project {
             let Some(field) = self.field(field) else {
                 continue;
             };
+            // Each item's key once, not once a comparison.
+            let mut keyed: Vec<_> = (items.into_iter())
+                .map(|i| (sort_key(field, i), i))
+                .collect();
             // Items without a value go last, either way.
-            items.sort_by(|a, b| {
+            keyed.sort_by(|(a, _), (b, _)| {
                 use std::cmp::Ordering;
-                match (sort_key(field, a), sort_key(field, b)) {
+                match (a, b) {
                     (Some(a), Some(b)) => {
-                        let order = a.partial_cmp(&b).unwrap_or(Ordering::Equal);
+                        let order = a.partial_cmp(b).unwrap_or(Ordering::Equal);
                         if *descending { order.reverse() } else { order }
                     }
                     (Some(_), None) => Ordering::Less,
@@ -364,6 +368,7 @@ impl Project {
                     (None, None) => Ordering::Equal,
                 }
             });
+            items = keyed.into_iter().map(|(_, i)| i).collect();
         }
         items
     }
@@ -562,15 +567,19 @@ impl Project {
     /// A board's swimlanes: its items grouped by the view's grouping
     /// field (not its columns'), each lane drawn with the columns.
     pub fn lanes(&self) -> Option<(&ProjectField, Vec<Group<'_>>)> {
+        let field = self.lane_field()?;
+        Some((field, grouped(field, &self.sorted())))
+    }
+
+    /// The field a board's swimlanes are by, without sorting or grouping
+    /// a thing: whether it has lanes.
+    pub fn lane_field(&self) -> Option<&ProjectField> {
         let view = self.shown()?;
         if view.layout != Layout::Board {
             return None;
         }
         let field = self.field(view.group.as_ref()?)?;
-        if self.column_field().is_some_and(|c| c.id == field.id) {
-            return None;
-        }
-        Some((field, grouped(field, &self.sorted())))
+        (!self.column_field().is_some_and(|c| c.id == field.id)).then_some(field)
     }
 
     /// The fields a roadmap places items by. GitHub's API doesn't say
