@@ -295,17 +295,14 @@ impl Job for Save {
                     return Cmds::new();
                 }
                 // Back on the page it was opened from, if it's that one.
-                let below = state.screens.below().and_then(|s| match s {
-                    crate::state::Screen::Page(p) => match &p.route {
-                        Route::Wiki(wiki::Wiki { repo: r, page }) if r == repo => {
-                            let title = (state
-                                .picked::<WikiPage>(&DataKey::Wiki(r.clone(), page.clone())))
-                            .and_then(|w| w.title.as_deref().map(crate::wiki::slug));
-                            (title.as_deref() == Some(slug.as_str())).then(|| p.route.clone())
-                        }
-                        _ => None,
-                    },
-                    crate::state::Screen::Diff(_) => None,
+                let below = state.screens.below().and_then(|s| match &s.page()?.route {
+                    shown @ Route::Wiki(wiki::Wiki { repo: r, page }) if r == repo => {
+                        let title = (state
+                            .picked::<WikiPage>(&DataKey::Wiki(r.clone(), page.clone())))
+                        .and_then(|w| w.title.as_deref().map(crate::wiki::slug));
+                        (title.as_deref() == Some(slug.as_str())).then(|| shown.clone())
+                    }
+                    _ => None,
                 });
                 let page = below.unwrap_or_else(|| {
                     Route::Wiki(wiki::Wiki {

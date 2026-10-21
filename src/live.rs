@@ -335,18 +335,14 @@ pub fn on_polled(
 ) -> Cmds {
     // The conversation is fetched again where it's shown: on a page; and
     // every review, where they're listed.
-    let page = match state.screen() {
-        Screen::Page(p) => Some(&p.route),
-        Screen::Diff(_) => None,
-    };
     let lists_reviews = matches!(
-        page,
+        state.route(),
         Some(Route::Pulls(pulls::Pr {
             tab: PrTab::Review | PrTab::Reviewed(_),
             ..
         }))
     );
-    let talk: Vec<DataKey> = (page.is_some())
+    let talk: Vec<DataKey> = (state.route().is_some())
         .then(|| DataKey::PrActivity(pr.clone()))
         .into_iter()
         .chain(lists_reviews.then(|| DataKey::Reviews(pr.clone())))

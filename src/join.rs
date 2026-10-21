@@ -8,7 +8,7 @@ use crate::diff_job::JobId;
 use crate::diff_screen::{DiffOf, LastReview};
 use crate::keymap::Action;
 use crate::review;
-use crate::state::{Cmd, Cmds, Git, Screen, State};
+use crate::state::{Cmd, Cmds, Git, State};
 use crate::ui::text::short_sha;
 
 /// What each piece of a diff's joined work last ran for: it runs again
@@ -50,10 +50,7 @@ impl<T> Joined<T> {
 /// The joined work now due, for every diff and then for the one on screen.
 pub(crate) fn join(state: &mut State) -> Cmds {
     let mut cmds = Cmds::new();
-    let shown = match state.screen() {
-        Screen::Diff(screen) => Some(screen.of.clone()),
-        Screen::Page(_) => None,
-    };
+    let shown = state.screen().diff().map(|d| d.of.clone());
     for (of, diff) in &mut state.diffs {
         // A commit's comments on its lines show as threads of its diff.
         if let DiffOf::Commit(repo, oid) = of {

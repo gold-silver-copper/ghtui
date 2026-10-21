@@ -19,7 +19,7 @@ use crate::data::DataKey;
 use crate::edit::Choosing;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::state::{Cmds, Screen, State};
+use crate::state::{Cmds, State};
 use crate::ui::page::Link;
 
 /// The actions a discussion's page takes as its own.
@@ -105,9 +105,7 @@ struct Here<'a> {
 }
 
 fn here(state: &State) -> Option<Here<'_>> {
-    let Screen::Page(p) = state.screen() else {
-        return None;
-    };
+    let p = state.screen().page()?;
     let Route::Discussions(discussions::Discussion { of, number }) = &p.route else {
         return None;
     };

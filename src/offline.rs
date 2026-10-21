@@ -248,9 +248,7 @@ pub fn banner(state: &State, when: &str) -> Option<String> {
 
 /// The queued write a row is, if it's one.
 fn selected(state: &State) -> Option<&queue::Entry> {
-    let Screen::Page(p) = state.screen() else {
-        return None;
-    };
+    let p = state.screen().page()?;
     let Some(Link::Queued(id)) = p.selected_link() else {
         return None;
     };

@@ -419,9 +419,7 @@ fn subject_or(
 /// The page's own subject, or the selected row's.
 fn here(state: &State) -> Option<Subject> {
     Subject::on_screen(state).or_else(|| {
-        let Screen::Page(p) = state.screen() else {
-            return None;
-        };
+        let p = state.screen().page()?;
         let url = p.selected_link()?.url()?;
         match crate::route::Dest::from_url(url).target {
             crate::route::Target::Page(route) => Subject::of(&route),
@@ -446,9 +444,7 @@ pub(crate) fn issue<'a>(
 /// The selected notification's thread: the inbox's rows are its
 /// notifications, in order.
 fn thread(state: &State) -> Option<Subject> {
-    let Screen::Page(p) = state.screen() else {
-        return None;
-    };
+    let p = state.screen().page()?;
     let Route::Search(search::Notifications { query }) = &p.route else {
         return None;
     };

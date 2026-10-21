@@ -1023,10 +1023,8 @@ pub fn polls(about: &Subject) -> Option<DataKey> {
 /// After an edit made in a pull request's files: its threads, fetched
 /// again to show it.
 pub fn after(state: &State) -> Option<Cmd> {
-    match state.screen() {
-        Screen::Diff(d) => (d.of.pr()).map(|pr| Cmd::Api(Api::FetchThreads(pr.clone()))),
-        Screen::Page(_) => None,
-    }
+    let pr = state.screen().diff()?.of.pr()?;
+    Some(Cmd::Api(Api::FetchThreads(pr.clone())))
 }
 
 /// What an edit is doing while it's sent, and what was refused, for "… refused it".

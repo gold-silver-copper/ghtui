@@ -219,9 +219,7 @@ struct Here<'a> {
 }
 
 fn here(state: &State) -> Option<Here<'_>> {
-    let Screen::Page(p) = state.screen() else {
-        return None;
-    };
+    let p = state.screen().page()?;
     let (project, view, number) = match &p.route {
         Route::Projects(projects::Project { project, view }) => (project, *view, None),
         Route::Projects(projects::ProjectItem {

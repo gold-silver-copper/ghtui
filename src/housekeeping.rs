@@ -32,7 +32,7 @@ use crate::data::DataKey;
 use crate::follow::{Expectation, Shown, expect};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
-use crate::state::{Cmds, Screen, State};
+use crate::state::{Cmds, State};
 
 pub mod files;
 pub mod git;
@@ -538,9 +538,7 @@ fn submit(state: &mut State) -> Cmds {
 /// The row selected on a list page, by its place among `items` (the
 /// page's rows are its items, in order) and checked by its link.
 fn selected<'a, T>(state: &State, items: &'a [T], url: impl Fn(&T) -> String) -> Option<&'a T> {
-    let Screen::Page(p) = state.screen() else {
-        return None;
-    };
+    let p = state.screen().page()?;
     let Some(Link::Url(link)) = p.selected_link() else {
         return None;
     };

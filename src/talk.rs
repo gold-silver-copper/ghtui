@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use crate::api::model::PrRef;
 use crate::data::DataKey;
 use crate::diff_screen::{DiffOf, RangeView};
-use crate::state::{Cmd, Cmds, Git, Screen, State};
+use crate::state::{Cmd, Cmds, Git, State};
 use crate::ui::page::{Link, ReviewLink};
 use crate::ui::pages::{LinesAt, Marks, PrTab};
 use crate::ui::text::short_sha;
@@ -163,9 +163,7 @@ fn toggle(state: &mut State, anchor: &str, open: Option<bool>) {
 /// unfolded. `None` where there's none (the action then says so).
 #[must_use]
 pub fn fold_key(state: &mut State) -> Option<Cmds> {
-    let Screen::Page(p) = state.screen() else {
-        return None;
-    };
+    let p = state.screen().page()?;
     let page = p.page();
     let at = page.items.get(p.selected?)?.start;
     // The review whose box holds the selection: the nearest anchor at or

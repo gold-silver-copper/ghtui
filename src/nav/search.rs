@@ -94,9 +94,7 @@ impl State {
 
     /// The page's filter field (`⌕ is:open`), while it's in view.
     pub(super) fn filter_field(&self) -> Option<Rect> {
-        let Screen::Page(p) = self.screen() else {
-            return None;
-        };
+        let p = self.screen().page()?;
         let area = self.page_area();
         let row = p.page.line_of(&Link::Filter)?.checked_sub(p.scroll)?;
         let y = area.y.checked_add(u16::try_from(row).ok()?)?;

@@ -363,6 +363,38 @@ pub enum Screen {
     Diff(Box<DiffScreen>),
 }
 
+impl Screen {
+    /// The page, if it's one.
+    pub fn page(&self) -> Option<&PageScreen> {
+        match self {
+            Screen::Page(p) => Some(p),
+            Screen::Diff(_) => None,
+        }
+    }
+
+    pub fn page_mut(&mut self) -> Option<&mut PageScreen> {
+        match self {
+            Screen::Page(p) => Some(p),
+            Screen::Diff(_) => None,
+        }
+    }
+
+    /// The diff, if it's one.
+    pub fn diff(&self) -> Option<&DiffScreen> {
+        match self {
+            Screen::Diff(d) => Some(d),
+            Screen::Page(_) => None,
+        }
+    }
+
+    pub fn diff_mut(&mut self) -> Option<&mut DiffScreen> {
+        match self {
+            Screen::Diff(d) => Some(d),
+            Screen::Page(_) => None,
+        }
+    }
+}
+
 /// Navigation history, like a browser's. The first screen can't be
 /// removed, so there's always one to show.
 pub struct Screens {
@@ -611,10 +643,7 @@ impl State {
 
     /// The page on screen, if it is one.
     pub fn route(&self) -> Option<&Route> {
-        match self.screen() {
-            Screen::Page(p) => Some(&p.route),
-            Screen::Diff(_) => None,
-        }
+        Some(&self.screen().page()?.route)
     }
 }
 

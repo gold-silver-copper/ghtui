@@ -9,7 +9,7 @@ use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
 use crate::route::{Dest, Route, Target};
-use crate::state::{Cmds, Screen, State};
+use crate::state::{Cmds, State};
 use crate::work::{self, Cx, Failure, Job};
 
 use super::Page;
@@ -26,9 +26,7 @@ pub struct DeleteVersion {
 /// The version `,D` is about: the row selected, else the version whose
 /// page this is.
 fn chosen(state: &State) -> Option<(PackageRef, u64)> {
-    let Screen::Page(p) = state.screen() else {
-        return None;
-    };
+    let p = state.screen().page()?;
     let Route::Site(Page::Package { at, version }) = &p.route else {
         return None;
     };

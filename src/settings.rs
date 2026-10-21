@@ -24,7 +24,7 @@ use crate::act::{Step, Subject};
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::state::{Cmds, Screen, State};
+use crate::state::{Cmds, State};
 use crate::ui::page::{Link, Page};
 
 /// The actions this module takes as its own.
@@ -52,9 +52,7 @@ fn data<'a>(state: &'a State, repo: &RepoId, page: SettingsPage) -> Option<&'a S
 
 /// The row selected on the page.
 fn selected(state: &State) -> Option<SettingLink> {
-    let Screen::Page(p) = state.screen() else {
-        return None;
-    };
+    let p = state.screen().page()?;
     match p.selected_link()? {
         Link::Setting(s) => Some(s.clone()),
         _ => None,

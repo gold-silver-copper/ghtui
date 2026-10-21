@@ -129,9 +129,7 @@ pub struct PageWatch {
 /// The page on screen, if it's one that's watched. A job is watched only
 /// while it runs, or its run does.
 fn watched(state: &State) -> Option<Watched> {
-    let Screen::Page(p) = state.screen() else {
-        return None;
-    };
+    let p = state.screen().page()?;
     Some(match &p.route {
         Route::Runs(runs::Job { repo, job, .. }) => {
             let j = state.picked::<Job>(&DataKey::Job(repo.clone(), *job))?;

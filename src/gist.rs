@@ -675,11 +675,8 @@ fn unsaved(state: &mut State, route: &Route, why: &Failure) -> Cmds {
 
 /// Back to `page` when it's the page before, else to it in place.
 pub(crate) fn back_to(state: &mut State, page: Route) -> Cmds {
-    let below = state.screens.below().and_then(|s| match s {
-        crate::state::Screen::Page(p) => Some(&p.route),
-        crate::state::Screen::Diff(_) => None,
-    });
-    if below == Some(&page) {
+    let below = state.screens.below().and_then(|s| s.page());
+    if below.map(|p| &p.route) == Some(&page) {
         let mut cmds = state.back();
         state.forward.clear();
         cmds.extend(state.ensure_route(&page, true));

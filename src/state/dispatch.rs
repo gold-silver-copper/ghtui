@@ -149,10 +149,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Cmds {
                         number,
                     }))
             {
-                let anchor = match state.screen() {
-                    Screen::Page(p) => p.anchor.clone(),
-                    Screen::Diff(_) => None,
-                };
+                let anchor = state.screen().page().and_then(|p| p.anchor.clone());
                 return state.replace(Route::pr(PrRef { repo, number }), true, anchor);
             }
         }
@@ -298,17 +295,14 @@ pub(super) fn on_search_key(state: &mut State, key: KeyEvent) -> Cmds {
 /// doesn't work there.
 pub fn apply(state: &mut State, action: Action) -> Cmds {
     // On the diff: whether a search or a selection is active.
-    let diff = match state.screen() {
-        Screen::Diff(screen) => Some(screen.search.is_some() || screen.selection.is_some()),
-        Screen::Page(_) => None,
-    };
+    let diff = (state.screen().diff()).map(|d| d.search.is_some() || d.selection.is_some());
     match action {
         Action::Quit => {
             state.quit = crate::compose::may_discard(state, "q", "quit and discard");
         }
         // Esc ends a search or selection; with neither, it goes back.
         Action::Cancel if diff == Some(true) => {
-            if let Screen::Diff(screen) = state.screen_mut() {
+            if let Some(screen) = state.screen_mut().diff_mut() {
                 (screen.search, screen.selection) = (None, None);
             }
             state.info("Cleared");

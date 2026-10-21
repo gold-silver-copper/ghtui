@@ -161,14 +161,14 @@ impl State {
             })
             .into(),
         };
-        let from_tree = match self.screen() {
-            Screen::Diff(d) if d.focus == crate::diff_screen::Pane::Tree => Some((*d).clone()),
-            _ => None,
-        };
+        let from_tree = self
+            .screen()
+            .diff()
+            .filter(|d| d.focus == crate::diff_screen::Pane::Tree);
         // The file the tree has selected: the same diff, at that file.
-        if let Some(screen) = from_tree {
-            self.push_tab(Screen::Diff(screen));
-            if let Screen::Diff(d) = self.screen_mut() {
+        if let Some(screen) = from_tree.cloned() {
+            self.push_tab(Screen::Diff(Box::new(screen)));
+            if let Some(d) = self.screen_mut().diff_mut() {
                 d.focus = crate::diff_screen::Pane::Diff;
             }
             return self.opened_tab();

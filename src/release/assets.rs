@@ -15,7 +15,7 @@ use crate::data::DataKey;
 use crate::forms::Answer;
 use crate::keymap::Action;
 use crate::picker::{Choice, entry};
-use crate::state::{Cmds, Screen, State};
+use crate::state::{Cmds, State};
 use crate::ui::page::Link;
 use crate::work::{self, Cx, Failure, Job};
 
@@ -132,9 +132,7 @@ fn of(state: &State, name: &str) -> Option<Of> {
 
 /// The asset selected on the release's page, by its name.
 pub fn selected(state: &State) -> Option<String> {
-    let Screen::Page(p) = state.screen() else {
-        return None;
-    };
+    let p = state.screen().page()?;
     match p.selected_link()? {
         Link::Asset(name) => Some(name.clone()),
         _ => None,

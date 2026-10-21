@@ -19,7 +19,7 @@ use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::{self, Titling};
-use crate::state::{Cmds, Overlay, Screen, State};
+use crate::state::{Cmds, Overlay, State};
 use crate::work::{Cx, Failure, Job};
 
 /// Rows a section shows unless it says.
@@ -415,9 +415,7 @@ impl State {
 
     /// The section the selection on Home is in.
     pub fn section_here(&self) -> Option<(usize, &Section)> {
-        let Screen::Page(p) = self.screen() else {
-            return None;
-        };
+        let p = self.screen().page()?;
         if p.route != Route::App(app::Home) {
             return None;
         }

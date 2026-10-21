@@ -80,11 +80,7 @@ pub fn compose_here(state: &mut State) -> Cmds {
     let Some(kind) = here(state) else {
         return Cmds::new();
     };
-    let selected = match state.screen() {
-        crate::state::Screen::Page(p) => p.selected_link(),
-        crate::state::Screen::Diff(_) => None,
-    };
-    let part = match selected {
+    let part = match state.screen().page().and_then(|p| p.selected_link()) {
         Some(Link::Form(Row::Text(i) | Row::Rename(i) | Row::Remove(i))) => *i,
         _ => 0,
     };

@@ -823,13 +823,12 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Cmds {
 /// Opens the composer on your draft `id`. From the Review tab, it opens
 /// Files changed on the draft first, where the composer goes.
 fn edit_draft(state: &mut State, pr: &PrRef, id: u64) -> Cmds {
-    let mut cmds = match state.screen() {
-        Screen::Page(p) => match p.selected_link().cloned() {
-            Some(link) => state.follow(&link),
-            None => Cmds::new(),
-        },
-        Screen::Diff(_) => Cmds::new(),
-    };
+    let link = state
+        .screen()
+        .page()
+        .and_then(|p| p.selected_link())
+        .cloned();
+    let mut cmds = link.map_or_else(Cmds::new, |link| state.follow(&link));
     let of = DiffOf::Pr(pr.clone());
     let pending = state.diffs.get(&of).map(|d| &d.inputs().review.pending);
     let Some(body) = pending
@@ -960,12 +959,8 @@ pub(crate) fn apply_commit_choice(
     choice: PickItem,
     mark: Option<usize>,
 ) -> Cmds {
-    let pr = match state.screen() {
-        Screen::Diff(screen) => match screen.of.pr() {
-            Some(pr) => pr.clone(),
-            None => return Cmds::new(),
-        },
-        Screen::Page(_) => return Cmds::new(),
+    let Some(pr) = state.screen().diff().and_then(|d| d.of.pr()).cloned() else {
+        return Cmds::new();
     };
     let Some(base) = state.pr_base(&pr) else {
         return Cmds::new();
