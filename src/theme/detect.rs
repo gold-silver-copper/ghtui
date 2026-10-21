@@ -38,11 +38,7 @@ pub fn mode_for_background(bg: Rgb) -> Mode {
 
 /// Truecolor if `COLORTERM` advertises it, else 256 colors.
 pub fn detect_color_depth(env: impl Fn(&str) -> Option<String>) -> ColorDepth {
-    match env("COLORTERM")
-        .as_deref()
-        .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
+    match env("COLORTERM").map(|v| v.to_ascii_lowercase()).as_deref() {
         Some("truecolor" | "24bit") => ColorDepth::TrueColor,
         _ => ColorDepth::Ansi256,
     }

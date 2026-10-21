@@ -893,7 +893,6 @@ mod tests {
         let out = lines("| a | bb |\n|---|---|\n| 1 | 2 |\n\n- [x] done\n- [ ] todo\n");
         assert!(out.iter().any(|l| l.starts_with("a │ bb")), "{out:?}");
         assert!(out.iter().any(|l| l.starts_with("☑ done")), "{out:?}");
-        assert!(out.iter().any(|l| l.contains("☑ done")), "{out:?}");
         assert!(out.iter().any(|l| l.contains("☐ todo")), "{out:?}");
     }
 }

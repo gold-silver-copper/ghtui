@@ -1707,7 +1707,7 @@ pub(crate) mod tests {
     }
 
     /// A document of one file, `old` changed to `new`.
-    fn one(path: &str, old: &str, new: &str) -> Doc {
+    pub(crate) fn one(path: &str, old: &str, new: &str) -> Doc {
         let mut doc = Doc::new(vec![changed(path)], &HashSet::new(), Default::default());
         doc.set_diff(0, compute(path, old, new));
         doc
@@ -2433,10 +2433,8 @@ pub(crate) mod tests {
             );
         }
 
-        /// The "moved to" row under a removed line paired with an added one
-        /// belongs to the removed line, in either view.
-        #[test]
-        fn a_moved_row_holds_the_line_that_moved() {
+        /// A function moved from a.rs, where `rest` is left, to b.rs.
+        fn moved(rest: &str) -> Doc {
             let block = "fn helper(x: u32) -> u32 {\n    let y = x * 2;\n    y + 1\n}\n";
             let mut doc = Doc::new(
                 vec![changed("a.rs"), changed("b.rs")],
@@ -2444,14 +2442,22 @@ pub(crate) mod tests {
                 Default::default(),
             );
             let old = format!("fn main() {{}}\n{block}");
-            doc.set_diff(0, compute("a.rs", &old, "fn main() {}\nfn other() {}\n"));
+            doc.set_diff(0, compute("a.rs", &old, rest));
             doc.set_diff(1, compute("b.rs", "// b\n", &format!("// b\n{block}")));
-            let texts: Vec<_> = doc
-                .files
-                .iter()
+            let texts: Vec<_> = (doc.files.iter())
                 .map(|f| f.text().unwrap().clone())
                 .collect();
-            doc.set_moves(detect_moves(&[(0, &texts[0]), (1, &texts[1])]));
+            let moves = detect_moves(&[(0, &texts[0]), (1, &texts[1])]);
+            assert_eq!(moves.len(), 1);
+            doc.set_moves(moves);
+            doc
+        }
+
+        /// The "moved to" row under a removed line paired with an added one
+        /// belongs to the removed line, in either view.
+        #[test]
+        fn a_moved_row_holds_the_line_that_moved() {
+            let mut doc = moved("fn main() {}\nfn other() {}\n");
             doc.set_options(view(true, Whitespace::Exact));
             let row = doc.files[0]
                 .rows()
@@ -2467,31 +2473,7 @@ pub(crate) mod tests {
 
         #[test]
         fn moved_blocks_get_rows_and_jump_targets() {
-            let block = "fn helper(x: u32) -> u32 {\n    let y = x * 2;\n    y + 1\n}\n";
-            let mut doc = Doc::new(
-                vec![changed("a.rs"), changed("b.rs")],
-                &HashSet::new(),
-                Default::default(),
-            );
-            doc.set_diff(
-                0,
-                compute(
-                    "a.rs",
-                    &format!("fn main() {{}}\n{block}"),
-                    "fn main() {}\n",
-                ),
-            );
-            doc.set_diff(1, compute("b.rs", "// b\n", &format!("// b\n{block}")));
-            let moves = {
-                let texts: Vec<_> = doc
-                    .files
-                    .iter()
-                    .map(|f| f.text().unwrap().clone())
-                    .collect();
-                detect_moves(&[(0, &texts[0]), (1, &texts[1])])
-            };
-            assert_eq!(moves.len(), 1);
-            doc.set_moves(moves);
+            let mut doc = moved("fn main() {}\n");
             let moved_from = doc.files[0]
                 .rows()
                 .iter()
@@ -2502,15 +2484,11 @@ pub(crate) mod tests {
                 .iter()
                 .position(|r| matches!(r, Row::Moved { from: false, .. }))
                 .unwrap();
-            let (mv, from) = doc
-                .move_at(
-                    Pos {
-                        file: 0,
-                        row: moved_from,
-                    },
-                    Side::Right,
-                )
-                .unwrap();
+            let at = Pos {
+                file: 0,
+                row: moved_from,
+            };
+            let (mv, from) = doc.move_at(at, Side::Right).unwrap();
             let target = doc.move_target(mv, from).unwrap();
             assert_eq!(target.file, 1);
             assert_eq!(target.row + 1, moved_to, "lands on the block's first line");

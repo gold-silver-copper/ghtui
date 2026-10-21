@@ -314,9 +314,14 @@ impl PageLine {
                 segs.push(Seg::linked(rest, seg.role.clone(), seg.link));
             }
         }
+        // Field by field: `..self.clone()` would copy the segments too.
         PageLine {
             segs,
-            ..self.clone()
+            right: self.right.clone(),
+            indent: self.indent,
+            frame: self.frame,
+            tone: self.tone,
+            fixed: self.fixed,
         }
     }
 }
@@ -934,9 +939,10 @@ fn flatten(line: &PageLine, width: u16) -> Vec<Seg> {
 pub fn spots(page: &Page, area: Rect, scroll: usize) -> Vec<Spot> {
     let layout = columns(page, area);
     let mut out = Vec::new();
+    let mut seen = Vec::new();
     let mut add = |lines: &[PageLine], x: u16, width: u16| {
         for (line, y) in lines.iter().skip(scroll).zip(area.top()..area.bottom()) {
-            let mut seen = Vec::new();
+            seen.clear();
             for (sx, _, seg) in place(line, x, width) {
                 if let Some(link) = seg.link
                     && !seen.contains(&link)

@@ -226,7 +226,7 @@ impl DiffView<'_> {
         fill(buf, area, theme, bg);
         let meta = &file.meta;
 
-        let mut left: Vec<Span<'static>> = Vec::new();
+        let mut left = Vec::new();
         let mut chip = |text: String, chip_bg| chips::push(&mut left, ctx, text, chip_bg, bg);
         let passed = ctx.icons.checks(crate::api::model::ChecksState::Passing);
         match file.viewed {
@@ -269,7 +269,7 @@ impl DiffView<'_> {
         {
             left.push(Span::styled(format!("{old} → "), theme.meta(bg)));
         }
-        left.push(Span::styled(meta.path().to_owned(), theme.title(bg)));
+        left.push(Span::styled(meta.path(), theme.title(bg)));
         if meta.mode_changed() && meta.old_mode != MODE_SYMLINK && meta.new_mode != MODE_SYMLINK {
             left.push(Span::styled(
                 format!("  mode {:o} → {:o}", meta.old_mode, meta.new_mode),
@@ -601,7 +601,7 @@ impl DiffView<'_> {
             }
             ThreadRowKind::Head { comment, first } => {
                 let Some(c) = ann.comments.get(*comment) else { return };
-                spans.push(Span::styled(c.author.clone(), theme.title(bg)));
+                spans.push(Span::styled(c.author.as_str(), theme.title(bg)));
                 if c.new {
                     spans.push(Span::styled(" ", theme.body(bg)));
                     spans.extend(chips::chip(
@@ -651,9 +651,7 @@ impl DiffView<'_> {
                 };
                 fill(buf, inner, theme, bg);
                 let segs = row.line.segs.iter();
-                spans.extend(
-                    segs.map(|s| Span::styled(s.text().to_owned(), role_style(theme, &s.role, bg))),
-                );
+                spans.extend(segs.map(|s| Span::styled(s.text(), role_style(theme, &s.role, bg))));
             }
             ThreadRowKind::Reactions { comment } => {
                 let given = ann.comments.get(*comment).and_then(|c| c.editable.as_ref());
@@ -766,6 +764,7 @@ pub fn link_spots(doc: &Doc, top: Pos, area: Rect) -> Vec<((u16, u16), String)> 
     // The sticky header covers the first row once scrolled into a file.
     let covered = (doc.clamp(top).row > 0).then_some(area.top());
     let rows = doc.to_global(top)..doc.total_rows();
+    let mut seen = Vec::new();
     for (g, y) in rows.zip(area.top()..area.bottom()) {
         let pos = doc.to_pos(g);
         let (Some(Row::Thread(t)), Some(file)) = (doc.row(pos), doc.files().get(pos.file)) else {
@@ -773,7 +772,7 @@ pub fn link_spots(doc: &Doc, top: Pos, area: Rect) -> Vec<((u16, u16), String)> 
         };
         let Some(row) = file.thread_row(t).filter(|_| covered != Some(y)) else { continue };
         let mut x = thread_card(file, area).x.saturating_add(PAD_X);
-        let mut seen = Vec::new();
+        seen.clear();
         for seg in &row.line.segs {
             if let Some(link) = seg.link.filter(|l| !seen.contains(l)) {
                 seen.push(link);
@@ -1107,41 +1106,15 @@ mod tests {
     /// on the left, the new on the right.
     #[test]
     fn split_halves_show_their_own_side() {
-        use crate::diff::{FileDiff, Whitespace};
         use crate::ui::diff_doc::ViewOptions;
-        use std::collections::HashSet;
-        use std::sync::Arc;
 
         let theme = theme();
-        let mut doc = Doc::new(
-            vec![crate::ui::diff_doc::tests::changed("a.rs")],
-            &HashSet::new(),
-            Default::default(),
-        );
-        let (old, new) = ("a\n  b\nc\n", "a\n      b\nc\nd\n");
-        doc.set_diff(
-            0,
-            Arc::new(FileDiff::compute(
-                "a.rs",
-                Some(old.as_bytes()),
-                Some(new.as_bytes()),
-            )),
-        );
+        let mut doc = crate::ui::diff_doc::tests::one("a.rs", "a\n  b\nc\n", "a\n      b\nc\nd\n");
         doc.set_options(ViewOptions {
             split: true,
             whitespace: Whitespace::Ignore,
             ..ViewOptions::default()
         });
-        let keys = Keys {
-            show: "s",
-            jump: "M",
-            expand: "e",
-            viewed: "v",
-            reply: "c",
-            resolve: "R",
-            delete: "d",
-            file_comment: "C",
-        };
         let area = Rect::new(0, 0, 80, 12);
         let mut buf = Buffer::empty(area);
         DiffView {
@@ -1150,7 +1123,7 @@ mod tests {
             cursor: Pos::default(),
             half: Side::Right,
             top: Pos::default(),
-            keys,
+            keys: Keys::default(),
             selection: None,
             shift: 0,
             word: None,
