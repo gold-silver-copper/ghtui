@@ -185,8 +185,27 @@ fn compose(state: &mut State) -> Cmds {
     crate::forms::compose::<Form>(state, &route, 0, &top)
 }
 
+/// Why the page can't be saved, if it can't: its page asks each frame,
+/// so nothing is copied.
+fn problem(form: &Form) -> Option<&'static str> {
+    // A new page's title is its first line, as `templates::split` reads it.
+    let title = form.text.lines().next().unwrap_or_default().trim();
+    if form.page.is_some() {
+        None
+    } else if title.is_empty() {
+        Some("Write the page's title first: it's the first line")
+    } else if title.contains(['/', '\\']) || title.chars().any(char::is_control) {
+        Some("A page's title can't have / or \\ in it")
+    } else {
+        None
+    }
+}
+
 /// The page to save, or why it can't be.
 fn to_save(state: &State, repo: &RepoId, form: &Form) -> Result<crate::wiki::Save, String> {
+    if let Some(why) = problem(form) {
+        return Err(why.into());
+    }
     let login = state.viewer.clone();
     match &form.page {
         Some((title, file, commit)) => Ok(crate::wiki::Save {
@@ -199,12 +218,6 @@ fn to_save(state: &State, repo: &RepoId, form: &Form) -> Result<crate::wiki::Sav
         }),
         None => {
             let (title, text) = templates::split(&form.text);
-            if title.is_empty() {
-                return Err("Write the page's title first: it's the first line".into());
-            }
-            if title.contains(['/', '\\']) || title.chars().any(char::is_control) {
-                return Err("A page's title can't have / or \\ in it".into());
-            }
             Ok(crate::wiki::Save {
                 repo: repo.clone(),
                 title,
@@ -324,8 +337,8 @@ pub const FORM: crate::forms::Kind = crate::forms::Kind {
 
 /// The form's rows in the menu: writing it, and saving it.
 fn offers(state: &State, out: &mut Vec<Doable>) {
-    if let Some((_, repo, _, form)) = here(state) {
-        let why = to_save(state, &repo, &form).err();
+    if let Some((.., form)) = here(state) {
+        let why = problem(&form).map(str::to_owned);
         let save = ("Save the page", "save");
         crate::forms::offer(state, Some("Write the page"), save, why, out);
     }
@@ -356,7 +369,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
         Some((title, file, _)) => (
             format!("Editing {title} in {repo}'s wiki"),
             title.clone(),
-            form.text.clone(),
+            Cow::Borrowed(form.text.as_str()),
             format!("Saved as {file}: committed and pushed with your git credentials"),
         ),
         None => {
@@ -364,7 +377,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
             (
                 format!("New page in {repo}'s wiki"),
                 title,
-                body,
+                Cow::Owned(body),
                 "The first line is the title; then the page, in Markdown (ctrl-e for $EDITOR)"
                     .to_owned(),
             )
@@ -385,7 +398,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
     }
     let write = state.first_key(Action::Comment);
     let save_key = state.first_key(Action::Create);
-    let body = if composing { String::new() } else { body };
+    let body = if composing { "" } else { &body };
     let view = WriteFormView {
         heading,
         base: Some(crate::ui::markdown::LinkBase::wiki(repo)),
@@ -394,7 +407,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
         boxes: vec![TextBox {
             title: if composing { String::new() } else { title },
             untitled: "Title",
-            body: &body,
+            body,
             markdown,
             empty: "Nothing written yet.",
             hint: &hint,
@@ -405,7 +418,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
         write: &write,
         button: "Save page".into(),
         save_key: &save_key,
-        why_not: to_save(state, repo, &form).err(),
+        why_not: problem(&form).map(str::to_owned),
         error: state.forms.sent(route).error.as_deref(),
     };
     crate::ui::pages::write_form(page, &view);

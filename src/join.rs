@@ -16,6 +16,9 @@ use crate::ui::text::short_sha;
 #[derive(Debug, Default)]
 pub struct Joins {
     moves: Option<JobId>,
+    /// The job, and the version of the inputs whose outdated threads were
+    /// last found: only a change to them can change those.
+    looked: Option<(JobId, u64)>,
     /// The job, and the outdated threads mapped onto it.
     mapped: Option<(JobId, Vec<NodeId>)>,
     /// The job, and the PR's head it was checked against.
@@ -54,12 +57,12 @@ pub(crate) fn join(state: &mut State) -> Cmds {
     for (of, diff) in &mut state.diffs {
         // A commit's comments on its lines show as threads of its diff.
         if let DiffOf::Commit(repo, oid) = of {
-            let key = crate::data::DataKey::CommitComments(repo.clone(), oid.to_string());
+            let key = DataKey::CommitComments(repo.clone(), oid.to_string());
             let comments = state.data.get(&key).and_then(|r| r.data.as_ref());
             if let Some(crate::data::Data::CommitComments(c)) = comments {
                 let threads: Vec<_> = c
                     .iter()
-                    .filter_map(super::api::commit_comments::CommitComment::as_thread)
+                    .filter_map(crate::api::commit_comments::CommitComment::as_thread)
                     .collect();
                 if diff.inputs().threads.data.as_ref() != Some(&threads) {
                     diff.edit(|i| i.threads.data = Some(threads));
@@ -78,7 +81,12 @@ pub(crate) fn join(state: &mut State) -> Cmds {
                 .collect();
             cmds.push(Cmd::Git(Git::DetectMoves(Joined((of.clone(), job, diffs)))));
         }
+        // Each settle: the threads are found again only when they may differ.
         let DiffOf::Pr(pr) = of else { continue };
+        let version = diff.version();
+        if !claim(&mut diff.joins.looked, (job, version)) {
+            continue;
+        }
         let threads = review::outdated_to_map(diff.inputs().thread_list());
         let ids = threads.iter().map(|t| t.thread.clone()).collect();
         if claim(&mut diff.joins.mapped, (job, ids)) && !threads.is_empty() {
