@@ -76,9 +76,7 @@ impl Family for Page {
     fn up(&self, _: &State) -> Option<Route> {
         Some(match self {
             User { .. } => Route::App(super::app::Home),
-            Stargazers(repo) | Watchers(repo) | Forks(repo) => {
-                Route::Code(super::code::Repo(repo.clone()))
-            }
+            Stargazers(repo) | Watchers(repo) | Forks(repo) => Route::code(repo.clone()),
             Teams(login) => Route::user(login),
             Team { org, .. } => Route::People(Teams(org.clone())),
         })

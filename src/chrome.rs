@@ -338,7 +338,7 @@ impl State {
     fn repo_tabs(&self, repo: &RepoId, c: &mut Chrome) {
         let o = self.overview(repo);
         let r = || repo.clone();
-        c.tab("<>", "Code", None, Route::Code(code::Repo(r())));
+        c.tab("<>", "Code", None, Route::code(r()));
         if o.is_none_or(|o| o.has_issues) {
             let issues = issues::Issues {
                 repo: r(),
@@ -513,10 +513,7 @@ pub(crate) fn compare_tabs(
 
 pub(crate) fn repo_crumbs(repo: &RepoId, c: &mut Chrome) {
     c.crumb(&repo.owner, Some(Target::Page(Route::user(&repo.owner))));
-    c.crumb(
-        &repo.name,
-        Some(Target::Page(Route::Code(code::Repo(repo.clone())))),
-    );
+    c.crumb(&repo.name, Some(Target::Page(Route::code(repo.clone()))));
 }
 
 impl Chrome {

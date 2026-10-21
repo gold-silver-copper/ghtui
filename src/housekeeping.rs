@@ -166,7 +166,7 @@ impl Family for FormOf {
                 repo: repo.clone(),
                 closed: false,
             }),
-            FormOf::Fork(repo) => Route::Code(code::Repo(repo.clone())),
+            FormOf::Fork(repo) => Route::code(repo.clone()),
             FormOf::NewRepo => return None,
             FormOf::File {
                 repo,

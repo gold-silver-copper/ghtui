@@ -1,7 +1,7 @@
 //! Home.
 
 use super::*;
-use crate::route::{app, code, search};
+use crate::route::{app, search};
 
 /// `]` and `[` go from section to section, either way: back from a
 /// section's first row is the section before, not the one it's in.
@@ -213,7 +213,7 @@ fn going_back_home_fetches_cached_sections() {
     let (value, fetched_at) = (Data::from(mine(1, 1)), 0);
     let cached = Remote::cached(Some(crate::store::Cached { value, fetched_at }));
     state.data.insert(key.clone(), cached);
-    let _ = state.start_at(Target::Page(Route::Code(code::Repo(ghtui()))).into());
+    let _ = state.start_at(Target::Page(Route::code(ghtui())).into());
     let cmds = state.back();
     assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
 }

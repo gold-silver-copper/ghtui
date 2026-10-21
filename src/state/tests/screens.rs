@@ -172,7 +172,7 @@ pub(crate) fn ghtui() -> RepoId {
 
 /// A repository's Code tab with everything it asked for delivered.
 pub(crate) fn with_repo() -> State {
-    at(state(), Route::Code(code::Repo(ghtui())))
+    at(state(), Route::code(ghtui()))
 }
 
 /// A file in the repository.

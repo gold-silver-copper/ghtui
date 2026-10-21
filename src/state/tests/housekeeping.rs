@@ -312,7 +312,7 @@ fn a_repository_is_forked_and_opened() {
     };
     fixtures::done(&mut s, fork, Ok(made));
     let fork = crate::api::model::RepoId::new("octocat", "ghtui");
-    assert_eq!(s.route(), Some(&Route::Code(code::Repo(fork))));
+    assert_eq!(s.route(), Some(&Route::code(fork)));
     assert!(s.busy().is_some_and(|b| b.contains("make the repository")));
 }
 
@@ -361,7 +361,7 @@ fn a_new_repository_is_made_and_cloning_offered() {
     };
     fixtures::done(&mut s, make, Ok(made));
     let repo = crate::api::model::RepoId::new("ghtui-org", "tools");
-    assert_eq!(s.route(), Some(&Route::Code(code::Repo(repo))));
+    assert_eq!(s.route(), Some(&Route::code(repo)));
     assert_eq!(overlay!(s, Ask).title, "Clone ghtui-org/tools?");
     let cmds = press(&mut s, "<Enter>");
     assert_eq!(

@@ -76,9 +76,9 @@ impl Family for Page {
 
     fn up(&self, _: &State) -> Option<Route> {
         Some(match self {
-            Advisories(repo) => repo.clone().map_or(Route::App(super::app::Home), |repo| {
-                Route::Code(super::code::Repo(repo))
-            }),
+            Advisories(repo) => repo
+                .clone()
+                .map_or(Route::App(super::app::Home), Route::code),
             Advisory { repo, .. } => Route::Security(Advisories(repo.clone())),
             Alert { repo, kind, .. } => Route::Security(Alerts {
                 repo: repo.clone(),

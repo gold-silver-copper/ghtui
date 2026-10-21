@@ -89,7 +89,7 @@ impl Family for Page {
     fn up(&self, _: &State) -> Option<Route> {
         let repo = self.repo_id().clone();
         Some(match self {
-            Issues { .. } | Milestones { .. } => Route::Code(super::code::Repo(repo)),
+            Issues { .. } | Milestones { .. } => Route::code(repo),
             Milestone { .. } => Route::Issues(Milestones {
                 repo,
                 closed: false,

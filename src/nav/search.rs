@@ -1,7 +1,7 @@
 //! The search box, with its suggestions.
 
 use super::*;
-use crate::route::{code, people, runs, search, security};
+use crate::route::{people, runs, search, security};
 use std::borrow::Cow;
 
 pub struct SearchBox {
@@ -268,7 +268,7 @@ impl State {
             }
             for r in live {
                 let detail = format!("☆ {}", pages::compact(r.stars));
-                let pick = Pick::Go(Target::Page(Route::Code(code::Repo(r.repo.clone()))).into());
+                let pick = Pick::Go(Target::Page(Route::code(r.repo.clone())).into());
                 out.push(suggestion("▤", r.repo.to_string(), &detail, "", pick));
             }
         }

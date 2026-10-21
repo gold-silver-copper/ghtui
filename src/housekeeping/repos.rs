@@ -2,7 +2,7 @@
 //! then the new repository's page, which follows GitHub until it's
 //! there, and (for a new one) an offer to clone it.
 
-use crate::route::{Route, code};
+use crate::route::Route;
 use std::path::PathBuf;
 
 use crate::api::housekeeping::{MadeRepo, NewFork, NewRepo, Owners, Templates};
@@ -249,7 +249,7 @@ fn opened(state: &mut State, route: &Route, made: &MadeRepo) -> Option<Cmds> {
     if state.route() != Some(route) {
         return Some(Cmds::new());
     }
-    let page = Route::Code(code::Repo(repo.clone()));
+    let page = Route::code(repo.clone());
     let cmds = state.replace(page.clone(), true, None);
     expect(state, page, Expected::Repo(repo));
     Some(cmds)

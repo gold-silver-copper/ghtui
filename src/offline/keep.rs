@@ -9,7 +9,7 @@
 //! when GitHub is back) what changed since is fetched again: an item
 //! updated since it was kept, and the lists.
 
-use crate::route::{Route, code, discussions, issues, pulls};
+use crate::route::{Route, discussions, issues, pulls};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -239,7 +239,7 @@ async fn refresh(
         Err(why) => kept.problem = Some(format!("The clone: {why}")),
     }
     let tabs = [
-        Route::Code(code::Repo(repo.clone())),
+        Route::code(repo.clone()),
         Route::Issues(issues::Issues {
             repo: repo.clone(),
             query: crate::route::OPEN.into(),

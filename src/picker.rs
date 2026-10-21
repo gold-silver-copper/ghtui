@@ -594,7 +594,7 @@ impl State {
                 let route = if file {
                     Route::blob(repo, rev, path)
                 } else if path.is_empty() && is_default {
-                    Route::Code(code::Repo(repo))
+                    Route::code(repo)
                 } else {
                     Route::Code(code::Tree { repo, rev, path })
                 };

@@ -126,7 +126,7 @@ impl Family for Page {
         let repo = self.repo_id().clone();
         Some(Route::Runs(match self {
             Actions { .. } | Deployments { .. } => {
-                return Some(Route::Code(super::code::Repo(repo)));
+                return Some(Route::code(repo));
             }
             Dispatch { file, .. } => Workflow {
                 repo,

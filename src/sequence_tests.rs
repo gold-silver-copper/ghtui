@@ -45,7 +45,7 @@ fn routes() -> [Route; 3] {
             query: "repo:o/r".into(),
         }),
         Route::Code(code::Branches(repo())),
-        Route::Code(code::Repo(repo())),
+        Route::code(repo()),
     ]
 }
 

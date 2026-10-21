@@ -16,7 +16,7 @@ fn failed(state: &mut State, key: DataKey) {
 #[test]
 fn a_failed_readme_says_why_under_the_files() {
     let mut state = state();
-    let _ = state.push(Route::Code(code::Repo(ghtui())));
+    let _ = state.push(Route::code(ghtui()));
     let overview = Data::from(fixtures::overview());
     fetched(&mut state, DataKey::Repo(ghtui()), overview);
     failed(&mut state, DataKey::Readme(ghtui()));

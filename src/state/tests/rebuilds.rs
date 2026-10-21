@@ -2,7 +2,6 @@
 //! what else it shows, or a time it shows relative to now.
 
 use super::*;
-use crate::route::code;
 use crate::source::{Clone, From};
 use crate::ui::page::Page;
 
@@ -47,7 +46,7 @@ fn a_page_away_is_built_with_what_came_meanwhile() {
     let mut state = with_issue();
     let key = state.needs(&route(&state)).pop().unwrap();
     let _ = act(&mut state, Action::OpenInTab);
-    let _ = state.push(Route::Code(code::Repo(ghtui())));
+    let _ = state.push(Route::code(ghtui()));
     let mut issue = fixtures::issue();
     issue.title = "Renamed meanwhile".into();
     fetched(&mut state, key, Data::Issue(Some(Box::new(issue))));

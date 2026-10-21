@@ -68,7 +68,7 @@ impl Family for Page {
 
     fn up(&self, _: &State) -> Option<Route> {
         Some(match self {
-            Projects(ProjectsOf::Repo(repo)) => Route::Code(super::code::Repo(repo.clone())),
+            Projects(ProjectsOf::Repo(repo)) => Route::code(repo.clone()),
             Projects(ProjectsOf::Owner(owner)) => Route::user(owner.login()),
             Project { project, .. } => {
                 Route::Projects(Projects(ProjectsOf::Owner(project.owner.clone())))

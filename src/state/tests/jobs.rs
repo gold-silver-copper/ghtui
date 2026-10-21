@@ -1,7 +1,7 @@
 //! Actions jobs and their logs.
 
 use super::*;
-use crate::route::{code, runs};
+use crate::route::runs;
 
 /// On a wide screen, output (a job's log) takes the whole width, lists
 /// grow to 200 columns, and reading (an issue) stays at 160 with a
@@ -126,13 +126,13 @@ fn a_running_jobs_log_is_checked_again() {
         DataKey::JobLog(ghtui(), 2),
         Data::Log(Arc::new(running)),
     );
-    let _ = s.push(Route::Code(code::Repo(ghtui())));
+    let _ = s.push(Route::code(ghtui()));
     let cmds = s.back();
     let keys = crate::fixtures::asked(&cmds);
     assert!(keys.contains(&DataKey::JobLog(ghtui(), 2)), "{keys:?}");
     assert!(keys.contains(&DataKey::Job(ghtui(), 2)), "{keys:?}");
     // A finished one isn't.
     crate::fixtures::served(&mut s, &cmds);
-    let _ = s.push(Route::Code(code::Repo(ghtui())));
+    let _ = s.push(Route::code(ghtui()));
     assert_eq!(crate::fixtures::asked(&s.back()), Vec::new());
 }

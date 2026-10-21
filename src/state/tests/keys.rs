@@ -58,11 +58,7 @@ fn h_l_and_u_move_like_a_file_manager() {
     });
     assert_eq!(route(&state), crates, "l opens");
     press(&mut state, "u");
-    assert_eq!(
-        route(&state),
-        Route::Code(code::Repo(ghtui())),
-        "u: the folder above"
-    );
+    assert_eq!(route(&state), Route::code(ghtui()), "u: the folder above");
     press(&mut state, "<BS>");
     assert_eq!(route(&state), crates, "ctrl-o: back");
     press(&mut state, "uu");

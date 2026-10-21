@@ -10,7 +10,7 @@ fn an_empty_repository_shows_its_about() {
     for width in [100, 140] {
         let mut s = state();
         s.size = (width, 30);
-        let _ = s.push(Route::Code(code::Repo(ghtui())));
+        let _ = s.push(Route::code(ghtui()));
         let mut o = crate::fixtures::overview();
         (o.entries, o.default_branch) = (Vec::new(), None);
         fetched(&mut s, DataKey::Repo(ghtui()), Data::from(o));
@@ -87,7 +87,7 @@ fn a_repositorys_pages_are_under_their_tabs() {
         assert_eq!(active(&state).as_deref(), Some(tab), "{route:?}");
     }
     // Every tab has a number key: `5` is Actions, `8` Security.
-    let _ = state.push(Route::Code(code::Repo(ghtui())));
+    let _ = state.push(Route::code(ghtui()));
     press(&mut state, "5gt");
     assert_eq!(route(&state), Route::actions(ghtui()));
     press(&mut state, "8gt");
@@ -159,7 +159,7 @@ fn repo_tabs_filters_state_sort_and_star() {
         "→: the next tab"
     );
     press(&mut state, "1");
-    assert_eq!(route(&state), Route::Code(code::Repo(ghtui())));
+    assert_eq!(route(&state), Route::code(ghtui()));
 
     let cmds = act(&mut state, Action::Star);
     let star = Change::Star {
