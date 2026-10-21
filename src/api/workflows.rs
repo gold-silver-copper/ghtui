@@ -204,18 +204,16 @@ pub struct WireSpan {
 
 fragments! { line: i32; WirePosition = "CheckAnnotationPosition" }
 
-impl WireAnnotations {
-    pub fn into_capped(self) -> Capped<Annotation> {
-        Capped::from_nodes(self.total_count, self.nodes, |a| {
-            Annotation::new(Raw {
-                path: a.path,
-                start: a.location.start.line.into(),
-                end: a.location.end.line.into(),
-                level: a.annotation_level.unwrap_or(Level::Notice),
-                title: a.title.unwrap_or_default(),
-                message: a.message,
-                blob: a.blob_url.0,
-            })
+impl From<WireAnnotation> for Annotation {
+    fn from(a: WireAnnotation) -> Self {
+        Annotation::new(Raw {
+            path: a.path,
+            start: a.location.start.line.into(),
+            end: a.location.end.line.into(),
+            level: a.annotation_level.unwrap_or(Level::Notice),
+            title: a.title.unwrap_or_default(),
+            message: a.message,
+            blob: a.blob_url.0,
         })
     }
 }

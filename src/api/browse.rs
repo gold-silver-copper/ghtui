@@ -1957,7 +1957,7 @@ impl WireCheckRun {
             url: self.details_url.map(|u| u.0),
             annotations: (self.annotations)
                 .map(|a| {
-                    let a = a.into_capped();
+                    let a = a.into_capped(crate::api::workflows::Annotation::from);
                     let total = a.total();
                     Capped::new(crate::api::workflows::sorted(a.items), total)
                 })
