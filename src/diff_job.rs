@@ -37,6 +37,24 @@ pub struct GitContext {
     pub cwd: PathBuf,
 }
 
+impl GitContext {
+    /// `owner/name`'s clone: yours, else the cache's (cloned on first use).
+    pub async fn repo(
+        &self,
+        owner: &str,
+        name: &str,
+        progress: crate::git::repo::Progress<'_>,
+    ) -> Result<Repo, GitError> {
+        if let Some(repo) = Repo::find_local(&self.cwd, owner, name).await? {
+            tracing::info!(path = %repo.path.display(), remote = repo.remote, "using local clone");
+            return Ok(repo);
+        }
+        let url = crate::host::current().git_url(owner, name);
+        let credentials = self.credentials.clone();
+        Repo::open_cache(&self.cache_root, owner, name, &url, credentials, progress).await
+    }
+}
+
 #[derive(Debug)]
 pub struct DiffFiles {
     pub refs: PrRefs,
@@ -167,24 +185,9 @@ async fn run_inner(
             out.send(JobMsg::Progress(line));
         }
     };
-    let (owner, name) = (&of.repo().owner, &of.repo().name);
-    let repo = match Repo::find_local(&ctx.cwd, owner, name).await? {
-        Some(repo) => {
-            tracing::info!(path = %repo.path.display(), remote = repo.remote, "using local clone");
-            repo
-        }
-        None => {
-            Repo::open_cache(
-                &ctx.cache_root,
-                owner,
-                name,
-                &crate::host::current().git_url(owner, name),
-                ctx.credentials.clone(),
-                &progress,
-            )
-            .await?
-        }
-    };
+    let repo = ctx
+        .repo(&of.repo().owner, &of.repo().name, &progress)
+        .await?;
     let mut refs = match of {
         DiffOf::Pr(pr) => {
             repo.fetch_pr(pr.number, &base.branch, base.oid.as_ref(), &progress)

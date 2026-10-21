@@ -320,16 +320,9 @@ impl Build {
     }
 
     async fn open(&self) -> Result<Arc<Repo>, String> {
-        let git = &self.git;
-        let (owner, name) = (&self.id.owner, &self.id.name);
+        let progress = |line: String| self.tx.send_modify(|s| s.stage = Stage::Opening(line));
         let open = async {
-            if let Some(repo) = Repo::find_local(&git.cwd, owner, name).await? {
-                return Ok(Arc::new(repo));
-            }
-            let url = crate::host::current().git_url(owner, name);
-            let progress = |line: String| self.tx.send_modify(|s| s.stage = Stage::Opening(line));
-            let credentials = git.credentials.clone();
-            let repo = Repo::open_cache(&git.cache_root, owner, name, &url, credentials, &progress);
+            let repo = self.git.repo(&self.id.owner, &self.id.name, &progress);
             repo.await.map(Arc::new)
         };
         // A failure is tried again next time.

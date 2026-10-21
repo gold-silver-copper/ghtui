@@ -339,24 +339,14 @@ impl Local {
                 )]
                 let done = tokio::time::timeout(wait(key), task).await;
                 match done {
-                    Ok(Ok(Ok(Answer::Data(data, at)))) => {
-                        let listed = self.listed(&repo).await;
-                        return (
-                            Ok(data),
-                            From::Git {
-                                clone: whose,
-                                at,
-                                listed,
-                            },
-                        );
-                    }
-                    Ok(Ok(Ok(Answer::Absent(what)))) => {
-                        let from = From::Git {
-                            clone: whose,
-                            at: None,
-                            listed: self.listed(&repo).await,
+                    Ok(Ok(Ok(answer))) => {
+                        let (data, at) = match answer {
+                            Answer::Data(data, at) => (Ok(data), at),
+                            Answer::Absent(what) => (Err(ApiError::NotFound(what)), None),
                         };
-                        return (Err(ApiError::NotFound(what)), from);
+                        let listed = self.listed(&repo).await;
+                        let clone = whose;
+                        return (data, From::Git { clone, at, listed });
                     }
                     Ok(Ok(Err(ReadError::Limit(limit)))) => limit,
                     Ok(Ok(Err(ReadError::Git(err)))) => format!("git couldn't read it: {err}"),
@@ -766,12 +756,7 @@ impl Local {
             DataKey::Tags(_) => {
                 let listed = self.remote_refs(gh, repo, clone).await?;
                 let tags = read::tags(clone, &listed.tags).await?;
-                let tags = Results {
-                    total: tags.len() as u64,
-                    items: tags,
-                    next: None,
-                };
-                Answer::Data(Data::from(tags), None)
+                Answer::Data(Data::from(all(tags)), None)
             }
             DataKey::RefIn(_, spot) => {
                 let listed = self.remote_refs(gh, repo, clone).await?;
@@ -783,13 +768,7 @@ impl Local {
                 };
                 let oid = at(search.rev.clone().unwrap_or_else(|| "HEAD".into())).await?;
                 let hits = read::grep(clone, repo, &oid, &search.grep).await?;
-                let results = Results {
-                    total: hits.len() as u64,
-                    items: hits,
-                    next: None,
-                };
-                let found = SearchResults::Code(results);
-                Answer::Data(Data::from(found), Some(oid))
+                Answer::Data(Data::from(SearchResults::Code(all(hits))), Some(oid))
             }
             DataKey::Activity(_) => {
                 let oid = at("HEAD".into()).await?;
@@ -799,6 +778,15 @@ impl Local {
             }
             _ => return Err(ReadError::Limit("git doesn't know it".into())),
         })
+    }
+}
+
+/// Every one of `items`, as one page.
+fn all<T>(items: Vec<T>) -> Results<T> {
+    Results {
+        total: items.len() as u64,
+        items,
+        next: None,
     }
 }
 
