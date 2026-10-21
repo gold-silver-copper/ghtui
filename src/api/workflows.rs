@@ -278,14 +278,13 @@ impl GitHub {
     ) -> Result<Capped<Annotation>, ApiError> {
         let base = format!("/repos/{repo}/check-runs/{job}");
         let what = format!("{repo}'s check run {job}");
-        let run: rest::CheckRun = serde_json::from_str(&self.rest_get(&base, &what).await?)?;
+        let run: rest::CheckRun = self.rest_json(&base, &what).await?;
         let total = run.output.annotations_count;
         if total == 0 {
             return Ok(Capped::default());
         }
         let path = format!("{base}/annotations?per_page={ANNOTATIONS}");
-        let wire: Vec<rest::Annotation> =
-            serde_json::from_str(&self.rest_get(&path, &what).await?)?;
+        let wire: Vec<rest::Annotation> = self.rest_json(&path, &what).await?;
         let list = wire.into_iter().map(|a| {
             let level = match a.annotation_level.as_str() {
                 "failure" => Level::Failure,
@@ -308,11 +307,9 @@ impl GitHub {
     /// A run's artifacts, newest first.
     pub async fn artifacts(&self, repo: &RepoId, run: u64) -> Result<Capped<Artifact>, ApiError> {
         let path = format!("/repos/{repo}/actions/runs/{run}/artifacts?per_page={ARTIFACTS}");
-        let wire: rest::Artifacts = serde_json::from_str(
-            &self
-                .rest_get(&path, format!("run {run}'s artifacts"))
-                .await?,
-        )?;
+        let wire: rest::Artifacts = self
+            .rest_json(&path, format!("run {run}'s artifacts"))
+            .await?;
         let items = wire.artifacts.into_iter().map(|a| Artifact {
             id: a.id,
             name: a.name,

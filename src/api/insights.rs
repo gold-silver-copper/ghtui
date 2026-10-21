@@ -195,21 +195,16 @@ impl GitHub {
     /// A repository's views, clones, referrers and popular paths. GitHub
     /// shows them only to people who can push to it.
     pub async fn traffic(&self, repo: &RepoId) -> Result<Traffic, ApiError> {
-        let part = |of| self.traffic_part(format!("/repos/{repo}/traffic/{of}"));
         let (views, clones, referrers, paths) = tokio::join!(
-            part("views"),
-            part("clones"),
-            part("popular/referrers"),
-            part("popular/paths"),
+            self.traffic_part::<wire::Counted>(repo, "views"),
+            self.traffic_part::<wire::Counted>(repo, "clones"),
+            self.traffic_part::<Vec<wire::Referrer>>(repo, "popular/referrers"),
+            self.traffic_part::<Vec<wire::Path>>(repo, "popular/paths"),
         );
-        let views: wire::Counted = serde_json::from_str(&views?)?;
-        let clones: wire::Counted = serde_json::from_str(&clones?)?;
-        let referrers: Vec<wire::Referrer> = serde_json::from_str(&referrers?)?;
-        let paths: Vec<wire::Path> = serde_json::from_str(&paths?)?;
         let traffic = Traffic {
-            views: views.into_counted(|d| d.views),
-            clones: clones.into_counted(|d| d.clones),
-            referrers: (referrers.into_iter())
+            views: views?.into_counted(|d| d.views),
+            clones: clones?.into_counted(|d| d.clones),
+            referrers: (referrers?.into_iter())
                 .map(|r| Popular {
                     name: r.referrer,
                     title: None,
@@ -217,7 +212,7 @@ impl GitHub {
                     uniques: r.uniques,
                 })
                 .collect(),
-            paths: (paths.into_iter())
+            paths: (paths?.into_iter())
                 .map(|p| Popular {
                     name: p.path,
                     title: Some(p.title).filter(|t| !t.is_empty()),
@@ -229,20 +224,25 @@ impl GitHub {
         Ok(traffic)
     }
 
-    /// One of the traffic's answers, or what GitHub's refusal means.
-    async fn traffic_part(&self, path: String) -> Result<String, ApiError> {
+    /// One of the traffic's answers (`of`), or what GitHub's refusal means.
+    async fn traffic_part<T: serde::de::DeserializeOwned>(
+        &self,
+        repo: &RepoId,
+        of: &str,
+    ) -> Result<T, ApiError> {
+        let path = format!("/repos/{repo}/traffic/{of}");
         let what = path.trim_start_matches("/repos/");
         let answer = self.rest_refusable(&path, what, |status, message, _| {
             (status == 403).then(|| traffic_refusal(message))
         });
         let answer = answer.await?.map_err(ApiError::Denied)?;
-        Ok(answer.body().to_owned())
+        Ok(serde_json::from_str(answer.body())?)
     }
 
     /// A repository's manifests and their dependencies, as its dependency
     /// graph has them: 20 manifests, the first 100 dependencies of each.
     pub async fn dependencies(&self, repo: &RepoId) -> Result<Dependencies, ApiError> {
-        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name });
+        let vars = serde_json::json!(repo);
         let found: wire::Manifests = self
             .graphql_preview(
                 crate::api::raw::DEPENDENCY_GRAPH,

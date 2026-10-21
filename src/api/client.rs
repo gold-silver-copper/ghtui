@@ -1109,7 +1109,7 @@ impl GitHub {
     }
 
     /// GETs a REST path and decodes its JSON.
-    async fn rest_json<T: DeserializeOwned>(
+    pub(crate) async fn rest_json<T: DeserializeOwned>(
         &self,
         path: &str,
         what: impl std::fmt::Display,

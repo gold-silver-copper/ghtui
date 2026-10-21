@@ -87,8 +87,8 @@ impl GitHub {
         // GitHub keeps at most 1,000 assets on a release.
         for page in 1..=10 {
             let path = format!("/repos/{repo}/releases/{id}/assets?per_page=100&page={page}");
-            let listed = self.rest_get(&path, format!("{repo}'s release assets"));
-            let listed: Vec<Listed> = serde_json::from_str(&listed.await?)?;
+            let listed: Vec<Listed> =
+                (self.rest_json(&path, format!("{repo}'s release assets"))).await?;
             if let Some(found) = listed.iter().find(|a| a.name == name) {
                 return Ok(found.id);
             }
@@ -136,8 +136,7 @@ impl GitHub {
             upload_url: String,
         }
         let path = format!("/repos/{repo}/releases/{id}");
-        let at = self.rest_get(&path, format!("{repo}'s release"));
-        let at: Uploads = serde_json::from_str(&at.await?)?;
+        let at: Uploads = self.rest_json(&path, format!("{repo}'s release")).await?;
         // `https://uploads.github.com/repos/o/r/releases/1/assets{?name,label}`
         let base = at.upload_url.split('{').next().unwrap_or_default();
         let encoded: String = url::form_urlencoded::byte_serialize(name.as_bytes()).collect();

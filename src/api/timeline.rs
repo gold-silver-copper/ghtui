@@ -959,7 +959,7 @@ pub(crate) fn progress(p: &WireProgress) -> Option<Progress> {
 
 pub(crate) fn latest(l: Option<LatestReviews>) -> Capped<Latest> {
     l.map_or_else(Capped::default, |l| {
-        Capped::from_nodes(l.total_count, l.nodes, |r| Latest {
+        l.into_capped(|r| Latest {
             author: author(r.author),
             state: r.state,
             id: database_id(r.full_database_id),

@@ -19,8 +19,7 @@ impl GitHub {
     pub async fn code_search(&self, query: &str) -> Result<CodeHits, ApiError> {
         let q: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
         let path = format!("/search/code?q={q}&per_page=10");
-        let body = self.rest_get(&path, "the code search").await?;
-        let page: Page<Code> = serde_json::from_str(&body)?;
+        let page: Page<Code> = self.rest_json(&path, "the code search").await?;
         Ok(CodeHits {
             paths: page.items.into_iter().map(|c| c.path).collect(),
             total: page.total_count,

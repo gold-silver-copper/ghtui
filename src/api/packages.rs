@@ -209,10 +209,8 @@ impl GitHub {
             #[serde(rename = "type")]
             kind: String,
         }
-        let body = self
-            .rest_get(&format!("/users/{login}"), format!("@{login}"))
-            .await?;
-        let owner: Owner = serde_json::from_str(&body)?;
+        let path = format!("/users/{login}");
+        let owner: Owner = self.rest_json(&path, format!("@{login}")).await?;
         Ok(owner.kind == "Organization")
     }
 
