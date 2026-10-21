@@ -42,6 +42,7 @@ pub struct TextBox<'a> {
     pub actions: Vec<(&'static str, Row)>,
 }
 
+#[derive(Default)]
 pub struct WriteFormView<'a> {
     pub heading: String,
     /// Where its Markdown's relative links point.

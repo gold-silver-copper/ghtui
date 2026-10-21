@@ -393,13 +393,10 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
             None,
         ));
     }
-    let write = state.first_key(Action::Comment);
-    let save_key = state.first_key(Action::Create);
     let body = if composing { "" } else { &body };
     let view = WriteFormView {
         heading,
         base: Some(crate::ui::markdown::LinkBase::wiki(repo)),
-        rows: Vec::new(),
         status,
         boxes: vec![TextBox {
             title: if composing { String::new() } else { title },
@@ -411,12 +408,9 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
             link: Link::Form(crate::ui::form::Row::Text(0)),
             actions: Vec::new(),
         }],
-        after: Vec::new(),
-        write: &write,
         button: "Save page".into(),
-        save_key: &save_key,
         why_not: problem(&form).map(str::to_owned),
-        error: state.forms.sent(route).error.as_deref(),
+        ..WriteFormView::default()
     };
-    crate::ui::pages::write_form(page, &view);
+    crate::forms::write_form(state, route, page, view);
 }

@@ -162,10 +162,6 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
             .is_empty()
             .then(|| "It needs a title first".to_owned())
     });
-    let (write, save_key) = (
-        state.first_key(Action::Comment),
-        state.first_key(Action::Create),
-    );
     // While the composer has it, its box is only the place it opens in.
     let text = if composing { "" } else { form.text.as_str() };
     let (title, description) = match text.split_once('\n') {
@@ -193,17 +189,15 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
             actions: Vec::new(),
         }],
         after,
-        write: &write,
-        save_key: &save_key,
         button: if pr {
             "Create pull request…".into()
         } else {
             "Create issue".into()
         },
         why_not,
-        error: state.forms.sent(route).error.as_deref(),
+        ..WriteFormView::default()
     };
-    pages::write_form(page, &view);
+    crate::forms::write_form(state, route, page, view);
     if let Some((commits, more)) = commits {
         pages::commits_box(page, &commits, more);
     }

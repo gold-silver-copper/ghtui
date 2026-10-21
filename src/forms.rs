@@ -98,6 +98,27 @@ pub fn row(state: &mut State, row: &Row) -> Cmds {
     }
 }
 
+/// Builds the page of the form at `route` from `view`, with the keys that
+/// write and save it, and why GitHub refused it last, if it did.
+pub(crate) fn write_form(
+    state: &State,
+    route: &Route,
+    page: &mut crate::ui::page::Page,
+    view: crate::ui::pages::WriteFormView<'_>,
+) {
+    let (write, save_key) = (
+        state.first_key(Action::Comment),
+        state.first_key(Action::Create),
+    );
+    let view = crate::ui::pages::WriteFormView {
+        write: &write,
+        save_key: &save_key,
+        error: state.forms.sent(route).error.as_deref(),
+        ..view
+    };
+    crate::ui::pages::write_form(page, &view);
+}
+
 /// A form's row with no chips: `unset` when `value` is a placeholder or
 /// a note.
 pub(crate) fn form_row(

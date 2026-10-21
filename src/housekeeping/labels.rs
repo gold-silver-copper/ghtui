@@ -13,7 +13,6 @@ use super::{
     selected, setting,
 };
 use crate::data::DataKey;
-use crate::keymap::Action;
 use crate::state::{Cmds, State};
 use crate::work::{self, Cx, Failure, Job};
 
@@ -316,25 +315,19 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route) {
             None,
         ));
     }
-    let save_key = state.first_key(Action::Create);
     let view = WriteFormView {
         heading,
-        base: None,
         rows: vec![
             form_row(&f, Field::Name, "Label name"),
             form_row(&f, Field::Description, "Description (optional)"),
             form_row(&f, Field::Colour, "#rrggbb"),
         ],
         status,
-        boxes: Vec::new(),
-        after: Vec::new(),
-        write: "",
         button: super::button(of, &f),
-        save_key: &save_key,
         why_not: super::problem(state, route, of),
-        error: state.forms.sent(route).error.as_deref(),
+        ..WriteFormView::default()
     };
-    crate::ui::pages::write_form(page, &view);
+    crate::forms::write_form(state, route, page, view);
 }
 
 #[cfg(test)]

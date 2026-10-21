@@ -796,30 +796,22 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
         })
         .collect();
     let after = vec![form_row("", "+ Add file", false, Some(Row::AddFile))];
-    let write = state.first_key(Action::Comment);
-    let save_key = state.first_key(Action::Create);
+    let (heading, button) = if editing {
+        ("Editing gist", "Update gist")
+    } else {
+        ("New gist", "Create gist…")
+    };
     let view = WriteFormView {
-        heading: if editing {
-            "Editing gist".into()
-        } else {
-            "New gist".into()
-        },
-        base: None,
+        heading: heading.into(),
         rows,
         status,
         boxes,
         after,
-        write: &write,
-        button: if editing {
-            "Update gist".into()
-        } else {
-            "Create gist…".into()
-        },
-        save_key: &save_key,
+        button: button.into(),
         why_not: names(&form).err(),
-        error: state.forms.sent(route).error.as_deref(),
+        ..WriteFormView::default()
     };
-    crate::ui::pages::write_form(page, &view);
+    crate::forms::write_form(state, route, page, view);
 }
 
 #[cfg(test)]

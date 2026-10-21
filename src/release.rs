@@ -1077,8 +1077,6 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
         form_row("Latest", latest, form.prerelease, Some(Row::Latest)),
     ];
     let (title, notes) = templates::split(&form.text);
-    let write = state.first_key(Action::Comment);
-    let save_key = state.first_key(Action::Create);
     let why_not = match &form.tag {
         None => Some("Choose a tag first".to_owned()),
         Some(_) => problem(state, repo, form),
@@ -1115,13 +1113,11 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
             actions: Vec::new(),
         }],
         after,
-        write: &write,
         button: button.into(),
-        save_key: &save_key,
         why_not,
-        error: state.forms.sent(route).error.as_deref(),
+        ..WriteFormView::default()
     };
-    crate::ui::pages::write_form(page, &view);
+    crate::forms::write_form(state, route, page, view);
 }
 
 #[cfg(test)]

@@ -637,8 +637,6 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
             actions: Vec::new(),
         }],
     };
-    let write = state.first_key(Action::Comment);
-    let save_key = state.first_key(Action::Create);
     // A deleted file's path is what it is.
     let mut path_row = form_row(&f, Field::Path, "Name your file…");
     if change == FileChange::Delete {
@@ -665,14 +663,11 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
         rows: vec![path_row, branch_row, message_row],
         status,
         boxes,
-        after: Vec::new(),
-        write: &write,
         button: super::button(of, &f),
-        save_key: &save_key,
         why_not: problem(state, route, of),
-        error: state.forms.sent(route).error.as_deref(),
+        ..WriteFormView::default()
     };
-    crate::ui::pages::write_form(page, &view);
+    crate::forms::write_form(state, route, page, view);
 }
 
 #[cfg(test)]

@@ -13,7 +13,6 @@ use crate::ui::pages::{Mark, WriteFormView};
 
 use super::{Expected, Field, Form, FormOf, ask, expect, form, form_mut, form_row, item, setting};
 use crate::data::DataKey;
-use crate::keymap::Action;
 use crate::state::{Cmds, State};
 use crate::work::{self, Cx, Failure, Job};
 
@@ -373,21 +372,15 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
     if !owner.is_empty() && !name.is_empty() {
         status.push((format!("It will be {owner}/{name}"), Mark::Fine, None));
     }
-    let save_key = state.first_key(Action::Create);
     let view = WriteFormView {
         heading,
-        base: None,
         rows,
         status,
-        boxes: Vec::new(),
-        after: Vec::new(),
-        write: "",
         button: super::button(of, &f),
-        save_key: &save_key,
         why_not: super::problem(state, route, of),
-        error: state.forms.sent(route).error.as_deref(),
+        ..WriteFormView::default()
     };
-    crate::ui::pages::write_form(page, &view);
+    crate::forms::write_form(state, route, page, view);
 }
 
 #[cfg(test)]
