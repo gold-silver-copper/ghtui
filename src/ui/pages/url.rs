@@ -88,6 +88,10 @@ pub fn search(kind: SearchKind, query: &str) -> String {
     };
     format!("{}/search?q={}&type={kind}", base(), encode(query))
 }
+/// A workflow run's page.
+pub fn run(repo: &RepoId, id: u64) -> String {
+    format!("{}/actions/runs/{id}", self::repo(repo))
+}
 pub fn commit(repo: &RepoId, oid: &str) -> String {
     at_rev(repo, "commit", oid, "")
 }

@@ -76,13 +76,21 @@ pub fn checks(page: &mut Page, checks: Fetched<'_, Checks>, now: u64) {
     }
 }
 
+/// How long `$ran` (a check, job or step: its `started_at`,
+/// `completed_at` and `outcome`) took, as [`took`] says it.
+macro_rules! took_by {
+    ($ran:expr, $now:expr) => {
+        took(
+            $ran.started_at.as_ref(),
+            $ran.completed_at.as_ref(),
+            $ran.outcome,
+            $now,
+        )
+    };
+}
+
 pub(super) fn check_row(page: &mut Page, check: &CheckItem, now: u64) {
-    let took = took(
-        check.started_at.as_ref(),
-        check.completed_at.as_ref(),
-        check.outcome,
-        now,
-    );
+    let took = took_by!(check, now);
     maybe_item(page, check.url.clone(), |page, link| {
         let name = Seg::linked(check.name.clone(), Role::Strong, link);
         status_row(page, outcome_mark(check.outcome), name, took);
@@ -241,8 +249,9 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
     }
     page.wrapped(facts, 0, Frame::None);
     page.blank();
-    let mut jobs = run.jobs.clone();
+    let mut jobs: Vec<_> = run.jobs.iter().collect();
     jobs.sort_by(|a, b| (a.outcome, &a.name).cmp(&(b.outcome, &b.name)));
+    let jobs = Capped::new(jobs, run.jobs.total());
     let title = counted("Jobs", &run.jobs);
     // A run just started (or re-run) has no jobs until GitHub queues them.
     let none = if run.outcome == CheckOutcome::Pending {
@@ -256,13 +265,8 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
         page.selects = Some(page.items.len());
     }
     list_box(page, title, Vec::new(), &jobs, none, |page, job| {
-        let target = format!("{}/actions/runs/{}/job/{}", url::repo(repo), run.id, job.id);
-        let took = took(
-            job.started_at.as_ref(),
-            job.completed_at.as_ref(),
-            job.outcome,
-            now,
-        );
+        let target = format!("{}/job/{}", url::run(repo, run.id), job.id);
+        let took = took_by!(job, now);
         item(page, target, |page, link| {
             let name = Seg::linked(job.name.clone(), Role::Strong, link);
             status_row(page, outcome_mark(job.outcome), name, took);
@@ -461,7 +465,7 @@ pub fn job(
 ) {
     outcome_title(page, job.name.clone(), job.outcome);
     let mut subline = Vec::new();
-    let run = format!("{}/actions/runs/{}", url::repo(repo), job.run_id);
+    let run = url::run(repo, job.run_id);
     subline.push(link_seg(
         page,
         format!("{} #{}", job.run.name, job.run.number),
@@ -477,12 +481,7 @@ pub fn job(
         let target = format!("{run}/job/{rerun}");
         subline.push(link_seg(page, "its re-run", target, Role::Link));
     }
-    if let Some(d) = took(
-        job.started_at.as_ref(),
-        job.completed_at.as_ref(),
-        job.outcome,
-        now,
-    ) {
+    if let Some(d) = took_by!(job, now) {
         subline.push(meta(format!(" · {d}")));
     }
     if job.outcome != CheckOutcome::Pending && job.run.outcome == CheckOutcome::Pending {
@@ -524,11 +523,12 @@ pub fn job(
     // Whether a line, without its escapes or as logged, has the search.
     let hit = |line: &str| !q.is_empty() && crate::ui::text::has(&line.to_lowercase(), &q);
     let matches = |line: &str| !q.is_empty() && hit(&strip_escapes(line));
-    // With a match anywhere, the search decides where the page opens.
-    let searched = lines
-        .iter()
-        .flatten()
-        .any(|(_, _, l)| l.iter().any(|t| matches(t)));
+    // Which steps' logs have the search, each searched once; with a match
+    // anywhere, the search decides where the page opens.
+    let found: Vec<bool> = (lines.iter().flatten())
+        .map(|(_, _, l)| l.iter().any(|t| matches(t)))
+        .collect();
+    let searched = found.contains(&true);
     // It opens on the step a link points at, else the first that failed;
     // followed, on the step running, or once it's done, the last that
     // logged; else the first, so Enter opens it.
@@ -550,12 +550,7 @@ pub fn job(
         .or(job.steps.first())
         .map(|s| s.number);
     let follow = followed.map(|s| s.number).filter(|n| opens == Some(*n));
-    let job_url = format!(
-        "{}/actions/runs/{}/job/{}",
-        url::repo(repo),
-        job.run_id,
-        job.id
-    );
+    let job_url = format!("{run}/job/{}", job.id);
     for (n, step) in job.steps.iter().enumerate() {
         if n > 0 {
             page.box_rule();
@@ -574,24 +569,18 @@ pub fn job(
             CheckOutcome::Pending if step.started_at.is_none() => ("○", Role::Meta),
             outcome => outcome_mark(outcome),
         };
-        let took = took(
-            step.started_at.as_ref(),
-            step.completed_at.as_ref(),
-            step.outcome,
-            now,
-        );
+        let took = took_by!(step, now);
         item(page, format!("{step_url}1"), |page, link| {
             let name = Seg::linked(step.name.clone(), Role::Strong, link);
             status_row(page, mark, name, took);
         });
         let pointed = at.step.map(|(s, _)| s) == Some(step.number);
         let failed = step.outcome == CheckOutcome::Failure;
-        // Numbered from the step's first line, cut ones included.
-        let (cut, raw) = lines
-            .as_ref()
-            .and_then(|lines| lines.iter().find(|(n, _, _)| *n == step.number))
+        // Numbered from the step's first line, cut ones included; the
+        // lines are the steps', in order.
+        let (cut, raw) = (lines.as_ref().and_then(|lines| lines.get(n)))
             .map_or((0, &[][..]), |(_, cut, l)| (*cut, l.as_slice()));
-        let found = raw.iter().any(|l| matches(l));
+        let found = found.get(n).is_some_and(|f| *f);
         let followed = follow == Some(step.number);
         if !(pointed || failed || found || followed) {
             continue;
@@ -722,33 +711,29 @@ pub(super) fn run_list(
     now: u64,
 ) {
     paged_list(page, "Runs", runs, empty, |page, run| {
-        item(
-            page,
-            format!("{}/actions/runs/{}", url::repo(repo), run.id),
-            |page, link| {
-                let title = if run.title.is_empty() {
-                    format!("Run #{}", run.number)
-                } else {
-                    run.title.clone()
-                };
-                let start = run.started_at.as_ref();
-                let end = run
-                    .updated_at
-                    .as_ref()
-                    .filter(|_| run.outcome != CheckOutcome::Pending);
-                let took = took(start, end, run.outcome, now);
-                let name = Seg::linked(title, Role::Strong, link);
-                status_row(page, outcome_mark(run.outcome), name, took);
-                let mut subline = format!("{} #{} · {}", run.workflow, run.number, run.event);
-                for said in [&run.branch, &run.actor].into_iter().flatten() {
-                    let _ = write!(subline, " · {said}");
-                }
-                if let Some(at) = &run.created_at {
-                    let _ = write!(subline, " · {}", time::ago_iso(at, now));
-                }
-                body(page, vec![meta(subline)]);
-            },
-        );
+        item(page, url::run(repo, run.id), |page, link| {
+            let title = if run.title.is_empty() {
+                format!("Run #{}", run.number)
+            } else {
+                run.title.clone()
+            };
+            let start = run.started_at.as_ref();
+            let end = run
+                .updated_at
+                .as_ref()
+                .filter(|_| run.outcome != CheckOutcome::Pending);
+            let took = took(start, end, run.outcome, now);
+            let name = Seg::linked(title, Role::Strong, link);
+            status_row(page, outcome_mark(run.outcome), name, took);
+            let mut subline = format!("{} #{} · {}", run.workflow, run.number, run.event);
+            for said in [&run.branch, &run.actor].into_iter().flatten() {
+                let _ = write!(subline, " · {said}");
+            }
+            if let Some(at) = &run.created_at {
+                let _ = write!(subline, " · {}", time::ago_iso(at, now));
+            }
+            body(page, vec![meta(subline)]);
+        });
     });
 }
 
