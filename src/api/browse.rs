@@ -855,11 +855,6 @@ pub struct RepoTopic {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-pub struct Topic {
-    pub name: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Ref")]
 pub struct BranchRef {
     pub name: String,
@@ -902,6 +897,7 @@ fragments! {
     AppName = "App",
     WorkflowName = "Workflow",
     TypeName = "IssueType",
+    Topic = "Topic",
 }
 fragments! {
     number: i32;
@@ -1292,11 +1288,7 @@ pub struct PrChecks {
     pub commits: PrHeadCommits,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestCommitConnection")]
-pub struct PrHeadCommits {
-    pub nodes: Option<Vec<Option<PrHeadCommit>>>,
-}
+fragments! { nodes: PrHeadCommits = "PullRequestCommitConnection" => PrHeadCommit }
 
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "PullRequestCommit")]
@@ -3767,11 +3759,7 @@ pub enum ReadmeObject {
     Other,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Blob")]
-pub struct ReadmeBlob {
-    pub text: Option<String>,
-}
+fragments! { text: Option<String>; ReadmeBlob = "Blob" }
 
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "UserStatus")]
@@ -3780,11 +3768,7 @@ pub struct WireStatus {
     pub message: Option<String>,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "SocialAccountConnection")]
-pub struct SocialList {
-    pub nodes: Option<Vec<Option<WireSocial>>>,
-}
+fragments! { nodes: SocialList = "SocialAccountConnection" => WireSocial }
 
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "SocialAccount")]
