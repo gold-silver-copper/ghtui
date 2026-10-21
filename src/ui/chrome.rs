@@ -150,7 +150,7 @@ impl Widget for Header<'_> {
             } else {
                 theme.body(BAR)
             };
-            Span::styled(text::truncate(&c.text, usize::from(r.width)), style).render(*r, buf);
+            Span::styled(text::fit(&c.text, usize::from(r.width)), style).render(*r, buf);
         }
         match self.input {
             Some(input) => SearchField {

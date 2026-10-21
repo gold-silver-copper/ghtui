@@ -17,6 +17,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -580,11 +581,7 @@ impl Page {
         for (i, width) in widths.iter().enumerate() {
             let mut column = Page::new(*width);
             column.compact = self.compact;
-            column.links = std::mem::take(&mut self.links);
-            column.link_ids = std::mem::take(&mut self.link_ids);
-            f(i, &mut column);
-            self.links = std::mem::take(&mut column.links);
-            self.link_ids = std::mem::take(&mut column.link_ids);
+            self.sharing_links(&mut column, |column| f(i, column));
             columns.push(column);
         }
         let base = self.lines.len();
@@ -624,17 +621,21 @@ impl Page {
             return false;
         };
         let mut aside = Page::new(width);
-        aside.links = std::mem::take(&mut self.links);
-        aside.link_ids = std::mem::take(&mut self.link_ids);
-        f(&mut aside);
-        self.links = std::mem::take(&mut aside.links);
-        self.link_ids = std::mem::take(&mut aside.link_ids);
+        self.sharing_links(&mut aside, f);
         let lines = aside.lines;
         self.aside = Some(Aside { width, lines });
         true
     }
 
-    /// Rows the page takes (the longer of the column and the aside).
+    /// Builds `sub` with `f`, its links being this page's.
+    fn sharing_links(&mut self, sub: &mut Page, f: impl FnOnce(&mut Page)) {
+        sub.links = std::mem::take(&mut self.links);
+        sub.link_ids = std::mem::take(&mut self.link_ids);
+        f(sub);
+        self.links = std::mem::take(&mut sub.links);
+        self.link_ids = std::mem::take(&mut sub.link_ids);
+    }
+
     /// Where sections start: boxes, and headings.
     pub fn sections(&self) -> Vec<usize> {
         let starts = self.lines.iter().enumerate().filter(|(_, l)| {
@@ -676,6 +677,7 @@ impl Page {
         longest.saturating_sub(usize::from(self.width) / 2)
     }
 
+    /// Rows the page takes (the longer of the column and the aside).
     pub fn height(&self) -> usize {
         let aside = self.aside.as_ref().map_or(0, |a| a.lines.len());
         self.lines.len().max(aside)
@@ -824,7 +826,7 @@ fn inside(line: &PageLine, x: u16, width: u16) -> Option<(u16, u16)> {
 }
 
 /// Segments of a line placed on a row: `(x, visible text, seg)`.
-fn place(line: &PageLine, x: u16, width: u16) -> Vec<(u16, String, &Seg)> {
+fn place(line: &PageLine, x: u16, width: u16) -> Vec<(u16, Cow<'_, str>, &Seg)> {
     let Some((tx, tw)) = inside(line, x, width) else {
         return Vec::new();
     };
@@ -851,13 +853,18 @@ fn place(line: &PageLine, x: u16, width: u16) -> Vec<(u16, String, &Seg)> {
 }
 
 /// `segs` from `x` on, cut to `room` columns.
-fn lay_out<'a>(out: &mut Vec<(u16, String, &'a Seg)>, segs: &'a [Seg], mut x: u16, room: u16) {
+fn lay_out<'a>(
+    out: &mut Vec<(u16, Cow<'a, str>, &'a Seg)>,
+    segs: &'a [Seg],
+    mut x: u16,
+    room: u16,
+) {
     let mut room = usize::from(room);
     for seg in segs {
         if room == 0 {
             break;
         }
-        let shown = text::truncate(&seg.text, room);
+        let shown = text::fit(&seg.text, room);
         let w = text::width(&shown);
         room = room.saturating_sub(w);
         out.push((x, shown, seg));
@@ -1195,7 +1202,7 @@ impl PageView<'_> {
             let w = cols(text::width(&shown));
             let style = match seg.role {
                 Role::Match if current => theme.fill(Bg::Primary),
-                _ => self.style(&seg.role, inner_bg),
+                _ => role_style(theme, &seg.role, inner_bg),
             };
             Line::from(Span::styled(shown, style)).render(row(sx, w), buf);
         }
@@ -1245,10 +1252,6 @@ impl PageView<'_> {
             let y = area.y.saturating_add(cols(r));
             put(buf, x, y, "▐", self.ctx.theme.separator(PAGE_BG));
         }
-    }
-
-    fn style(&self, role: &Role, bg: Bg) -> Style {
-        role_style(self.ctx.theme, role, bg)
     }
 }
 

@@ -267,7 +267,7 @@ impl FileTree<'_> {
                 Line::from(vec![
                     Span::styled(indent, theme.body(bg)),
                     Span::styled(fold, theme.meta(bg)),
-                    Span::styled(text::truncate(name, room), theme.meta(bg)),
+                    Span::styled(text::fit(name, room), theme.meta(bg)),
                 ])
                 .render(area, buf);
             }
@@ -315,7 +315,7 @@ impl FileTree<'_> {
                 } else {
                     room
                 };
-                spans.push(Span::styled(text::truncate(name, room), name_style));
+                spans.push(Span::styled(text::fit(name, room), name_style));
                 render_split(area, buf, &spans, &right, 1);
             }
         }

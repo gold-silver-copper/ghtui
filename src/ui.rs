@@ -94,12 +94,12 @@ fn render_split(area: Rect, buf: &mut Buffer, left: &[Span<'_>], right: &[Span<'
 }
 
 /// `spans` cut to `room` columns, ending in `…` where cut.
-fn fit_spans(spans: &[Span<'_>], room: u16) -> Vec<Span<'static>> {
+fn fit_spans<'a>(spans: &'a [Span<'_>], room: u16) -> Vec<Span<'a>> {
     let mut room = usize::from(room);
     spans
         .iter()
         .map(|s| {
-            let shown = text::truncate(&s.content, room);
+            let shown = text::fit(&s.content, room);
             room = room.saturating_sub(text::width(&shown));
             Span::styled(shown, s.style)
         })

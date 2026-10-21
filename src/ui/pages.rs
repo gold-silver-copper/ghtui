@@ -243,12 +243,12 @@ fn item(page: &mut Page, target: impl Into<Link>, build: impl FnOnce(&mut Page, 
     page.item(start, link);
 }
 
-/// Each name once, in order.
 /// A file shown as Markdown, read as prose rather than as code.
 pub fn is_markdown(path: &str) -> bool {
     path.to_ascii_lowercase().ends_with(".md")
 }
 
+/// Each name once, in order.
 fn unique<'a>(names: impl IntoIterator<Item = &'a String>) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for name in names {
@@ -607,26 +607,34 @@ mod tests {
             .collect()
     }
 
-    /// A commit by an email without an account is by its git name, which
-    /// isn't a login: neither its author nor its committer links to a
-    /// profile, as GitHub shows them.
-    #[test]
-    fn a_commit_by_git_names_doesnt_link_them_as_profiles() {
-        let repo = RepoId::new("o", "r");
-        let d = CommitDetail {
+    /// A commit by `author`, committed by `committer`.
+    fn commit_by(author: Person, committer: Option<Person>) -> CommitDetail {
+        CommitDetail {
             oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
             headline: "Fix the thing".into(),
             body: String::new(),
-            author: Person::Git("Jane Doe".into()),
+            author,
             authored_at: "2026-01-14T10:00:00Z".into(),
-            committer: Some(Person::Git("bob".into())),
+            committer,
             committed_at: "2026-01-15T09:30:00Z".into(),
             parents: Vec::new().into(),
             additions: 1,
             deletions: 1,
             changed_files: Some(1),
             verified: None,
-        };
+        }
+    }
+
+    /// A commit by an email without an account is by its git name, which
+    /// isn't a login: neither its author nor its committer links to a
+    /// profile, as GitHub shows them.
+    #[test]
+    fn a_commit_by_git_names_doesnt_link_them_as_profiles() {
+        let repo = RepoId::new("o", "r");
+        let d = commit_by(
+            Person::Git("Jane Doe".into()),
+            Some(Person::Git("bob".into())),
+        );
         let mut page = Page::new(100);
         commit(&mut page, &repo, &d, "", 0);
         let text: Vec<String> = page.lines.iter().map(PageLine::text).collect();
@@ -638,20 +646,7 @@ mod tests {
     /// GitHub user of that name.
     #[test]
     fn a_commit_by_nobody_doesnt_link_unknown_as_a_profile() {
-        let d = CommitDetail {
-            oid: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".into(),
-            headline: "Fix the thing".into(),
-            body: String::new(),
-            author: Person::Unknown,
-            authored_at: "2026-01-14T10:00:00Z".into(),
-            committer: None,
-            committed_at: "2026-01-14T10:00:00Z".into(),
-            parents: Vec::new().into(),
-            additions: 1,
-            deletions: 1,
-            changed_files: None,
-            verified: None,
-        };
+        let d = commit_by(Person::Unknown, None);
         let mut page = Page::new(100);
         commit(&mut page, &RepoId::new("o", "r"), &d, "", 0);
         let text: Vec<String> = page.lines.iter().map(PageLine::text).collect();
