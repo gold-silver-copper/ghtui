@@ -694,8 +694,7 @@ pub(super) fn review(
         let ago = time::ago_iso(&r.at, talk.now);
         let mut segs = vec![who, meta(format!(" {what} {ago}"))];
         if new {
-            segs.push(space());
-            segs.push(chip("New", Bg::TertiaryContainer));
+            tag(&mut segs, "New", Bg::TertiaryContainer);
         }
         event_line(page, icon, segs);
         return;
@@ -818,21 +817,17 @@ fn thread(page: &mut Page, place: &Place<'_>, t: &ReviewThread, marks: Marks<'_>
     });
     item(page, target, |page, link| {
         let mut segs = vec![Seg::linked(at, Role::Link, link)];
-        let mut tag = |text: &str, bg| {
-            segs.push(space());
-            segs.push(chip(text, bg));
-        };
         if t.outdated {
-            tag("Outdated", Bg::ContainerHigh);
+            tag(&mut segs, "Outdated", Bg::ContainerHigh);
         }
         if t.resolved {
-            tag("Resolved", Bg::SuccessContainer);
+            tag(&mut segs, "Resolved", Bg::SuccessContainer);
         }
         if first.pending {
-            tag("Pending", Bg::TertiaryContainer);
+            tag(&mut segs, "Pending", Bg::TertiaryContainer);
         }
         if t.comments.iter().any(|c| marks.threads.contains(&c.id)) {
-            tag("New", Bg::TertiaryContainer);
+            tag(&mut segs, "New", Bg::TertiaryContainer);
         }
         let more = t.comments.total().saturating_sub(1);
         let right = (t.resolved && more > 0).then(|| meta(plural(more, "reply")));
@@ -860,8 +855,7 @@ fn thread(page: &mut Page, place: &Place<'_>, t: &ReviewThread, marks: Marks<'_>
                 meta(format!("{verb} {}", time::ago_iso(&c.created_at, now))),
             ];
             if n > 0 && marks.threads.contains(&c.id) {
-                segs.push(space());
-                segs.push(chip("New", Bg::TertiaryContainer));
+                tag(&mut segs, "New", Bg::TertiaryContainer);
             }
             page.box_line(segs, Vec::new(), 2);
             let body_start = page.lines.len();
@@ -1221,9 +1215,7 @@ pub(super) fn projects_inline(page: &mut Page, projects: Fetched<'_, Capped<InPr
     };
     let mut segs = Vec::new();
     for p in list {
-        if !segs.is_empty() {
-            segs.push(meta(", "));
-        }
+        sep(&mut segs, ", ");
         segs.push(link_seg(page, p.title.clone(), p.url.clone(), Role::Link));
         let said: Vec<String> = (p.status().map(str::to_owned).into_iter())
             .chain(p.others().map(|(name, v)| format!("{name}: {}", v.text())))
@@ -1248,13 +1240,8 @@ fn inline(page: &mut Page, heading: &str, segs: Vec<Seg>) {
 /// issues it closes.
 pub(super) fn pr_inline(page: &mut Page, icons: Icons, pr: &PrRef, d: &PrDetail, a: &PrActivity) {
     let mut segs = Vec::new();
-    let sep = |segs: &mut Vec<Seg>| {
-        if !segs.is_empty() {
-            segs.push(meta(" · "));
-        }
-    };
     for l in a.latest.iter().filter(|l| l.author != d.author) {
-        sep(&mut segs);
+        sep(&mut segs, " · ");
         let ((mark, role), _) = review_said(l.state);
         segs.push(Seg::new(format!("{mark} "), role));
         segs.push(login_seg(page, &l.author, Role::Link));
@@ -1265,7 +1252,7 @@ pub(super) fn pr_inline(page: &mut Page, icons: Icons, pr: &PrRef, d: &PrDetail,
         }
     }
     for r in &a.requested {
-        sep(&mut segs);
+        sep(&mut segs, " · ");
         let (name, target) = reviewer_link(&r.who);
         segs.push(Seg::new("● ", Role::Accent));
         segs.push(link_seg(page, name, target, Role::Link));
@@ -1278,9 +1265,7 @@ pub(super) fn pr_inline(page: &mut Page, icons: Icons, pr: &PrRef, d: &PrDetail,
     inline(page, "Reviewers", segs);
     let mut closes = Vec::new();
     for l in &a.closing {
-        if !closes.is_empty() {
-            closes.push(meta(", "));
-        }
+        sep(&mut closes, ", ");
         closes.extend(linked_segs(page, icons, &pr.repo, l));
     }
     inline(page, "Closes", closes);
@@ -1313,9 +1298,7 @@ pub(super) fn relations_inline(page: &mut Page, icons: Icons, d: &IssueDetail) {
         }
         let mut segs = Vec::new();
         for l in list {
-            if !segs.is_empty() {
-                segs.push(meta(", "));
-            }
+            sep(&mut segs, ", ");
             segs.extend(linked_segs(page, icons, &d.repo, l));
         }
         if list.left_out() > 0 {
@@ -1325,15 +1308,11 @@ pub(super) fn relations_inline(page: &mut Page, icons: Icons, d: &IssueDetail) {
     }
     let mut dev = Vec::new();
     for l in &d.closed_by {
-        if !dev.is_empty() {
-            dev.push(meta(", "));
-        }
+        sep(&mut dev, ", ");
         dev.extend(linked_segs(page, icons, &d.repo, l));
     }
     for b in &d.branches {
-        if !dev.is_empty() {
-            dev.push(meta(", "));
-        }
+        sep(&mut dev, ", ");
         let target = url::tree(&d.repo, b, "");
         dev.push(meta("⌥ "));
         dev.push(link_seg(page, b.clone(), target, Role::Link));

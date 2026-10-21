@@ -40,19 +40,14 @@ pub struct SettingKeys<'a> {
 /// The tab's own menu, as GitHub's sidebar; `on` is the page shown.
 fn settings_nav(page: &mut Page, repo: &RepoId, on: SettingsPage) {
     let base = format!("{}/settings", url::repo(repo));
-    let mut segs = Vec::new();
-    for item in SettingsPage::MENU {
-        if !segs.is_empty() {
-            segs.push(meta(" · "));
-        }
-        let role = if item == on.menu() {
-            Role::Strong
-        } else {
-            Role::Link
-        };
-        let target = format!("{base}{}", item.slug());
-        segs.push(link_seg(page, item.name(), target, role));
-    }
+    let tabs = SettingsPage::MENU.into_iter().map(|item| {
+        (
+            item.name(),
+            format!("{base}{}", item.slug()),
+            item == on.menu(),
+        )
+    });
+    let segs = nav_strip(page, &meta(" · "), &Role::Link, tabs);
     page.wrapped(segs, 0, Frame::None);
     page.blank();
 }
@@ -553,7 +548,7 @@ fn deploy_keys(page: &mut Page, list: &Listed<DeployKey>, keys: SettingKeys<'_>,
                 }
                 match &k.last_used {
                     Some(at) => {
-                        subline.push_str(&format!(" · last used {}", time::ago_iso(at, now)))
+                        subline.push_str(&format!(" · last used {}", time::ago_iso(at, now)));
                     }
                     None => subline.push_str(" · never used"),
                 }

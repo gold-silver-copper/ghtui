@@ -16,8 +16,7 @@ pub fn repo_title(page: &mut Page, repo: &RepoId, overview: Option<&RepoOverview
         let visibility = if s.private { "Private" } else { "Public" };
         segs.push(chip(visibility, Bg::SecondaryContainer));
         if s.archived {
-            segs.push(space());
-            segs.push(chip("Archived", Bg::TertiaryContainer));
+            tag(&mut segs, "Archived", Bg::TertiaryContainer);
         }
         let star = if o.starred { "★ Starred" } else { "☆ Star" };
         right.push(button(
@@ -54,7 +53,7 @@ pub(super) fn about(page: &mut Page, repo: &RepoId, o: &RepoOverview, compact_la
     match &o.summary.description {
         Some(d) => say(page, d.clone(), Role::Body),
         None if !compact_layout => {
-            page.line(vec![meta("No description, website, or topics provided.")])
+            page.line(vec![meta("No description, website, or topics provided.")]);
         }
         None => {}
     }
@@ -106,9 +105,7 @@ pub(super) fn about(page: &mut Page, repo: &RepoId, o: &RepoOverview, compact_la
     if compact_layout {
         let mut segs = Vec::new();
         for fact in facts {
-            if !segs.is_empty() {
-                segs.push(meta("   "));
-            }
+            sep(&mut segs, "   ");
             segs.push(fact);
         }
         page.wrapped(segs, 0, Frame::None);
@@ -379,8 +376,7 @@ pub(super) fn release_chips(segs: &mut Vec<Seg>, r: &Release) {
         (r.draft, "Draft", Bg::SecondaryContainer),
     ] {
         if on {
-            segs.push(space());
-            segs.push(chip(text, bg));
+            tag(segs, text, bg);
         }
     }
 }
@@ -494,8 +490,7 @@ pub fn branches(
         item(page, url::tree(repo, &b.name, ""), |page, link| {
             let mut segs = vec![Seg::linked(b.name.clone(), Role::Link, link)];
             if b.default {
-                segs.push(space());
-                segs.push(chip("Default", Bg::SecondaryContainer));
+                tag(&mut segs, "Default", Bg::SecondaryContainer);
             }
             let mut right = Vec::new();
             if let Some((number, state)) = b.pr {

@@ -128,8 +128,8 @@ pub fn package(
                     Role::Link
                 };
                 let mut segs = vec![Seg::linked(v.name.clone(), role, link)];
-                for tag in &v.tags {
-                    segs.extend([space(), chip(tag, Bg::TertiaryContainer)]);
+                for t in &v.tags {
+                    tag(&mut segs, t, Bg::TertiaryContainer);
                 }
                 page.box_line(segs, Vec::new(), 0);
                 if let Some(at) = &v.created_at {

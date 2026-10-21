@@ -17,8 +17,7 @@ pub(super) fn repo_row(page: &mut Page, r: &RepoSummary, now: u64, show_owner: b
             (r.archived, "Archived"),
         ] {
             if on {
-                segs.push(space());
-                segs.push(chip(text, Bg::SecondaryContainer));
+                tag(&mut segs, text, Bg::SecondaryContainer);
             }
         }
         let right = vec![meta(format!("☆ {}", compact(r.stars)))];
@@ -160,8 +159,7 @@ pub(super) fn user_row(page: &mut Page, u: &UserSummary) {
             segs.push(strong(format!("  {name}")));
         }
         if u.is_org {
-            segs.push(space());
-            segs.push(chip("Organization", Bg::SecondaryContainer));
+            tag(&mut segs, "Organization", Bg::SecondaryContainer);
         }
         body(page, segs);
         if let Some(bio) = u.bio.as_ref().filter(|_| !page.compact) {
@@ -257,7 +255,6 @@ pub fn issue_list(
     let PageCtx { icons, keys, now } = cx;
     filter_field(page, query, keys, "filter");
     let state = list_state(query);
-    let mut title = Vec::new();
     let (open_state, closed_state) = if is_pr {
         (Status::Pr(PrState::Open), Status::Pr(PrState::Merged))
     } else {
@@ -267,26 +264,19 @@ pub fn issue_list(
         )
     };
     let (open, closed) = counts.unwrap_or_default();
-    for (name, kind, n, label) in [
+    let tabs = [
         ("open", open_state, open, "Open"),
         ("closed", closed_state, closed, "Closed"),
-    ] {
+    ]
+    .map(|(name, kind, n, label)| {
         let (icon, _) = issue_icon(icons, kind);
-        let role = if state == name {
-            Role::Strong
-        } else {
-            Role::Meta
-        };
         let text = match counts {
             Some(_) => format!("{icon} {} {label}", compact(n)),
             None => format!("{icon} {label}"),
         };
-        let link = page.link(Link::State(name.to_owned()));
-        if !title.is_empty() {
-            title.push(Seg::new("   ", Role::Body));
-        }
-        title.push(Seg::linked(text, role, link));
-    }
+        (text, Link::State(name.to_owned()), state == name)
+    });
+    let title = nav_strip(page, &Seg::new("   ", Role::Body), &Role::Meta, tabs);
     let sort = link_seg(
         page,
         format!("Sort: {} ▾", sort_label(query)),
@@ -354,8 +344,7 @@ pub fn search(
             item(page, target, |page, link| {
                 let mut segs = vec![Seg::linked(d.title.clone(), Role::Strong, link)];
                 if d.answered {
-                    segs.push(space());
-                    segs.push(chip("✓ Answered", Bg::SuccessContainer));
+                    tag(&mut segs, "✓ Answered", Bg::SuccessContainer);
                 }
                 body(page, segs);
                 let subline = format!(

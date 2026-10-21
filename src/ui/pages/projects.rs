@@ -25,10 +25,10 @@ pub fn projects(
         item(page, p.url.clone(), |page, link| {
             let mut segs = vec![Seg::linked(p.title.clone(), Role::Strong, link)];
             if p.closed {
-                segs.extend([space(), chip("Closed", Bg::TertiaryContainer)]);
+                tag(&mut segs, "Closed", Bg::TertiaryContainer);
             }
             if !p.public {
-                segs.extend([space(), chip("Private", Bg::SecondaryContainer)]);
+                tag(&mut segs, "Private", Bg::SecondaryContainer);
             }
             let right = vec![meta(format!("#{}", p.number))];
             page.box_line(segs, right, 0);
@@ -101,10 +101,10 @@ struct Spot<'a> {
 fn heading(page: &mut Page, p: &Project) {
     let mut title = vec![Seg::new(p.title.clone(), Role::Title)];
     if p.closed {
-        title.extend([space(), chip("Closed", Bg::TertiaryContainer)]);
+        tag(&mut title, "Closed", Bg::TertiaryContainer);
     }
     if !p.public {
-        title.extend([space(), chip("Private", Bg::SecondaryContainer)]);
+        tag(&mut title, "Private", Bg::SecondaryContainer);
     }
     page.wrapped(title, 0, Frame::None);
     if !p.description.is_empty() {
@@ -366,9 +366,7 @@ fn card(
     for field in fields {
         let value = value_segs(it, field);
         if !value.is_empty() {
-            if !subline.is_empty() {
-                subline.push(meta(" · "));
-            }
+            sep(&mut subline, " · ");
             subline.extend(value);
         }
     }
@@ -906,7 +904,7 @@ pub fn project_item(
         }
     }
     if it.archived {
-        title.extend([space(), chip("Archived", Bg::TertiaryContainer)]);
+        tag(&mut title, "Archived", Bg::TertiaryContainer);
     }
     hanging(page, Seg::new(format!("{icon} "), role), title, Frame::None);
     let mut place = vec![meta("In ")];

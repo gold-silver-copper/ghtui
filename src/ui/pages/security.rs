@@ -10,18 +10,16 @@ use crate::api::security::{
 /// each kind of alert; `on` is the one shown (`None`: advisories).
 pub fn security_nav(page: &mut Page, repo: &RepoId, on: Option<AlertKind>) {
     let base = format!("{}/security", url::repo(repo));
-    let role = |here: bool| if here { Role::Strong } else { Role::Link };
-    let mut segs = vec![link_seg(
-        page,
-        "Advisories",
-        format!("{base}/advisories"),
-        role(on.is_none()),
-    )];
-    for kind in AlertKind::ALL {
-        segs.push(meta(" · "));
-        let target = format!("{base}/{}", kind.slug());
-        segs.push(link_seg(page, kind.name(), target, role(on == Some(kind))));
-    }
+    let advisories = ("Advisories", format!("{base}/advisories"), on.is_none());
+    let kinds = AlertKind::ALL.into_iter().map(|kind| {
+        (
+            kind.name(),
+            format!("{base}/{}", kind.slug()),
+            on == Some(kind),
+        )
+    });
+    let tabs = std::iter::once(advisories).chain(kinds);
+    let segs = nav_strip(page, &meta(" · "), &Role::Link, tabs);
     page.wrapped(segs, 0, Frame::None);
     page.blank();
 }
@@ -118,19 +116,9 @@ pub fn alerts(
     let PageCtx { keys, now, .. } = cx;
     filter_field(page, query, keys, "filter");
     let state = list_state(query);
-    let mut title = Vec::new();
-    for (name, label) in [("open", "Open"), ("closed", "Closed")] {
-        let role = if state == name {
-            Role::Strong
-        } else {
-            Role::Meta
-        };
-        let link = page.link(Link::State(name.to_owned()));
-        if !title.is_empty() {
-            title.push(Seg::new("   ", Role::Body));
-        }
-        title.push(Seg::linked(label, role, link));
-    }
+    let tabs = [("open", "Open"), ("closed", "Closed")]
+        .map(|(name, label)| (label, Link::State(name.to_owned()), state == name));
+    let title = nav_strip(page, &Seg::new("   ", Role::Body), &Role::Meta, tabs);
     let Some(l) = list.show_or(page, &kind.alerts().to_lowercase(), |page| {
         page.box_top(title.clone(), Vec::new());
         skeleton(page);

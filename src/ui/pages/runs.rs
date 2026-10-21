@@ -37,9 +37,7 @@ pub fn checks(page: &mut Page, checks: Fetched<'_, Checks>, now: u64) {
     ] {
         let n = c.items.iter().filter(|i| i.outcome == outcome).count();
         if n > 0 {
-            if !summary.is_empty() {
-                summary.push(meta(" · "));
-            }
+            sep(&mut summary, " · ");
             let (mark, role) = outcome_mark(outcome);
             summary.push(Seg::new(format!("{mark} {n} {word}"), role));
         }
@@ -724,8 +722,7 @@ pub fn workflow(
     if let Some(wf) = wf.show(page, "the workflow") {
         let mut title = vec![Seg::new(wf.name.clone(), Role::Title)];
         if let Some(why) = &wf.disabled {
-            title.push(space());
-            title.push(chip(why.clone(), Bg::SecondaryContainer));
+            tag(&mut title, why.clone(), Bg::SecondaryContainer);
         }
         page.wrapped(title, 0, Frame::None);
         let file = link_seg(

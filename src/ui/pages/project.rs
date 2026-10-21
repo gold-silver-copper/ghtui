@@ -57,8 +57,7 @@ pub fn advisory(page: &mut Page, a: &Advisory, now: u64) {
     say(page, a.summary.clone(), Role::Title);
     let mut segs = vec![severity_chip(a.severity)];
     if a.withdrawn_at.is_some() {
-        segs.push(space());
-        segs.push(chip("Withdrawn", Bg::SecondaryContainer));
+        tag(&mut segs, "Withdrawn", Bg::SecondaryContainer);
     }
     let mut subline = format!("  {}", a.ghsa);
     if let Some(cve) = &a.cve {
@@ -107,12 +106,7 @@ pub fn advisory(page: &mut Page, a: &Advisory, now: u64) {
     if !a.credits.is_empty() {
         page.blank();
         let mut segs = vec![strong("Credits  ")];
-        for (i, login) in a.credits.iter().enumerate() {
-            if i > 0 {
-                segs.push(meta(", "));
-            }
-            segs.push(login_seg(page, login, Role::Link));
-        }
+        segs.extend(login_list(page, ", ", &a.credits));
         page.wrapped(segs, 0, Frame::None);
     }
     if !a.references.is_empty() {
@@ -205,22 +199,13 @@ pub fn deployments(
         )
     };
     if !l.environments.is_empty() {
-        let role = |on: bool| if on { Role::Strong } else { Role::Link };
-        let mut segs = vec![link_seg(
-            page,
-            "All",
-            base.clone(),
-            role(environment.is_none()),
-        )];
-        for env in &l.environments {
-            segs.push(meta(" · "));
-            segs.push(link_seg(
-                page,
-                env.clone(),
-                filter(env),
-                role(environment == Some(env.as_str())),
-            ));
-        }
+        let all = ("All".to_owned(), base.clone(), environment.is_none());
+        let envs = l.environments.iter().map(|env| {
+            let on = environment == Some(env.as_str());
+            (env.clone(), filter(env), on)
+        });
+        let tabs = std::iter::once(all).chain(envs);
+        let mut segs = nav_strip(page, &meta(" · "), &Role::Link, tabs);
         more_chips(&mut segs, &l.environments);
         page.wrapped(segs, 0, Frame::None);
         page.blank();
@@ -301,20 +286,16 @@ pub fn milestones(
         return;
     };
     let base = format!("{}/milestones", url::repo(repo));
-    let role = |on: bool| if on { Role::Strong } else { Role::Link };
-    let open = link_seg(
-        page,
-        format!("Open {}", l.open),
-        base.clone(),
-        role(!closed),
-    );
-    let shut = link_seg(
-        page,
-        format!("Closed {}", l.closed),
-        format!("{base}?state=closed"),
-        role(closed),
-    );
-    page.wrapped(vec![open, meta(" · "), shut], 0, Frame::None);
+    let tabs = [
+        (format!("Open {}", l.open), base.clone(), !closed),
+        (
+            format!("Closed {}", l.closed),
+            format!("{base}?state=closed"),
+            closed,
+        ),
+    ];
+    let segs = nav_strip(page, &meta(" · "), &Role::Link, tabs);
+    page.wrapped(segs, 0, Frame::None);
     page.blank();
     let r = &l.results;
     let title = counted("Milestones", r);

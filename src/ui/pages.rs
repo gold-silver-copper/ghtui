@@ -130,6 +130,37 @@ fn space() -> Seg {
     Seg::new(" ", Role::Body)
 }
 
+/// A chip after what's already there.
+fn tag(segs: &mut Vec<Seg>, text: impl Into<String>, bg: Bg) {
+    segs.extend([space(), chip(text, bg)]);
+}
+
+/// `text` between parts: nothing before the first.
+fn sep(segs: &mut Vec<Seg>, text: &'static str) {
+    if !segs.is_empty() {
+        segs.push(meta(text));
+    }
+}
+
+/// A menu of links, `between` them: the one shown (`true`) strong, the
+/// others `idle`.
+fn nav_strip<T: Into<String>, L: Into<Link>>(
+    page: &mut Page,
+    between: &Seg,
+    idle: &Role,
+    tabs: impl IntoIterator<Item = (T, L, bool)>,
+) -> Vec<Seg> {
+    let mut segs = Vec::new();
+    for (text, target, on) in tabs {
+        if !segs.is_empty() {
+            segs.push(between.clone());
+        }
+        let role = if on { Role::Strong } else { idle.clone() };
+        segs.push(link_seg(page, text, target, role));
+    }
+    segs
+}
+
 fn labels(segs: &mut Vec<Seg>, labels: &Capped<Label>) {
     for l in labels {
         segs.push(space());
@@ -156,6 +187,16 @@ fn link_seg(page: &mut Page, text: impl Into<String>, url: impl Into<Link>, role
 /// A login, linked to its profile.
 fn login_seg(page: &mut Page, login: &str, role: Role) -> Seg {
     link_seg(page, login.to_owned(), url::user(login), role)
+}
+
+/// Logins, each linked to its profile, `between` them.
+fn login_list<'a>(
+    page: &mut Page,
+    between: &'static str,
+    logins: impl IntoIterator<Item = &'a String>,
+) -> Vec<Seg> {
+    let tabs = logins.into_iter().map(|l| (l.clone(), url::user(l), false));
+    nav_strip(page, &meta(between), &Role::Link, tabs)
 }
 
 /// A commit's author or committer: linked to their profile only when

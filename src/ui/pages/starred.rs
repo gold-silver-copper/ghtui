@@ -13,8 +13,7 @@ fn list_url(login: &str, list: &StarList) -> String {
 fn about(list: &StarList) -> Vec<Seg> {
     let mut segs = vec![meta(format!("  {}", plural(list.count, "repository")))];
     if list.private {
-        segs.push(space());
-        segs.push(chip("Private", Bg::SecondaryContainer));
+        tag(&mut segs, "Private", Bg::SecondaryContainer);
     }
     segs
 }

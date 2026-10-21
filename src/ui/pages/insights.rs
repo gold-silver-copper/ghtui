@@ -29,14 +29,10 @@ const HEIGHT: usize = 6;
 /// Insights' own menu, as GitHub's sidebar: each tab, the one shown
 /// strong.
 pub fn insights_nav(page: &mut Page, repo: &RepoId, on: InsightsTab) {
-    let mut segs = Vec::new();
-    for tab in InsightsTab::ALL {
-        if !segs.is_empty() {
-            segs.push(meta(" · "));
-        }
-        let role = if tab == on { Role::Strong } else { Role::Link };
-        segs.push(link_seg(page, tab.name(), url::insights(repo, tab), role));
-    }
+    let tabs = InsightsTab::ALL
+        .into_iter()
+        .map(|tab| (tab.name(), url::insights(repo, tab), tab == on));
+    let segs = nav_strip(page, &meta(" · "), &Role::Link, tabs);
     page.wrapped(segs, 0, Frame::None);
     page.blank();
 }

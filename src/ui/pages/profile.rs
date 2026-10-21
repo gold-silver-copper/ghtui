@@ -9,8 +9,7 @@ pub(super) fn team_row(page: &mut Page, org: &str, t: &TeamSummary) {
         |page, link| {
             let mut segs = vec![Seg::linked(t.name.clone(), Role::Strong, link)];
             if t.secret {
-                segs.push(space());
-                segs.push(chip("Secret", Bg::SecondaryContainer));
+                tag(&mut segs, "Secret", Bg::SecondaryContainer);
             }
             let counts = format!(
                 "{} · {}",
@@ -46,8 +45,7 @@ pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
         Seg::new(t.name.clone(), Role::Title),
     ];
     if t.secret {
-        title.push(space());
-        title.push(chip("Secret", Bg::SecondaryContainer));
+        tag(&mut title, "Secret", Bg::SecondaryContainer);
     }
     page.wrapped(title, 0, Frame::None);
     if !t.description.is_empty() {
@@ -107,8 +105,7 @@ pub fn gist(page: &mut Page, g: &Gist, now: u64) {
     }
     title.push(Seg::new(first.to_owned(), Role::Title));
     if !g.public {
-        title.push(space());
-        title.push(chip("Secret", Bg::SecondaryContainer));
+        tag(&mut title, "Secret", Bg::SecondaryContainer);
     }
     page.wrapped(title, 0, Frame::None);
     let subline = format!(
@@ -225,12 +222,10 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
         None => segs.push(Seg::new(p.login.clone(), Role::Title)),
     }
     if p.is_org {
-        segs.push(space());
-        segs.push(chip("Organization", Bg::SecondaryContainer));
+        tag(&mut segs, "Organization", Bg::SecondaryContainer);
     }
     if p.verified {
-        segs.push(space());
-        segs.push(chip("✓ Verified", Bg::SuccessContainer));
+        tag(&mut segs, "✓ Verified", Bg::SuccessContainer);
     }
     page.line(segs);
     if let Some(status) = &p.status {
@@ -271,12 +266,7 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
     }
     if !p.orgs.is_empty() {
         let mut orgs = vec![meta("Organizations  ")];
-        for (i, org) in p.orgs.iter().enumerate() {
-            if i > 0 {
-                orgs.push(meta(" · "));
-            }
-            orgs.push(login_seg(page, org, Role::Link));
-        }
+        orgs.extend(login_list(page, " · ", &p.orgs));
         more_chips(&mut orgs, &p.orgs);
         page.wrapped(orgs, 0, Frame::None);
     }
@@ -376,13 +366,7 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
         if p.people.is_empty() {
             empty_row(page, "No public members.");
         } else {
-            let mut people = Vec::new();
-            for (i, login) in p.people.iter().enumerate() {
-                if i > 0 {
-                    people.push(meta(" · "));
-                }
-                people.push(login_seg(page, login, Role::Link));
-            }
+            let people = login_list(page, " · ", &p.people);
             page.wrapped(people, 0, Frame::Body);
         }
         // The rest are on the People tab.

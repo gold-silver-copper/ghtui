@@ -308,12 +308,7 @@ pub fn issue(
     }
     if !aside && !d.assignees.is_empty() {
         let mut segs = vec![meta("Assignees: ")];
-        for (i, a) in d.assignees.iter().enumerate() {
-            if i > 0 {
-                segs.push(meta(", "));
-            }
-            segs.push(login_seg(page, a, Role::Link));
-        }
+        segs.extend(login_list(page, ", ", &d.assignees));
         more_chips(&mut segs, &d.assignees);
         page.line(segs);
     }
@@ -361,24 +356,13 @@ pub fn discussions(
         return;
     };
     if !l.categories.is_empty() {
-        let mut segs = Vec::new();
-        let all = category.is_none();
-        segs.push(link_seg(
-            page,
-            "All",
-            base.to_owned(),
-            if all { Role::Strong } else { Role::Link },
-        ));
-        for c in &l.categories {
-            segs.push(meta(" · "));
+        let all = ("All".to_owned(), base.to_owned(), category.is_none());
+        let categories = l.categories.iter().map(|c| {
             let target = format!("{base}/categories/{}", c.slug);
-            let role = if category == Some(c.slug.as_str()) {
-                Role::Strong
-            } else {
-                Role::Link
-            };
-            segs.push(link_seg(page, c.name.clone(), target, role));
-        }
+            (c.name.clone(), target, category == Some(c.slug.as_str()))
+        });
+        let tabs = std::iter::once(all).chain(categories);
+        let mut segs = nav_strip(page, &meta(" · "), &Role::Link, tabs);
         more_chips(&mut segs, &l.categories);
         page.wrapped(segs, 0, Frame::None);
         page.blank();
@@ -395,8 +379,7 @@ pub fn discussions(
             item(page, format!("{base}/{}", d.number), |page, link| {
                 let mut segs = vec![Seg::linked(d.title.clone(), Role::Strong, link)];
                 if d.answered {
-                    segs.push(space());
-                    segs.push(chip("✓ Answered", Bg::SuccessContainer));
+                    tag(&mut segs, "✓ Answered", Bg::SuccessContainer);
                 }
                 body(page, segs);
                 let subline = format!(
@@ -435,8 +418,7 @@ pub fn discussion(
     );
     let mut segs = vec![chip(d.category.clone(), Bg::SecondaryContainer)];
     if d.answered {
-        segs.push(space());
-        segs.push(chip("✓ Answered", Bg::SuccessContainer));
+        tag(&mut segs, "✓ Answered", Bg::SuccessContainer);
     }
     match d.closed {
         Some(Some(reason)) => {
@@ -445,14 +427,12 @@ pub fn discussion(
             segs.push(chip(said, Bg::ContainerHigh));
         }
         Some(None) => {
-            segs.push(space());
-            segs.push(chip("Closed", Bg::ContainerHigh));
+            tag(&mut segs, "Closed", Bg::ContainerHigh);
         }
         None => {}
     }
     if let Some(locked) = d.locked {
-        segs.push(space());
-        segs.push(chip(locked_said(locked), Bg::TertiaryContainer));
+        tag(&mut segs, locked_said(locked), Bg::TertiaryContainer);
     }
     segs.push(meta(format!(
         "  ▲ {} · {}",

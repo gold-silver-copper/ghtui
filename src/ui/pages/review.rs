@@ -135,8 +135,7 @@ fn all_reviews(page: &mut Page, pr: &PrRef, d: &PrDetail, glance: Glance<'_>, no
                 meta(format!(" {what}")),
             ];
             if glance.new_reviews.contains(&id) {
-                segs.push(space());
-                segs.push(chip("New", Bg::TertiaryContainer));
+                tag(&mut segs, "New", Bg::TertiaryContainer);
             }
             let mut right = vec![meta(time::ago_iso(&r.at, now))];
             if r.comments > 0 {
@@ -154,9 +153,7 @@ fn all_reviews(page: &mut Page, pr: &PrRef, d: &PrDetail, glance: Glance<'_>, no
             }
             let said = first_line(&r.body, page.room(Frame::Body, 0));
             if !said.is_empty() {
-                if !on.is_empty() {
-                    on.push(meta(" · "));
-                }
+                sep(&mut on, " · ");
                 on.push(Seg::new(said, Role::Body));
             }
             if !on.is_empty() {
