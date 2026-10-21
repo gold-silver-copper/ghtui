@@ -460,11 +460,7 @@ words! {
     TooHeated "TOO_HEATED" "too heated";
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReview")]
-pub struct ReviewAuthor {
-    pub author: Option<Actor>,
-}
+fragments! { author: Option<Actor>; ReviewAuthor = "PullRequestReview" }
 
 /// A review, as the timeline and the list of reviews have it.
 #[derive(cynic::QueryFragment, Debug)]

@@ -181,13 +181,8 @@ pub fn dispatch_inputs(file: &str) -> Option<Vec<Input>> {
     Some(inputs.collect())
 }
 
-/// Annotations as GraphQL has them, on a check run.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CheckAnnotationConnection")]
-pub struct WireAnnotations {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<WireAnnotation>>>,
-}
+// Annotations as GraphQL has them, on a check run.
+fragments! { counted: WireAnnotations = "CheckAnnotationConnection" => WireAnnotation }
 
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "CheckAnnotation")]

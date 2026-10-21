@@ -274,14 +274,8 @@ impl GitHub {
                 json!({ "id": subject.as_str(), "reason": reason.map(LockReason::wire) }),
             ),
             Manage::Unlock { subject } => (raw::UNLOCK, json!({ "id": subject.as_str() })),
-            Manage::Pin { issue, on } => (
-                if *on {
-                    raw::PIN_ISSUE
-                } else {
-                    raw::UNPIN_ISSUE
-                },
-                json!({ "id": issue.as_str() }),
-            ),
+            Manage::Pin { issue, on: true } => (raw::PIN_ISSUE, json!({ "id": issue.as_str() })),
+            Manage::Pin { issue, .. } => (raw::UNPIN_ISSUE, json!({ "id": issue.as_str() })),
             Manage::Hide { comment, reason } => (
                 raw::HIDE_COMMENT,
                 json!({ "id": comment.as_str(), "reason": reason.wire() }),
@@ -317,8 +311,8 @@ impl GitHub {
                 sibling,
                 before,
             } => {
-                let (child, sibling) =
-                    tokio::try_join!(self.issue_id(child), self.issue_id(sibling))?;
+                let child = self.issue_id(child).await?;
+                let sibling = self.issue_id(sibling).await?;
                 let (before, after) = if *before {
                     (Some(sibling.as_str()), None)
                 } else {
