@@ -37,18 +37,25 @@ macro_rules! fragments {
             pub $field: Option<$ty>,
         }
     )*};
-    (total_count: i32; $($name:ident = $graphql:literal),* $(,)?) => {$(
-        #[derive(cynic::QueryFragment, Debug)]
-        #[cynic(graphql_type = $graphql)]
-        pub struct $name {
-            pub total_count: i32,
-        }
-    )*};
     (id: cynic::Id; $($name:ident = $graphql:literal),* $(,)?) => {$(
         #[derive(cynic::QueryFragment, Debug)]
         #[cynic(graphql_type = $graphql)]
         pub struct $name {
             pub id: cynic::Id,
+        }
+    )*};
+    ($field:ident: i32; $($name:ident = $graphql:literal),* $(,)?) => {$(
+        #[derive(cynic::QueryFragment, Debug)]
+        #[cynic(graphql_type = $graphql)]
+        pub struct $name {
+            pub $field: i32,
+        }
+    )*};
+    ($field:ident: String; $($name:ident = $graphql:literal),* $(,)?) => {$(
+        #[derive(cynic::QueryFragment, Debug)]
+        #[cynic(graphql_type = $graphql)]
+        pub struct $name {
+            pub $field: String,
         }
     )*};
     // A page of nodes and how many there are in all.
@@ -256,11 +263,7 @@ pub struct Actor {
     pub login: String,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository")]
-pub struct RepositoryName {
-    pub name_with_owner: String,
-}
+fragments! { name_with_owner: String; RepositoryName = "Repository" }
 
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Milestone")]
@@ -429,11 +432,7 @@ pub struct RefCompare {
     pub compare: Option<Behind>,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Comparison")]
-pub struct Behind {
-    pub behind_by: i32,
-}
+fragments! { behind_by: i32; Behind = "Comparison" }
 
 // ---- viewed files ------------------------------------------------------------
 

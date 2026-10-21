@@ -374,10 +374,10 @@ fn typed() -> Vec<(&'static str, String)> {
         Mutation e::UpdatePrBody, e::BodyVariables;
         Mutation e::UpdateIssueComment, e::BodyVariables;
         Mutation e::UpdateReviewComment, e::BodyVariables;
-        Mutation e::DeleteIssueComment, e::EditIdVariables;
-        Mutation e::DeleteReviewComment, e::EditIdVariables;
+        Mutation e::DeleteIssueComment, c::IdVariables;
+        Mutation e::DeleteReviewComment, c::IdVariables;
         Mutation e::UpdateReview, e::BodyVariables;
-        Mutation e::DeleteReview, e::EditIdVariables;
+        Mutation e::DeleteReview, c::IdVariables;
         Query t::ReviewsQuery, q::PageVariables;
         Mutation e::UpdateIssueTitle, e::TitleVariables;
         Mutation e::UpdatePrTitle, e::TitleVariables;

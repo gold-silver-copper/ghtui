@@ -257,15 +257,9 @@ pub struct TagQuery {
 pub struct TagRepo {
     #[arguments(qualifiedName: $qualified)]
     #[cynic(rename = "ref")]
-    pub tag: Option<TagRef>,
+    pub tag: Option<crate::api::browse::RefName>,
     #[arguments(tagName: $tag)]
     pub release: Option<TagRelease>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Ref")]
-pub struct TagRef {
-    pub name: String,
 }
 
 #[derive(cynic::QueryFragment, Debug)]

@@ -14,8 +14,8 @@ use crate::api::model::{
     count, labels,
 };
 use crate::api::queries::{
-    Actor, CommentCount, CommitCount, DateTime, FollowCount, FollowingCount, GitObjectId,
-    IssueCount, LabelConnection, NumberVariablesFields, PageInfo, PrCount, RefCount,
+    Actor, CommentCount, CommitCount, CommitOid, DateTime, FollowCount, FollowingCount,
+    GitObjectId, IssueCount, LabelConnection, NumberVariablesFields, PageInfo, PrCount, RefCount,
     RepositoryName, StatusState, Uri, UserCount, fragments, nodes,
 };
 use crate::api::timeline;
@@ -708,7 +708,7 @@ fragments! {
     counted:
     Topics = "RepositoryTopicConnection" => RepoTopic,
     Assignees = "UserConnection" => UserLogin,
-    CommitParents = "CommitConnection" => ParentCommit,
+    CommitParents = "CommitConnection" => CommitOid,
     OrgLogins = "OrganizationConnection" => OrgLogin,
     MemberList = "OrganizationMemberConnection" => UserLogin,
     RepoList = "RepositoryConnection" => RepoCard,
@@ -889,10 +889,32 @@ pub struct GitActor {
     pub user: Option<UserLogin>,
 }
 
+// Objects by the one field asked of them.
+fragments! {
+    login: String;
+    UserLogin = "User",
+    BotLogin = "Bot",
+    OrgLogin = "Organization",
+}
+fragments! {
+    name: String;
+    RefName = "Ref",
+    AppName = "App",
+    WorkflowName = "Workflow",
+    TypeName = "IssueType",
+}
+fragments! {
+    number: i32;
+    PrNumber = "PullRequest",
+    IssueNumber = "Issue",
+}
+// Its `org/slug`.
+fragments! { combined_slug: String; TeamSlug = "Team" }
+
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "User")]
-pub struct UserLogin {
-    pub login: String,
+#[cynic(graphql_type = "PullRequestCommit")]
+pub struct PrCommitNode {
+    pub commit: CommitCard,
 }
 
 #[derive(cynic::InlineFragments, Debug)]
@@ -984,11 +1006,7 @@ pub struct StateCountsQuery {
     pub closed: SearchCount,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "SearchResultItemConnection")]
-pub struct SearchCount {
-    pub issue_count: i32,
-}
+fragments! { issue_count: i32; SearchCount = "SearchResultItemConnection" }
 
 /// A filtered issue or pull request list's open and closed counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1091,12 +1109,6 @@ pub enum IssueOrPr {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequest")]
-pub struct PrNumber {
-    pub number: i32,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Issue")]
 pub struct IssueFull {
     pub id: cynic::Id,
@@ -1127,7 +1139,7 @@ pub struct IssueFull {
     pub blocked_by: timeline::Issues,
     #[arguments(first: 20)]
     pub blocking: timeline::Issues,
-    pub issue_type: Option<timeline::TypeName>,
+    pub issue_type: Option<TypeName>,
     pub repository: RepoAccess,
     pub locked: bool,
     pub active_lock_reason: Option<timeline::LockReason>,
@@ -1203,25 +1215,6 @@ pub enum RequestedReviewer {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Bot")]
-pub struct BotLogin {
-    pub login: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Team")]
-pub struct TeamSlug {
-    /// `org/slug`.
-    pub combined_slug: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestCommit")]
-pub struct PrCommitNode {
-    pub commit: CommitCard,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Commit")]
 pub struct CommitCard {
     pub oid: GitObjectId,
@@ -1256,12 +1249,6 @@ pub struct WireCommit {
     pub deletions: i32,
     pub changed_files_if_available: Option<i32>,
     pub signature: Option<WireSignature>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Commit")]
-pub struct ParentCommit {
-    pub oid: GitObjectId,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -1410,21 +1397,9 @@ pub struct WireSuite {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "App")]
-pub struct AppName {
-    pub name: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "WorkflowRun")]
 pub struct WireWorkflowRun {
     pub workflow: WorkflowName,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Workflow")]
-pub struct WorkflowName {
-    pub name: String,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -3846,12 +3821,6 @@ pub struct SocialList {
 pub struct WireSocial {
     pub display_name: String,
     pub url: Uri,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Organization")]
-pub struct OrgLogin {
-    pub login: String,
 }
 
 #[derive(cynic::QueryFragment, Debug)]

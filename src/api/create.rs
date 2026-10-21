@@ -303,13 +303,7 @@ pub struct CreateIssue {
 
 #[derive(cynic::QueryFragment, Debug)]
 pub struct CreateIssuePayload {
-    pub issue: Option<Numbered>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Issue")]
-pub struct Numbered {
-    pub number: i32,
+    pub issue: Option<crate::api::browse::IssueNumber>,
 }
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -332,11 +326,5 @@ pub struct CreatePr {
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "CreatePullRequestPayload")]
 pub struct CreatePrPayload {
-    pub pull_request: Option<NumberedPr>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequest")]
-pub struct NumberedPr {
-    pub number: i32,
+    pub pull_request: Option<crate::api::browse::PrNumber>,
 }

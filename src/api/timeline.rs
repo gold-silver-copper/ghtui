@@ -8,8 +8,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::api::browse::{
-    BotLogin, Comment, CommitCard, CommitInfo, RequestedReviewer, Reviewer, StateReason, UserLogin,
-    WireComment, WireIssueState, comment,
+    BotLogin, Comment, CommitInfo, PrCommitNode, RefName, RequestedReviewer, Reviewer, StateReason,
+    TeamSlug, TypeName, UserLogin, WireComment, WireIssueState, comment,
 };
 use crate::api::edit::{Editable, WireReactionGroup, reactions};
 use crate::api::model::{
@@ -461,21 +461,9 @@ words! {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "IssueType")]
-pub struct TypeName {
-    pub name: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "PullRequestReview")]
 pub struct ReviewAuthor {
     pub author: Option<Actor>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestCommit")]
-pub struct CommitEv {
-    pub commit: CommitCard,
 }
 
 /// A review, as the timeline and the list of reviews have it.
@@ -504,7 +492,7 @@ pub struct WireReview {
 pub enum PrItem {
     IssueComment(Box<WireComment>),
     PullRequestReview(Box<WireReview>),
-    PullRequestCommit(CommitEv),
+    PullRequestCommit(PrCommitNode),
     ClosedEvent(ClosedEv),
     ReopenedEvent(ReopenedEv),
     MergedEvent(MergedEv),
@@ -599,28 +587,15 @@ pub struct WireLinkedBranch {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Ref")]
-pub struct RefName {
-    pub name: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "SubIssuesSummary")]
 pub struct WireProgress {
     pub completed: i32,
     pub total: i32,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Team")]
-pub struct TeamName {
-    /// `org/slug`.
-    pub combined_slug: String,
-}
-
 fragments! {
     counted:
-    OnBehalfOf = "TeamConnection" => TeamName,
+    OnBehalfOf = "TeamConnection" => TeamSlug,
 }
 
 #[derive(cynic::QueryFragment, Debug)]

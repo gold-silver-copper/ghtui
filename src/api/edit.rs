@@ -6,7 +6,7 @@
 use crate::schema::schema;
 use serde::{Deserialize, Serialize};
 
-use crate::api::change::mutations;
+use crate::api::change::{IdVariables, IdVariablesFields, mutations};
 use crate::api::client::{ApiError, GitHub};
 use crate::api::model::{Capped, NodeId, RepoId, count};
 use crate::api::queries::{NumberVariables, NumberVariablesFields, fragments, nodes};
@@ -191,7 +191,7 @@ impl GitHub {
                 }
             }
             Edit::Delete { of, id } => {
-                let vars = EditIdVariables { id: id.gql() };
+                let vars = IdVariables { id: id.gql() };
                 match of {
                     Written::ReviewComment => self.run::<DeleteReviewComment, _>(vars).await,
                     Written::Review => self.run::<DeleteReview, _>(vars).await,
@@ -413,15 +413,9 @@ pub struct SidebarPr {
 #[derive(cynic::InlineFragments, Debug)]
 #[cynic(graphql_type = "RepositoryOwner")]
 pub enum SidebarOwner {
-    Organization(OrgLogin),
+    Organization(crate::api::browse::OrgLogin),
     #[cynic(fallback)]
     Other,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Organization")]
-pub struct OrgLogin {
-    pub login: String,
 }
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -596,11 +590,6 @@ fragments! {
 }
 
 #[derive(cynic::QueryVariables, Debug)]
-pub struct EditIdVariables {
-    pub id: cynic::Id,
-}
-
-#[derive(cynic::QueryVariables, Debug)]
 pub struct BodyVariables {
     pub id: cynic::Id,
     pub body: String,
@@ -652,12 +641,12 @@ mutations! {
     UpdatePrBody("BodyVariables") update_pull_request: UpdatePrPayload { pullRequestId: $id, body: $body }
     UpdateIssueComment("BodyVariables") update_issue_comment: UpdateIssueCommentPayload { id: $id, body: $body }
     UpdateReviewComment("BodyVariables") update_pull_request_review_comment: UpdateReviewCommentPayload { pullRequestReviewCommentId: $id, body: $body }
-    DeleteIssueComment("EditIdVariables") delete_issue_comment: DeleteIssueCommentPayload { id: $id }
-    DeleteReviewComment("EditIdVariables") delete_pull_request_review_comment: DeleteReviewCommentPayload { id: $id }
+    DeleteIssueComment("IdVariables") delete_issue_comment: DeleteIssueCommentPayload { id: $id }
+    DeleteReviewComment("IdVariables") delete_pull_request_review_comment: DeleteReviewCommentPayload { id: $id }
     /// A review's summary.
     UpdateReview("BodyVariables") update_pull_request_review: UpdateReviewPayload { pullRequestReviewId: $id, body: $body }
     /// Your pending review, thrown away with its comments.
-    DeleteReview("EditIdVariables") delete_pull_request_review: DeleteReviewPayload { pullRequestReviewId: $id }
+    DeleteReview("IdVariables") delete_pull_request_review: DeleteReviewPayload { pullRequestReviewId: $id }
     UpdateIssueTitle("TitleVariables") update_issue: UpdateIssuePayload { id: $id, title: $title }
     UpdatePrTitle("TitleVariables") update_pull_request: UpdatePrPayload { pullRequestId: $id, title: $title }
     AddReaction("ReactVariables") add_reaction: AddReactionPayload { subjectId: $subject, content: $content }

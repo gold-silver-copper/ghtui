@@ -623,10 +623,7 @@ mod wire {
     use crate::api::browse::IssueDetail;
     use crate::api::model::IssueState;
 
-    #[derive(Deserialize)]
-    pub struct Name {
-        pub name: String,
-    }
+    pub use crate::api::browse::wire::{Count, Name};
 
     #[derive(Deserialize)]
     pub struct Login {
@@ -686,11 +683,5 @@ mod wire {
         pub title: String,
         pub body: String,
         pub comments: Count,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Count {
-        pub total_count: u64,
     }
 }

@@ -320,10 +320,7 @@ pub(crate) mod rest {
         pub latest_comment_url: Option<String>,
     }
 
-    #[derive(Deserialize)]
-    pub struct Repository {
-        pub full_name: String,
-    }
+    pub use crate::api::browse::rest_search::Repo as Repository;
 
     impl Thread {
         /// The thread, if its repository's name is one.

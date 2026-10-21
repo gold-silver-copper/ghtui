@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::client::{ApiError, GitHub};
 use crate::api::model::{Capped, RepoId};
+use crate::api::queries::fragments;
 use crate::schema::schema;
 
 /// How serious an annotation is.
@@ -206,11 +207,7 @@ pub struct WireSpan {
     pub end: WirePosition,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CheckAnnotationPosition")]
-pub struct WirePosition {
-    pub line: i32,
-}
+fragments! { line: i32; WirePosition = "CheckAnnotationPosition" }
 
 impl WireAnnotations {
     pub fn into_capped(self) -> Capped<Annotation> {
