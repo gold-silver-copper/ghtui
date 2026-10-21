@@ -3,25 +3,21 @@
 use super::*;
 
 pub(super) fn team_row(page: &mut Page, org: &str, t: &TeamSummary) {
-    item(
-        page,
-        format!("{}/orgs/{org}/teams/{}", url::base(), t.slug),
-        |page, link| {
-            let mut segs = vec![Seg::linked(t.name.clone(), Role::Strong, link)];
-            if t.secret {
-                tag(&mut segs, "Secret", Bg::SecondaryContainer);
-            }
-            let counts = format!(
-                "{} · {}",
-                plural(t.members, "member"),
-                plural(t.repos, "repository")
-            );
-            page.box_line(segs, vec![meta(counts)], 0);
-            if !t.description.is_empty() {
-                body(page, vec![meta(t.description.clone())]);
-            }
-        },
-    );
+    item(page, url::team(org, &t.slug), |page, link| {
+        let mut segs = vec![Seg::linked(t.name.clone(), Role::Strong, link)];
+        if t.secret {
+            tag(&mut segs, "Secret", Bg::SecondaryContainer);
+        }
+        let counts = format!(
+            "{} · {}",
+            plural(t.members, "member"),
+            plural(t.repos, "repository")
+        );
+        page.box_line(segs, vec![meta(counts)], 0);
+        if !t.description.is_empty() {
+            body(page, vec![meta(t.description.clone())]);
+        }
+    });
 }
 
 /// An organization's teams, the ones you can see.
@@ -52,7 +48,7 @@ pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
         say(page, t.description.clone(), Role::Body);
     }
     if let Some(parent) = &d.parent {
-        let target = format!("{}/orgs/{org}/teams/{}", url::base(), parent.slug);
+        let target = url::team(org, &parent.slug);
         let link = link_seg(page, parent.name.clone(), target, Role::Link);
         page.wrapped(vec![meta("Part of "), link], 0, Frame::None);
     }
@@ -70,11 +66,7 @@ pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
         |page, r| {
             item(page, url::repo(&r.repo), |page, link| {
                 let right = vec![meta(format!("★ {}", compact(r.stars)))];
-                page.box_line(
-                    vec![Seg::linked(r.repo.to_string(), Role::Link, link)],
-                    right,
-                    0,
-                );
+                link_line(page, r.repo.to_string(), Role::Link, link, right);
                 if !r.description.is_empty() {
                     body(page, vec![meta(r.description.clone())]);
                 }
@@ -475,7 +467,8 @@ pub(super) fn contribution_activity(page: &mut Page, c: &Contributions) {
     for m in &c.activity {
         page.blank();
         let year = m.month.get(..4).unwrap_or_default();
-        let name = month_name(&format!("{}-01", m.month)).unwrap_or_default();
+        // `2026-09` names its month as a date does.
+        let name = month_name(&m.month).unwrap_or_default();
         page.line(vec![Seg::new(format!("{name} {year}"), Role::Heading)]);
         if !m.commits.is_empty() {
             let total: u64 = m.commits.iter().map(|(_, n)| n).sum();
@@ -497,31 +490,33 @@ pub(super) fn contribution_activity(page: &mut Page, c: &Contributions) {
                 ]);
             }
         }
-        for (items, icon, verb, short) in [
-            (&m.pulls, "⇄", "Opened", &c.short.pulls),
-            (&m.issues, "◉", "Opened", &c.short.issues),
-            (&m.reviews, "◎", "Reviewed", &c.short.reviews),
+        for (items, icon, verb, noun, path, short) in [
+            (
+                &m.pulls,
+                "⇄",
+                "Opened",
+                "pull request",
+                "pull",
+                &c.short.pulls,
+            ),
+            (&m.issues, "◉", "Opened", "issue", "issues", &c.short.issues),
+            (
+                &m.reviews,
+                "◎",
+                "Reviewed",
+                "pull request",
+                "pull",
+                &c.short.reviews,
+            ),
         ] {
             if items.is_empty() {
                 continue;
             }
-            let noun = if icon == "◉" {
-                "issue"
-            } else {
-                "pull request"
-            };
-            let what = at_least(
-                items.len() as u64,
-                noun,
-                Short::in_month(short.as_ref(), &m.month),
-            );
+            let short = Short::in_month(short.as_ref(), &m.month);
+            let what = at_least(items.len() as u64, noun, short);
             page.line(vec![Seg::new(format!("{icon} {verb} {what}"), Role::Body)]);
             for item in items.iter().take(5) {
-                let target = if icon == "◉" {
-                    format!("{}/{}/issues/{}", url::base(), item.repo, item.number)
-                } else {
-                    format!("{}/{}/pull/{}", url::base(), item.repo, item.number)
-                };
+                let target = format!("{}/{}/{path}/{}", url::base(), item.repo, item.number);
                 let place = format!("{}#{}", item.repo, item.number);
                 let link = link_seg(page, item.title.clone(), target, Role::Link);
                 page.wrapped(vec![meta(format!("{place}  ")), link], 4, Frame::None);

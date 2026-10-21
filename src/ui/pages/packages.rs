@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::api::packages::{PackageDetail, PackageList, PackagesOf, install};
+use std::fmt::Write as _;
 
 fn visibility(v: &str) -> Option<Seg> {
     match v {
@@ -37,10 +38,10 @@ pub fn packages(page: &mut Page, of: &PackagesOf, list: &PackageList, now: u64) 
                 page.box_line(segs, Vec::new(), 0);
                 let mut subline = plural(p.versions, "version");
                 if let Some(at) = &p.updated_at {
-                    subline.push_str(&format!(" · updated {}", time::ago_iso(at, now)));
+                    let _ = write!(subline, " · updated {}", time::ago_iso(at, now));
                 }
                 if let (Some(repo), PackagesOf::Owner(_)) = (&p.repo, of) {
-                    subline.push_str(&format!(" · {repo}"));
+                    let _ = write!(subline, " · {repo}");
                 }
                 body(page, vec![meta(subline)]);
             });

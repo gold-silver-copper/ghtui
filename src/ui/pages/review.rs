@@ -65,9 +65,7 @@ fn reviewers(page: &mut Page, pr: &PrRef, d: &PrDetail, activity: Fetched<'_, Pr
                 Seg::linked(l.author.clone(), Role::Link, link),
                 meta(format!(" {what}")),
             ];
-            let stale = l.state == ReviewState::Approved
-                && l.commit.as_deref().is_some_and(|c| c != d.head_oid);
-            if stale {
+            if timeline::stale(l, &d.head_oid) {
                 segs.push(meta(" · before the last push"));
             }
             for team in &l.for_teams {
@@ -356,12 +354,10 @@ pub(super) fn open_threads(
                 None => strong(at),
             }];
             if thread.outdated {
-                segs.push(meta(" "));
-                segs.push(chip("Outdated", Bg::ContainerHigh));
+                tag(&mut segs, "Outdated", Bg::ContainerHigh);
             }
             if thread.comments.iter().any(|c| fresh.contains(&c.id)) {
-                segs.push(meta(" "));
-                segs.push(chip("New", Bg::TertiaryContainer));
+                tag(&mut segs, "New", Bg::TertiaryContainer);
             }
             let mut said = Vec::new();
             if let Some(c) = first {

@@ -56,11 +56,8 @@ pub(super) fn commit_rows(
             None => url::commit(repo, &c.oid),
         };
         item(page, commit, |page, link| {
-            page.box_line(
-                vec![Seg::linked(c.headline.clone(), Role::Strong, link)],
-                vec![Seg::new(short_sha(&c.oid), Role::Code)],
-                0,
-            );
+            let sha = vec![Seg::new(short_sha(&c.oid), Role::Code)];
+            link_line(page, c.headline.clone(), Role::Strong, link, sha);
             let who = c.author.name();
             let committed = format!("{who} committed {}", time::ago_iso(&c.date, now));
             body(page, vec![meta(committed)]);

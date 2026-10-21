@@ -98,8 +98,8 @@ pub fn home(page: &mut Page, sections: &[HomeSection<'_>], icons: Icons, now: u6
                 let title = title(Some(count_of(&start)));
                 // Asked to review: a row opens straight to the review.
                 let review = search.query.contains("review-requested:");
+                let shown = (true, by_update(search.query));
                 section_box(page, title, &start, (i, &empty), |page, it| {
-                    let shown = (true, by_update(search.query));
                     issue_row(page, it, shown, icons, now, review);
                 });
             }

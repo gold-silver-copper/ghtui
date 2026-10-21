@@ -2,6 +2,7 @@
 //! and comparisons.
 
 use super::*;
+use std::fmt::Write as _;
 
 /// The repository's title: `owner / name  Public` with Star, Fork and Watch
 /// buttons on the right, as on GitHub.
@@ -385,10 +386,10 @@ pub(super) fn release_chips(segs: &mut Vec<Seg>, r: &Release) {
 pub(super) fn release_meta(r: &Release, now: u64) -> String {
     let mut subline = r.tag.clone();
     if let Some(author) = &r.author {
-        subline.push_str(&format!(" · {author}"));
+        let _ = write!(subline, " · {author}");
     }
     match &r.published_at {
-        Some(at) => subline.push_str(&format!(" released {}", time::ago_iso(at, now))),
+        Some(at) => _ = write!(subline, " released {}", time::ago_iso(at, now)),
         None => subline.push_str(" · not published"),
     }
     subline
@@ -445,11 +446,7 @@ pub fn release(page: &mut Page, repo: &RepoId, r: &Release, now: u64) {
                 size(a.size),
                 plural(a.downloads, "download")
             ))];
-            page.box_line(
-                vec![Seg::linked(a.name.clone(), Role::Link, link)],
-                right,
-                0,
-            );
+            link_line(page, a.name.clone(), Role::Link, link, right);
         });
     });
 }
@@ -465,11 +462,7 @@ pub fn tags(page: &mut Page, repo: &RepoId, list: Fetched<'_, Results<TagInfo>>,
             if let Some(oid) = &t.oid {
                 right.push(Seg::new(format!("  {}", short_sha(oid)), Role::Code));
             }
-            page.box_line(
-                vec![Seg::linked(t.name.clone(), Role::Link, link)],
-                right,
-                0,
-            );
+            link_line(page, t.name.clone(), Role::Link, link, right);
         });
     });
 }

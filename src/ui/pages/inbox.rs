@@ -18,18 +18,9 @@ pub fn notifications(page: &mut Page, query: &str, inbox: Fetched<'_, Inbox>, cx
     };
     let l = &inbox.list;
     let shown = list_state(query);
-    let mut title = Vec::new();
-    for (state, label) in [("all", "All"), ("unread", "Unread"), ("read", "Read")] {
-        let role = if state == shown {
-            Role::Strong
-        } else {
-            Role::Meta
-        };
-        if !title.is_empty() {
-            title.push(Seg::new("   ", Role::Body));
-        }
-        title.push(link_seg(page, label, Link::State(state.to_owned()), role));
-    }
+    let tabs = [("all", "All"), ("unread", "Unread"), ("read", "Read")]
+        .map(|(state, label)| (label, Link::State(state.to_owned()), state == shown));
+    let title = nav_strip(page, &Seg::new("   ", Role::Body), &Role::Meta, tabs);
     let empty = if query.is_empty() {
         "All caught up: no notifications."
     } else {

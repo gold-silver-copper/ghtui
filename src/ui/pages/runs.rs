@@ -3,6 +3,8 @@
 use super::*;
 use crate::api::workflows::{Annotation, Artifact, Input, InputKind, Level};
 use crate::ui::form::Row;
+use std::borrow::Cow;
+use std::fmt::Write as _;
 
 pub(super) fn outcome_mark(o: CheckOutcome) -> (&'static str, Role) {
     match o {
@@ -117,12 +119,7 @@ pub(super) fn annotation_rows(
         };
         let target = a.url.as_deref().or(run).map(str::to_owned);
         maybe_item(page, target, |page, link| {
-            let linked = if link.is_some() {
-                Role::Link
-            } else {
-                Role::Meta
-            };
-            let place = Seg::linked(a.place(), linked, link);
+            let place = Seg::linked(a.place(), link.map_or(Role::Meta, |_| Role::Link), link);
             let mut segs = vec![Seg::new(format!("{mark} "), role), place];
             if !a.title.is_empty() {
                 segs.push(strong(format!("  {}", a.title)));
@@ -370,9 +367,13 @@ pub fn step_lines<'a>(job: &Job, cut: &'a str, log: &'a str) -> Vec<(u32, usize,
     out
 }
 
-/// `text` without terminal escape sequences (colors, mostly).
-pub fn strip_escapes(text: &str) -> String {
-    let mut out = String::new();
+/// `text` without terminal escape sequences (colors, mostly): most log
+/// lines have none, and come back as they are.
+pub fn strip_escapes(text: &str) -> Cow<'_, str> {
+    if !text.contains('\u{1b}') {
+        return Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         if c != '\u{1b}' {
@@ -408,7 +409,7 @@ pub fn strip_escapes(text: &str) -> String {
             _ => {}
         }
     }
-    out
+    Cow::Owned(out)
 }
 
 /// A log line as shown, as GitHub shows it: its markers (`##[group]`,
@@ -605,7 +606,7 @@ pub fn job(
         }
         // Each shown line without its escapes, numbered from the step's
         // first line, cut ones included.
-        let shown: Vec<(usize, String)> = (raw.iter().enumerate())
+        let shown: Vec<(usize, Cow<'_, str>)> = (raw.iter().enumerate())
             .map(|(i, l)| (cut + i, strip_escapes(l)))
             .collect();
         // Where the page opens: the first search match; else the line a
@@ -739,14 +740,11 @@ pub(super) fn run_list(
                 let name = Seg::linked(title, Role::Strong, link);
                 status_row(page, outcome_mark(run.outcome), name, took);
                 let mut subline = format!("{} #{} · {}", run.workflow, run.number, run.event);
-                if let Some(b) = &run.branch {
-                    subline.push_str(&format!(" · {b}"));
-                }
-                if let Some(a) = &run.actor {
-                    subline.push_str(&format!(" · {a}"));
+                for said in [&run.branch, &run.actor].into_iter().flatten() {
+                    let _ = write!(subline, " · {said}");
                 }
                 if let Some(at) = &run.created_at {
-                    subline.push_str(&format!(" · {}", time::ago_iso(at, now)));
+                    let _ = write!(subline, " · {}", time::ago_iso(at, now));
                 }
                 body(page, vec![meta(subline)]);
             },

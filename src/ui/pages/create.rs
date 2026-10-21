@@ -24,11 +24,7 @@ pub fn template_chooser(page: &mut Page, repo: &RepoId, starters: &[Starter]) {
         item(page, s.link.clone(), |page, link| {
             let open = if external { "Open ↗" } else { "Get started" };
             let right = vec![Seg::new(format!(" {open} "), Role::Chip(Bg::ContainerHigh))];
-            page.box_line(
-                vec![Seg::linked(s.name.clone(), Role::Strong, link)],
-                right,
-                0,
-            );
+            link_line(page, s.name.clone(), Role::Strong, link, right);
             if !s.about.trim().is_empty() {
                 page.wrapped(vec![meta(s.about.clone())], 0, Frame::Body);
             }
