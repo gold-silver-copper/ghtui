@@ -1,6 +1,7 @@
 //! The GitHub client: one HTTP client (reqwest) for GraphQL and REST, with
 //! our own retry policy, rate-limit tracking, ETag revalidation and caching.
 
+use std::borrow::Cow;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -180,11 +181,7 @@ impl Answer {
     /// The cursor for the next page in its `Link` header: `after=…` or
     /// `page=…`, as a query parameter to send.
     pub(crate) fn next_page(&self) -> Option<String> {
-        let link = self.header(header::LINK.as_str())?;
-        let next = link.split(',').find(|l| l.contains("rel=\"next\""))?;
-        let url = next.split(['<', '>']).nth(1)?;
-        let query = url.split_once('?')?.1;
-        query
+        next_query(self.header(header::LINK.as_str())?)?
             .split('&')
             .find(|kv| kv.starts_with("after=") || kv.starts_with("page="))
             .map(str::to_owned)
@@ -234,11 +231,9 @@ impl GitHub {
     /// For tests: point the client at a local server, its GraphQL at
     /// `/graphql`, retrying at once.
     pub fn with_base_uri(token: Token, store: Store, base_uri: &str) -> Self {
-        let rest = base_uri.trim_end_matches('/');
-        let graphql = format!("{rest}/graphql");
         Self {
             backoff: Duration::ZERO,
-            ..Self::with_bases(token, store, Host::GITHUB_COM, rest.to_owned(), graphql)
+            ..Self::enterprise_at(token, store, Host::GITHUB_COM, base_uri)
         }
     }
 
@@ -351,11 +346,11 @@ impl GitHub {
 
     /// A GraphQL request `body` as `server` can take it: without what it
     /// lacks, and what its answer reads in place of each field left out.
-    fn for_server(
+    fn for_server<'a>(
         &self,
         server: crate::api::enterprise::Server,
-        body: &Value,
-    ) -> (Value, Vec<(Vec<String>, Value)>) {
+        body: &'a Value,
+    ) -> (Cow<'a, Value>, Vec<(Vec<String>, Value)>) {
         use crate::api::enterprise::{lacks, rewrite};
         let mut lacks = lacks(server);
         lacks.extend(lock(&self.enterprise.learned).iter().cloned());
@@ -364,7 +359,7 @@ impl GitHub {
             .and_then(Value::as_str)
             .unwrap_or_default();
         let Some(done) = rewrite(query, &lacks) else {
-            return (body.clone(), Vec::new());
+            return (Cow::Borrowed(body), Vec::new());
         };
         self.missing(server, &done.about);
         let mut sent = body.clone();
@@ -376,7 +371,7 @@ impl GitHub {
                 }
             }
         }
-        (sent, done.fills)
+        (Cow::Owned(sent), done.fills)
     }
 
     /// Learns what a server's refusal says it lacks; whether it learned
@@ -689,7 +684,7 @@ impl GitHub {
         subject: impl std::fmt::Display,
         pick: impl FnOnce(Q) -> Option<T>,
     ) -> Result<T, ApiError> {
-        let reply = self.ask(&serde_json::to_value(&op)?, true).await?;
+        let reply = self.ask(&serde_json::to_value(&op)?, true, None).await?;
         reply.picked(subject, pick, |errors| self.leave_out(errors))
     }
 
@@ -699,27 +694,13 @@ impl GitHub {
         &self,
         op: cynic::Operation<Q, V>,
     ) -> Result<Q, ApiError> {
-        self.ask(&serde_json::to_value(&op)?, false)
-            .await?
-            .mutation()
+        (self.ask(&serde_json::to_value(&op)?, false, None).await?).mutation()
     }
 
     /// Runs a mutation given as text ([`crate::api::raw`]), which only has
     /// to succeed: any error fails it, with GitHub's messages.
     pub(crate) async fn mutate_json(&self, query: &str, variables: Value) -> Result<(), ApiError> {
-        let body = serde_json::json!({ "query": query, "variables": variables });
-        self.ask(&body, false).await?.mutation::<Value>().map(drop)
-    }
-
-    /// [`Self::mutate_json`], for a mutation whose answer says what it
-    /// made.
-    pub(crate) async fn mutate_json_for<T: DeserializeOwned>(
-        &self,
-        query: &str,
-        variables: Value,
-    ) -> Result<T, ApiError> {
-        let body = serde_json::json!({ "query": query, "variables": variables });
-        self.ask(&body, false).await?.mutation()
+        (self.graphql_data::<Value>(query, variables, false).await).map(drop)
     }
 
     /// Runs a query given as text (built at run time, or read as JSON) for
@@ -733,8 +714,7 @@ impl GitHub {
         subject: impl std::fmt::Display,
         at: &str,
     ) -> Result<T, ApiError> {
-        let body = serde_json::json!({ "query": query, "variables": variables });
-        let reply = self.ask(&body, true).await?;
+        let reply = self.ask(&gql_body(query, variables), true, None).await?;
         reply.at(subject, at, |errors| self.leave_out(errors))
     }
 
@@ -747,8 +727,10 @@ impl GitHub {
         variables: Value,
         idempotent: bool,
     ) -> Result<T, ApiError> {
-        let body = serde_json::json!({ "query": query, "variables": variables });
-        self.ask(&body, idempotent).await?.mutation()
+        (self
+            .ask(&gql_body(query, variables), idempotent, None)
+            .await?)
+            .mutation()
     }
 
     /// [`Self::graphql_json`], under a preview's media type `accept`.
@@ -760,21 +742,18 @@ impl GitHub {
         at: &str,
         accept: &'static str,
     ) -> Result<T, ApiError> {
-        let body = serde_json::json!({ "query": query, "variables": variables });
-        let reply = self.ask_as(&body, true, Some(accept)).await?;
+        let reply = self
+            .ask(&gql_body(query, variables), true, Some(accept))
+            .await?;
         reply.at(subject, at, |errors| self.leave_out(errors))
     }
 
     /// Posts a GraphQL request: the one place that reads GitHub's errors.
     /// A query's NOT_FOUND that explains a null in the data is dropped (the
     /// null says it); a mutation (not `idempotent`) keeps every error. A
-    /// response without data is an error.
-    async fn ask(&self, body: &Value, idempotent: bool) -> Result<Reply, ApiError> {
-        self.ask_as(body, idempotent, None).await
-    }
-
-    /// [`Self::ask`], under a preview's media type.
-    async fn ask_as(
+    /// response without data is an error. `accept` is a preview's media
+    /// type, for fields GitHub serves only under one.
+    async fn ask(
         &self,
         body: &Value,
         idempotent: bool,
@@ -791,7 +770,7 @@ impl GitHub {
         let (mut wire, fills) = loop {
             let (sent, fills) = match server {
                 Some(server) => self.for_server(server, body),
-                None => (body.clone(), Vec::new()),
+                None => (Cow::Borrowed(body), Vec::new()),
             };
             let request = Request::Post {
                 body: &sent,
@@ -937,7 +916,7 @@ impl GitHub {
         if response.status == StatusCode::NOT_MODIFIED && etag.is_some() {
             return Ok(Polled::Same);
         }
-        check_status(&response, path.strip_prefix("/repos/").unwrap_or(path))?;
+        check_status(&response, short_path(path))?;
         let etag = (response.headers.get(header::ETAG))
             .and_then(|v| v.to_str().ok())
             .unwrap_or_default()
@@ -956,9 +935,7 @@ impl GitHub {
         path: &str,
         body: Option<&serde_json::Value>,
     ) -> Result<(), ApiError> {
-        let response = (self.send(&Request::Write { method, path, body })).await?;
-        let path = path.strip_prefix("/repos/").unwrap_or(path);
-        check_status(&response, path)
+        (self.rest_write_answer(method, path, body).await).map(drop)
     }
 
     /// GETs a REST path and hands back GitHub's answer whatever its
@@ -1008,9 +985,8 @@ impl GitHub {
         path: &str,
         body: Option<&serde_json::Value>,
     ) -> Result<T, ApiError> {
-        let response = (self.send(&Request::Write { method, path, body })).await?;
-        check_status(&response, path.strip_prefix("/repos/").unwrap_or(path))?;
-        Ok(serde_json::from_str(&response.body)?)
+        let answer = self.rest_write_answer(method, path, body).await?;
+        Ok(serde_json::from_str(&answer)?)
     }
 
     /// [`Self::rest_write`], for a change GitHub answers with what it
@@ -1022,7 +998,7 @@ impl GitHub {
         body: Option<&serde_json::Value>,
     ) -> Result<String, ApiError> {
         let response = (self.send(&Request::Write { method, path, body })).await?;
-        check_status(&response, path.strip_prefix("/repos/").unwrap_or(path))?;
+        check_status(&response, short_path(path))?;
         Ok(response.body)
     }
 
@@ -1067,7 +1043,7 @@ impl GitHub {
                 headers,
                 body,
             };
-            check_status(&answer, path.strip_prefix("/repos/").unwrap_or(path))?;
+            check_status(&answer, short_path(path))?;
             return Err(ApiError::Network(format!("{path}: {status}")));
         }
         let dir = dest.parent().filter(|d| !d.as_os_str().is_empty());
@@ -1276,8 +1252,8 @@ impl GitHub {
         let page = move |after: Option<String>| async move {
             let page = rest_page(after.as_deref());
             let path = format!(
-                "/repos/{}/{}/pulls/{}/files?per_page=100&page={page}",
-                pr.repo.owner, pr.repo.name, pr.number
+                "/repos/{}/pulls/{}/files?per_page=100&page={page}",
+                pr.repo, pr.number
             );
             let batch: Vec<PatchFile> = self.rest_json(&path, format!("{pr}'s files")).await?;
             let next = (batch.len() == 100).then(|| page.saturating_add(1).to_string());
@@ -1300,7 +1276,7 @@ impl GitHub {
             .map(|r| PendingReview {
                 id: r.id.into(),
                 commit: r.commit.map(|c| c.oid.0),
-                comments: u64::try_from(r.comments.total_count).unwrap_or(0),
+                comments: crate::api::model::count(r.comments.total_count),
             });
         Ok((pr_node.id.into(), review))
     }
@@ -1421,15 +1397,8 @@ impl GitHub {
 
     /// A repository's overview: stats, root directory, last commit.
     pub async fn repo(&self, repo: &RepoId) -> Result<browse::RepoOverview, ApiError> {
-        let op = browse::RepoQuery::build(browse::RepoVariables {
-            owner: repo.owner.clone(),
-            name: repo.name.clone(),
-            expression: "HEAD:".into(),
-        });
-        let overview = self
-            .find(op, repo, |q| q.repository?.into_overview())
-            .await?;
-        Ok(overview)
+        let op = browse::RepoQuery::build(browse::RepoVariables::at(repo, "HEAD:"));
+        self.find(op, repo, |q| q.repository?.into_overview()).await
     }
 
     /// The README GitHub shows for the repository root, if it has one.
@@ -1440,18 +1409,10 @@ impl GitHub {
             path: String,
             content: String,
         }
-        let wire: Wire = match self
-            .rest_json(
-                &format!("/repos/{}/{}/readme", repo.owner, repo.name),
-                format!("{repo}'s README"),
-            )
-            .await
-        {
-            Ok(wire) => wire,
-            Err(ApiError::NotFound(_)) => {
-                return Ok(None);
-            }
-            Err(err) => return Err(err),
+        let path = format!("/repos/{repo}/readme");
+        let wire: Wire = match self.rest_json(&path, format!("{repo}'s README")).await {
+            Err(ApiError::NotFound(_)) => return Ok(None),
+            wire => wire?,
         };
         let compact: String = wire.content.split_whitespace().collect();
         let bytes = base64::engine::general_purpose::STANDARD
@@ -1501,11 +1462,8 @@ impl GitHub {
         rev: &str,
         path: &str,
     ) -> Result<browse::GitObject, ApiError> {
-        let op = browse::ObjectQuery::build(browse::RepoVariables {
-            owner: repo.owner.clone(),
-            name: repo.name.clone(),
-            expression: format!("{rev}:{path}"),
-        });
+        let op =
+            browse::ObjectQuery::build(browse::RepoVariables::at(repo, format!("{rev}:{path}")));
         self.find(op, format!("{repo}/{path}"), |q| q.repository?.object)
             .await
     }
@@ -1529,11 +1487,10 @@ impl GitHub {
         });
         let found = self.graphql(op).await?;
         let count = crate::api::model::count;
-        let counts = browse::StateCounts {
+        Ok(browse::StateCounts {
             open: count(found.open.issue_count),
             closed: count(found.closed.issue_count),
-        };
-        Ok(counts)
+        })
     }
 
     /// One page of search results (30 per page). GitHub gives a request
@@ -1666,9 +1623,8 @@ impl GitHub {
         }
         // GitHub refuses an empty commit or code search (422).
         if query.trim().is_empty() {
-            let empty = Results::default();
             return Ok(if kind == Kind::Commits {
-                SearchResults::Commits(empty)
+                SearchResults::Commits(Results::default())
             } else {
                 SearchResults::Code(Results::default())
             });
@@ -1684,32 +1640,28 @@ impl GitHub {
             encode_query(query)
         );
         let next = |total: u64| next_page(number, REST_PAGE, total.min(SEARCH_CAP));
-        if kind == Kind::Commits {
-            let page: browse::rest_search::Page<browse::rest_search::Commit> =
-                self.rest_json(&path, "the search").await?;
-            self.note_incomplete(page.incomplete_results);
-            return Ok(SearchResults::Commits(Results {
-                next: next(page.total_count),
-                total: page.total_count,
-                items: page
-                    .items
-                    .into_iter()
-                    .filter_map(browse::rest_search::Commit::into_hit)
-                    .collect(),
-            }));
-        }
-        let page: browse::rest_search::Page<browse::rest_search::Code> =
-            self.rest_json(&path, "the search").await?;
+        use browse::rest_search::{Code, Commit};
+        Ok(if kind == Kind::Commits {
+            SearchResults::Commits(self.rest_hits(&path, next, Commit::into_hit).await?)
+        } else {
+            SearchResults::Code(self.rest_hits(&path, next, Code::into_hit).await?)
+        })
+    }
+
+    /// A page of a REST search at `path`, each item made a hit by `hit`.
+    async fn rest_hits<W: DeserializeOwned, T>(
+        &self,
+        path: &str,
+        next: impl Fn(u64) -> Option<String>,
+        hit: fn(W) -> Option<T>,
+    ) -> Result<browse::Results<T>, ApiError> {
+        let page: browse::rest_search::Page<W> = self.rest_json(path, "the search").await?;
         self.note_incomplete(page.incomplete_results);
-        Ok(SearchResults::Code(Results {
+        Ok(browse::Results {
             next: next(page.total_count),
             total: page.total_count,
-            items: page
-                .items
-                .into_iter()
-                .filter_map(browse::rest_search::Code::into_hit)
-                .collect(),
-        }))
+            items: page.items.into_iter().filter_map(hit).collect(),
+        })
     }
 
     /// A page of a search, as GitHub's API takes it, with each item's pull
@@ -1765,21 +1717,17 @@ impl GitHub {
         repo: &RepoId,
         number: u64,
     ) -> Result<Option<browse::IssueDetail>, ApiError> {
-        let op = browse::IssueQuery::build(queries::NumberVariables {
-            owner: repo.owner.clone(),
-            name: repo.name.clone(),
-            number: i32::try_from(number)
-                .map_err(|_| ApiError::NotFound(format!("{repo}#{number}")))?,
-        });
+        let at = PrRef {
+            repo: repo.clone(),
+            number,
+        };
+        let op = browse::IssueQuery::build(number_vars(&at)?);
         let pick = |q: browse::IssueQuery| match q.repository?.issue_or_pull_request? {
             browse::IssueOrPr::Issue(issue) => issue.into_detail().map(Some),
             browse::IssueOrPr::PullRequest(_) => Some(None),
             browse::IssueOrPr::Other => None,
         };
-        let Some(issue) = self.find(op, format!("{repo}#{number}"), pick).await? else {
-            return Ok(None);
-        };
-        Ok(Some(issue))
+        self.find(op, at, pick).await
     }
 
     /// A pull request's timeline (comments, reviews, events), commits and
@@ -1790,11 +1738,10 @@ impl GitHub {
             Some(q.repository?.pull_request?.into_activity())
         });
         let (activity, threads) = tokio::try_join!(activity, self.review_threads(pr))?;
-        let activity = browse::PrActivity {
+        Ok(browse::PrActivity {
             threads,
             ..activity
-        };
-        Ok(activity)
+        })
     }
 
     /// All of a pull request's reviews, oldest first.
@@ -1818,10 +1765,8 @@ impl GitHub {
         let op = browse::ProfileQuery::build(browse::ProfileVariables {
             login: login.to_owned(),
         });
-        let profile = self
-            .find(op, login, browse::ProfileQuery::into_profile)
-            .await?;
-        Ok(profile)
+        self.find(op, login, browse::ProfileQuery::into_profile)
+            .await
     }
 
     /// Every file path at `rev` (GitHub's "Go to file"), and whether GitHub
@@ -1845,12 +1790,7 @@ impl GitHub {
         }
         let wire: Wire = self
             .rest_json(
-                &format!(
-                    "/repos/{}/{}/git/trees/{}?recursive=1",
-                    repo.owner,
-                    repo.name,
-                    encode_path(rev)
-                ),
+                &format!("/repos/{repo}/git/trees/{}?recursive=1", encode_path(rev)),
                 format!("{repo}@{rev}"),
             )
             .await?;
@@ -1922,17 +1862,12 @@ impl GitHub {
 
     /// A commit, by a revision GitHub can resolve (a short or full SHA).
     pub async fn commit(&self, repo: &RepoId, rev: &str) -> Result<browse::CommitDetail, ApiError> {
-        let op = browse::CommitQuery::build(browse::RepoVariables {
-            owner: repo.owner.clone(),
-            name: repo.name.clone(),
-            expression: rev.to_owned(),
-        });
+        let op = browse::CommitQuery::build(browse::RepoVariables::at(repo, rev));
         let pick = |q: browse::CommitQuery| match q.repository?.object? {
             browse::CommitObject::Commit(c) => Some(c.into_detail()),
             browse::CommitObject::Other => None,
         };
-        let commit = self.find(op, format!("{repo}@{rev}"), pick).await?;
-        Ok(commit)
+        self.find(op, format!("{repo}@{rev}"), pick).await
     }
 
     /// A revision's commits, newest first, touching `path` if it isn't
@@ -2050,8 +1985,7 @@ impl GitHub {
             self.graphql_json(&query, vars, &who, "/node/list").await?;
         let people = field.trim_end_matches("WithRole");
         self.check_connection(&wire, 30, format!("{who}'s {people}"));
-        let results = wire.into_results(browse::wire::Person::into_summary);
-        Ok(results)
+        Ok(wire.into_results(browse::wire::Person::into_summary))
     }
 
     /// A user's or organization's own repositories in `sort` order, 30 at a
@@ -2133,13 +2067,10 @@ impl GitHub {
             name: repo.name.clone(),
             tag: tag.to_owned(),
         });
-        let release = self
-            .find(op, format!("{repo} release {tag}"), |q| {
-                q.repository?.release
-            })
-            .await?
-            .into_release();
-        Ok(release)
+        let release = self.find(op, format!("{repo} release {tag}"), |q| {
+            q.repository?.release
+        });
+        Ok(release.await?.into_release())
     }
 
     /// A repository's tags, 30 at a time from `after`; the first page is
@@ -2177,8 +2108,7 @@ impl GitHub {
             .await?;
         self.check_connection(&wire.refs, 30, format!("{repo}'s branches"));
         let default = wire.default_branch_ref.map(|r| r.name);
-        let branches = (wire.refs).into_results(|b| b.into_info(repo, default.as_deref()));
-        Ok(branches)
+        Ok((wire.refs).into_results(|b| b.into_info(repo, default.as_deref())))
     }
 
     /// Open or closed milestones, soonest due first, 25 at a time from
@@ -2289,9 +2219,7 @@ impl GitHub {
             },
         };
         let path = format!(
-            "/repos/{}/{}/compare/{}...{}",
-            repo.owner,
-            repo.name,
+            "/repos/{repo}/compare/{}...{}",
             encode_path(base),
             encode_path(head)
         );
@@ -2335,8 +2263,7 @@ impl GitHub {
         let subject = format!("{repo}:{rev}:{path}");
         let wire: browse::wire_blame::Blame =
             (self.graphql_json(raw::BLAME, vars, subject, "/repository/object/blame")).await?;
-        let blame = wire.into_blame();
-        Ok(blame)
+        Ok(wire.into_blame())
     }
     /// A gist and its files. REST, since GraphQL finds gists only through
     /// their owners, and a gist's URL may not name its owner.
@@ -2344,8 +2271,7 @@ impl GitHub {
         let wire: browse::rest_gists::Gist = self
             .rest_json(&format!("/gists/{}", encode_path(id)), format!("gist {id}"))
             .await?;
-        let gist = wire.into_gist();
-        Ok(gist)
+        Ok(wire.into_gist())
     }
 
     /// Someone's public gists, most recently updated first, 30 at a time
@@ -2360,8 +2286,7 @@ impl GitHub {
             (self.graphql_json(raw::GISTS, vars, format!("{login}'s gists"), "/user/gists"))
                 .await?;
         self.check_connection(&wire, 30, format!("{login}'s gists"));
-        let gists = wire.into_results(browse::wire_gists::Gist::into_summary);
-        Ok(gists)
+        Ok(wire.into_results(browse::wire_gists::Gist::into_summary))
     }
     /// The teams in an organization you can see (its members see them),
     /// by name, 30 at a time from `after`.
@@ -2374,8 +2299,7 @@ impl GitHub {
         let wire: browse::wire::Connection<browse::wire_teams::Team> =
             (self.graphql_json(&raw::teams(), vars, org, "/organization/teams")).await?;
         self.check_connection(&wire, 30, format!("{org}'s teams"));
-        let teams = wire.into_results(browse::wire_teams::Team::into_summary);
-        Ok(teams)
+        Ok(wire.into_results(browse::wire_teams::Team::into_summary))
     }
 
     /// A team: its members, repositories and child teams.
@@ -2388,8 +2312,7 @@ impl GitHub {
             "/organization/team",
         ))
         .await?;
-        let team = wire.into_detail();
-        Ok(team)
+        Ok(wire.into_detail())
     }
     /// A repository's published security advisories, or GitHub's newest
     /// reviewed ones, up to 100. REST: repositories' advisories aren't in
@@ -2400,10 +2323,9 @@ impl GitHub {
         after: Option<String>,
     ) -> Result<browse::Results<browse::Advisory>, ApiError> {
         let mut path = match repo {
-            Some(r) => format!(
-                "/repos/{}/{}/security-advisories?state=published&per_page={REST_PAGE}",
-                r.owner, r.name
-            ),
+            Some(r) => {
+                format!("/repos/{r}/security-advisories?state=published&per_page={REST_PAGE}")
+            }
             None => format!("/advisories?type=reviewed&per_page={REST_PAGE}"),
         };
         if let Some(after) = &after {
@@ -2432,12 +2354,11 @@ impl GitHub {
     ) -> Result<browse::Advisory, ApiError> {
         let id = encode_path(ghsa);
         let path = match repo {
-            Some(r) => format!("/repos/{}/{}/security-advisories/{id}", r.owner, r.name),
+            Some(r) => format!("/repos/{r}/security-advisories/{id}"),
             None => format!("/advisories/{id}"),
         };
         let wire: browse::rest_advisories::Advisory = self.rest_json(&path, ghsa).await?;
-        let advisory = wire.into_advisory();
-        Ok(advisory)
+        Ok(wire.into_advisory())
     }
     /// A workflow run (one attempt of it, or the latest) and its jobs.
     pub async fn workflow_run(
@@ -2446,7 +2367,7 @@ impl GitHub {
         run: u64,
         attempt: Option<u64>,
     ) -> Result<browse::WorkflowRun, ApiError> {
-        let base = format!("/repos/{}/{}/actions/runs/{run}", repo.owner, repo.name);
+        let base = format!("/repos/{repo}/actions/runs/{run}");
         let path = match attempt {
             Some(n) => format!("{base}/attempts/{n}"),
             None => base,
@@ -2499,10 +2420,7 @@ impl GitHub {
     /// A job, its steps, and its run as it is now.
     pub async fn job(&self, repo: &RepoId, job: u64) -> Result<browse::Job, ApiError> {
         let wire = self.job_wire(repo, job).await?;
-        let base = format!(
-            "/repos/{}/{}/actions/runs/{}",
-            repo.owner, repo.name, wire.run_id
-        );
+        let base = format!("/repos/{repo}/actions/runs/{}", wire.run_id);
         let run: browse::rest_actions::Run = self
             .rest_json(&base, format!("{repo}'s run {}", wire.run_id))
             .await?;
@@ -2533,7 +2451,7 @@ impl GitHub {
         repo: &RepoId,
         job: u64,
     ) -> Result<browse::rest_actions::Job, ApiError> {
-        let path = format!("/repos/{}/{}/actions/jobs/{job}", repo.owner, repo.name);
+        let path = format!("/repos/{repo}/actions/jobs/{job}");
         self.rest_json(&path, format!("{repo}'s job {job}")).await
     }
 
@@ -2547,10 +2465,7 @@ impl GitHub {
                 ..browse::JobLog::default()
             });
         }
-        let path = format!(
-            "/repos/{}/{}/actions/jobs/{job}/logs",
-            repo.owner, repo.name
-        );
+        let path = format!("/repos/{repo}/actions/jobs/{job}/logs");
         let response = self
             .send(&Request::Get {
                 path: &path,
@@ -2573,12 +2488,7 @@ impl GitHub {
 
     /// A workflow, by its file name (`ci.yml`) or ID.
     pub async fn workflow(&self, repo: &RepoId, file: &str) -> Result<browse::Workflow, ApiError> {
-        let path = format!(
-            "/repos/{}/{}/actions/workflows/{}",
-            repo.owner,
-            repo.name,
-            encode_path(file)
-        );
+        let path = format!("/repos/{repo}/actions/workflows/{}", encode_path(file));
         let what = format!("{repo}'s workflow {file}");
         let wire: browse::rest_actions::Workflow = self.rest_json(&path, what).await?;
         let workflow = browse::Workflow {
@@ -2626,7 +2536,7 @@ impl GitHub {
         page: u64,
     ) -> Result<(String, String), ApiError> {
         let filter = browse::RunFilter::parse(query);
-        let base = format!("/repos/{}/{}/actions", repo.owner, repo.name);
+        let base = format!("/repos/{repo}/actions");
         let (list, what) = match &filter.workflow {
             Some(w) => {
                 let id = encode_path(&self.workflow_id(repo, w).await?);
@@ -2772,10 +2682,7 @@ impl GitHub {
         if file || workflow.bytes().all(|b| b.is_ascii_digit()) {
             return Ok(workflow.to_owned());
         }
-        let path = format!(
-            "/repos/{}/{}/actions/workflows?per_page=100",
-            repo.owner, repo.name
-        );
+        let path = format!("/repos/{repo}/actions/workflows?per_page=100");
         let list: browse::rest_actions::Workflows =
             self.rest_json(&path, format!("{repo}'s workflows")).await?;
         let shown = list.workflows.len() as u64;
@@ -2798,11 +2705,7 @@ impl GitHub {
         repo: &RepoId,
         rev: &str,
     ) -> Result<browse::Checks, ApiError> {
-        let op = browse::CommitChecksQuery::build(browse::RepoVariables {
-            owner: repo.owner.clone(),
-            name: repo.name.clone(),
-            expression: rev.to_owned(),
-        });
+        let op = browse::CommitChecksQuery::build(browse::RepoVariables::at(repo, rev));
         let pick = |q: browse::CommitChecksQuery| match q.repository?.object? {
             browse::ChecksTarget::Commit(commit) => Some(commit),
             browse::ChecksTarget::Other => None,
@@ -2909,8 +2812,7 @@ impl GitHub {
         let wire: browse::wire_discussions::Detail =
             (self.graphql_json(&raw::discussion(), vars, subject, "/repository/discussion"))
                 .await?;
-        let detail = wire.into_detail(repo);
-        Ok(detail)
+        Ok(wire.into_detail(repo))
     }
 
     /// Branches by name, up to [`PAGES`] pages of 100, and the newest 100
@@ -2943,8 +2845,7 @@ impl GitHub {
         let branches = self
             .more_pages(what, heads(first.heads), PAGES, more)
             .await?;
-        let refs = browse::Refs { branches, tags };
-        Ok(refs)
+        Ok(browse::Refs { branches, tags })
     }
 
     /// The ref a plain GitHub URL's `spot` (`feature/x/src/lib.rs`)
@@ -3178,18 +3079,34 @@ fn text_short(oid: &str) -> &str {
     oid.get(..7).unwrap_or(oid)
 }
 
-/// The `after` cursor in a `Link` header's `rel="next"` URL.
-fn next_after(link: &str) -> Option<String> {
+/// The query string of a `Link` header's `rel="next"` URL.
+fn next_query(link: &str) -> Option<&str> {
     let next = link.split(',').find(|l| l.contains("rel=\"next\""))?;
     let url = next.split(['<', '>']).nth(1)?;
-    let query = url.split_once('?')?.1;
-    let after = query.split('&').find_map(|kv| kv.strip_prefix("after="))?;
+    Some(url.split_once('?')?.1)
+}
+
+/// The `after` cursor in a `Link` header's `rel="next"` URL.
+fn next_after(link: &str) -> Option<String> {
+    let after = next_query(link)?
+        .split('&')
+        .find_map(|kv| kv.strip_prefix("after="))?;
     Some(
         url::form_urlencoded::parse(format!("a={after}").as_bytes())
             .next()?
             .1
             .into_owned(),
     )
+}
+
+/// A GraphQL request's body.
+fn gql_body(query: &str, variables: Value) -> Value {
+    serde_json::json!({ "query": query, "variables": variables })
+}
+
+/// A REST path as an error names it: without `/repos/`.
+fn short_path(path: &str) -> &str {
+    path.strip_prefix("/repos/").unwrap_or(path)
 }
 
 /// Percent-encodes a query string's value (spaces as `+`).

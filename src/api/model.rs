@@ -797,10 +797,7 @@ impl ReviewThread {
                         .map(comment)
                         .filter(|c| first.as_ref() != Some(&c.id)),
                 );
-                Capped::new(
-                    items,
-                    u64::try_from(t.comments.total_count).unwrap_or_default(),
-                )
+                Capped::new(items, count(t.comments.total_count))
             },
             diff_hunk,
         }

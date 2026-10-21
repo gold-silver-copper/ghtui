@@ -778,6 +778,17 @@ pub struct RepoVariables {
     pub expression: String,
 }
 
+impl RepoVariables {
+    /// `repo`'s object at `expression`.
+    pub fn at(repo: &RepoId, expression: impl Into<String>) -> Self {
+        Self {
+            owner: repo.owner.clone(),
+            name: repo.name.clone(),
+            expression: expression.into(),
+        }
+    }
+}
+
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Repository", variables = "RepoVariables")]
 pub struct RepoFull {

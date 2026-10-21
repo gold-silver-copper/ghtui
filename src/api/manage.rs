@@ -367,7 +367,7 @@ impl GitHub {
     /// and a pull request of it, whose number this answers.
     pub async fn revert(&self, pr: &NodeId) -> Result<u64, ApiError> {
         let made: Value = self
-            .mutate_json_for(raw::REVERT_PR, json!({ "id": pr.as_str() }))
+            .graphql_data(raw::REVERT_PR, json!({ "id": pr.as_str() }), false)
             .await?;
         made.pointer("/revertPullRequest/revertPullRequest/number")
             .and_then(Value::as_u64)
@@ -377,7 +377,7 @@ impl GitHub {
     /// Moves an issue to another repository: where it is now.
     pub async fn transfer(&self, issue: &NodeId, to: &NodeId) -> Result<IssueAt, ApiError> {
         let vars = json!({ "id": issue.as_str(), "repo": to.as_str() });
-        let made: Value = self.mutate_json_for(raw::TRANSFER_ISSUE, vars).await?;
+        let made: Value = self.graphql_data(raw::TRANSFER_ISSUE, vars, false).await?;
         let issue = made.pointer("/transferIssue/issue");
         let repo = (issue.and_then(|i| i.pointer("/repository/nameWithOwner")))
             .and_then(Value::as_str)
@@ -400,7 +400,9 @@ impl GitHub {
         body: &str,
     ) -> Result<u64, ApiError> {
         let vars = json!({ "repo": repo.as_str(), "category": category.as_str(), "title": title, "body": body });
-        let made: Value = self.mutate_json_for(raw::START_DISCUSSION, vars).await?;
+        let made: Value = self
+            .graphql_data(raw::START_DISCUSSION, vars, false)
+            .await?;
         made.pointer("/createDiscussion/discussion/number")
             .and_then(Value::as_u64)
             .ok_or_else(|| ApiError::Internal("GitHub didn't say which discussion".into()))
