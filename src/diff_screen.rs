@@ -424,7 +424,7 @@ impl DiffState {
             } else {
                 Arc::default()
             },
-            viewed: i.viewed.iter().flat_map(|v| v.states.clone()).collect(),
+            viewed: (i.viewed.as_ref()).map_or_else(HashMap::new, |v| v.states.clone()),
             reviewed: i.review.reviewed_hunks.iter().cloned().collect(),
             annotations: (annotations(i.thread_list(), &self.mapped, &i.review.pending, &i.fresh))
                 .into_iter()
@@ -489,7 +489,7 @@ impl DiffState {
             Some(format!(
                 "Diffing {}/{files} {}",
                 self.doc.ready_count(),
-                crate::ui::text::noun(files as u64, "file")
+                text::noun(files as u64, "file")
             ))
         } else {
             Some(progress.clone())
@@ -1010,8 +1010,8 @@ pub fn search(screen: &mut DiffScreen, state: &DiffState, query: String, forward
         (Some(pos), n) => {
             go_to_match(screen, &state.doc, pos, &query);
             Notice::Info(format!(
-                "{n} line{} match “{query}”",
-                if n == 1 { "" } else { "s" }
+                "{n} {} match “{query}”",
+                text::noun(n as u64, "line")
             ))
         }
         (None, _) => Notice::Error(format!("No match for “{query}”")),
@@ -1283,14 +1283,11 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
         }
     }
 
-    let mut wanted = vec![screen.cursor.file];
-    wanted.extend(doc.loading_in_view(screen.top, height));
-    let wanted: Vec<usize> = wanted
-        .into_iter()
+    let in_view = doc.loading_in_view(screen.top, height);
+    let wanted: Vec<usize> = (std::iter::once(screen.cursor.file).chain(in_view))
         .filter(|f| {
-            doc.files()
-                .get(*f)
-                .is_some_and(|file| file.diff.is_none() && !file.collapsed())
+            let file = doc.files().get(*f);
+            file.is_some_and(|file| file.diff.is_none() && !file.collapsed())
                 && !state.requested.contains(f)
         })
         .collect();

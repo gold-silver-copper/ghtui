@@ -155,8 +155,8 @@ fn no_symbols(path: &str) -> String {
     }
 }
 
-/// The file on screen, or why there's none to read. A page's file is
-/// parsed for its `scopes` only when they're asked for.
+/// The file on screen, or why there's none to read, with its `scopes`
+/// only when they're asked for.
 fn here(state: &State, scopes: bool) -> Result<Here, String> {
     match state.screen() {
         Screen::Page(p) => {
@@ -214,7 +214,9 @@ fn here(state: &State, scopes: bool) -> Result<Here, String> {
                 repo: screen.of.repo().clone(),
                 rev: diff.head().map(|oid| oid.to_string()),
                 path: file.meta.path().to_owned(),
-                scopes: file.text().map(|t| t.scopes.clone()).unwrap_or_default(),
+                scopes: (file.text().filter(|_| scopes))
+                    .map(|t| t.scopes.clone())
+                    .unwrap_or_default(),
                 word,
             })
         }

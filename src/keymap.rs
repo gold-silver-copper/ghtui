@@ -375,25 +375,26 @@ impl From<KeyEvent> for Key {
     }
 }
 
-const NAMED: &[(&str, KeyCode)] = &[
-    ("Enter", KeyCode::Enter),
-    ("CR", KeyCode::Enter),
-    ("Esc", KeyCode::Esc),
-    ("Tab", KeyCode::Tab),
-    ("S-Tab", KeyCode::BackTab),
-    ("BS", KeyCode::Backspace),
-    ("Space", KeyCode::Char(' ')),
-    ("Up", KeyCode::Up),
-    ("Down", KeyCode::Down),
-    ("Left", KeyCode::Left),
-    ("Right", KeyCode::Right),
-    ("PageUp", KeyCode::PageUp),
-    ("PageDown", KeyCode::PageDown),
-    ("Home", KeyCode::Home),
-    ("End", KeyCode::End),
-    ("Delete", KeyCode::Delete),
-    ("Del", KeyCode::Delete),
-    ("lt", KeyCode::Char('<')),
+/// Keys by name: as the config spells them, and as people write them.
+const NAMED: &[(&str, KeyCode, &str)] = &[
+    ("Enter", KeyCode::Enter, "↵"),
+    ("CR", KeyCode::Enter, "↵"),
+    ("Esc", KeyCode::Esc, "esc"),
+    ("Tab", KeyCode::Tab, "⇥"),
+    ("S-Tab", KeyCode::BackTab, "⇧⇥"),
+    ("BS", KeyCode::Backspace, "⌫"),
+    ("Space", KeyCode::Char(' '), "space"),
+    ("Up", KeyCode::Up, "↑"),
+    ("Down", KeyCode::Down, "↓"),
+    ("Left", KeyCode::Left, "←"),
+    ("Right", KeyCode::Right, "→"),
+    ("PageUp", KeyCode::PageUp, "pgup"),
+    ("PageDown", KeyCode::PageDown, "pgdn"),
+    ("Home", KeyCode::Home, "home"),
+    ("End", KeyCode::End, "end"),
+    ("Delete", KeyCode::Delete, "del"),
+    ("Del", KeyCode::Delete, "del"),
+    ("lt", KeyCode::Char('<'), "<"),
 ];
 
 /// Parses one key: `c`, `]`, `<C-s>`, `<Enter>`. More than one key (`gg`)
@@ -413,7 +414,7 @@ pub fn parse_key(s: &str) -> Result<Key, String> {
 }
 
 fn parse_named(name: &str) -> Option<Key> {
-    if let Some((_, code)) = NAMED.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
+    if let Some((_, code, _)) = NAMED.iter().find(|(n, ..)| n.eq_ignore_ascii_case(name)) {
         return Some(Key::new(*code, KeyModifiers::NONE));
     }
     let mut mods = KeyModifiers::NONE;
@@ -439,8 +440,8 @@ fn parse_named(name: &str) -> Option<Key> {
         (Some(c), None) => KeyCode::Char(c.to_ascii_lowercase()),
         _ => NAMED
             .iter()
-            .find(|(n, _)| n.eq_ignore_ascii_case(rest))
-            .map(|(_, code)| *code)?,
+            .find(|(n, ..)| n.eq_ignore_ascii_case(rest))
+            .map(|(_, code, _)| *code)?,
     };
     Some(Key::new(code, mods))
 }
@@ -454,8 +455,8 @@ pub fn format_key(key: Key) -> String {
         KeyCode::Char(c) => c.to_string(),
         code => NAMED
             .iter()
-            .find(|(_, c)| *c == code)
-            .map_or_else(|| format!("{code:?}"), |(n, _)| (*n).to_owned()),
+            .find(|(_, c, _)| *c == code)
+            .map_or_else(|| format!("{code:?}"), |(n, ..)| (*n).to_owned()),
     };
     let mods = [
         (KeyModifiers::CONTROL, "C-"),
@@ -595,25 +596,12 @@ impl Keymap {
 
 /// A key as people write it: `↵`, `esc`, `⇥`, `space`, `ctrl-d`.
 pub fn pretty(key: Key) -> String {
-    let base = match key.code {
-        KeyCode::Enter => "↵".to_owned(),
-        KeyCode::Esc => "esc".to_owned(),
-        KeyCode::Tab => "⇥".to_owned(),
-        KeyCode::BackTab => "⇧⇥".to_owned(),
-        KeyCode::Backspace => "⌫".to_owned(),
-        KeyCode::Char(' ') => "space".to_owned(),
-        KeyCode::Up => "↑".to_owned(),
-        KeyCode::Down => "↓".to_owned(),
-        KeyCode::Left => "←".to_owned(),
-        KeyCode::Right => "→".to_owned(),
-        KeyCode::PageUp => "pgup".to_owned(),
-        KeyCode::PageDown => "pgdn".to_owned(),
-        KeyCode::Home => "home".to_owned(),
-        KeyCode::End => "end".to_owned(),
-        KeyCode::Delete => "del".to_owned(),
-        KeyCode::F(n) => format!("f{n}"),
-        KeyCode::Char(c) => c.to_string(),
-        code => format!("{code:?}").to_lowercase(),
+    let named = NAMED.iter().find(|(_, c, _)| *c == key.code);
+    let base = match (key.code, named) {
+        (_, Some((.., said))) => (*said).to_owned(),
+        (KeyCode::F(n), _) => format!("f{n}"),
+        (KeyCode::Char(c), _) => c.to_string(),
+        (code, _) => format!("{code:?}").to_lowercase(),
     };
     if key.mods.contains(KeyModifiers::CONTROL) {
         format!("ctrl-{base}")
@@ -820,7 +808,7 @@ mod tests {
 
         fn key() -> impl Strategy<Value = Key> {
             let named =
-                prop::sample::select(NAMED.iter().map(|(_, code)| *code).collect::<Vec<_>>());
+                prop::sample::select(NAMED.iter().map(|(_, code, _)| *code).collect::<Vec<_>>());
             let mods = prop::sample::select(vec![
                 KeyModifiers::NONE,
                 KeyModifiers::CONTROL,
