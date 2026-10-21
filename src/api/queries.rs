@@ -66,6 +66,13 @@ macro_rules! fragments {
             pub total_count: i32,
             pub nodes: Option<Vec<Option<$ty>>>,
         }
+
+        impl $name {
+            /// Its nodes, each made an item by `item`, of its total.
+            pub fn into_capped<T>(self, item: impl FnMut($ty) -> T) -> crate::api::model::Capped<T> {
+                crate::api::model::Capped::from_nodes(self.total_count, self.nodes, item)
+            }
+        }
     )*};
     // A page of a connection, and how many there are in all.
     (paged: $($name:ident = $graphql:literal => $ty:ident),* $(,)?) => {$(
@@ -75,6 +82,16 @@ macro_rules! fragments {
             pub total_count: i32,
             pub page_info: crate::api::queries::PageInfo,
             pub nodes: Option<Vec<Option<$ty>>>,
+        }
+
+        impl $name {
+            /// The page as results, the nodes `item` makes nothing of left out.
+            pub fn filter_results<T>(
+                self,
+                item: impl FnMut($ty) -> Option<T>,
+            ) -> crate::api::browse::Results<T> {
+                crate::api::browse::Results::from_page(self.total_count, self.page_info, self.nodes, item)
+            }
         }
     )*};
     (nodes: $($name:ident = $graphql:literal => $ty:ident),* $(,)?) => {$(

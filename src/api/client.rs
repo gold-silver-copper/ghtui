@@ -596,7 +596,7 @@ impl GitHub {
             };
             // A mutation that may have reached GitHub is never sent again:
             // it could post a comment twice. A failed connect never left.
-            let response = match result {
+            let mut response = match result {
                 Ok(response) => response,
                 Err(err) if !last && (request.idempotent() || err.is_connect()) => {
                     tracing::debug!(%err, attempt, "request failed; retrying");
@@ -615,7 +615,7 @@ impl GitHub {
             self.rejected
                 .0
                 .store(status == StatusCode::UNAUTHORIZED, Ordering::Relaxed);
-            let headers = response.headers().clone();
+            let headers = std::mem::take(response.headers_mut());
             lock(&self.limits).update(&headers);
 
             if let Some(wait) = retry_after(status, &headers, crate::store::now()) {
@@ -1036,12 +1036,10 @@ impl GitHub {
             .map_err(|e| ApiError::Network(e.to_string()))?;
         let status = response.status();
         if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            let headers = HeaderMap::new();
             let answer = Response {
                 status,
-                headers,
-                body,
+                headers: HeaderMap::new(),
+                body: response.text().await.unwrap_or_default(),
             };
             check_status(&answer, short_path(path))?;
             return Err(ApiError::Network(format!("{path}: {status}")));
@@ -1090,7 +1088,7 @@ impl GitHub {
         let client = self.client().await?;
         let opened = tokio::fs::File::open(file).await.map_err(|e| failed(&e))?;
         let size = opened.metadata().await.map_err(|e| failed(&e))?.len();
-        let response = client
+        let mut response = client
             .post(url)
             .header(header::CONTENT_TYPE, content_type)
             .header(header::CONTENT_LENGTH, size)
@@ -1100,7 +1098,7 @@ impl GitHub {
             .map_err(|e| ApiError::Network(e.to_string()))?;
         let answer = Response {
             status: response.status(),
-            headers: response.headers().clone(),
+            headers: std::mem::take(response.headers_mut()),
             body: response
                 .text()
                 .await
@@ -1222,12 +1220,10 @@ impl GitHub {
             path: path.to_owned(),
         };
         if viewed {
-            self.mutate(queries::MarkFileAsViewed::build(vars)).await?;
+            (self.mutate(queries::MarkFileAsViewed::build(vars)).await).map(drop)
         } else {
-            self.mutate(queries::UnmarkFileAsViewed::build(vars))
-                .await?;
+            (self.mutate(queries::UnmarkFileAsViewed::build(vars)).await).map(drop)
         }
-        Ok(())
     }
 
     /// All review threads of a PR, with up to 100 comments each.
@@ -1622,29 +1618,24 @@ impl GitHub {
                 page.filter_results(browse::wire_discussions::Hit::into_hit),
             ));
         }
-        // GitHub refuses an empty commit or code search (422).
-        if query.trim().is_empty() {
-            return Ok(if kind == Kind::Commits {
-                SearchResults::Commits(Results::default())
-            } else {
-                SearchResults::Code(Results::default())
-            });
-        }
+        let commits = kind == Kind::Commits;
         let number = rest_page(after.as_deref());
-        let what = if kind == Kind::Commits {
-            "commits"
-        } else {
-            "code"
-        };
         let path = format!(
-            "/search/{what}?q={}&per_page={REST_PAGE}&page={number}",
+            "/search/{}?q={}&per_page={REST_PAGE}&page={number}",
+            if commits { "commits" } else { "code" },
             encode_query(query)
         );
         let next = |total: u64| next_page(number, REST_PAGE, total.min(SEARCH_CAP));
-        Ok(if kind == Kind::Commits {
-            SearchResults::Commits(self.rest_hits(&path, next, Commit::into_hit).await?)
-        } else {
-            SearchResults::Code(self.rest_hits(&path, next, Code::into_hit).await?)
+        // GitHub refuses an empty commit or code search (422).
+        Ok(match (commits, query.trim().is_empty()) {
+            (true, true) => SearchResults::Commits(Results::default()),
+            (false, true) => SearchResults::Code(Results::default()),
+            (true, false) => {
+                SearchResults::Commits(self.rest_hits(&path, next, Commit::into_hit).await?)
+            }
+            (false, false) => {
+                SearchResults::Code(self.rest_hits(&path, next, Code::into_hit).await?)
+            }
         })
     }
 
@@ -1776,11 +1767,18 @@ impl GitHub {
         repo: &RepoId,
         rev: &str,
     ) -> Result<(Vec<String>, bool), ApiError> {
+        #[derive(serde::Deserialize, PartialEq)]
+        #[serde(rename_all = "lowercase")]
+        enum Kind {
+            Blob,
+            #[serde(other)]
+            Other,
+        }
         #[derive(serde::Deserialize)]
         struct Entry {
             path: String,
             #[serde(rename = "type")]
-            kind: String,
+            kind: Kind,
         }
         #[derive(serde::Deserialize)]
         struct Wire {
@@ -1797,7 +1795,7 @@ impl GitHub {
         let files: Vec<String> = wire
             .tree
             .into_iter()
-            .filter(|e| e.kind == "blob")
+            .filter(|e| e.kind == Kind::Blob)
             .map(|e| e.path)
             .collect();
         Ok((files, wire.truncated))
@@ -1887,7 +1885,9 @@ impl GitHub {
             after,
         });
         let pick = |q: browse::HistoryQuery| match q.repository?.object? {
-            browse::HistoryObject::Commit(c) => Some(c.history.into_results()),
+            browse::HistoryObject::Commit(c) => {
+                Some(c.history.filter_results(|c| Some(c.into_info())))
+            }
             browse::HistoryObject::Other => None,
         };
         let history = self.find(op, format!("{repo}@{rev}"), pick).await?;
@@ -1937,9 +1937,9 @@ impl GitHub {
                 browse::ContextsTarget::Other => None,
             };
             let rollup = self.find(op, repo, pick).await?;
-            Ok(rollup
-                .map(|r| r.contexts.into_results())
-                .unwrap_or_default())
+            Ok(rollup.map_or_else(browse::Results::default, |r| {
+                r.contexts.filter_results(Some)
+            }))
         };
         let contexts = self.more_pages(what, first, PAGES, page).await?;
         Ok(browse::checks(oid, contexts))
@@ -1952,33 +1952,26 @@ impl GitHub {
         after: Option<String>,
     ) -> Result<browse::Results<browse::UserSummary>, ApiError> {
         use browse::UserList as L;
-        let (root, field, vars, who) = match list {
-            L::Stargazers(repo) | L::Watchers(repo) => (
+        let of_repo = |field, repo: &RepoId| {
+            let vars =
+                serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after });
+            (
                 "repository(owner: $owner, name: $name)",
-                if matches!(list, L::Stargazers(_)) {
-                    "stargazers"
-                } else {
-                    "watchers"
-                },
-                serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after }),
+                field,
+                vars,
                 repo.to_string(),
-            ),
-            L::Followers(login) | L::Following(login) => (
-                "user(login: $login)",
-                if matches!(list, L::Followers(_)) {
-                    "followers"
-                } else {
-                    "following"
-                },
-                serde_json::json!({ "login": login, "after": after }),
-                login.clone(),
-            ),
-            L::People(login) => (
-                "organization(login: $login)",
-                "membersWithRole",
-                serde_json::json!({ "login": login, "after": after }),
-                login.clone(),
-            ),
+            )
+        };
+        let of_login = |root, field, login: &String| {
+            let vars = serde_json::json!({ "login": login, "after": after });
+            (root, field, vars, login.clone())
+        };
+        let (root, field, vars, who) = match list {
+            L::Stargazers(repo) => of_repo("stargazers", repo),
+            L::Watchers(repo) => of_repo("watchers", repo),
+            L::Followers(login) => of_login("user(login: $login)", "followers", login),
+            L::Following(login) => of_login("user(login: $login)", "following", login),
+            L::People(login) => of_login("organization(login: $login)", "membersWithRole", login),
         };
         let query = raw::users(root, field);
         let wire: browse::wire::Connection<browse::wire::Person> =
@@ -2001,12 +1994,14 @@ impl GitHub {
             after,
             order: sort.into(),
         });
-        let repos = self
-            .find(op, login, |q| q.repository_owner)
-            .await?
-            .repositories
-            .into_results();
-        Ok(self.checked(repos, format!("{login}'s repositories")))
+        let repos = self.find(op, login, |q| {
+            Some(
+                q.repository_owner?
+                    .repositories
+                    .filter_results(browse::RepoCard::into_summary),
+            )
+        });
+        Ok(self.checked(repos.await?, format!("{login}'s repositories")))
     }
 
     /// What a user starred, most recently first, 30 at a time from
@@ -2020,12 +2015,14 @@ impl GitHub {
             login: login.to_owned(),
             after,
         });
-        let stars = self
-            .find(op, login, |q| q.user)
-            .await?
-            .starred_repositories
-            .into_results();
-        Ok(self.checked(stars, format!("{login}'s stars")))
+        let stars = self.find(op, login, |q| {
+            Some(
+                q.user?
+                    .starred_repositories
+                    .filter_results(browse::RepoCard::into_summary),
+            )
+        });
+        Ok(self.checked(stars.await?, format!("{login}'s stars")))
     }
 
     /// A repository's forks, most starred first, 30 at a time from
@@ -2036,12 +2033,14 @@ impl GitHub {
         after: Option<String>,
     ) -> Result<browse::Results<browse::RepoSummary>, ApiError> {
         let op = browse::ForksQuery::build(list_vars(repo, after));
-        let forks = self
-            .find(op, repo, |q| q.repository)
-            .await?
-            .forks
-            .into_results();
-        Ok(self.checked(forks, format!("{repo}'s forks")))
+        let forks = self.find(op, repo, |q| {
+            Some(
+                q.repository?
+                    .forks
+                    .filter_results(browse::RepoCard::into_summary),
+            )
+        });
+        Ok(self.checked(forks.await?, format!("{repo}'s forks")))
     }
 
     /// A repository's releases, newest first, 20 at a time from `after`;
@@ -2052,12 +2051,10 @@ impl GitHub {
         after: Option<String>,
     ) -> Result<browse::Results<browse::Release>, ApiError> {
         let op = browse::ReleasesQuery::build(list_vars(repo, after));
-        let releases = self
-            .find(op, repo, |q| q.repository)
-            .await?
-            .releases
-            .into_results();
-        Ok(self.checked(releases, format!("{repo}'s releases")))
+        let releases = self.find(op, repo, |q| {
+            Some((q.repository?.releases).filter_results(|r| Some(r.into_release())))
+        });
+        Ok(self.checked(releases.await?, format!("{repo}'s releases")))
     }
 
     /// A release by its tag, with its notes and assets.
@@ -2081,11 +2078,14 @@ impl GitHub {
         after: Option<String>,
     ) -> Result<browse::Results<browse::TagInfo>, ApiError> {
         let op = browse::TagsQuery::build(list_vars(repo, after));
-        let tags = self
-            .find(op, repo, |q| q.repository?.refs)
-            .await?
-            .into_results();
-        Ok(self.checked(tags, format!("{repo}'s tags")))
+        let tags = self.find(op, repo, |q| {
+            Some(
+                q.repository?
+                    .refs?
+                    .filter_results(browse::TagRef::into_info),
+            )
+        });
+        Ok(self.checked(tags.await?, format!("{repo}'s tags")))
     }
 
     /// Branches by name, 30 at a time from `after`, each with its latest
@@ -2478,9 +2478,12 @@ impl GitHub {
             ));
         }
         check_status(&response, format!("{repo}'s job {job}'s log"))?;
-        let (cut, text) = browse::log::cut(&response.body);
+        let mut text = response.body;
+        let (cut, kept) = browse::log::cut(&text);
+        let start = text.len() - kept.len();
+        text.drain(..start);
         Ok(browse::JobLog {
-            text: text.to_owned(),
+            text,
             cut,
             running: false,
         })
@@ -3143,9 +3146,6 @@ fn escape(s: &str, plus: bool) -> String {
     out
 }
 
-/// The HTTP client: the token on every request, rustls with the platform's
-/// roots (loading those is why this runs on a blocking thread), GitHub's
-/// JSON media type, and no retries of its own.
 /// Adds what `list` doesn't have yet.
 fn note(list: &Mutex<Vec<String>>, said: impl IntoIterator<Item = String>) {
     let mut list = lock(list);
@@ -3156,6 +3156,9 @@ fn note(list: &Mutex<Vec<String>>, said: impl IntoIterator<Item = String>) {
     }
 }
 
+/// The HTTP client: the token on every request, rustls with the platform's
+/// roots (loading those is why this runs on a blocking thread), GitHub's
+/// JSON media type, and no retries of its own.
 fn build_client(token: &str) -> Result<reqwest::Client, ApiError> {
     // rustls needs a process-wide crypto provider; a second install is a no-op.
     let _ = rustls::crypto::ring::default_provider().install_default();
