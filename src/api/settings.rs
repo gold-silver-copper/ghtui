@@ -435,35 +435,29 @@ impl GitHub {
         let settings = match page {
             SettingsPage::General => Settings::General(self.general(repo).await?),
             SettingsPage::Branches => Settings::Branches(self.protection_rules(repo).await?),
-            SettingsPage::Access => Settings::Access(Access {
-                people: self
-                    .listed(
-                        repo,
-                        "collaborators?affiliation=direct&",
-                        "collaborators",
-                        wire::person,
-                    )
-                    .await?,
-                invitations: self
-                    .listed(repo, "invitations?", "invitations", wire::invitation)
-                    .await?,
-            }),
+            SettingsPage::Access => {
+                let collaborators = "collaborators?affiliation=direct&";
+                let (people, invitations) = tokio::try_join!(
+                    self.listed(repo, collaborators, "collaborators", wire::person),
+                    self.listed(repo, "invitations?", "invitations", wire::invitation),
+                )?;
+                Settings::Access(Access {
+                    people,
+                    invitations,
+                })
+            }
             SettingsPage::Hooks => {
                 Settings::Hooks(self.listed(repo, "hooks?", "webhooks", wire::hook).await?)
             }
             SettingsPage::Hook(id) => {
                 let path = format!("/repos/{repo}/hooks/{id}");
-                let answer = self.admin_answer(&path, "webhooks").await?;
+                let deliveries = format!("hooks/{id}/deliveries?");
+                let (answer, deliveries) = tokio::try_join!(
+                    self.admin_answer(&path, "webhooks"),
+                    self.listed(repo, &deliveries, "webhooks", wire::delivery),
+                )?;
                 let hook = wire::hook(serde_json::from_str(answer.body())?)
                     .ok_or_else(|| ApiError::Decode(format!("{repo}'s webhook {id}")))?;
-                let deliveries = self
-                    .listed(
-                        repo,
-                        &format!("hooks/{id}/deliveries?"),
-                        "webhooks",
-                        wire::delivery,
-                    )
-                    .await?;
                 Settings::Hook(Box::new(HookPage { hook, deliveries }))
             }
             SettingsPage::Keys => {
@@ -540,18 +534,15 @@ impl GitHub {
 
     async fn protection_rules(&self, repo: &RepoId) -> Result<Branches, ApiError> {
         let vars = json!({ "owner": repo.owner, "name": repo.name });
-        let found: wire::Rules = self
-            .graphql_json(raw::PROTECTION_RULES, vars, repo, "/repository")
-            .await?;
+        let rulesets = format!("/repos/{repo}/rulesets?per_page={PER_PAGE}");
+        let (found, rulesets) = tokio::join!(
+            self.graphql_json(raw::PROTECTION_RULES, vars, repo, "/repository"),
+            self.admin_answer(&rulesets, "rulesets"),
+        );
+        let found: wire::Rules = found?;
         let repo_id = NodeId::new(found.id);
         let rules = (found.branch_protection_rules).into_capped(|n| Some(wire::rule(n)));
-        let rulesets = match self
-            .admin_answer(
-                &format!("/repos/{repo}/rulesets?per_page={PER_PAGE}"),
-                "rulesets",
-            )
-            .await
-        {
+        let rulesets = match rulesets {
             Ok(answer) => {
                 let wire: Vec<wire::RulesetWire> = serde_json::from_str(answer.body())?;
                 Ok(wire.into_iter().map(|r| wire::ruleset(r, repo)).collect())

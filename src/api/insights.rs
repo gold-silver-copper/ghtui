@@ -156,7 +156,9 @@ impl GitHub {
     /// counts them on the first ask, and says so (202) until it has.
     pub async fn activity(&self, repo: &RepoId) -> Result<Activity, ApiError> {
         let path = format!("/repos/{repo}/stats/contributors");
-        let answer = self.rest_answer(&path).await?;
+        // The weekdays are asked alongside: GitHub counts both at once.
+        let (answer, days) = tokio::join!(self.rest_answer(&path), self.commit_days(repo));
+        let answer = answer?;
         if answer.status() == 202 {
             return Err(ApiError::Http {
                 status: 202,
@@ -170,9 +172,7 @@ impl GitHub {
         } else {
             serde_json::from_str(answer.body())?
         };
-        let days = self.commit_days(repo).await;
-        let activity = from_stats(contributors, days, crate::store::now());
-        Ok(activity)
+        Ok(from_stats(contributors, days, crate::store::now()))
     }
 
     /// The last year's commits by weekday, as GitHub counts them; none

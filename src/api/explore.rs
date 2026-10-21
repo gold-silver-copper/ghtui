@@ -134,7 +134,12 @@ impl GitHub {
             "/search/topics?q={}&per_page=10",
             url::form_urlencoded::byte_serialize(name.as_bytes()).collect::<String>()
         );
-        let found: wire::Found = serde_json::from_str(&self.rest_get(&path, name).await?)?;
+        let vars = serde_json::json!({ "name": name });
+        let (found, graph) = tokio::join!(
+            self.rest_get(&path, name),
+            self.graphql_json(crate::api::raw::TOPIC, vars, name, "/topic"),
+        );
+        let found: wire::Found = serde_json::from_str(&found?)?;
         let mut topic = (found.items.into_iter())
             .find(|t| t.name.eq_ignore_ascii_case(name))
             .map_or_else(
@@ -144,10 +149,7 @@ impl GitHub {
                 },
                 wire::Topic::into_topic,
             );
-        let vars = serde_json::json!({ "name": name });
-        let graph: Result<Graph, _> = self
-            .graphql_json(crate::api::raw::TOPIC, vars, name, "/topic")
-            .await;
+        let graph: Result<Graph, _> = graph;
         match graph {
             Ok(g) => {
                 topic.stars = Some(g.stargazer_count);

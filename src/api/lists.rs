@@ -116,17 +116,19 @@ impl GitHub {
         let Some(item) = found.repository else {
             return Err(ApiError::NotFound(repo.to_string()));
         };
-        let mut lists = Vec::new();
-        for list in found.viewer.lists.nodes.into_iter().flatten() {
-            let has = self.has(&list.id, &item.id, list.items).await?;
-            lists.push(Mine {
+        let repo_id = &item.id;
+        let lists = found.viewer.lists.nodes.into_iter().flatten();
+        let lists = futures::future::try_join_all(lists.map(|list| async move {
+            let (has, count) = self.has(&list.id, repo_id, list.items).await?;
+            Ok::<_, ApiError>(Mine {
                 id: list.id,
                 name: list.name,
                 private: list.is_private,
-                count: has.1,
-                has: has.0,
-            });
-        }
+                count,
+                has,
+            })
+        }))
+        .await?;
         let mine = MyLists {
             repo: item.id,
             starred: item.viewer_has_starred,

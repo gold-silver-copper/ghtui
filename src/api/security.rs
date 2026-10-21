@@ -507,32 +507,57 @@ impl GitHub {
     pub async fn alert(&self, a: &AlertRef) -> Result<Alert, ApiError> {
         let path = format!("/repos/{}/{}/alerts/{}", a.repo, a.kind.slug(), a.number);
         let what = format!("{}'s {}", a.repo, a.kind.alert(a.number));
-        let mut alert = match self.alerts_answer(a.kind, &path, &what).await? {
+        // What only the page shows needs only `a`, so it's asked alongside.
+        let update = async {
+            match a.kind {
+                AlertKind::Dependabot => self.dependabot_update(a).await,
+                _ => None,
+            }
+        };
+        let locations = async {
+            match a.kind {
+                AlertKind::SecretScanning => self.secret_locations(&path).await,
+                _ => None,
+            }
+        };
+        let (answer, update, locations) =
+            tokio::join!(self.alerts_answer(a.kind, &path, &what), update, locations);
+        let mut alert = match answer? {
             Ok(answer) => wire::alert(a.kind, answer.body())?,
             Err(off) => return Err(ApiError::Denied(off)),
         };
         match &mut alert.detail {
-            Detail::Dependency(d) => d.update = self.dependabot_update(a).await,
+            Detail::Dependency(d) => d.update = update,
             Detail::Secret(s) => {
-                let path = format!("{path}/locations?per_page=100");
-                match self.rest_answer(&path).await {
-                    Ok(answer) if (200..300).contains(&answer.status()) => {
-                        if let Ok(found) = wire::locations(answer.body()) {
-                            s.locations = found;
-                        }
-                    }
-                    Ok(answer) => {
-                        tracing::debug!(
-                            status = answer.status(),
-                            "couldn't list a secret's locations"
-                        );
-                    }
-                    Err(err) => tracing::debug!(%err, "couldn't list a secret's locations"),
+                if let Some(found) = locations {
+                    s.locations = found;
                 }
             }
             Detail::Code(_) => {}
         }
         Ok(alert)
+    }
+
+    /// All of a secret's locations, from its alert's `path`; nothing if
+    /// GitHub won't list them.
+    async fn secret_locations(&self, path: &str) -> Option<Vec<SecretLocation>> {
+        match self
+            .rest_answer(&format!("{path}/locations?per_page=100"))
+            .await
+        {
+            Ok(answer) if (200..300).contains(&answer.status()) => {
+                wire::locations(answer.body()).ok()
+            }
+            Ok(answer) => {
+                let status = answer.status();
+                tracing::debug!(status, "couldn't list a secret's locations");
+                None
+            }
+            Err(err) => {
+                tracing::debug!(%err, "couldn't list a secret's locations");
+                None
+            }
+        }
     }
 
     /// Dependabot's pull request for an alert, or why it couldn't make
@@ -626,7 +651,7 @@ mod wire {
     use crate::api::browse::UserLogin as Login;
     use crate::api::browse::rest_advisories::{Cwe, Package};
 
-    #[derive(Deserialize)]
+    #[derive(Deserialize, Default)]
     struct Dependency {
         package: Option<Package>,
         manifest_path: Option<String>,
@@ -639,7 +664,7 @@ mod wire {
         identifier: String,
     }
 
-    #[derive(Deserialize)]
+    #[derive(Deserialize, Default)]
     struct Vulnerability {
         severity: Option<Severity>,
         vulnerable_version_range: Option<String>,
@@ -651,7 +676,7 @@ mod wire {
         url: String,
     }
 
-    #[derive(Deserialize)]
+    #[derive(Deserialize, Default)]
     struct Advisory {
         ghsa_id: String,
         cve_id: Option<String>,
@@ -664,7 +689,7 @@ mod wire {
         references: Vec<Reference>,
     }
 
-    #[derive(Deserialize)]
+    #[derive(Deserialize, Default)]
     struct Rule {
         id: Option<String>,
         name: Option<String>,
@@ -688,14 +713,14 @@ mod wire {
         text: Option<String>,
     }
 
-    #[derive(Deserialize)]
+    #[derive(Deserialize, Default)]
     struct Location {
         path: Option<String>,
         start_line: Option<u32>,
         end_line: Option<u32>,
     }
 
-    #[derive(Deserialize)]
+    #[derive(Deserialize, Default)]
     struct Instance {
         #[serde(rename = "ref")]
         git_ref: Option<String>,
@@ -781,12 +806,17 @@ mod wire {
     }
 
     fn file(d: FileAt) -> Option<SecretLocation> {
-        let start = d.start_line?;
         Some(SecretLocation::File {
             path: d.path?,
-            lines: (start, d.end_line.unwrap_or(start).max(start)),
+            lines: span(d.start_line?, d.end_line),
             commit: d.commit_sha?,
         })
+    }
+
+    /// Lines `start` to `end`, one line when GitHub gives no end (or one
+    /// before the start).
+    fn span(start: u32, end: Option<u32>) -> (u32, u32) {
+        (start, end.unwrap_or(start).max(start))
     }
 
     fn nonempty(s: Option<String>) -> Option<String> {
@@ -813,70 +843,75 @@ mod wire {
             };
             let (title, severity, level, detail) = match kind {
                 AlertKind::Dependabot => {
-                    let advisory = self.security_advisory;
-                    let vulnerability = self.security_vulnerability;
-                    let dependency = self.dependency;
-                    let package = dependency.as_ref().and_then(|d| d.package.as_ref());
-                    let severity = vulnerability
-                        .as_ref()
-                        .and_then(|v| v.severity)
-                        .or(advisory.as_ref().and_then(|a| a.severity));
-                    let title = advisory
-                        .as_ref()
-                        .map(|a| a.summary.clone())
-                        .unwrap_or_default();
+                    let Advisory {
+                        ghsa_id,
+                        cve_id,
+                        summary,
+                        description,
+                        severity: advisory_severity,
+                        cwes,
+                        references,
+                    } = self.security_advisory.unwrap_or_default();
+                    let Vulnerability {
+                        severity,
+                        vulnerable_version_range,
+                        first_patched_version,
+                    } = self.security_vulnerability.unwrap_or_default();
+                    let Dependency {
+                        package,
+                        manifest_path,
+                        scope,
+                        relationship,
+                    } = self.dependency.unwrap_or_default();
+                    let (name, ecosystem) = package.map_or((None, None), |p| (p.name, p.ecosystem));
                     let detail = super::Dependency {
-                        package: package.and_then(|p| p.name.clone()).unwrap_or_default(),
-                        ecosystem: package
-                            .and_then(|p| p.ecosystem.clone())
-                            .unwrap_or_default(),
-                        manifest: dependency
-                            .as_ref()
-                            .and_then(|d| d.manifest_path.clone())
-                            .unwrap_or_default(),
-                        scope: dependency.as_ref().and_then(|d| d.scope.clone()),
-                        relationship: dependency
-                            .and_then(|d| d.relationship)
-                            .filter(|r| r != "unknown"),
-                        vulnerable: vulnerability
-                            .as_ref()
-                            .and_then(|v| v.vulnerable_version_range.clone()),
-                        patched: vulnerability
-                            .and_then(|v| v.first_patched_version)
-                            .map(|v| v.identifier),
-                        ghsa: advisory
-                            .as_ref()
-                            .map(|a| a.ghsa_id.clone())
-                            .unwrap_or_default(),
-                        cve: advisory.as_ref().and_then(|a| a.cve_id.clone()),
-                        description: advisory
-                            .as_ref()
-                            .and_then(|a| a.description.clone())
-                            .unwrap_or_default(),
-                        cwes: advisory
-                            .as_ref()
-                            .map(|a| {
-                                a.cwes
-                                    .iter()
-                                    .map(|c| format!("{} {}", c.cwe_id, c.name))
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
-                        references: advisory
-                            .map(|a| a.references.into_iter().map(|r| r.url).collect())
-                            .unwrap_or_default(),
+                        package: name.unwrap_or_default(),
+                        ecosystem: ecosystem.unwrap_or_default(),
+                        manifest: manifest_path.unwrap_or_default(),
+                        scope,
+                        relationship: relationship.filter(|r| r != "unknown"),
+                        vulnerable: vulnerable_version_range,
+                        patched: first_patched_version.map(|v| v.identifier),
+                        ghsa: ghsa_id,
+                        cve: cve_id,
+                        description: description.unwrap_or_default(),
+                        cwes: cwes
+                            .into_iter()
+                            .map(|c| format!("{} {}", c.cwe_id, c.name))
+                            .collect(),
+                        references: references.into_iter().map(|r| r.url).collect(),
                         update: None,
                     };
-                    (title, severity, None, Detail::Dependency(Box::new(detail)))
+                    let severity = severity.or(advisory_severity);
+                    (
+                        summary,
+                        severity,
+                        None,
+                        Detail::Dependency(Box::new(detail)),
+                    )
                 }
                 AlertKind::CodeScanning => {
-                    let rule = self.rule;
-                    let instance = self.most_recent_instance;
-                    let location = instance.as_ref().and_then(|i| i.location.as_ref());
-                    let lines = location.and_then(|l| {
-                        let start = l.start_line?;
-                        Some((start, l.end_line.unwrap_or(start).max(start)))
-                    });
+                    let Rule {
+                        id,
+                        name,
+                        severity,
+                        security_severity_level,
+                        description,
+                        full_description,
+                        help,
+                        tags,
+                    } = self.rule.unwrap_or_default();
+                    let Instance {
+                        git_ref,
+                        commit_sha,
+                        message,
+                        location,
+                    } = self.most_recent_instance.unwrap_or_default();
+                    let Location {
+                        path,
+                        start_line,
+                        end_line,
+                    } = location.unwrap_or_default();
                     let tool = self.tool.map(|t| {
                         let name = t.name.unwrap_or_default();
                         match t.version {
@@ -884,35 +919,21 @@ mod wire {
                             _ => name,
                         }
                     });
-                    let title = rule
-                        .as_ref()
-                        .and_then(|r| r.description.clone().or(r.name.clone()))
-                        .unwrap_or_default();
-                    let severity = rule.as_ref().and_then(|r| r.security_severity_level);
-                    let level = rule.as_ref().and_then(|r| r.severity.clone());
                     let detail = CodeAlert {
-                        rule: rule.as_ref().and_then(|r| r.id.clone()).unwrap_or_default(),
-                        rule_description: rule
-                            .as_ref()
-                            .and_then(|r| nonempty(r.full_description.clone()))
-                            .unwrap_or_default(),
-                        help: rule
-                            .as_ref()
-                            .and_then(|r| r.help.clone())
-                            .unwrap_or_default(),
+                        rule: id.unwrap_or_default(),
+                        rule_description: nonempty(full_description).unwrap_or_default(),
+                        help: help.unwrap_or_default(),
                         tool: tool.unwrap_or_default(),
-                        message: instance
-                            .as_ref()
-                            .and_then(|i| i.message.as_ref())
-                            .and_then(|m| m.text.clone())
-                            .unwrap_or_default(),
-                        path: location.and_then(|l| l.path.clone()),
-                        lines,
-                        commit: instance.as_ref().and_then(|i| i.commit_sha.clone()),
-                        git_ref: instance.and_then(|i| i.git_ref),
-                        tags: rule.map(|r| r.tags).unwrap_or_default(),
+                        message: message.and_then(|m| m.text).unwrap_or_default(),
+                        path,
+                        lines: start_line.map(|start| span(start, end_line)),
+                        commit: commit_sha,
+                        git_ref,
+                        tags,
                     };
-                    (title, severity, level, Detail::Code(Box::new(detail)))
+                    let title = description.or(name).unwrap_or_default();
+                    let detail = Detail::Code(Box::new(detail));
+                    (title, security_severity_level, severity, detail)
                 }
                 AlertKind::SecretScanning => {
                     let secret_type = self
