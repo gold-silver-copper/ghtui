@@ -1348,11 +1348,8 @@ pub fn shows(state: &State, m: &Manage, about: &Subject) -> bool {
                 Manage::ChangeBase { base, .. } => d.base_ref == *base,
                 Manage::Lock { .. } => d.locked.is_some(),
                 Manage::Unlock { .. } => d.locked.is_none(),
-                Manage::Hide { comment, .. } | Manage::Unhide { comment } => {
-                    let hide = matches!(m, Manage::Hide { .. });
-                    state
-                        .activity(r)
-                        .is_none_or(|a| hidden(a.comments(), comment).is_none_or(|h| h == hide))
+                Manage::Hide { .. } | Manage::Unhide { .. } => {
+                    state.activity(r).is_none_or(|a| hides(a.comments(), m))
                 }
                 _ => true,
             }
@@ -1369,10 +1366,7 @@ pub fn shows(state: &State, m: &Manage, about: &Subject) -> bool {
                 Manage::Lock { .. } => d.locked.is_some(),
                 Manage::Unlock { .. } => d.locked.is_none(),
                 Manage::Pin { on, .. } => d.pinned == *on,
-                Manage::Hide { comment, .. } | Manage::Unhide { comment } => {
-                    let hide = matches!(m, Manage::Hide { .. });
-                    hidden(d.comments(), comment).is_none_or(|h| h == hide)
-                }
+                Manage::Hide { .. } | Manage::Unhide { .. } => hides(d.comments(), m),
                 Manage::CloseAsDuplicate { .. } => d.state != IssueState::Open,
                 // Past those loaded, it can't be seen: don't wait.
                 Manage::SubIssue { child, add, .. } => {
@@ -1405,10 +1399,7 @@ pub fn shows(state: &State, m: &Manage, about: &Subject) -> bool {
                 Manage::Unlock { .. } => d.locked.is_none(),
                 Manage::CloseDiscussion { .. } => d.closed.is_some(),
                 Manage::ReopenDiscussion { .. } => d.closed.is_none(),
-                Manage::Hide { comment, .. } | Manage::Unhide { comment } => {
-                    let hide = matches!(m, Manage::Hide { .. });
-                    hidden(comments(d), comment).is_none_or(|h| h == hide)
-                }
+                Manage::Hide { .. } | Manage::Unhide { .. } => hides(comments(d), m),
                 _ => true,
             }
         }
@@ -1416,27 +1407,30 @@ pub fn shows(state: &State, m: &Manage, about: &Subject) -> bool {
     }
 }
 
-/// Whether the comment `id` among `comments` is hidden; `None` if it
-/// isn't among them.
-fn hidden<'a>(
+/// Whether `comments` show the comment `m` hides or unhides as it says
+/// (or don't have it).
+fn hides<'a>(
     mut comments: impl Iterator<Item = &'a crate::api::browse::Comment>,
-    id: &NodeId,
-) -> Option<bool> {
+    m: &Manage,
+) -> bool {
+    let (Manage::Hide { comment: id, .. } | Manage::Unhide { comment: id }) = m else {
+        return true;
+    };
+    let hide = matches!(m, Manage::Hide { .. });
     comments
         .find(|c| c.editable.as_ref().is_some_and(|e| e.id == *id))
-        .map(|c| c.hiding.reason.is_some())
+        .is_none_or(|c| c.hiding.reason.is_some() == hide)
 }
 
 /// `,x` on a discussion: close it with one of GitHub's reasons, or reopen
-/// it; `Ok(None)` until it's loaded.
-#[allow(clippy::type_complexity, reason = "act's own plan, in its parts")]
-pub fn discussion_close(
+/// it, once it's loaded.
+pub(crate) fn discussion_close(
     state: &State,
     of: &DiscussionsOf,
     number: u64,
-) -> Result<Option<(String, Vec<(String, bool)>, Vec<(String, Change)>)>, String> {
+) -> Result<crate::act::Plan, String> {
     let Some(d) = discussion(state, of, number) else {
-        return Ok(None);
+        return Ok(crate::act::Plan::Load);
     };
     let id = d.id.clone();
     match d.closed {
@@ -1451,16 +1445,18 @@ pub fn discussion_close(
                     (format!("Close as {}", reason.said()), change)
                 })
                 .collect();
-            Ok(Some((format!("Close “{}”?", d.title), Vec::new(), choices)))
+            let title = format!("Close “{}”?", d.title);
+            Ok(crate::act::Plan::Ask(title, Vec::new(), choices))
         }
         Some(_) if !d.can_reopen => Err(crate::act::CANT_REOPEN.into()),
         Some(_) => {
             let reopen = Change::Manage(Manage::ReopenDiscussion { discussion: id });
-            Ok(Some((
-                format!("Reopen “{}”?", d.title),
+            let title = format!("Reopen “{}”?", d.title);
+            Ok(crate::act::Plan::Ask(
+                title,
                 Vec::new(),
                 vec![("Reopen".into(), reopen)],
-            )))
+            ))
         }
     }
 }

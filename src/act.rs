@@ -615,10 +615,7 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         Subject::Alert(a) => crate::security::plan(state, a),
         Subject::Discussion(of, number) => {
             loaded(state.remote(&subject.need()), &name)?;
-            match crate::manage::discussion_close(state, of, *number)? {
-                Some((title, facts, choices)) => Ok(Plan::Ask(title, facts, choices)),
-                None => Ok(Plan::Load),
-            }
+            crate::manage::discussion_close(state, of, *number)
         }
         Subject::Project(..) | Subject::Settings(..) => Err(elsewhere(action).to_owned()),
     }
