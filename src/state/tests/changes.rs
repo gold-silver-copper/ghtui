@@ -229,7 +229,7 @@ fn what_github_forbids_is_refused() {
     let mut s = with_run();
     let mut repo = crate::fixtures::overview();
     repo.can_write = false;
-    fetched(&mut s, DataKey::Repo(ghtui()), Data::Repo(Box::new(repo)));
+    fetched(&mut s, DataKey::Repo(ghtui()), Data::from(repo));
     press(&mut s, "R");
     says(
         &s,
@@ -299,7 +299,7 @@ fn a_draft_is_marked_ready_at_once_and_hears_back_alone() {
 #[test]
 fn a_star_leaves_the_wait_for_another_change_alone() {
     let mut s = super::with_workflow();
-    let run = Data::Run(Box::new(crate::fixtures::workflow_run()));
+    let run = Data::from(crate::fixtures::workflow_run());
     fetched(&mut s, DataKey::Run(ghtui(), 7, None), run);
     let rerun = press(&mut s, "R<Enter>");
     press(&mut s, "<Esc>");
@@ -432,20 +432,12 @@ fn notifications_are_marked_read_and_done() {
     says(&s, "Marked read");
     // Until GitHub shows it read, the inbox is fetched again.
     let mut inbox = crate::fixtures::notifications();
-    fetched(
-        &mut s,
-        key.clone(),
-        Data::Notifications(Box::new(inbox.clone())),
-    );
+    fetched(&mut s, key.clone(), Data::from(inbox.clone()));
     assert!(s.following.is_some());
     if let Some(n) = inbox.list.items.first_mut() {
         n.unread = false;
     }
-    fetched(
-        &mut s,
-        key.clone(),
-        Data::Notifications(Box::new(inbox.clone())),
-    );
+    fetched(&mut s, key.clone(), Data::from(inbox.clone()));
     assert!(s.following.is_none());
     press(&mut s, "m");
     says(&s, "It's read already");
@@ -464,7 +456,7 @@ fn notifications_are_marked_read_and_done() {
     says(&s, "Marked done");
     assert!(s.following.is_some());
     inbox.list.items.retain(|n| n.id != "103");
-    fetched(&mut s, key, Data::Notifications(Box::new(inbox)));
+    fetched(&mut s, key, Data::from(inbox));
     assert!(s.following.is_none());
 
     // Elsewhere, there's no notification to mark.
@@ -503,7 +495,7 @@ fn the_inbox_is_marked_read_and_done_all_at_once() {
     // GitHub marks them a moment later: until then, the inbox is asked
     // again.
     let mut inbox = crate::fixtures::notifications();
-    let shown = |i: &crate::api::notifications::Inbox| Data::Notifications(Box::new(i.clone()));
+    let shown = |i: &crate::api::notifications::Inbox| Data::from(i.clone());
     fetched(&mut s, key.clone(), shown(&inbox));
     assert!(s.following.is_some());
     inbox.list.items.iter_mut().for_each(|n| n.unread = false);
@@ -559,11 +551,7 @@ fn a_finished_job_in_a_running_run_cancels_the_run() {
     let mut s = with_job(None);
     let (mut job, _) = crate::fixtures::job();
     job.run.outcome = CheckOutcome::Pending;
-    fetched(
-        &mut s,
-        DataKey::Job(ghtui(), 2),
-        Data::Job(Box::new(job.clone())),
-    );
+    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::from(job.clone()));
     press(&mut s, "R");
     says(&s, "The run is still going: x cancels it");
     press(&mut s, "x");
@@ -586,7 +574,7 @@ fn a_finished_job_in_a_running_run_cancels_the_run() {
     says(&s, "hasn't shown the last change");
     assert!(s.busy().is_some_and(|b| b.starts_with("Cancel requested")));
     job.run.outcome = CheckOutcome::Cancelled;
-    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::Job(Box::new(job)));
+    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::from(job));
     assert!(s.following.is_none());
 }
 
@@ -604,11 +592,7 @@ fn a_rerun_job_is_followed_to_its_new_attempt() {
     let (mut job, _) = crate::fixtures::job();
     job.run.attempt = 2;
     job.run.outcome = CheckOutcome::Pending;
-    fetched(
-        &mut s,
-        DataKey::Job(ghtui(), 2),
-        Data::Job(Box::new(job.clone())),
-    );
+    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::from(job.clone()));
     assert!(
         matches!(s.route(), Some(Route::Runs(runs::Job { job: 2, .. }))),
         "not there yet"
@@ -616,12 +600,7 @@ fn a_rerun_job_is_followed_to_its_new_attempt() {
     job.run.rerun = Some(9);
     let cmds = update(
         &mut s,
-        Msg::Fetched {
-            key: DataKey::Job(ghtui(), 2),
-            result: Ok(Data::Job(Box::new(job))),
-            cached_at: None,
-            source: None,
-        },
+        Msg::fetched(DataKey::Job(ghtui(), 2), Ok(Data::from(job))),
     );
     assert!(
         matches!(s.route(), Some(Route::Runs(runs::Job { job: 9, .. }))),

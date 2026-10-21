@@ -120,7 +120,7 @@ fn a_running_jobs_log_is_checked_again() {
         running: true,
         ..Default::default()
     };
-    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::Job(Box::new(job)));
+    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::from(job));
     fetched(
         &mut s,
         DataKey::JobLog(ghtui(), 2),

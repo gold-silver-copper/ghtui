@@ -7,41 +7,18 @@ use crate::api::insights::{
     Activity, Counted, Counter, Dependencies, Popular, Traffic, WEEK, YEAR_WEEKS,
 };
 
-/// Insights' tabs, as GitHub's sidebar lists them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum InsightsTab {
-    Contributors,
-    Commits,
-    Traffic,
-    Dependencies,
-}
-
-impl InsightsTab {
-    pub const ALL: [InsightsTab; 4] = [
-        InsightsTab::Contributors,
-        InsightsTab::Commits,
-        InsightsTab::Traffic,
-        InsightsTab::Dependencies,
-    ];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            InsightsTab::Contributors => "Contributors",
-            InsightsTab::Commits => "Commit activity",
-            InsightsTab::Traffic => "Traffic",
-            InsightsTab::Dependencies => "Dependency graph",
-        }
+words! {
+    /// Insights' tabs, as GitHub's sidebar lists them.
+    #[derive(Hash)]
+    pub enum InsightsTab {
+        pub fn name,
+        /// Its path under the repository.
+        pub fn path,
     }
-
-    /// Its path under the repository.
-    pub fn path(self) -> &'static str {
-        match self {
-            InsightsTab::Contributors => "graphs/contributors",
-            InsightsTab::Commits => "graphs/commit-activity",
-            InsightsTab::Traffic => "graphs/traffic",
-            InsightsTab::Dependencies => "network/dependencies",
-        }
-    }
+    Contributors "Contributors"     "graphs/contributors";
+    Commits      "Commit activity"  "graphs/commit-activity";
+    Traffic      "Traffic"          "graphs/traffic";
+    Dependencies "Dependency graph" "network/dependencies";
 }
 
 /// The columns a chart of weeks takes at most.
@@ -52,14 +29,10 @@ const HEIGHT: usize = 6;
 /// Insights' own menu, as GitHub's sidebar: each tab, the one shown
 /// strong.
 pub fn insights_nav(page: &mut Page, repo: &RepoId, on: InsightsTab) {
-    let mut segs = Vec::new();
-    for tab in InsightsTab::ALL {
-        if !segs.is_empty() {
-            segs.push(Seg::new(" · ", Role::Meta));
-        }
-        let role = if tab == on { Role::Strong } else { Role::Link };
-        segs.push(link_seg(page, tab.name(), url::insights(repo, tab), role));
-    }
+    let tabs = InsightsTab::ALL
+        .into_iter()
+        .map(|tab| (tab.name(), url::insights(repo, tab), tab == on));
+    let segs = nav_strip(page, &meta(" · "), &Role::Link, tabs);
     page.wrapped(segs, 0, Frame::None);
     page.blank();
 }
@@ -96,7 +69,7 @@ fn week_chart(
         n => format!("Each bar is {n} weeks"),
     };
     let text = format!("{each}. {note}.");
-    page.wrapped(vec![Seg::new(text, Role::Meta)], 0, Frame::Body);
+    page.wrapped(vec![meta(text)], 0, Frame::Body);
 }
 
 /// Room for a bar after `used` cells of a box's line.
@@ -113,7 +86,7 @@ pub fn contributors(page: &mut Page, repo: &RepoId, a: &Activity) {
         "Commits over time  {} since {since}",
         plural(a.total, "commit")
     );
-    page.box_top(vec![Seg::new(title, Role::Strong)], Vec::new());
+    page.box_top(vec![strong(title)], Vec::new());
     if a.total == 0 {
         empty_row(page, "No commits on the default branch.");
         page.box_bottom();
@@ -127,11 +100,7 @@ pub fn contributors(page: &mut Page, repo: &RepoId, a: &Activity) {
     };
     week_chart(page, &a.weeks, a.start, HEIGHT, when, counted_by(a));
     if let Some(cut) = &a.cut {
-        page.wrapped(
-            vec![Seg::new(format!("{cut}."), Role::Meta)],
-            0,
-            Frame::Body,
-        );
+        page.wrapped(vec![meta(format!("{cut}."))], 0, Frame::Body);
     }
     page.box_bottom();
     page.blank();
@@ -141,13 +110,13 @@ pub fn contributors(page: &mut Page, repo: &RepoId, a: &Activity) {
         0 => listed.to_string(),
         n => format!("{listed} of {}", listed + n),
     };
-    let title = vec![Seg::new(format!("Contributors  {count}"), Role::Strong)];
-    let right = vec![Seg::new("commits · each week, as above", Role::Meta)];
+    let title = vec![strong(format!("Contributors  {count}"))];
+    let right = vec![meta("commits · each week, as above")];
     page.box_top(title, right);
     let most = a.authors.iter().map(|x| x.commits).max().unwrap_or(0);
     let digits = compact(most).len();
     let names = (a.authors.iter())
-        .map(|x| crate::ui::text::width(&x.name))
+        .map(|x| width(&x.name))
         .max()
         .unwrap_or(0)
         .min(24);
@@ -163,29 +132,28 @@ pub fn contributors(page: &mut Page, repo: &RepoId, a: &Activity) {
             page.box_rule();
         }
         let (_, weeks) = buckets(&author.weeks, n);
-        let name = crate::ui::text::truncate(&author.name, names);
-        let pad = " ".repeat(names.saturating_sub(crate::ui::text::width(&name)));
-        let mut segs = vec![Seg::new(format!("{:>3}  ", i + 1), Role::Meta)];
+        let name = truncate(&author.name, names);
+        let pad = " ".repeat(names.saturating_sub(width(&name)));
+        let mut segs = vec![meta(format!("{:>3}  ", i + 1))];
         let commits = Seg::new(
             format!("  {:>digits$} ", compact(author.commits)),
             Role::Body,
         );
         let line = Seg::new(sparkline(&weeks), Role::Accent);
-        match &author.login {
-            Some(login) => {
-                let link = page.link(url::user(login));
-                let start = page.lines.len();
-                segs.push(Seg::linked(name, Role::Link, link));
-                segs.extend([Seg::new(pad, Role::Body), commits, line]);
-                body(page, segs);
-                page.item(start, link);
-            }
-            None => {
-                segs.extend([Seg::new(name, Role::Strong), Seg::new(pad, Role::Body)]);
+        maybe_item(
+            page,
+            author.login.as_deref().map(url::user),
+            |page, link| {
+                let role = if link.is_some() {
+                    Role::Link
+                } else {
+                    Role::Strong
+                };
+                segs.extend([Seg::linked(name, role, link), Seg::new(pad, Role::Body)]);
                 segs.extend([commits, line]);
                 body(page, segs);
-            }
-        }
+            },
+        );
     }
     if a.authors_left_out > 0 {
         page.box_rule();
@@ -200,7 +168,7 @@ pub fn contributors(page: &mut Page, repo: &RepoId, a: &Activity) {
             "Authors by their git names (as {}'s .mailmap joins them): linked where a GitHub no-reply address names the account.",
             repo.name
         );
-        page.wrapped(vec![Seg::new(note, Role::Meta)], 0, Frame::None);
+        say(page, note, Role::Meta);
     }
 }
 
@@ -209,13 +177,13 @@ pub fn commit_activity(page: &mut Page, a: &Activity) {
     let (start, weeks) = a.last_year();
     let total: u64 = weeks.iter().map(|&n| u64::from(n)).sum();
     let title = format!("Commits in the last {YEAR_WEEKS} weeks  {}", compact(total));
-    page.box_top(vec![Seg::new(title, Role::Strong)], Vec::new());
+    page.box_top(vec![strong(title)], Vec::new());
     week_chart(page, &weeks, start, HEIGHT + 2, date, counted_by(a));
     page.box_bottom();
     page.blank();
 
     let title = format!("By day of the week, in the last {YEAR_WEEKS} weeks");
-    page.box_top(vec![Seg::new(title, Role::Strong)], Vec::new());
+    page.box_top(vec![strong(title)], Vec::new());
     let max = a.weekdays.iter().copied().max().map_or(0, u64::from);
     let room = bar_room(page, 13);
     for (day, n) in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -234,8 +202,8 @@ pub fn commit_activity(page: &mut Page, a: &Activity) {
     page.box_bottom();
     // The weeks with commits, newest first, as numbers.
     page.blank();
-    let title = vec![Seg::new("Week by week", Role::Strong)];
-    page.box_top(title, vec![Seg::new("newest first", Role::Meta)]);
+    let title = vec![strong("Week by week")];
+    page.box_top(title, vec![meta("newest first")]);
     let max = weeks.iter().copied().max().map_or(0, u64::from);
     let room = bar_room(page, 22);
     let mut any = false;
@@ -258,16 +226,13 @@ pub fn commit_activity(page: &mut Page, a: &Activity) {
 }
 
 /// Views or clones, day by day.
-fn counted(page: &mut Page, what: &str, people: &str, c: &Counted) {
-    let title = vec![Seg::new(
-        format!(
-            "{what}  {} · {} unique {people}",
-            compact(c.count),
-            compact(c.uniques)
-        ),
-        Role::Strong,
-    )];
-    page.box_top(title, vec![Seg::new("the last 14 days", Role::Meta)]);
+fn traffic_box(page: &mut Page, what: &str, people: &str, c: &Counted) {
+    let title = vec![strong(format!(
+        "{what}  {} · {} unique {people}",
+        compact(c.count),
+        compact(c.uniques)
+    ))];
+    page.box_top(title, vec![meta("the last 14 days")]);
     if c.days.is_empty() {
         empty_row(page, "None.");
     }
@@ -296,16 +261,17 @@ fn counted(page: &mut Page, what: &str, people: &str, c: &Counted) {
 
 /// Referring sites or popular content.
 fn popular(page: &mut Page, title: &str, list: &[Popular], paths: bool) {
-    let title = vec![Seg::new(title, Role::Strong)];
-    page.box_top(title, vec![Seg::new("views · unique", Role::Meta)]);
+    let title = vec![strong(title)];
+    page.box_top(title, vec![meta("views · unique")]);
     if list.is_empty() {
         empty_row(page, "None in the last 14 days.");
     }
     for p in list {
-        let counts = vec![Seg::new(
-            format!("{} · {}", compact(p.count), compact(p.uniques)),
-            Role::Meta,
-        )];
+        let counts = vec![meta(format!(
+            "{} · {}",
+            compact(p.count),
+            compact(p.uniques)
+        ))];
         // GitHub's title for a path is often the path again.
         let named = (p.title.as_deref())
             .filter(|t| !p.name.ends_with(t.trim_start_matches('/')) && *t != p.name);
@@ -315,7 +281,7 @@ fn popular(page: &mut Page, title: &str, list: &[Popular], paths: bool) {
             item(page, target, |page, link| {
                 let mut segs = vec![Seg::linked(p.name.clone(), Role::Link, link)];
                 if let Some(t) = named {
-                    segs.push(Seg::new(format!("  {t}"), Role::Meta));
+                    segs.push(meta(format!("  {t}")));
                 }
                 page.box_line(segs, counts, 0);
             });
@@ -329,8 +295,8 @@ fn popular(page: &mut Page, title: &str, list: &[Popular], paths: bool) {
 
 /// Traffic: views, clones, referring sites and popular content.
 pub fn traffic(page: &mut Page, t: &Traffic) {
-    counted(page, "Views", "visitors", &t.views);
-    counted(page, "Git clones", "cloners", &t.clones);
+    traffic_box(page, "Views", "visitors", &t.views);
+    traffic_box(page, "Git clones", "cloners", &t.clones);
     popular(page, "Referring sites", &t.referrers, false);
     popular(page, "Popular content", &t.paths, true);
 }
@@ -340,10 +306,7 @@ pub fn traffic(page: &mut Page, t: &Traffic) {
 pub fn dependents_note(page: &mut Page, repo: &RepoId) {
     let target = format!("{}/network/dependents", url::repo(repo));
     let segs = vec![
-        Seg::new(
-            "Dependents (who depends on this repository) aren't in GitHub's API: ",
-            Role::Meta,
-        ),
+        meta("Dependents (who depends on this repository) aren't in GitHub's API: "),
         link_seg(page, "see them on github.com ↗", target, Role::Link),
     ];
     page.wrapped(segs, 0, Frame::None);
@@ -353,7 +316,7 @@ pub fn dependents_note(page: &mut Page, repo: &RepoId) {
 /// The dependency graph: each manifest and what it depends on.
 pub fn dependencies(page: &mut Page, d: &Dependencies) {
     if d.manifests.is_empty() {
-        let title = Seg::new("Dependencies", Role::Strong);
+        let title = strong("Dependencies");
         empty_box(
             page,
             title,
@@ -366,10 +329,7 @@ pub fn dependencies(page: &mut Page, d: &Dependencies) {
             0 => m.dependencies.len().to_string(),
             _ => format!("{} of {}", m.dependencies.len(), m.dependencies.total()),
         };
-        let title = vec![
-            Seg::new(m.path.clone(), Role::Strong),
-            Seg::new(format!("  {count}"), Role::Meta),
-        ];
+        let title = vec![strong(m.path.clone()), meta(format!("  {count}"))];
         page.box_top(title, Vec::new());
         if m.unparseable {
             empty_row(page, "GitHub couldn't read this manifest.");
@@ -379,37 +339,35 @@ pub fn dependencies(page: &mut Page, d: &Dependencies) {
             empty_row(page, "No dependencies.");
         }
         let names = (m.dependencies.iter())
-            .map(|d| crate::ui::text::width(&d.package))
+            .map(|d| width(&d.package))
             .max()
             .unwrap_or(0)
             .min(40);
         let wants = (m.dependencies.iter())
-            .map(|d| crate::ui::text::width(&d.requirements))
+            .map(|d| width(&d.requirements))
             .max()
             .unwrap_or(0)
             .min(30);
         for dep in &m.dependencies {
-            let name = crate::ui::text::truncate(&dep.package, names);
-            let pad = " ".repeat(names.saturating_sub(crate::ui::text::width(&name)) + 2);
-            let want = crate::ui::text::truncate(&dep.requirements, wants);
-            let gap = " ".repeat(wants.saturating_sub(crate::ui::text::width(&want)) + 2);
+            let name = truncate(&dep.package, names);
+            let pad = " ".repeat(names.saturating_sub(width(&name)) + 2);
+            let want = truncate(&dep.requirements, wants);
+            let gap = " ".repeat(wants.saturating_sub(width(&want)) + 2);
             let rest = vec![
                 Seg::new(pad, Role::Body),
                 Seg::new(want, Role::Body),
-                Seg::new(format!("{gap}{}", dep.manager.to_lowercase()), Role::Meta),
+                meta(format!("{gap}{}", dep.manager.to_lowercase())),
             ];
-            match &dep.repo {
-                Some(r) => item(page, url::repo(r), |page, link| {
-                    let mut segs = vec![Seg::linked(name, Role::Link, link)];
-                    segs.extend(rest);
-                    body(page, segs);
-                }),
-                None => {
-                    let mut segs = vec![Seg::new(name, Role::Strong)];
-                    segs.extend(rest);
-                    body(page, segs);
-                }
-            }
+            maybe_item(page, dep.repo.as_ref().map(url::repo), |page, link| {
+                let role = if link.is_some() {
+                    Role::Link
+                } else {
+                    Role::Strong
+                };
+                let mut segs = vec![Seg::linked(name, role, link)];
+                segs.extend(rest);
+                body(page, segs);
+            });
         }
         if m.dependencies.left_out() > 0 {
             page.box_rule();
@@ -422,6 +380,6 @@ pub fn dependencies(page: &mut Page, d: &Dependencies) {
     if d.manifests.left_out() > 0 {
         let n = d.manifests.left_out();
         let text = left_out_text(n, "more manifest", "more manifests");
-        page.wrapped(vec![Seg::new(text, Role::Meta)], 0, Frame::None);
+        say(page, text, Role::Meta);
     }
 }

@@ -6,19 +6,6 @@ use crate::ui::form::Row;
 use crate::ui::page::Link;
 use crate::workflows::{Dispatch, SaveArtifact};
 
-/// Selects the row on screen whose link is `link`.
-fn select_link(s: &mut State, link: &Link) {
-    let height = s.page_height();
-    let Screen::Page(p) = s.screen_mut() else {
-        panic!("not on a page")
-    };
-    let page = p.page();
-    let i = (0..page.items.len())
-        .find(|&i| page.target(page.items[i].link) == Some(link))
-        .unwrap_or_else(|| panic!("no {link:?} row"));
-    p.select(i, height);
-}
-
 const WORKFLOW: &str = "name: CI\non:\n  workflow_dispatch:\n    inputs:\n      outcome:\n        type: choice\n        options: [fail, pass]\n        default: fail\n      seconds:\n        type: string\n        default: \"60\"\n";
 
 /// `,E` on a workflow opens the form of its inputs, read from its file;
@@ -35,8 +22,8 @@ fn a_workflow_runs_by_hand_with_its_inputs_and_is_followed() {
     assert_eq!(route(&s), dispatch);
     let blob = crate::fixtures::file(".github/workflows/ci.yml", WORKFLOW);
     let key = DataKey::Blob(ghtui(), "HEAD".into(), ".github/workflows/ci.yml".into());
-    fetched(&mut s, key, Data::Blob(Box::new(blob)));
-    select_link(&mut s, &Link::Form(Row::Input("outcome".into())));
+    fetched(&mut s, key, Data::from(blob));
+    fixtures::select_link(&mut s, &Link::Form(Row::Input("outcome".into())));
     press(&mut s, "<Enter>");
     press(&mut s, "pass<Enter>");
     let cmds = act(&mut s, Action::RunWorkflow);
@@ -68,7 +55,7 @@ fn a_workflow_that_cant_run_by_hand_says_so() {
     act(&mut s, Action::RunWorkflow);
     let blob = crate::fixtures::file(".github/workflows/ci.yml", "on: push\n");
     let key = DataKey::Blob(ghtui(), "HEAD".into(), ".github/workflows/ci.yml".into());
-    fetched(&mut s, key, Data::Blob(Box::new(blob)));
+    fetched(&mut s, key, Data::from(blob));
     assert!(fetches(act(&mut s, Action::RunWorkflow)).is_empty());
     says(&s, "can't be run by hand");
 }
@@ -82,7 +69,7 @@ fn an_artifact_is_saved_where_you_say() {
         id: 31,
         name: "coverage-report".into(),
     };
-    select_link(&mut s, &artifact);
+    fixtures::select_link(&mut s, &artifact);
     press(&mut s, "<Enter>");
     let cmds = press(&mut s, "<Enter>");
     let saved = SaveArtifact {
@@ -94,7 +81,7 @@ fn an_artifact_is_saved_where_you_say() {
     };
     assert_eq!(crate::fixtures::sent::<SaveArtifact>(&cmds), saved);
     // Cargo.toml is there: the row asks to replace it.
-    select_link(&mut s, &artifact);
+    fixtures::select_link(&mut s, &artifact);
     press(&mut s, "<Enter>");
     press(&mut s, "Cargo.toml");
     let Some(Overlay::Picker(p)) = &s.overlay else {
@@ -118,11 +105,7 @@ fn check_annotations_show_on_their_lines_in_files_changed() {
     let mut on_file = crate::fixtures::check_annotation();
     on_file.path = Some("src/point.rs".into());
     checks.items.items[0].annotations = vec![on_file, on_run].into();
-    fetched(
-        &mut s,
-        DataKey::PrChecks(pr.clone()),
-        Data::Checks(Box::new(checks)),
-    );
+    fetched(&mut s, DataKey::PrChecks(pr.clone()), Data::from(checks));
     let anns = s.diffs[&crate::diff_screen::DiffOf::Pr(pr)]
         .doc
         .annotations();

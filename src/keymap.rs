@@ -6,27 +6,33 @@ use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-/// Where a binding applies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Context {
+words! {
+    /// Where a binding applies.
+    #[derive(Hash)]
+    pub enum Context {
+        /// Its name in config: `diff:x` binds `x` in the diff.
+        pub fn name,
+        /// Where it is, for "works … only".
+        fn place,
+    }
     /// Everywhere.
-    Global,
+    Global   "global"   "everywhere";
     /// Any page (not the diff).
-    Page,
+    Page     "page"     "on pages";
     /// A list with a GitHub filter: issues, pull requests, search results.
-    List,
+    List     "list"     "on lists";
     /// A file or its blame.
-    File,
+    File     "file"     "in files";
     /// A job's log.
-    Log,
-    /// A pull request's (or commit's) files: the diff and its file tree.
-    Diff,
-    /// The diff's file tree, when it has the focus.
-    Tree,
+    Log      "log"      "in job logs";
     /// A project: its board or table, or an item.
-    Project,
+    Project  "project"  "in projects";
     /// A repository's Settings tab.
-    Settings,
+    Settings "settings" "in a repository's settings";
+    /// A pull request's (or commit's) files: the diff and its file tree.
+    Diff     "diff"     "in Files changed";
+    /// The diff's file tree, when it has the focus.
+    Tree     "tree"     "in Files changed's file tree";
 }
 
 /// The stacks of contexts that can be active at once, innermost first.
@@ -45,48 +51,6 @@ const STACKS: &[&[Context]] = {
 };
 
 impl Context {
-    const ALL: [Context; 9] = [
-        Context::Global,
-        Context::Page,
-        Context::List,
-        Context::File,
-        Context::Log,
-        Context::Project,
-        Context::Settings,
-        Context::Diff,
-        Context::Tree,
-    ];
-
-    /// Its name in config: `diff:x` binds `x` in the diff.
-    pub fn name(self) -> &'static str {
-        match self {
-            Context::Global => "global",
-            Context::Page => "page",
-            Context::List => "list",
-            Context::File => "file",
-            Context::Log => "log",
-            Context::Diff => "diff",
-            Context::Tree => "tree",
-            Context::Project => "project",
-            Context::Settings => "settings",
-        }
-    }
-
-    /// Where it is, for "works … only".
-    fn place(self) -> &'static str {
-        match self {
-            Context::Global => "everywhere",
-            Context::Page => "on pages",
-            Context::List => "on lists",
-            Context::File => "in files",
-            Context::Log => "in job logs",
-            Context::Diff => "in Files changed",
-            Context::Tree => "in Files changed's file tree",
-            Context::Project => "in projects",
-            Context::Settings => "in a repository's settings",
-        }
-    }
-
     /// The contexts active when this is the innermost.
     pub fn stack(self) -> &'static [Context] {
         STACKS
@@ -450,18 +414,12 @@ pub fn parse_key(s: &str) -> Result<Key, String> {
     match (chars.next(), chars.next()) {
         (None, _) => Err("empty key".into()),
         (Some(c), None) => Ok(Key::new(KeyCode::Char(c), KeyModifiers::NONE)),
-        (Some('<'), Some(_)) => {
-            let name = s
-                .strip_prefix('<')
-                .and_then(|k| k.strip_suffix('>'))
-                .ok_or_else(|| {
-                    format!("`{s}` is more than one key: bind one key, like `x` or `<C-x>`")
-                })?;
-            parse_named(name).ok_or_else(|| format!("unknown key `{s}`"))
-        }
-        _ => Err(format!(
-            "`{s}` is more than one key: bind one key, like `x` or `<C-x>`"
-        )),
+        _ => match s.strip_prefix('<').and_then(|k| k.strip_suffix('>')) {
+            Some(name) => parse_named(name).ok_or_else(|| format!("unknown key `{s}`")),
+            None => Err(format!(
+                "`{s}` is more than one key: bind one key, like `x` or `<C-x>`"
+            )),
+        },
     }
 }
 
@@ -510,16 +468,14 @@ pub fn format_key(key: Key) -> String {
             .find(|(_, c)| *c == code)
             .map_or_else(|| format!("{code:?}"), |(n, _)| (*n).to_owned()),
     };
-    let mut prefix = String::new();
-    if key.mods.contains(KeyModifiers::CONTROL) {
-        prefix.push_str("C-");
-    }
-    if key.mods.contains(KeyModifiers::ALT) {
-        prefix.push_str("A-");
-    }
-    if key.mods.contains(KeyModifiers::SHIFT) {
-        prefix.push_str("S-");
-    }
+    let mods = [
+        (KeyModifiers::CONTROL, "C-"),
+        (KeyModifiers::ALT, "A-"),
+        (KeyModifiers::SHIFT, "S-"),
+    ];
+    let prefix: String = (mods.into_iter())
+        .filter_map(|(m, said)| key.mods.contains(m).then_some(said))
+        .collect();
     format!("<{prefix}{base}>")
 }
 

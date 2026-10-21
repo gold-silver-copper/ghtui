@@ -22,18 +22,6 @@ fn page() -> Route {
     })
 }
 
-fn select_link(s: &mut State, link: &Link) {
-    let height = s.page_height();
-    let Screen::Page(p) = s.screen_mut() else {
-        panic!("not on a page")
-    };
-    let page = p.page();
-    let i = (0..page.items.len())
-        .find(|&i| page.target(page.items[i].link) == Some(link))
-        .unwrap_or_else(|| panic!("no {link:?} row"));
-    p.select(i, height);
-}
-
 /// `,e` on a release opens it as the form, filled from it; saving asks
 /// whether to update it or make it a draft again, sends the whole of it
 /// to the release's ID, and its page follows until it shows the edit.
@@ -49,9 +37,7 @@ fn a_release_is_edited_and_its_page_follows() {
     assert!(page_text(&s).contains("Editing v0.2.0"));
     assert!(page_text(&s).contains("Scope names in hunk headers"));
     press(&mut s, "c");
-    let Some(Overlay::Compose(c)) = &mut s.overlay else {
-        panic!("no composer")
-    };
+    let c = crate::fixtures::composer(&mut s);
     c.input.move_cursor(CursorMove::Top);
     c.input.move_cursor(CursorMove::End);
     c.input.insert_str(", fixed");
@@ -88,15 +74,11 @@ fn a_release_is_edited_and_its_page_follows() {
     says(&s, "Updated v0.2.0");
     // GitHub still shows the old title: the page waits.
     let key = DataKey::Release(ghtui(), "v0.2.0".into());
-    fetched(
-        &mut s,
-        key.clone(),
-        Data::Release(Box::new(fixtures::release(true))),
-    );
+    fetched(&mut s, key.clone(), Data::from(fixtures::release(true)));
     assert!(s.following.is_some());
     let mut edited = fixtures::release(true);
     edited.name = "ghtui 0.2.0, fixed".into();
-    fetched(&mut s, key, Data::Release(Box::new(edited)));
+    fetched(&mut s, key, Data::from(edited));
     assert!(s.following.is_none(), "GitHub shows it");
 }
 
@@ -135,16 +117,12 @@ fn a_release_is_deleted_then_its_tag_asked_about() {
     fetched(
         &mut s,
         DataKey::Releases(ghtui()),
-        Data::Releases(Box::new(fixtures::releases())),
+        Data::from(fixtures::releases()),
     );
     assert!(s.following.is_some());
     let mut gone = fixtures::releases();
     gone.items.retain(|r| r.tag != "v0.2.0");
-    fetched(
-        &mut s,
-        DataKey::Releases(ghtui()),
-        Data::Releases(Box::new(gone)),
-    );
+    fetched(&mut s, DataKey::Releases(ghtui()), Data::from(gone));
     assert!(s.following.is_none());
 }
 
@@ -156,7 +134,7 @@ fn an_asset_is_saved_where_you_say() {
     let mut s = with_release();
     let name = "ghtui-x86_64-linux.tar.gz";
     let asset = Link::Asset(name.into());
-    select_link(&mut s, &asset);
+    fixtures::select_link(&mut s, &asset);
     press(&mut s, "<Enter>");
     let sent = fixtures::sent::<assets::Save>(&press(&mut s, "<Enter>"));
     let of = Of {
@@ -171,7 +149,7 @@ fn an_asset_is_saved_where_you_say() {
         replace: false,
     };
     assert_eq!(sent, save);
-    select_link(&mut s, &asset);
+    fixtures::select_link(&mut s, &asset);
     press(&mut s, "<Enter>");
     press(&mut s, "Cargo.toml");
     let Some(Overlay::Picker(p)) = &s.overlay else {
@@ -210,11 +188,11 @@ fn assets_are_uploaded_and_deleted() {
     toml.name = "Cargo.toml".into();
     with.assets.items.push(toml);
     let key = DataKey::Release(ghtui(), "v0.2.0".into());
-    fetched(&mut s, key.clone(), Data::Release(Box::new(with)));
+    fetched(&mut s, key.clone(), Data::from(with));
     assert!(s.following.is_none());
 
     let name = "ghtui-aarch64-macos.tar.gz";
-    select_link(&mut s, &Link::Asset(name.into()));
+    fixtures::select_link(&mut s, &Link::Asset(name.into()));
     press(&mut s, "D");
     assert_eq!(overlay!(s, Ask).title, format!("Delete {name}?"));
     let sent = fixtures::sent::<assets::Delete>(&press(&mut s, "<Enter>"));
@@ -229,6 +207,6 @@ fn assets_are_uploaded_and_deleted() {
     assert!(s.overlay.is_none());
     let mut without = fixtures::release(true);
     without.assets.items.retain(|a| a.name != name);
-    fetched(&mut s, key, Data::Release(Box::new(without)));
+    fetched(&mut s, key, Data::from(without));
     assert!(s.following.is_none());
 }

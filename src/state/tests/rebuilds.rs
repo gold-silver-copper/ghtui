@@ -32,7 +32,7 @@ fn only_what_a_page_shows_rebuilds_it() {
     update(&mut state, Msg::Timer(Timer::Minute));
     assert!(std::ptr::eq(built(&state), before));
 
-    let overview = Data::Repo(Box::new(fixtures::overview()));
+    let overview = Data::from(fixtures::overview());
     fetched(&mut state, DataKey::Repo(ghtui()), overview);
     assert!(!std::ptr::eq(built(&state), before));
     let before = built(&state);
@@ -101,11 +101,7 @@ fn recent_times_build_a_page_at_most_once_a_minute() {
         .into();
     let mut activity = fixtures::activity();
     activity.timeline = Capped::new(items, 4);
-    fetched(
-        &mut state,
-        DataKey::PrActivity(pr),
-        Data::PrActivity(Box::new(activity)),
-    );
+    fetched(&mut state, DataKey::PrActivity(pr), Data::from(activity));
     let mut builds = 0;
     for second in 1..=300 {
         CLOCK.store(NOW + second, Ordering::Relaxed);
@@ -137,7 +133,7 @@ fn a_file_says_where_git_read_it() {
         &mut state,
         Msg::Fetched {
             key,
-            result: Ok(Data::Blob(Box::new(fixtures::blob()))),
+            result: Ok(Data::from(fixtures::blob())),
             cached_at: None,
             source: Some(source),
         },
@@ -178,11 +174,7 @@ fn idle_hour_timing_on_a_long_conversation() {
         .collect();
     let mut activity = fixtures::activity();
     activity.timeline = Capped::new(items, 300);
-    fetched(
-        &mut state,
-        DataKey::PrActivity(pr),
-        Data::PrActivity(Box::new(activity)),
-    );
+    fetched(&mut state, DataKey::PrActivity(pr), Data::from(activity));
     let (mut builds, mut spent) = (0u32, std::time::Duration::ZERO);
     let mut step = |state: &mut State, msg: Msg| {
         let before = built(state);

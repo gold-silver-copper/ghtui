@@ -210,7 +210,7 @@ fn home_stays_fresh_only_on_screen() {
 fn going_back_home_fetches_cached_sections() {
     let mut state = state();
     let key = mine_key(&state);
-    let (value, fetched_at) = (Data::Search(Box::new(mine(1, 1))), 0);
+    let (value, fetched_at) = (Data::from(mine(1, 1)), 0);
     let cached = Remote::cached(Some(crate::store::Cached { value, fetched_at }));
     state.data.insert(key.clone(), cached);
     let _ = state.start_at(Target::Page(Route::Code(code::Repo(ghtui()))).into());

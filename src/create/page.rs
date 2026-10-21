@@ -51,11 +51,12 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
     let mut status = Vec::new();
     let mut commits = None;
     if pr && form.head.is_some() {
+        let head = form.head_state(state, repo);
         let pushing = matches!(
-            form.head_state(state, repo),
+            head,
             Some(Ok(HeadState { local: Some(b), .. })) if !b.pushed()
         );
-        match (&problem, form.head_state(state, repo)) {
+        match (&problem, head) {
             (Some(why), None) => {
                 status.push((why.clone(), Mark::Waiting, None));
             }
@@ -65,7 +66,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
             }
             (None, _) => {}
         }
-        if let Some(Ok(hs)) = form.head_state(state, repo) {
+        if let Some(Ok(hs)) = head {
             if let Some(b) = hs.local.as_ref().filter(|b| b.pushed()) {
                 let text = match b.behind {
                     Some(n) if n > 0 => format!(

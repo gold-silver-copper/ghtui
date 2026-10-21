@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::api::browse::{Results, wire};
 use crate::api::client::{ApiError, GitHub, encode_path};
 use crate::api::model::{NodeId, RepoId};
+use crate::api::raw::raw;
+use crate::ui::pages::url;
 
 // ---- labels ---------------------------------------------------------------------------
 
@@ -31,31 +33,22 @@ pub struct LabelChange {
     pub description: String,
 }
 
-/// A repository's labels by name, 100 at a time from `after`, with how
-/// many open issues and pull requests each has.
-pub(crate) const LABELS: &str = "query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) { labels(first: 100, after: $after, orderBy: {field: NAME, direction: ASC}) { totalCount pageInfo { hasNextPage endCursor } nodes { name color description issues(states: OPEN) { totalCount } pullRequests(states: OPEN) { totalCount } } } } }";
+raw! {
+    /// A repository's labels by name, 100 at a time from `after`, with how
+    /// many open issues and pull requests each has.
+    LABELS = "query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) { labels(first: 100, after: $after, orderBy: {field: NAME, direction: ASC}) { totalCount pageInfo { hasNextPage endCursor } nodes { name color description issues(states: OPEN) { totalCount } pullRequests(states: OPEN) { totalCount } } } } }";
 
-/// Who you may make a repository for: you, and the organizations that
-/// let you.
-pub(crate) const OWNERS: &str = "query { viewer { login organizations(first: 100) { totalCount nodes { login viewerCanCreateRepositories } } } }";
+    /// Who you may make a repository for: you, and the organizations that
+    /// let you.
+    OWNERS = "query { viewer { login organizations(first: 100) { totalCount nodes { login viewerCanCreateRepositories } } } }";
 
-/// What a file's form starts from: the repository, the branch's tip (or
-/// the commit a tag or SHA names), and the file there.
-pub(crate) const FILE_LOOK: &str = "query($owner: String!, $name: String!, $qualified: String!, $rev: String!, $spec: String!) { repository(owner: $owner, name: $name) { id ref(qualifiedName: $qualified) { target { oid } } commit: object(expression: $rev) { ... on Commit { oid } ... on Tag { target { oid } } } file: object(expression: $spec) { ... on Blob { oid text isBinary isTruncated } } } }";
+    /// What a file's form starts from: the repository, the branch's tip (or
+    /// the commit a tag or SHA names), and the file there.
+    FILE_LOOK = "query($owner: String!, $name: String!, $qualified: String!, $rev: String!, $spec: String!) { repository(owner: $owner, name: $name) { id ref(qualifiedName: $qualified) { target { oid } } commit: object(expression: $rev) { ... on Commit { oid } ... on Tag { target { oid } } } file: object(expression: $spec) { ... on Blob { oid text isBinary isTruncated } } } }";
 
-/// One commit on a branch, made only if the branch is still at
-/// `expectedHeadOid`.
-pub(crate) const COMMIT_ON_BRANCH: &str = "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }";
-
-/// This module's GraphQL, for the schema checks.
-#[cfg(test)]
-pub(crate) fn queries() -> Vec<(&'static str, String)> {
-    vec![
-        ("LABELS", LABELS.to_owned()),
-        ("OWNERS", OWNERS.to_owned()),
-        ("FILE_LOOK", FILE_LOOK.to_owned()),
-        ("COMMIT_ON_BRANCH", COMMIT_ON_BRANCH.to_owned()),
-    ]
+    /// One commit on a branch, made only if the branch is still at
+    /// `expectedHeadOid`.
+    COMMIT_ON_BRANCH = "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }";
 }
 
 // ---- milestones --------------------------------------------------------------------
@@ -77,29 +70,19 @@ pub struct MadeMilestone {
 
 // ---- branches and tags ---------------------------------------------------------------
 
-/// Whether a branch is a tag's or a branch's, for its ref's name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum RefKind {
-    Branch,
-    Tag,
+words! {
+    /// Whether a branch is a tag's or a branch's, for its ref's name.
+    #[derive(Hash)]
+    pub enum RefKind {
+        /// Its refs' prefix below `refs/`.
+        pub fn prefix,
+        pub fn noun,
+    }
+    Branch "heads" "branch";
+    Tag    "tags"  "tag";
 }
 
 impl RefKind {
-    /// Its refs' prefix below `refs/`.
-    pub fn prefix(self) -> &'static str {
-        match self {
-            RefKind::Branch => "heads",
-            RefKind::Tag => "tags",
-        }
-    }
-
-    pub fn noun(self) -> &'static str {
-        match self {
-            RefKind::Branch => "branch",
-            RefKind::Tag => "tag",
-        }
-    }
-
     /// `refs/heads/name`.
     pub fn full(self, name: &str) -> String {
         format!("refs/{}/{name}", self.prefix())
@@ -225,15 +208,6 @@ pub fn workflow_scoped(err: ApiError) -> ApiError {
     }
 }
 
-/// A ref's path below `/git/refs/` or a label's name, each segment
-/// escaped.
-fn segments(path: &str) -> String {
-    path.split('/')
-        .map(encode_path)
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
 impl GitHub {
     /// A repository's labels by name, 100 at a time from `after`.
     pub async fn labels(
@@ -343,7 +317,7 @@ impl GitHub {
         struct Wire {
             sha: String,
         }
-        let path = format!("/repos/{repo}/commits/{}", segments(rev));
+        let path = format!("/repos/{repo}/commits/{}", url::encode_path(rev));
         let answer = self.rest_get(&path, format!("{rev} in {repo}")).await?;
         Ok(serde_json::from_str::<Wire>(&answer)?.sha)
     }
@@ -371,7 +345,7 @@ impl GitHub {
         let path = format!(
             "/repos/{repo}/git/refs/{}/{}",
             kind.prefix(),
-            segments(name)
+            url::encode_path(name)
         );
         self.rest_write(http::Method::DELETE, &path, None).await
     }
@@ -388,10 +362,10 @@ impl GitHub {
             #[serde(rename = "type")]
             kind: String,
         }
-        let path = format!("/repos/{repo}/branches/{}", segments(name));
+        let path = format!("/repos/{repo}/branches/{}", url::encode_path(name));
         let branch: Branch = serde_json::from_str(&self.rest_get(&path, name).await?)?;
         // Rulesets: GitHub lists the rules that apply to the branch.
-        let path = format!("/repos/{repo}/rules/branches/{}", segments(name));
+        let path = format!("/repos/{repo}/rules/branches/{}", url::encode_path(name));
         let rules: Vec<Rule> = match self.rest_get(&path, name).await {
             Ok(body) => serde_json::from_str(&body)?,
             // An older Enterprise Server has no rulesets.

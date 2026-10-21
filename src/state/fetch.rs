@@ -249,12 +249,17 @@ impl State {
             return Some(waiting.to_owned());
         }
         match self.screen() {
-            Screen::Page(p) if self.fetches(&p.route).any(|r| r.more.is_some()) => {
-                Some("Loading more".into())
-            }
-            Screen::Page(p) if self.page_loading(&p.route) => {
+            Screen::Page(p) => {
+                // The page's needs, worked out once.
+                let fetches: Vec<_> = self.fetches(&p.route).collect();
+                if fetches.iter().any(|r| r.more.is_some()) {
+                    return Some("Loading more".into());
+                }
+                if !fetches.iter().any(|r| r.loading) {
+                    return None;
+                }
                 // Cached data on screen says how old it is.
-                Some(match self.page_cached_at(&p.route) {
+                Some(match fetches.iter().filter_map(|r| r.cached_at).min() {
                     Some(at) => {
                         let ago = crate::ui::time::ago(at, (self.clock)());
                         format!("Refreshing · cached {ago}")
@@ -262,7 +267,6 @@ impl State {
                     None => "Loading".to_owned(),
                 })
             }
-            Screen::Page(_) => None,
             Screen::Diff(screen) => match self.diffs.get(&screen.of) {
                 Some(diff) => diff.status(),
                 None => Some(format!("Loading {}", screen.of)),

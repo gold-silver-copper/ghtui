@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::route::{code, people, runs, search, security};
+use std::borrow::Cow;
 
 pub struct SearchBox {
     pub input: TextArea<'static>,
@@ -151,64 +152,28 @@ impl State {
                 out.push(suggestion("⌕", q, "filter this list", "↵", pick));
             }
             out.push(heading("Quick filters"));
-            // Alerts filter by their own words, and aren't searched.
-            if let Some(Route::Security(security::Alerts { repo, kind, .. })) = self.route() {
-                let branch = (self.overview(repo).and_then(|o| o.default_branch.as_ref()))
-                    .filter(|_| *kind == crate::api::security::AlertKind::CodeScanning);
-                if let Some(b) = branch {
-                    let f = format!("branch:{b}");
-                    let pick = Pick::Filter(f.clone());
-                    out.push(suggestion("⚑", f, &format!("on {b}"), "", pick));
+            // Alerts and runs filter by their own words (code scanning and
+            // runs on the default branch too), and aren't searched; nor
+            // are notifications.
+            let (on, filters, searched) = match self.route() {
+                Some(Route::Security(security::Alerts { repo, kind, .. })) => {
+                    let scans = *kind == crate::api::security::AlertKind::CodeScanning;
+                    (scans.then_some(repo), kind.filters(), false)
                 }
-                for (f, what) in kind.filters() {
-                    out.push(suggestion("⚑", *f, what, "", Pick::Filter((*f).to_owned())));
-                }
-                return out;
+                Some(Route::Runs(runs::Actions { repo, .. })) => (Some(repo), RUN_FILTERS, false),
+                Some(Route::Search(search::Notifications { .. })) => (None, INBOX_FILTERS, false),
+                _ => (None, ISSUE_FILTERS, true),
+            };
+            let overview = on.and_then(|repo| self.overview(repo));
+            if let Some(b) = overview.and_then(|o| o.default_branch.as_ref()) {
+                let f = format!("branch:{b}");
+                let pick = Pick::Filter(f.clone());
+                out.push(suggestion("⚑", f, &format!("on {b}"), "", pick));
             }
-            // Runs filter by GitHub's Actions words, and aren't searched.
-            if let Some(Route::Runs(runs::Actions { repo, .. })) = self.route() {
-                if let Some(b) = self.overview(repo).and_then(|o| o.default_branch.as_ref()) {
-                    let f = format!("branch:{b}");
-                    let pick = Pick::Filter(f.clone());
-                    out.push(suggestion("⚑", f, &format!("on {b}"), "", pick));
-                }
-                for (f, what) in [
-                    ("is:failure", "failed"),
-                    ("is:in_progress", "running"),
-                    ("is:queued", "queued"),
-                    ("is:success", "succeeded"),
-                    ("event:pull_request", "for pull requests"),
-                    ("event:push", "for pushes"),
-                ] {
-                    out.push(suggestion("⚑", f, what, "", Pick::Filter(f.to_owned())));
-                }
-                return out;
+            for (f, what) in filters {
+                out.push(suggestion("⚑", *f, what, "", Pick::Filter((*f).to_owned())));
             }
-            if let Some(Route::Search(search::Notifications { .. })) = self.route() {
-                for (f, what) in [
-                    ("is:unread", "unread"),
-                    ("reason:review-requested", "review requested"),
-                    ("reason:mention", "mentioning you"),
-                    ("reason:assign", "assigned to you"),
-                    ("reason:participating", "participating"),
-                    ("reason:team-mention", "mentioning your team"),
-                    ("reason:ci-activity", "CI activity"),
-                ] {
-                    out.push(suggestion("⚑", f, what, "", Pick::Filter(f.to_owned())));
-                }
-                return out;
-            }
-            for (f, what) in [
-                ("is:open", "open"),
-                ("is:closed", "closed"),
-                ("is:open author:@me", "yours"),
-                ("is:open assignee:@me", "assigned to you"),
-                ("is:open mentions:@me", "mentioning you"),
-                ("is:open no:assignee", "unassigned"),
-            ] {
-                out.push(suggestion("⚑", f, what, "", Pick::Filter(f.to_owned())));
-            }
-            if !q.is_empty() {
+            if searched && !q.is_empty() {
                 out.push(heading("Search all of GitHub"));
                 let pick = Pick::Search(SearchKind::Issues, q.to_owned());
                 out.push(suggestion("⌕", q, "issues and pull requests", "", pick));
@@ -221,24 +186,29 @@ impl State {
         // Jump to: pages you've visited, your repositories, live matches.
         let current = self.route().map(Route::url);
         let now = (self.clock)();
-        let mut visits: Vec<&Visit> = self
-            .visits
-            .iter()
+        // Only the visits that match are sorted, and only the rows shown
+        // are copied.
+        let mut visits: Vec<(usize, &Visit)> = (self.visits.iter())
             .filter(|v| Some(&v.url) != current.as_ref())
+            .filter_map(|v| Some((fuzzy_score(q, &v.title)?, v)))
             .collect();
-        visits.sort_by_key(|v| std::cmp::Reverse(v.score(now)));
-        let mut jumps: Vec<(usize, String, String, &str, &str)> = visits
-            .into_iter()
-            .filter_map(|v| {
-                let score = fuzzy_score(q, &v.title)?;
-                Some((score, v.title.clone(), v.url.clone(), "◷", "visited"))
+        visits.sort_by_key(|(_, v)| std::cmp::Reverse(v.score(now)));
+        let mut jumps: Vec<Jump> = (visits.into_iter())
+            .map(|(score, v)| {
+                (
+                    score,
+                    v.title.as_str().into(),
+                    v.url.as_str().into(),
+                    "◷",
+                    "visited",
+                )
             })
             .collect();
         for r in self.home_repos() {
             let name = r.repo.to_string();
             if let Some(score) = fuzzy_score(q, &name) {
                 let url = pages::url::repo(&r.repo);
-                jumps.push((score + 1, name, url, "▤", "on your Home"));
+                jumps.push((score + 1, name.into(), url.into(), "▤", "on your Home"));
             }
         }
         // Most recent first, as they came, until something is typed.
@@ -251,10 +221,13 @@ impl State {
         // it; one that only has its letters scattered, after.
         let (near, far): (Vec<_>, Vec<_>) =
             (jumps.into_iter()).partition(|(score, ..)| q.is_empty() || *score < 1000);
-        let mut jump = |out: &mut Vec<_>, jumps: Vec<(usize, String, String, &str, &str)>| {
+        let mut jump = |out: &mut Vec<_>, jumps: Vec<Jump>| {
             let mut headed = false;
             for (_, title, url, icon, detail) in jumps {
-                if seen.contains(&url) || seen.len() >= most {
+                if seen.len() >= most {
+                    break;
+                }
+                if seen.iter().any(|s| *s == url) {
                     continue;
                 }
                 if !headed {
@@ -263,7 +236,7 @@ impl State {
                 }
                 let pick = Pick::Go(Dest::from_url(&url));
                 out.push(suggestion(icon, title, detail, "", pick));
-                seen.push(url);
+                seen.push(url.into_owned());
             }
         };
         jump(&mut out, near);
@@ -317,6 +290,47 @@ pub(super) fn link_in(q: &str, context: Option<&RepoId>) -> Option<Dest> {
         || (last.contains('/') && last.contains('#'));
     link.then(|| route::parse_input(last, context)).flatten()
 }
+
+/// A page to jump to: how well it matches, its title and link, its icon
+/// and why it's offered.
+type Jump<'a> = (
+    usize,
+    Cow<'a, str>,
+    Cow<'a, str>,
+    &'static str,
+    &'static str,
+);
+
+/// GitHub Actions' words for a repository's runs.
+const RUN_FILTERS: &[(&str, &str)] = &[
+    ("is:failure", "failed"),
+    ("is:in_progress", "running"),
+    ("is:queued", "queued"),
+    ("is:success", "succeeded"),
+    ("event:pull_request", "for pull requests"),
+    ("event:push", "for pushes"),
+];
+
+/// Why notifications came.
+const INBOX_FILTERS: &[(&str, &str)] = &[
+    ("is:unread", "unread"),
+    ("reason:review-requested", "review requested"),
+    ("reason:mention", "mentioning you"),
+    ("reason:assign", "assigned to you"),
+    ("reason:participating", "participating"),
+    ("reason:team-mention", "mentioning your team"),
+    ("reason:ci-activity", "CI activity"),
+];
+
+/// Issues' and pull requests' common searches.
+const ISSUE_FILTERS: &[(&str, &str)] = &[
+    ("is:open", "open"),
+    ("is:closed", "closed"),
+    ("is:open author:@me", "yours"),
+    ("is:open assignee:@me", "assigned to you"),
+    ("is:open mentions:@me", "mentioning you"),
+    ("is:open no:assignee", "unassigned"),
+];
 
 /// A suggestion to choose.
 pub(super) fn suggestion(

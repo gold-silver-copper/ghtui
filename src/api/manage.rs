@@ -66,62 +66,23 @@ impl std::fmt::Display for IssueAt {
     }
 }
 
-/// Why a comment is hidden, as GitHub's "Hide" menu offers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum HideReason {
-    Spam,
-    Abuse,
-    OffTopic,
-    Outdated,
-    Duplicate,
-    Resolved,
-}
-
-impl HideReason {
-    pub const ALL: [HideReason; 6] = [
-        HideReason::Spam,
-        HideReason::Abuse,
-        HideReason::OffTopic,
-        HideReason::Outdated,
-        HideReason::Duplicate,
-        HideReason::Resolved,
-    ];
-
-    fn wire(self) -> &'static str {
-        match self {
-            HideReason::Spam => "SPAM",
-            HideReason::Abuse => "ABUSE",
-            HideReason::OffTopic => "OFF_TOPIC",
-            HideReason::Outdated => "OUTDATED",
-            HideReason::Duplicate => "DUPLICATE",
-            HideReason::Resolved => "RESOLVED",
-        }
+words! {
+    /// Why a comment is hidden, as GitHub's "Hide" menu offers.
+    #[derive(serde::Serialize, serde::Deserialize)]
+    pub enum HideReason {
+        fn wire,
+        /// As GitHub's menu says it.
+        pub fn label,
+        /// GitHub's `minimizedReason` for it ("off-topic"), which differs
+        /// from what's sent.
+        pub fn said,
     }
-
-    /// As GitHub's menu says it.
-    pub fn label(self) -> &'static str {
-        match self {
-            HideReason::Spam => "Spam",
-            HideReason::Abuse => "Abuse",
-            HideReason::OffTopic => "Off Topic",
-            HideReason::Outdated => "Outdated",
-            HideReason::Duplicate => "Duplicate",
-            HideReason::Resolved => "Resolved",
-        }
-    }
-
-    /// GitHub's `minimizedReason` for it ("off-topic"), which differs from
-    /// what's sent.
-    pub fn said(self) -> &'static str {
-        match self {
-            HideReason::Spam => "spam",
-            HideReason::Abuse => "abuse",
-            HideReason::OffTopic => "off-topic",
-            HideReason::Outdated => "outdated",
-            HideReason::Duplicate => "duplicate",
-            HideReason::Resolved => "resolved",
-        }
-    }
+    Spam      "SPAM"      "Spam"      "spam";
+    Abuse     "ABUSE"     "Abuse"     "abuse";
+    OffTopic  "OFF_TOPIC" "Off Topic" "off-topic";
+    Outdated  "OUTDATED"  "Outdated"  "outdated";
+    Duplicate "DUPLICATE" "Duplicate" "duplicate";
+    Resolved  "RESOLVED"  "Resolved"  "resolved";
 }
 
 /// A locked conversation, and GitHub's reason.
@@ -139,52 +100,18 @@ pub struct Hiding {
     pub can_unhide: bool,
 }
 
-/// "off-topic", "too heated".
-pub fn lock_said(reason: LockReason) -> &'static str {
-    match reason {
-        LockReason::OffTopic => "off-topic",
-        LockReason::Resolved => "resolved",
-        LockReason::Spam => "spam",
-        LockReason::TooHeated => "too heated",
+words! {
+    /// Why a discussion is closed.
+    #[derive(Serialize, Deserialize)]
+    pub enum DiscussionReason {
+        /// A closed discussion's `stateReason`.
+        fn wire -> pub fn from_wire,
+        /// "resolved".
+        pub fn said,
     }
-}
-
-/// Why a discussion is closed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DiscussionReason {
-    Resolved,
-    Outdated,
-    Duplicate,
-}
-
-impl DiscussionReason {
-    pub const ALL: [DiscussionReason; 3] = [
-        DiscussionReason::Resolved,
-        DiscussionReason::Outdated,
-        DiscussionReason::Duplicate,
-    ];
-
-    fn wire(self) -> &'static str {
-        match self {
-            DiscussionReason::Resolved => "RESOLVED",
-            DiscussionReason::Outdated => "OUTDATED",
-            DiscussionReason::Duplicate => "DUPLICATE",
-        }
-    }
-
-    /// "resolved".
-    pub fn said(self) -> &'static str {
-        match self {
-            DiscussionReason::Resolved => "resolved",
-            DiscussionReason::Outdated => "outdated",
-            DiscussionReason::Duplicate => "duplicate",
-        }
-    }
-
-    /// A closed discussion's `stateReason`.
-    pub fn from_wire(reason: Option<&str>) -> Option<Self> {
-        Self::ALL.into_iter().find(|r| Some(r.wire()) == reason)
-    }
+    Resolved  "RESOLVED"  "resolved";
+    Outdated  "OUTDATED"  "outdated";
+    Duplicate "DUPLICATE" "duplicate";
 }
 
 /// A change to an issue, a pull request or a discussion.
@@ -344,7 +271,7 @@ impl GitHub {
             }
             Manage::Lock { subject, reason } => (
                 raw::LOCK,
-                json!({ "id": subject.as_str(), "reason": reason.map(lock_wire) }),
+                json!({ "id": subject.as_str(), "reason": reason.map(LockReason::wire) }),
             ),
             Manage::Unlock { subject } => (raw::UNLOCK, json!({ "id": subject.as_str() })),
             Manage::Pin { issue, on } => (
@@ -440,7 +367,7 @@ impl GitHub {
     /// and a pull request of it, whose number this answers.
     pub async fn revert(&self, pr: &NodeId) -> Result<u64, ApiError> {
         let made: Value = self
-            .mutate_json_for(raw::REVERT_PR, json!({ "id": pr.as_str() }))
+            .graphql_data(raw::REVERT_PR, json!({ "id": pr.as_str() }), false)
             .await?;
         made.pointer("/revertPullRequest/revertPullRequest/number")
             .and_then(Value::as_u64)
@@ -450,7 +377,7 @@ impl GitHub {
     /// Moves an issue to another repository: where it is now.
     pub async fn transfer(&self, issue: &NodeId, to: &NodeId) -> Result<IssueAt, ApiError> {
         let vars = json!({ "id": issue.as_str(), "repo": to.as_str() });
-        let made: Value = self.mutate_json_for(raw::TRANSFER_ISSUE, vars).await?;
+        let made: Value = self.graphql_data(raw::TRANSFER_ISSUE, vars, false).await?;
         let issue = made.pointer("/transferIssue/issue");
         let repo = (issue.and_then(|i| i.pointer("/repository/nameWithOwner")))
             .and_then(Value::as_str)
@@ -473,7 +400,9 @@ impl GitHub {
         body: &str,
     ) -> Result<u64, ApiError> {
         let vars = json!({ "repo": repo.as_str(), "category": category.as_str(), "title": title, "body": body });
-        let made: Value = self.mutate_json_for(raw::START_DISCUSSION, vars).await?;
+        let made: Value = self
+            .graphql_data(raw::START_DISCUSSION, vars, false)
+            .await?;
         made.pointer("/createDiscussion/discussion/number")
             .and_then(Value::as_u64)
             .ok_or_else(|| ApiError::Internal("GitHub didn't say which discussion".into()))
@@ -547,7 +476,7 @@ impl GitHub {
         struct Wire {
             id: NodeId,
             discussion_categories: crate::api::browse::wire::Counted<WireCategory>,
-            templates: Option<Tree>,
+            templates: Option<crate::api::create::TextFiles>,
         }
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
@@ -558,19 +487,6 @@ impl GitHub {
             description: Option<String>,
             is_answerable: bool,
         }
-        #[derive(Deserialize)]
-        struct Tree {
-            entries: Option<Vec<Entry>>,
-        }
-        #[derive(Deserialize)]
-        struct Entry {
-            name: String,
-            object: Option<Blob>,
-        }
-        #[derive(Deserialize)]
-        struct Blob {
-            text: Option<String>,
-        }
         let found: Wire = (self.graphql_json(
             raw::DISCUSSION_FORMS,
             json!({ "owner": repo.owner, "name": repo.name }),
@@ -578,12 +494,7 @@ impl GitHub {
             "/repository",
         ))
         .await?;
-        let files: Vec<(String, String)> = (found.templates)
-            .and_then(|t| t.entries)
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|e| Some((e.name, e.object?.text?)))
-            .collect();
+        let files = crate::api::create::TextFiles::files(found.templates);
         let form = |slug: &str| {
             (files.iter())
                 .find(|(name, _)| {
@@ -607,15 +518,6 @@ impl GitHub {
             repo: found.id,
             categories,
         })
-    }
-}
-
-fn lock_wire(reason: LockReason) -> &'static str {
-    match reason {
-        LockReason::OffTopic => "OFF_TOPIC",
-        LockReason::Resolved => "RESOLVED",
-        LockReason::Spam => "SPAM",
-        LockReason::TooHeated => "TOO_HEATED",
     }
 }
 

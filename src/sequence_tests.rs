@@ -70,11 +70,7 @@ fn page(route: &Route, start: u64, len: u8, total: u64, next: bool) -> Data {
                     )
                 })
                 .collect();
-            Data::Search(Box::new(SearchResults::Issues(Results {
-                total,
-                items,
-                next,
-            })))
+            Data::from(SearchResults::Issues(Results { total, items, next }))
         }
         Route::Code(code::Branches(_)) => {
             let base = fixtures::branches().items.into_iter().next();
@@ -86,12 +82,12 @@ fn page(route: &Route, start: u64, len: u8, total: u64, next: bool) -> Data {
                     })
                 })
                 .collect();
-            Data::Branches(Box::new(Results { total, items, next }))
+            Data::from(Results { total, items, next })
         }
         _ => {
             let mut overview = fixtures::overview();
             overview.commits = total;
-            Data::Repo(Box::new(overview))
+            Data::from(overview)
         }
     }
 }
@@ -260,15 +256,7 @@ fn apply(state: &mut State, model: &mut Model, event: &Event) {
                 model.ends.insert(key.clone(), start + u64::from(*len));
             }
             let cached_at = cached.then_some(1);
-            update(
-                state,
-                Msg::Fetched {
-                    key,
-                    result: Ok(data),
-                    cached_at,
-                    source: None,
-                },
-            );
+            update(state, Msg::fetched_at(key, Ok(data), cached_at));
         }
         Event::More {
             route,
@@ -292,12 +280,7 @@ fn apply(state: &mut State, model: &mut Model, event: &Event) {
             let key = key_of(&routes[*route]);
             update(
                 state,
-                Msg::Fetched {
-                    key,
-                    result: Err(ApiError::Network("down".into())),
-                    cached_at: None,
-                    source: None,
-                },
+                Msg::fetched(key, Err(ApiError::Network("down".into()))),
             );
         }
     }
@@ -414,12 +397,7 @@ fn joined_diff_work_is_the_same_in_every_arrival_order() {
                     let threads = vec![fixtures::thread("old", None, false, true)];
                     Msg::Diff(of.clone(), DiffMsg::ThreadsLoaded(Ok(threads)))
                 }
-                _ => Msg::Fetched {
-                    key: DataKey::Pr(pr.clone()),
-                    result: Ok(Data::Pr(Box::new(detail.clone()))),
-                    cached_at: None,
-                    source: None,
-                },
+                _ => Msg::fetched(DataKey::Pr(pr.clone()), Ok(Data::from(detail.clone()))),
             };
             cmds.extend(update(&mut state, msg));
         }

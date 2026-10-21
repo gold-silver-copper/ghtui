@@ -7,10 +7,11 @@
 //! wait for the batch that covers their file, so a partial clone never falls
 //! back to fetching blobs one at a time.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::diff::FileDiff;
 use crate::git::blobs::BlobReader;
@@ -18,12 +19,13 @@ use crate::git::credentials::Credentials;
 use crate::git::files::{ChangedFile, ZERO_OID, is_lockfile};
 use crate::git::repo::{PrRefs, Repo};
 use crate::git::{GitError, Oid};
+use crate::lock;
 use futures::{StreamExt, TryStreamExt};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
 use crate::diff_screen::DiffOf;
-use crate::state::{DiffMsg, Msg};
+use crate::state::{DiffMsg, Msg, OutdatedThread};
 use crate::work::Failure;
 
 /// Where and how git runs.
@@ -88,20 +90,15 @@ pub type RepoGit = (Arc<Repo>, Arc<BlobReader>);
 /// later work on the same repository such as mapping outdated comments).
 #[derive(Default)]
 pub struct JobControl {
+    /// The files still to diff.
     queue: Mutex<VecDeque<usize>>,
     git: OnceLock<RepoGit>,
 }
 
 impl JobControl {
-    /// The files still to diff. Every change to it is one call that can't
-    /// leave it half done, so a panic elsewhere doesn't poison it.
-    fn queue(&self) -> MutexGuard<'_, VecDeque<usize>> {
-        self.queue.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
     /// Moves `files` to the front of the queue, in order.
     pub fn prioritize(&self, files: &[usize]) {
-        let mut queue = self.queue();
+        let mut queue = lock(&self.queue);
         for file in files.iter().rev() {
             if let Some(pos) = queue.iter().position(|f| f == file) {
                 queue.remove(pos);
@@ -111,11 +108,11 @@ impl JobControl {
     }
 
     fn pop(&self) -> Option<usize> {
-        self.queue().pop_front()
+        lock(&self.queue).pop_front()
     }
 
     fn fill(&self, files: impl IntoIterator<Item = usize>) {
-        let mut queue = self.queue();
+        let mut queue = lock(&self.queue);
         queue.clear();
         queue.extend(files);
     }
@@ -126,7 +123,7 @@ impl JobControl {
     }
 
     fn front(&self) -> Option<usize> {
-        self.queue().front().copied()
+        lock(&self.queue).front().copied()
     }
 }
 
@@ -262,7 +259,7 @@ async fn run_inner(
                     .iter()
                     .enumerate()
                     .filter(|(i, _)| pick(*i))
-                    .flat_map(|(_, f)| f.blob_oids().map(str::to_owned).collect::<Vec<_>>())
+                    .flat_map(|(_, f)| f.blob_oids().map(str::to_owned))
                     .collect()
             };
             for (stage, batch) in [(1u8, oids(&|i| first.contains(&i))), (2, oids(&|_| true))] {
@@ -374,7 +371,7 @@ pub async fn since_review_hashes(
     let files = repo.changed_files(&merge_base, old_head).await?;
     let oids: Vec<String> = files
         .iter()
-        .flat_map(|f| f.blob_oids().map(str::to_owned).collect::<Vec<_>>())
+        .flat_map(|f| f.blob_oids().map(str::to_owned))
         .collect();
     if let Err(err) = repo.prefetch(&oids).await {
         tracing::warn!(%err, "prefetch for the earlier diff failed");
@@ -401,58 +398,66 @@ pub async fn since_review_hashes(
     Ok(hashes)
 }
 
-/// Where an outdated thread's line is now: reads the file at the thread's
+/// Where outdated threads' lines are now: reads each file at a thread's
 /// original commit and at `head`, and maps the line if it survived
-/// unchanged. Fetches the original commit by SHA if it isn't local.
+/// unchanged. Fetches an original commit by SHA if it isn't local. Threads
+/// on the same file and commit share the reads and the diff.
 pub async fn map_outdated(
+    repo: &Repo,
+    reader: &BlobReader,
+    head: &str,
+    threads: &[OutdatedThread],
+) -> Vec<(crate::api::model::NodeId, Option<u32>)> {
+    let mut maps = HashMap::new();
+    let mut mapped = Vec::with_capacity(threads.len());
+    for t in threads {
+        let map = match maps.entry((t.commit.as_str(), t.path.as_str())) {
+            Entry::Occupied(known) => known.into_mut(),
+            Entry::Vacant(new) => {
+                new.insert(line_map(repo, reader, head, &t.path, &t.commit).await)
+            }
+        };
+        let to = map.as_ref().and_then(|m| m.get(&t.line).copied());
+        mapped.push((t.thread.clone(), to));
+    }
+    mapped
+}
+
+/// [`crate::diff::anchor::line_map`] of `path` from `original_commit` to
+/// `head`; `None` when either side can't be read.
+async fn line_map(
     repo: &Repo,
     reader: &BlobReader,
     head: &str,
     path: &str,
     original_commit: &str,
-    original_line: u32,
-) -> Option<u32> {
-    let original = format!("{original_commit}:{path}");
+) -> Option<HashMap<u32, u32>> {
     if let Err(err) = async { repo.ensure(&Oid::parse(original_commit)?, &|_| {}).await }.await {
         tracing::info!(%err, original_commit, "original commit unavailable");
         return None;
     }
-    let old = reader.read(&original).await.ok().flatten()?;
+    let old = reader
+        .read(&format!("{original_commit}:{path}"))
+        .await
+        .ok()
+        .flatten()?;
     let new = reader
         .read(&format!("{head}:{path}"))
         .await
         .ok()
         .flatten()?;
-    let (old, new) = (crate::diff::Text::new(&old), crate::diff::Text::new(&new));
-    crate::diff::anchor::map_line(&old, &new, original_line)
+    let diff = move || {
+        let (old, new) = (crate::diff::Text::new(&old), crate::diff::Text::new(&new));
+        crate::diff::anchor::line_map(&old, &new)
+    };
+    tokio::task::spawn_blocking(diff).await.ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
-
-    /// Runs git for fixture setup, isolated from the user's configuration.
-    fn git(dir: &Path, args: &[&str]) -> String {
-        let out = std::process::Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(args)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_AUTHOR_NAME", "T")
-            .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
-            .env("GIT_COMMITTER_NAME", "T")
-            .env("GIT_COMMITTER_EMAIL", "t@example.invalid")
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "{args:?}: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        String::from_utf8_lossy(&out.stdout).trim().to_owned()
-    }
+    use crate::git::fixture::{cache_clone, commit, origin};
+    use crate::git::set_up as git;
 
     #[test]
     fn prioritize_moves_files_to_front_in_order() {
@@ -470,46 +475,24 @@ mod tests {
     #[tokio::test]
     async fn a_merged_prs_job_lists_its_files() {
         let tmp = tempfile::tempdir().unwrap();
-        let origin = tmp.path().join("origin");
-        std::fs::create_dir_all(&origin).unwrap();
-        git(&origin, &["init", "-q", "-b", "main"]);
-        git(&origin, &["config", "uploadpack.allowFilter", "true"]);
-        git(
-            &origin,
-            &["config", "uploadpack.allowAnySHA1InWant", "true"],
-        );
-        std::fs::write(origin.join("a.txt"), "a\n").unwrap();
-        git(&origin, &["add", "."]);
-        git(&origin, &["commit", "-q", "-m", "base"]);
-        git(&origin, &["checkout", "-q", "-b", "feature"]);
-        std::fs::write(origin.join("b.txt"), "b\n").unwrap();
-        git(&origin, &["add", "."]);
-        git(&origin, &["commit", "-q", "-m", "b"]);
-        git(&origin, &["update-ref", "refs/pull/7/head", "feature"]);
-        git(&origin, &["checkout", "-q", "main"]);
-        let base = git(&origin, &["rev-parse", "HEAD"]);
-        git(
-            &origin,
-            &["merge", "-q", "--no-ff", "-m", "Merge #7", "feature"],
-        );
+        let o = tmp.path().join("origin");
+        origin(&o).await;
+        let base = commit(&o, &[("a.txt", "a\n")], "base").await;
+        git(&o, &["checkout", "-q", "-b", "feature"]).await;
+        commit(&o, &[("b.txt", "b\n")], "b").await;
+        git(&o, &["update-ref", "refs/pull/7/head", "feature"]).await;
+        git(&o, &["checkout", "-q", "main"]).await;
+        git(&o, &["merge", "-q", "--no-ff", "-m", "Merge #7", "feature"]).await;
 
         // The user's clone of github.com/o/r, which git fetches from the
         // local "GitHub" instead.
         let local = tmp.path().join("local");
-        let url = format!("file://{}", origin.display());
-        git(tmp.path(), &["clone", "-q", &url, "local"]);
-        git(
-            &local,
-            &["remote", "set-url", "origin", "https://github.com/o/r.git"],
-        );
-        git(
-            &local,
-            &[
-                "config",
-                &format!("url.{url}.insteadOf"),
-                "https://github.com/o/r.git",
-            ],
-        );
+        let url = format!("file://{}", o.display());
+        let github = "https://github.com/o/r.git";
+        git(tmp.path(), &["clone", "-q", &url, "local"]).await;
+        git(&local, &["remote", "set-url", "origin", github]).await;
+        let instead = format!("url.{url}.insteadOf");
+        git(&local, &["config", &instead, github]).await;
 
         let ctx = GitContext {
             cache_root: tmp.path().join("cache"),
@@ -545,58 +528,39 @@ mod tests {
         let lines = |n: u32| (1..=n).map(|i| format!("line {i}\n")).collect::<String>();
 
         let tmp = tempfile::tempdir().unwrap();
-        let origin = tmp.path().join("origin");
-        std::fs::create_dir_all(&origin).unwrap();
-        git(&origin, &["init", "-q", "-b", "main"]);
-        git(&origin, &["config", "uploadpack.allowFilter", "true"]);
-        git(
-            &origin,
-            &["config", "uploadpack.allowAnySHA1InWant", "true"],
-        );
-        std::fs::write(origin.join("a.txt"), lines(20)).unwrap();
-        git(&origin, &["add", "."]);
-        git(&origin, &["commit", "-q", "-m", "base"]);
-        git(&origin, &["checkout", "-q", "-b", "feature"]);
-        std::fs::write(
-            origin.join("a.txt"),
-            lines(20).replace("line 3\n", "three\n"),
-        )
-        .unwrap();
-        git(&origin, &["commit", "-qam", "v1"]);
-        let written_on = git(&origin, &["rev-parse", "HEAD"]);
+        let o = tmp.path();
+        origin(o).await;
+        commit(o, &[("a.txt", &lines(20))], "base").await;
+        git(o, &["checkout", "-q", "-b", "feature"]).await;
+        let v1 = lines(20).replace("line 3\n", "three\n");
+        let written_on = commit(o, &[("a.txt", &v1)], "v1").await;
         // Force-pushed: v1 is gone from every branch; v2 adds two lines on
         // top and changes line 15.
-        git(&origin, &["reset", "-q", "--hard", "main"]);
-        let v2 = format!(
-            "new 1\nnew 2\n{}",
-            lines(20)
-                .replace("line 3\n", "three\n")
-                .replace("line 15\n", "fifteen\n")
-        );
-        std::fs::write(origin.join("a.txt"), v2).unwrap();
-        git(&origin, &["commit", "-qam", "v2"]);
-        git(&origin, &["update-ref", "refs/pull/1/head", "feature"]);
+        git(o, &["reset", "-q", "--hard", "main"]).await;
+        let v2 = format!("new 1\nnew 2\n{}", v1.replace("line 15\n", "fifteen\n"));
+        commit(o, &[("a.txt", &v2)], "v2").await;
+        git(o, &["update-ref", "refs/pull/1/head", "feature"]).await;
 
-        let repo = Repo::open_cache(
-            &tmp.path().join("cache"),
-            "o",
-            "r",
-            &format!("file://{}", origin.display()),
-            Credentials::Ambient,
-            &|_| {},
-        )
-        .await
-        .unwrap();
+        let (_cache, repo) = cache_clone(o).await;
         let head = repo.fetch_pr(1, "main", None, &|_| {}).await.unwrap().head;
         let reader = repo.blob_reader().unwrap();
-        let map = |line| map_outdated(&repo, &reader, &head, "a.txt", &written_on, line);
-        assert_eq!(map(10).await, Some(12));
-        assert_eq!(map(3).await, Some(5), "\"three\" is unchanged since");
-        assert_eq!(map(15).await, None, "line 15 changed");
-        assert_eq!(
-            map_outdated(&repo, &reader, &head, "a.txt", &"f".repeat(40), 1).await,
-            None
-        );
+        let thread = |n: u32, commit: &str, line| OutdatedThread {
+            thread: crate::api::model::NodeId::new(n.to_string()),
+            path: "a.txt".into(),
+            commit: commit.into(),
+            line,
+        };
+        let threads = [
+            thread(1, &written_on, 10),
+            thread(2, &written_on, 3),
+            thread(3, &written_on, 15),
+            thread(4, &"f".repeat(40), 1),
+        ];
+        let mapped = map_outdated(&repo, &reader, &head, &threads).await;
+        let to: Vec<Option<u32>> = mapped.into_iter().map(|(_, to)| to).collect();
+        // "three" is unchanged since; line 15 changed; the last commit
+        // doesn't exist.
+        assert_eq!(to, [Some(12), Some(5), None, None]);
     }
 
     /// "Since my last review" against a real force-push and rebase: the
@@ -607,57 +571,30 @@ mod tests {
         let numbered = |n: u32| (1..=n).map(|i| format!("line {i}\n")).collect::<String>();
 
         let tmp = tempfile::tempdir().unwrap();
-        let origin = tmp.path().join("origin");
-        std::fs::create_dir_all(&origin).unwrap();
-        git(&origin, &["init", "-q", "-b", "main"]);
-        git(&origin, &["config", "uploadpack.allowFilter", "true"]);
-        git(
-            &origin,
-            &["config", "uploadpack.allowAnySHA1InWant", "true"],
-        );
-        std::fs::write(origin.join("a.txt"), numbered(60)).unwrap();
-        git(&origin, &["add", "."]);
-        git(&origin, &["commit", "-q", "-m", "base"]);
+        let o = tmp.path();
+        origin(o).await;
+        commit(o, &[("a.txt", &numbered(60))], "base").await;
 
         // v1 of the PR: one change near the top.
-        git(&origin, &["checkout", "-q", "-b", "feature"]);
-        std::fs::write(
-            origin.join("a.txt"),
-            numbered(60).replace("line 5\n", "five\n"),
-        )
-        .unwrap();
-        git(&origin, &["commit", "-qam", "v1"]);
-        git(&origin, &["update-ref", "refs/pull/1/head", "feature"]);
+        git(o, &["checkout", "-q", "-b", "feature"]).await;
+        let v1 = numbered(60).replace("line 5\n", "five\n");
+        commit(o, &[("a.txt", &v1)], "v1").await;
+        git(o, &["update-ref", "refs/pull/1/head", "feature"]).await;
 
-        let repo = Repo::open_cache(
-            &tmp.path().join("cache"),
-            "o",
-            "r",
-            &format!("file://{}", origin.display()),
-            Credentials::Ambient,
-            &|_| {},
-        )
-        .await
-        .unwrap();
+        let (_cache, repo) = cache_clone(o).await;
         let reviewed = repo.fetch_pr(1, "main", None, &|_| {}).await.unwrap().head;
 
         // main moves on (unrelated change), and the PR is rebased onto it,
         // keeps its first change and adds a second: force-pushed.
-        git(&origin, &["checkout", "-q", "main"]);
-        std::fs::write(
-            origin.join("a.txt"),
-            numbered(60).replace("line 30\n", "thirty\n"),
-        )
-        .unwrap();
-        git(&origin, &["commit", "-qam", "upstream"]);
-        git(&origin, &["checkout", "-q", "-B", "feature", "main"]);
-        let rebased = numbered(60)
-            .replace("line 30\n", "thirty\n")
+        git(o, &["checkout", "-q", "main"]).await;
+        let upstream = numbered(60).replace("line 30\n", "thirty\n");
+        commit(o, &[("a.txt", &upstream)], "upstream").await;
+        git(o, &["checkout", "-q", "-B", "feature", "main"]).await;
+        let rebased = upstream
             .replace("line 5\n", "five\n")
             .replace("line 55\n", "fifty-five\n");
-        std::fs::write(origin.join("a.txt"), rebased).unwrap();
-        git(&origin, &["commit", "-qam", "v2"]);
-        git(&origin, &["update-ref", "refs/pull/1/head", "feature"]);
+        commit(o, &[("a.txt", &rebased)], "v2").await;
+        git(o, &["update-ref", "refs/pull/1/head", "feature"]).await;
         let now = repo.fetch_pr(1, "main", None, &|_| {}).await.unwrap();
         assert_ne!(now.head, reviewed);
 

@@ -11,12 +11,7 @@ use crate::live::page::Probe;
 
 /// The asks the page watch's next timer sends, and how long it waits.
 fn next_ask(s: &mut State) -> (Vec<Ask<Probe>>, u64) {
-    let timer = timers(s).into_iter().find_map(|cmd| match cmd {
-        Cmd::Timer(Timer::Watch(id), ms) => Some((id, ms)),
-        _ => None,
-    });
-    let (id, ms) = timer.expect("an ask scheduled");
-    let cmds = update(s, Msg::Timer(Timer::Watch(id)));
+    let (cmds, ms) = next_watch(s);
     match &cmds[..] {
         [Cmd::Api(Api::Watch { asks, .. })] => (asks.clone(), ms),
         _ => panic!("{cmds:?}"),
@@ -26,13 +21,6 @@ fn next_ask(s: &mut State) -> (Vec<Ask<Probe>>, u64) {
 fn answer_with(s: &mut State, answers: Vec<(Probe, Result<Polled, ApiError>)>) -> Vec<Cmd> {
     let what = s.page_watch.as_ref().expect("a watch").what.clone();
     update(s, Msg::Watched(what, answers))
-}
-
-fn changed(etag: &str, body: &str) -> Result<Polled, ApiError> {
-    Ok(Polled::Changed {
-        etag: etag.into(),
-        body: body.into(),
-    })
 }
 
 /// The fixture's issue as REST has it, with `comments` comments.
@@ -157,11 +145,7 @@ fn a_running_job_is_followed_to_its_end() {
         step.completed_at = None;
     }
     running.steps[3].started_at = None;
-    fetched(
-        &mut s,
-        DataKey::Job(ghtui(), 2),
-        Data::Job(Box::new(running)),
-    );
+    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::from(running));
     let waiting = JobLog {
         running: true,
         ..JobLog::default()
@@ -193,7 +177,7 @@ fn a_running_job_is_followed_to_its_end() {
     assert!(keys.contains(&DataKey::Job(ghtui(), 2)), "{keys:?}");
     assert!(keys.contains(&DataKey::JobLog(ghtui(), 2)), "{keys:?}");
 
-    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::Job(Box::new(done)));
+    fetched(&mut s, DataKey::Job(ghtui(), 2), Data::from(done));
     says(&s, "test (ubuntu) failed");
     fetched(
         &mut s,
@@ -232,6 +216,6 @@ fn new_runs_on_the_actions_tab_are_said() {
     let mut new = more.items[0].clone();
     (new.id, new.actor) = (999, Some("monalisa".into()));
     more.items.insert(0, new);
-    fetched(&mut s, key, Data::Runs(Box::new(more)));
+    fetched(&mut s, key, Data::from(more));
     says(&s, "New on the Actions tab: 1 run");
 }

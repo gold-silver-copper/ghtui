@@ -6,10 +6,11 @@ use crate::api::model::ReviewEvent;
 use crate::theme::{Bg, DiffBg, Fg, Theme};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use ratatui_textarea::TextArea;
+use std::fmt::Display;
 
 use crate::ui::{Ctx, PAD_Y, centered, chips, cols, fill, fit_spans, idx, key_hints, padded, text};
 
@@ -50,23 +51,13 @@ impl Widget for ComposeSheet<'_> {
             self.preview
                 .map(|(_, o, s)| o.len().saturating_add(s.len())),
         );
-        fill(buf, area, theme, SHEET);
-        let inner = padded(area);
+        let inner = sheet(theme, area, buf);
+        let row = |y| row(inner, y);
         let mut y = inner.y;
-        let row = |y: u16| Rect {
-            y,
-            height: 1,
-            ..inner
-        };
-        let title = text::truncate(self.title, usize::from(inner.width));
-        Span::styled(title, theme.title(SHEET)).render(row(y), buf);
+        say(self.title, theme.title(SHEET), row(y), buf);
         y = y.saturating_add(1);
         if let Some(note) = self.note {
-            Span::styled(
-                text::truncate(note, usize::from(inner.width)),
-                theme.meta(SHEET),
-            )
-            .render(row(y), buf);
+            say(note, theme.meta(SHEET), row(y), buf);
             y = y.saturating_add(1);
         }
         y = y.saturating_add(1);
@@ -186,6 +177,43 @@ fn completion_list(
     }
 }
 
+/// Fills a sheet's `area`, and gives the room inside its padding.
+fn sheet(theme: &Theme, area: Rect, buf: &mut Buffer) -> Rect {
+    fill(buf, area, theme, SHEET);
+    padded(area)
+}
+
+/// Line `y` of a sheet's `inner` room.
+fn row(inner: Rect, y: u16) -> Rect {
+    Rect {
+        y,
+        height: 1,
+        ..inner
+    }
+}
+
+/// Writes `text` on one line of `area`, cut to fit.
+fn say(text: &str, style: Style, area: Rect, buf: &mut Buffer) {
+    Span::styled(text::fit(text, usize::from(area.width)), style).render(area, buf);
+}
+
+/// A row of buttons, each `(label, chosen)`: filled for the chosen one,
+/// tonal for the others.
+fn buttons(ctx: Ctx<'_>, labels: impl IntoIterator<Item = (impl Display, bool)>) -> Line<'static> {
+    let theme = ctx.theme;
+    let mut buttons = Vec::new();
+    for (label, chosen) in labels {
+        let style = if chosen {
+            theme.fill(Bg::Primary).add_modifier(Modifier::BOLD)
+        } else {
+            theme.fill(Bg::SecondaryContainer)
+        };
+        buttons.extend(chips::chip(ctx, format!(" {label} "), style, SHEET));
+        buttons.push(Span::styled("  ", theme.body(SHEET)));
+    }
+    Line::from(buttons)
+}
+
 /// A sheet's last line: progress, the error, or its keys.
 fn footer(
     theme: &Theme,
@@ -225,13 +253,8 @@ impl Widget for SubmitSheet<'_> {
         let height = 2 * PAD_Y + 10;
         let top = screen.height.saturating_sub(height) / 2;
         let area = centered(screen, 76.min(screen.width.saturating_sub(4)), height, top);
-        fill(buf, area, theme, SHEET);
-        let inner = padded(area);
-        let row = |y: u16| Rect {
-            y,
-            height: 1,
-            ..inner
-        };
+        let inner = sheet(theme, area, buf);
+        let row = |y| row(inner, y);
         let mut y = inner.y;
         Span::styled("Submit review", theme.title(SHEET)).render(row(y), buf);
         y = y.saturating_add(1);
@@ -243,8 +266,7 @@ impl Widget for SubmitSheet<'_> {
                 "{n} pending comment{s}, {r} previously rejected (fix or delete those first)."
             ),
         };
-        let pending = text::truncate(&pending, usize::from(inner.width));
-        Span::styled(pending, theme.meta(SHEET)).render(row(y), buf);
+        say(&pending, theme.meta(SHEET), row(y), buf);
         // What's on GitHub is published too, wherever it was written.
         let on_github = match self.on_github {
             None => Span::styled(
@@ -266,22 +288,13 @@ impl Widget for SubmitSheet<'_> {
         Line::from(fit_spans(&[on_github], inner.width)).render(row(y.saturating_add(1)), buf);
         y = y.saturating_add(2);
 
-        // Filled button for the chosen action, tonal for the others.
-        let mut buttons: Vec<Span<'static>> = Vec::new();
-        for (event, label) in [
+        let events = [
             (ReviewEvent::Comment, "Comment"),
             (ReviewEvent::Approve, "Approve"),
             (ReviewEvent::RequestChanges, "Request changes"),
-        ] {
-            let style = if event == self.event {
-                theme.fill(Bg::Primary).add_modifier(Modifier::BOLD)
-            } else {
-                theme.fill(Bg::SecondaryContainer)
-            };
-            buttons.extend(chips::chip(ctx, format!(" {label} "), style, SHEET));
-            buttons.push(Span::styled("  ", theme.body(SHEET)));
-        }
-        Line::from(buttons).render(row(y), buf);
+        ];
+        let events = events.map(|(event, label)| (label, event == self.event));
+        buttons(ctx, events).render(row(y), buf);
         y = y.saturating_add(2);
 
         let input_area = Rect {
@@ -340,16 +353,10 @@ impl Widget for ConfirmSheet<'_> {
             .saturating_add(error_rows);
         let top = screen.height.saturating_sub(height) / 2;
         let area = centered(screen, width, height, top);
-        fill(buf, area, theme, SHEET);
-        let inner = padded(area);
-        let row = |y: u16| Rect {
-            y,
-            height: 1,
-            ..inner
-        };
+        let inner = sheet(theme, area, buf);
+        let row = |y| row(inner, y);
         let mut y = inner.y;
-        let title = text::truncate(self.title, usize::from(inner.width));
-        Span::styled(title, theme.title(SHEET)).render(row(y), buf);
+        say(self.title, theme.title(SHEET), row(y), buf);
         y = y.saturating_add(2);
         for (fact, problem) in self.facts {
             let style = if *problem {
@@ -357,25 +364,14 @@ impl Widget for ConfirmSheet<'_> {
             } else {
                 theme.meta(SHEET)
             };
-            let fact = text::truncate(fact, usize::from(inner.width));
-            Span::styled(fact, style).render(row(y), buf);
+            say(fact, style, row(y), buf);
             y = y.saturating_add(1);
         }
         if !self.facts.is_empty() {
             y = y.saturating_add(1);
         }
-        // Filled button for the chosen way, tonal for the others.
-        let mut buttons: Vec<Span<'static>> = Vec::new();
-        for (i, label) in self.choices.iter().enumerate() {
-            let style = if i == self.selected {
-                theme.fill(Bg::Primary).add_modifier(Modifier::BOLD)
-            } else {
-                theme.fill(Bg::SecondaryContainer)
-            };
-            buttons.extend(chips::chip(ctx, format!(" {label} "), style, SHEET));
-            buttons.push(Span::styled("  ", theme.body(SHEET)));
-        }
-        Line::from(buttons).render(row(y), buf);
+        let choices = self.choices.iter().enumerate();
+        buttons(ctx, choices.map(|(i, label)| (label, i == self.selected))).render(row(y), buf);
         if let Some(error) = self.error {
             let area = Rect {
                 y: y.saturating_add(2),

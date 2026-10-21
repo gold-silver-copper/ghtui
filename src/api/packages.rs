@@ -10,55 +10,22 @@ use crate::api::browse::Results;
 use crate::api::client::{Answer, ApiError, GitHub};
 use crate::api::model::RepoId;
 
-/// A kind of package, as GitHub's API names them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Kind {
-    Container,
-    Npm,
-    Maven,
-    Rubygems,
-    Nuget,
+words! {
+    /// A kind of package, as GitHub's API names them.
+    #[derive(Hash, Serialize, Deserialize)]
+    pub enum Kind {
+        /// As GitHub's API and URLs say it (`container`).
+        pub fn slug -> pub fn from_slug,
+        /// As a person says it.
+        pub fn name,
+    }
+    Container "container" "Container";
+    Npm       "npm"       "npm";
+    Maven     "maven"     "Maven";
+    Rubygems  "rubygems"  "RubyGems";
+    Nuget     "nuget"     "NuGet";
     /// Docker's old registry (`docker.pkg.github.com`).
-    Docker,
-}
-
-impl Kind {
-    pub const ALL: [Kind; 6] = [
-        Kind::Container,
-        Kind::Npm,
-        Kind::Maven,
-        Kind::Rubygems,
-        Kind::Nuget,
-        Kind::Docker,
-    ];
-
-    /// As GitHub's API and URLs say it (`container`).
-    pub fn slug(self) -> &'static str {
-        match self {
-            Kind::Container => "container",
-            Kind::Npm => "npm",
-            Kind::Maven => "maven",
-            Kind::Rubygems => "rubygems",
-            Kind::Nuget => "nuget",
-            Kind::Docker => "docker",
-        }
-    }
-
-    pub fn from_slug(slug: &str) -> Option<Kind> {
-        Kind::ALL.into_iter().find(|k| k.slug() == slug)
-    }
-
-    /// As a person says it.
-    pub fn name(self) -> &'static str {
-        match self {
-            Kind::Container => "Container",
-            Kind::Npm => "npm",
-            Kind::Maven => "Maven",
-            Kind::Rubygems => "RubyGems",
-            Kind::Nuget => "NuGet",
-            Kind::Docker => "Docker",
-        }
-    }
+    Docker    "docker"    "Docker";
 }
 
 /// Whose packages.
@@ -291,15 +258,17 @@ impl GitHub {
     ) -> Result<PackageDetail, ApiError> {
         let what = format!("the package {}", p.name);
         let base = p.path(self.is_org(&p.owner).await?);
-        let answer = self.packages_answer(&base, &what).await?;
-        let package: wire::Package = serde_json::from_str(answer.body())?;
-        let package = package.into_package(&p.owner, p.kind);
         let mut path = format!("{base}/versions?per_page={VERSIONS}");
         if let Some(after) = &after {
             path.push('&');
             path.push_str(after);
         }
-        let answer = self.packages_answer(&path, &what).await?;
+        let (package, answer) = tokio::try_join!(
+            self.packages_answer(&base, &what),
+            self.packages_answer(&path, &what),
+        )?;
+        let package: wire::Package = serde_json::from_str(package.body())?;
+        let package = package.into_package(&p.owner, p.kind);
         let found: Vec<wire::Version> = serde_json::from_str(answer.body())?;
         let items: Vec<Version> = found.into_iter().map(wire::Version::into_version).collect();
         let next = answer.next_page().filter(|_| items.len() >= VERSIONS);

@@ -14,8 +14,8 @@ pub struct Starter {
 /// GitHub's template chooser.
 pub fn template_chooser(page: &mut Page, repo: &RepoId, starters: &[Starter]) {
     page.line(vec![Seg::new(format!("New issue in {repo}"), Role::Title)]);
-    page.line(vec![Seg::new("Choose how to start", Role::Meta)]);
-    page.box_top(vec![Seg::new("Templates", Role::Strong)], Vec::new());
+    page.line(vec![meta("Choose how to start")]);
+    page.box_top(vec![strong("Templates")], Vec::new());
     for (i, s) in starters.iter().enumerate() {
         if i > 0 {
             page.box_rule();
@@ -30,7 +30,7 @@ pub fn template_chooser(page: &mut Page, repo: &RepoId, starters: &[Starter]) {
                 0,
             );
             if !s.about.trim().is_empty() {
-                page.wrapped(vec![Seg::new(s.about.clone(), Role::Meta)], 0, Frame::Body);
+                page.wrapped(vec![meta(s.about.clone())], 0, Frame::Body);
             }
         });
     }
@@ -41,10 +41,7 @@ pub fn template_chooser(page: &mut Page, repo: &RepoId, starters: &[Starter]) {
 /// there are, under its form.
 pub fn commits_box(page: &mut Page, commits: &[(String, String)], more: u64) {
     let n = commits.len() as u64 + more;
-    page.box_top(
-        vec![Seg::new(plural(n, "commit"), Role::Strong)],
-        Vec::new(),
-    );
+    page.box_top(vec![strong(plural(n, "commit"))], Vec::new());
     if commits.is_empty() {
         empty_row(page, "No commits to merge");
     }

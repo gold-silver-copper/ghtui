@@ -16,7 +16,8 @@ use crate::api::model::{
     Capped, IssueState, Label, PrState, PrStatus, RepoId, ReviewState, Status, author, count,
 };
 use crate::api::queries::{
-    Actor, BigInt, CommitOid, DateTime, PageVariablesFields, RepositoryName, fragments, nodes,
+    Actor, BigInt, CommitOid, DateTime, Label as QLabel, PageVariablesFields, RepositoryName,
+    fragments, nodes,
 };
 use crate::schema::schema;
 
@@ -314,32 +315,78 @@ pub struct Requested {
 
 // ---- wire: the items -------------------------------------------------------------
 
-/// Events that are only who and when.
-macro_rules! bare_events {
-    ($($name:ident = $graphql:literal),* $(,)?) => {$(
+/// The events: each is who and when, and what else it carries, `?` marking
+/// what may be null. cynic's derive names its locals with the span of each
+/// field type's first token, so this macro writes that token itself: a type
+/// is `Option<T>` or `self::T`, never the caller's own tokens.
+macro_rules! events {
+    ($($name:ident = $graphql:literal { $($field:ident: $(?$opt:ident)? $($ty:ident)?),* $(,)? }),* $(,)?) => {$(
         #[derive(cynic::QueryFragment, Debug)]
         #[cynic(graphql_type = $graphql)]
         pub struct $name {
             pub actor: Option<Actor>,
             pub created_at: DateTime,
+            $(pub $field: $(Option<$opt>)? $(self::$ty)?,)*
         }
     )*};
 }
 
-bare_events! {
-    ReopenedEv = "ReopenedEvent",
-    ReadyEv = "ReadyForReviewEvent",
-    DraftEv = "ConvertToDraftEvent",
-    RestoredEv = "HeadRefRestoredEvent",
-    UnlockedEv = "UnlockedEvent",
-    PinnedEv = "PinnedEvent",
-    UnpinnedEv = "UnpinnedEvent",
-    AutoMergeOnEv = "AutoMergeEnabledEvent",
-    AutoMergeOffEv = "AutoMergeDisabledEvent",
-    QueuedEv = "AddedToMergeQueueEvent",
-    DiscussionEv = "ConvertedToDiscussionEvent",
-    ProjectAddedEv = "AddedToProjectV2Event",
-    ProjectRemovedEv = "RemovedFromProjectV2Event",
+// events! writes `self::String`, and the prelude's String isn't in `self`.
+use std::string::String;
+
+events! {
+    ReopenedEv = "ReopenedEvent" {},
+    ReadyEv = "ReadyForReviewEvent" {},
+    DraftEv = "ConvertToDraftEvent" {},
+    RestoredEv = "HeadRefRestoredEvent" {},
+    UnlockedEv = "UnlockedEvent" {},
+    PinnedEv = "PinnedEvent" {},
+    UnpinnedEv = "UnpinnedEvent" {},
+    AutoMergeOnEv = "AutoMergeEnabledEvent" {},
+    AutoMergeOffEv = "AutoMergeDisabledEvent" {},
+    QueuedEv = "AddedToMergeQueueEvent" {},
+    DiscussionEv = "ConvertedToDiscussionEvent" {},
+    ProjectAddedEv = "AddedToProjectV2Event" {},
+    ProjectRemovedEv = "RemovedFromProjectV2Event" {},
+    ClosedEv = "ClosedEvent" { closer: ?WireCloser, state_reason: ?StateReason },
+    MergedEv = "MergedEvent" { commit: ?CommitOid, merge_ref_name: String },
+    ReferencedEv = "ReferencedEvent" { commit: ?CommitOid, commit_repository: RepositoryName },
+    LabeledEv = "LabeledEvent" { label: QLabel },
+    UnlabeledEv = "UnlabeledEvent" { label: QLabel },
+    AssignedEv = "AssignedEvent" { assignee: ?WireAssignee },
+    UnassignedEv = "UnassignedEvent" { assignee: ?WireAssignee },
+    MilestonedEv = "MilestonedEvent" { milestone_title: String },
+    DemilestonedEv = "DemilestonedEvent" { milestone_title: String },
+    StatusChangedEv = "ProjectV2ItemStatusChangedEvent" { previous_status: String, status: String },
+    ReviewRequestedEv = "ReviewRequestedEvent" { requested_reviewer: ?RequestedReviewer },
+    ReviewUnrequestedEv = "ReviewRequestRemovedEvent" { requested_reviewer: ?RequestedReviewer },
+    DismissedEv = "ReviewDismissedEvent" { dismissal_message: ?String, review: ?ReviewAuthor },
+    RenamedEv = "RenamedTitleEvent" { previous_title: String, current_title: String },
+    HeadPushedEv = "HeadRefForcePushedEvent" { before_commit: ?CommitOid, after_commit: ?CommitOid },
+    BasePushedEv = "BaseRefForcePushedEvent" { before_commit: ?CommitOid, after_commit: ?CommitOid },
+    DeletedEv = "HeadRefDeletedEvent" { head_ref_name: String },
+    BaseChangedEv = "BaseRefChangedEvent" { previous_ref_name: String, current_ref_name: String },
+    LockedEv = "LockedEvent" { lock_reason: ?LockReason },
+    TransferredEv = "TransferredEvent" { from_repository: ?RepositoryName },
+    DuplicateEv = "MarkedAsDuplicateEvent" { canonical: ?IssueOrPrLink },
+    NotDuplicateEv = "UnmarkedAsDuplicateEvent" { canonical: ?IssueOrPrLink },
+    DequeuedEv = "RemovedFromMergeQueueEvent" { reason: ?String },
+    SubAddedEv = "SubIssueAddedEvent" { sub_issue: ?LinkedIssue },
+    SubRemovedEv = "SubIssueRemovedEvent" { sub_issue: ?LinkedIssue },
+    ParentAddedEv = "ParentIssueAddedEvent" { parent: ?LinkedIssue },
+    ParentRemovedEv = "ParentIssueRemovedEvent" { parent: ?LinkedIssue },
+    TypeAddedEv = "IssueTypeAddedEvent" { issue_type: ?TypeName },
+    TypeChangedEv = "IssueTypeChangedEvent" { issue_type: ?TypeName, prev_issue_type: ?TypeName },
+    TypeRemovedEv = "IssueTypeRemovedEvent" { issue_type: ?TypeName },
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "CrossReferencedEvent")]
+pub struct CrossReferencedEv {
+    pub actor: Option<Actor>,
+    pub created_at: DateTime,
+    pub source: Subject,
+    pub will_close_target: bool,
 }
 
 /// An issue a timeline names.
@@ -400,12 +447,17 @@ pub enum WireAssignee {
     Other,
 }
 
-#[derive(cynic::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum LockReason {
-    OffTopic,
-    Resolved,
-    Spam,
-    TooHeated,
+words! {
+    #[derive(cynic::Enum, Hash)]
+    pub enum LockReason {
+        pub(crate) fn wire,
+        /// "off-topic", "too heated".
+        pub fn said,
+    }
+    OffTopic  "OFF_TOPIC"  "off-topic";
+    Resolved  "RESOLVED"   "resolved";
+    Spam      "SPAM"       "spam";
+    TooHeated "TOO_HEATED" "too heated";
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -415,268 +467,9 @@ pub struct TypeName {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ClosedEvent")]
-pub struct ClosedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub closer: Option<WireCloser>,
-    pub state_reason: Option<StateReason>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "MergedEvent")]
-pub struct MergedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub commit: Option<CommitOid>,
-    pub merge_ref_name: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CrossReferencedEvent")]
-pub struct CrossReferencedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub source: Subject,
-    pub will_close_target: bool,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ReferencedEvent")]
-pub struct ReferencedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub commit: Option<CommitOid>,
-    pub commit_repository: RepositoryName,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "LabeledEvent")]
-pub struct LabeledEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub label: crate::api::queries::Label,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "UnlabeledEvent")]
-pub struct UnlabeledEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub label: crate::api::queries::Label,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "AssignedEvent")]
-pub struct AssignedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub assignee: Option<WireAssignee>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "UnassignedEvent")]
-pub struct UnassignedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub assignee: Option<WireAssignee>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "MilestonedEvent")]
-pub struct MilestonedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub milestone_title: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "DemilestonedEvent")]
-pub struct DemilestonedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub milestone_title: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ProjectV2ItemStatusChangedEvent")]
-pub struct StatusChangedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub previous_status: String,
-    pub status: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ReviewRequestedEvent")]
-pub struct ReviewRequestedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub requested_reviewer: Option<RequestedReviewer>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ReviewRequestRemovedEvent")]
-pub struct ReviewUnrequestedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub requested_reviewer: Option<RequestedReviewer>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "PullRequestReview")]
 pub struct ReviewAuthor {
     pub author: Option<Actor>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ReviewDismissedEvent")]
-pub struct DismissedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub dismissal_message: Option<String>,
-    pub review: Option<ReviewAuthor>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "RenamedTitleEvent")]
-pub struct RenamedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub previous_title: String,
-    pub current_title: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "HeadRefForcePushedEvent")]
-pub struct HeadPushedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub before_commit: Option<CommitOid>,
-    pub after_commit: Option<CommitOid>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "BaseRefForcePushedEvent")]
-pub struct BasePushedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub before_commit: Option<CommitOid>,
-    pub after_commit: Option<CommitOid>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "HeadRefDeletedEvent")]
-pub struct DeletedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub head_ref_name: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "BaseRefChangedEvent")]
-pub struct BaseChangedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub previous_ref_name: String,
-    pub current_ref_name: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "LockedEvent")]
-pub struct LockedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub lock_reason: Option<LockReason>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "TransferredEvent")]
-pub struct TransferredEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub from_repository: Option<RepositoryName>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "MarkedAsDuplicateEvent")]
-pub struct DuplicateEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub canonical: Option<IssueOrPrLink>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "UnmarkedAsDuplicateEvent")]
-pub struct NotDuplicateEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub canonical: Option<IssueOrPrLink>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "RemovedFromMergeQueueEvent")]
-pub struct DequeuedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub reason: Option<String>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "SubIssueAddedEvent")]
-pub struct SubAddedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub sub_issue: Option<LinkedIssue>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "SubIssueRemovedEvent")]
-pub struct SubRemovedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub sub_issue: Option<LinkedIssue>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ParentIssueAddedEvent")]
-pub struct ParentAddedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub parent: Option<LinkedIssue>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ParentIssueRemovedEvent")]
-pub struct ParentRemovedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub parent: Option<LinkedIssue>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "IssueTypeAddedEvent")]
-pub struct TypeAddedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub issue_type: Option<TypeName>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "IssueTypeChangedEvent")]
-pub struct TypeChangedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub issue_type: Option<TypeName>,
-    pub prev_issue_type: Option<TypeName>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "IssueTypeRemovedEvent")]
-pub struct TypeRemovedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub issue_type: Option<TypeName>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -790,9 +583,8 @@ fragments! {
     counted:
     PrTimeline = "PullRequestTimelineItemsConnection" => PrItem,
     IssueTimeline = "IssueTimelineItemsConnection" => IssueItem,
-    Closing = "IssueConnection" => LinkedIssue,
+    Issues = "IssueConnection" => LinkedIssue,
     ClosedBy = "PullRequestConnection" => LinkedPr,
-    SubIssues = "IssueConnection" => LinkedIssue,
     Branches = "LinkedBranchConnection" => WireLinkedBranch,
     LatestReviews = "PullRequestReviewConnection" => WireLatest,
     Requests = "ReviewRequestConnection" => WireRequest,
@@ -885,13 +677,9 @@ pub struct WireRequest {
 
 // ---- from the wire ---------------------------------------------------------------
 
-fn actor(a: Option<Actor>) -> String {
-    author(a)
-}
-
 fn event(actor_: Option<Actor>, at: DateTime, what: What) -> Item {
     Item::Event(Event {
-        actor: actor(actor_),
+        actor: author(actor_),
         at: at.0,
         what,
     })
@@ -1056,7 +844,7 @@ macro_rules! shared_events {
                 Some(event(e.actor, e.created_at, what))
             }
             $ty::LockedEvent(e) => {
-                let reason = e.lock_reason.map(|r| crate::api::manage::lock_said(r).to_owned());
+                let reason = e.lock_reason.map(|r| r.said().to_owned());
                 Some(event(e.actor, e.created_at, What::Locked { reason }))
             }
             $ty::UnlockedEvent(e) => Some(event(e.actor, e.created_at, What::Unlocked)),
@@ -1215,14 +1003,7 @@ pub(crate) fn issue_timeline(t: IssueTimeline) -> Capped<Item> {
     Capped::new(items, count(t.total_count).saturating_sub(unshown))
 }
 
-pub(crate) fn linked_issues(c: Closing) -> Capped<Linked> {
-    let items = nodes(c.nodes)
-        .filter_map(LinkedIssue::into_linked)
-        .collect();
-    Capped::new(items, count(c.total_count))
-}
-
-pub(crate) fn sub_issues(c: SubIssues) -> Capped<Linked> {
+pub(crate) fn linked_issues(c: Issues) -> Capped<Linked> {
     let items = nodes(c.nodes)
         .filter_map(LinkedIssue::into_linked)
         .collect();

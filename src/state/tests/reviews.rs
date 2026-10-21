@@ -30,19 +30,6 @@ fn conversation() -> State {
     sized(with_pr(), 200, 80)
 }
 
-/// Selects the first item whose link `pick` likes, going down with `}`.
-fn select(s: &mut State, pick: impl Fn(&Link) -> bool) {
-    for _ in 0..200 {
-        if let Screen::Page(p) = s.screen()
-            && p.selected_link().is_some_and(&pick)
-        {
-            return;
-        }
-        press(s, "<Down>");
-    }
-    panic!("nothing selectable like that:\n{}", text(s));
-}
-
 /// A review shows its state, its summary, and the threads it started
 /// with the lines they're on and their replies; Enter on a thread opens
 /// it in Files changed.
@@ -62,7 +49,7 @@ fn a_review_shows_its_threads_and_opens_them() {
     ] {
         assert!(page.contains(part), "{part:?} in\n{page}");
     }
-    select(
+    fixtures::select_by(
         &mut s,
         |l| matches!(l, Link::Url(u) if u.contains("discussion_r")),
     );
@@ -112,7 +99,7 @@ fn the_review_tab_lists_reviews_and_one_opens_its_page() {
     fetched(
         &mut s,
         DataKey::Reviews(pr()),
-        Data::Reviews(Box::new(fixtures::reviews())),
+        Data::from(fixtures::reviews()),
     );
     let page = text(&s);
     let (monalisa, hubot) = (page.find("monalisa approved"), page.rfind("hubot reviewed"));
@@ -120,7 +107,7 @@ fn the_review_tab_lists_reviews_and_one_opens_its_page() {
         monalisa.zip(hubot).is_some_and(|(m, h)| m < h),
         "newest first:\n{page}"
     );
-    select(&mut s, |l| {
+    fixtures::select_by(&mut s, |l| {
         matches!(l, Link::Review(ReviewLink::Open { id: 2_000_002, .. }))
     });
     press(&mut s, "<Enter>");
@@ -141,7 +128,7 @@ fn the_review_tab_lists_reviews_and_one_opens_its_page() {
         page.contains("What changed since, from 1b2c3d4 to fedcba9"),
         "{page}"
     );
-    select(&mut s, |l| {
+    fixtures::select_by(&mut s, |l| {
         matches!(l, Link::Review(ReviewLink::AsReviewed { .. }))
     });
     let cmds = press(&mut s, "<Enter>");
@@ -164,14 +151,12 @@ fn the_review_tab_lists_reviews_and_one_opens_its_page() {
 #[test]
 fn a_reviews_summary_is_edited() {
     let mut s = conversation();
-    select(
+    fixtures::select_by(
         &mut s,
         |l| matches!(l, Link::Quote { author, body, .. } if author == "hubot" && body.starts_with("Yes")),
     );
     press(&mut s, "e");
-    let Some(Overlay::Compose(c)) = &s.overlay else {
-        panic!("e opens the composer")
-    };
+    let c = crate::fixtures::composer(&mut s);
     assert_eq!(c.text(), "Yes: every role is checked at both depths.");
     press(&mut s, "!");
     let cmds = press(&mut s, "<C-s>");
@@ -202,11 +187,7 @@ fn a_long_review_folds() {
         })
         .collect();
     let mut s = conversation();
-    fetched(
-        &mut s,
-        DataKey::PrActivity(pr()),
-        Data::PrActivity(Box::new(activity)),
-    );
+    fetched(&mut s, DataKey::PrActivity(pr()), Data::from(activity));
     let count = |s: &State| text(s).matches("src/theme.rs:").count();
     assert_eq!(count(&s), 2, "{}", text(&s));
     assert!(
@@ -214,13 +195,13 @@ fn a_long_review_folds() {
         "{}",
         text(&s)
     );
-    select(
+    fixtures::select_by(
         &mut s,
         |l| matches!(l, Link::Quote { body, .. } if body.starts_with("Yes")),
     );
     act(&mut s, Action::FoldToggle);
     assert_eq!(count(&s), 6, "{}", text(&s));
-    select(&mut s, |l| matches!(l, Link::Review(ReviewLink::Fold(_))));
+    fixtures::select_by(&mut s, |l| matches!(l, Link::Review(ReviewLink::Fold(_))));
     press(&mut s, "<Enter>");
     assert_eq!(count(&s), 2);
 }
@@ -267,11 +248,7 @@ fn a_closed_pr_says_who_closed_it() {
         },
     ));
     let mut s = conversation();
-    fetched(
-        &mut s,
-        DataKey::PrActivity(pr()),
-        Data::PrActivity(Box::new(activity)),
-    );
+    fetched(&mut s, DataKey::PrActivity(pr()), Data::from(activity));
     assert!(
         text(&s).contains("monalisa closed this 1d ago"),
         "{}",
@@ -301,11 +278,7 @@ fn a_new_review_is_marked_new() {
         "Done.",
         "2026-10-03T11:30:00Z",
     )));
-    fetched(
-        &mut s,
-        DataKey::PrActivity(pr()),
-        Data::PrActivity(Box::new(activity)),
-    );
+    fetched(&mut s, DataKey::PrActivity(pr()), Data::from(activity));
     fixtures::says(&s, "defunkt requested changes");
     let page = text(&s);
     let defunkt = page

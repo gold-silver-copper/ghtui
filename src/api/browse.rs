@@ -4,6 +4,8 @@
 //! The wire types are typed against GitHub's schema; the models after them
 //! are what the app renders and caches.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::api::edit::{Editable, SidebarPermits, WireReactionGroup, reactions};
@@ -335,6 +337,21 @@ page_in! {
 }
 
 impl<T> Results<T> {
+    /// A page of a connection: its total, its cursor, and the nodes `item`
+    /// makes something of.
+    pub(crate) fn from_page<N>(
+        total: i32,
+        page: PageInfo,
+        list: Option<Vec<Option<N>>>,
+        item: impl FnMut(N) -> Option<T>,
+    ) -> Self {
+        Self {
+            total: count(total),
+            items: nodes(list).filter_map(item).collect(),
+            next: page.next(),
+        }
+    }
+
     /// A page of a list GitHub doesn't count.
     pub(crate) fn uncounted(items: Vec<T>, next: Option<String>) -> Self {
         Self {
@@ -379,28 +396,28 @@ pub enum SearchResults {
     Code(Results<CodeHit>),
 }
 
+/// `$e` of whichever kind of results `$s` holds, as `$r`.
+macro_rules! each_kind {
+    ($s:expr, $r:ident => $e:expr) => {
+        match $s {
+            SearchResults::Repos($r) => $e,
+            SearchResults::Issues($r) => $e,
+            SearchResults::Users($r) => $e,
+            SearchResults::Discussions($r) => $e,
+            SearchResults::Commits($r) => $e,
+            SearchResults::Code($r) => $e,
+        }
+    };
+}
+
 impl SearchResults {
     /// How many there are in all, and how many are here.
     pub fn counts(&self) -> (u64, usize) {
-        match self {
-            SearchResults::Repos(r) => (r.total, r.items.len()),
-            SearchResults::Issues(r) => (r.total, r.items.len()),
-            SearchResults::Users(r) => (r.total, r.items.len()),
-            SearchResults::Discussions(r) => (r.total, r.items.len()),
-            SearchResults::Commits(r) => (r.total, r.items.len()),
-            SearchResults::Code(r) => (r.total, r.items.len()),
-        }
+        each_kind!(self, r => (r.total, r.items.len()))
     }
 
     pub fn next(&self) -> Option<&str> {
-        match self {
-            SearchResults::Repos(r) => r.next.as_deref(),
-            SearchResults::Issues(r) => r.next.as_deref(),
-            SearchResults::Users(r) => r.next.as_deref(),
-            SearchResults::Discussions(r) => r.next.as_deref(),
-            SearchResults::Commits(r) => r.next.as_deref(),
-            SearchResults::Code(r) => r.next.as_deref(),
-        }
+        each_kind!(self, r => r.next.as_deref())
     }
 }
 
@@ -691,11 +708,76 @@ fragments! {
     counted:
     Topics = "RepositoryTopicConnection" => RepoTopic,
     Assignees = "UserConnection" => UserLogin,
+    CommitParents = "CommitConnection" => ParentCommit,
+    OrgLogins = "OrganizationConnection" => OrgLogin,
+    MemberList = "OrganizationMemberConnection" => UserLogin,
+    RepoList = "RepositoryConnection" => RepoCard,
+    AssetList = "ReleaseAssetConnection" => WireAsset,
+}
+
+fragments! {
+    total_count: i32;
+    StarCount = "StarredRepositoryConnection",
 }
 
 fragments! {
     nodes:
     Pinned = "PinnableItemConnection" => PinnedItem,
+}
+
+// Pages of lists, and how many there are in all.
+fragments! {
+    paged:
+    CommitHistory = "CommitHistoryConnection" => CommitCard,
+    RollupContexts = "StatusCheckRollupContextConnection" => RollupContext,
+    PagedRepos = "RepositoryConnection" => RepoCard,
+    PagedStars = "StarredRepositoryConnection" => RepoCard,
+    ReleaseList = "ReleaseConnection" => WireRelease,
+    TagRefs = "RefConnection" => TagRef,
+}
+
+// The roots of the queries below, and what they open in a repository.
+fragments! {
+    root "Query" repository(owner, name);
+    RepoQuery("RepoVariables") => RepoFull,
+    /// A directory listing or file by `<ref>:<path>`.
+    ObjectQuery("RepoVariables") => RepoObject,
+    IssueQuery("NumberVariables") => RepoIssue,
+    PrActivityQuery("NumberVariables") => RepoPrActivity,
+    /// A commit by revision (`<sha>`, short or full).
+    CommitQuery("RepoVariables") => RepoCommit,
+    /// A revision's commits, newest first (touching `path`, if given).
+    HistoryQuery("HistoryVariables") => RepoHistory,
+    /// The checks on a pull request's head.
+    PrChecksQuery("NumberVariables") => RepoPrChecks,
+    ContextsQuery("ContextsVariables") => ContextsRepo,
+    /// The checks on a commit, by revision.
+    CommitChecksQuery("RepoVariables") => RepoCommitChecks,
+    /// A repository's forks, most starred first.
+    ForksQuery("ListVariables") => RepoForks,
+    /// A repository's releases, newest first.
+    ReleasesQuery("ListVariables") => RepoReleases,
+    /// One release, with its notes and assets.
+    ReleaseQuery("ReleaseVariables") => RepoRelease,
+    /// A repository's tags, most recently committed first.
+    TagsQuery("ListVariables") => RepoTags,
+}
+fragments! {
+    root "Repository" object(expression);
+    RepoObject("RepoVariables") => GitObject,
+    RepoCommit("RepoVariables") => CommitObject,
+    RepoHistory("HistoryVariables") => HistoryObject,
+    ContextsRepo("ContextsVariables") => ContextsTarget,
+    RepoCommitChecks("RepoVariables") => ChecksTarget,
+}
+fragments! {
+    root "Repository" pull_request(number);
+    RepoPrActivity("NumberVariables") => WirePrActivity,
+    RepoPrChecks("NumberVariables") => PrChecks,
+}
+fragments! {
+    root "Repository" issue_or_pull_request(number);
+    RepoIssue("NumberVariables") => IssueOrPr,
 }
 
 // ---- repository ---------------------------------------------------------------------
@@ -708,11 +790,15 @@ pub struct RepoVariables {
     pub expression: String,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "RepoVariables")]
-pub struct RepoQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoFull>,
+impl RepoVariables {
+    /// `repo`'s object at `expression`.
+    pub fn at(repo: &RepoId, expression: impl Into<String>) -> Self {
+        Self {
+            owner: repo.owner.clone(),
+            name: repo.name.clone(),
+            expression: expression.into(),
+        }
+    }
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -840,21 +926,6 @@ pub struct BlobObject {
     pub is_binary: Option<bool>,
     pub byte_size: i32,
     pub is_truncated: bool,
-}
-
-/// A directory listing or file by `<ref>:<path>`.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "RepoVariables")]
-pub struct ObjectQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoObject>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "RepoVariables")]
-pub struct RepoObject {
-    #[arguments(expression: $expression)]
-    pub object: Option<GitObject>,
 }
 
 // ---- search ----------------------------------------------------------------------
@@ -1010,20 +1081,6 @@ pub enum StateReason {
 
 // ---- issue ------------------------------------------------------------------------
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "NumberVariables")]
-pub struct IssueQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoIssue>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "NumberVariables")]
-pub struct RepoIssue {
-    #[arguments(number: $number)]
-    pub issue_or_pull_request: Option<IssueOrPr>,
-}
-
 #[derive(cynic::InlineFragments, Debug)]
 #[cynic(graphql_type = "IssueOrPullRequest")]
 pub enum IssueOrPr {
@@ -1064,12 +1121,12 @@ pub struct IssueFull {
     pub linked_branches: timeline::Branches,
     pub parent: Option<timeline::LinkedIssue>,
     #[arguments(first: 50)]
-    pub sub_issues: timeline::SubIssues,
+    pub sub_issues: timeline::Issues,
     pub sub_issues_summary: timeline::WireProgress,
     #[arguments(first: 20)]
-    pub blocked_by: timeline::SubIssues,
+    pub blocked_by: timeline::Issues,
     #[arguments(first: 20)]
-    pub blocking: timeline::SubIssues,
+    pub blocking: timeline::Issues,
     pub issue_type: Option<timeline::TypeName>,
     pub repository: RepoAccess,
     pub locked: bool,
@@ -1115,20 +1172,6 @@ pub struct WireComment {
 // ---- PR activity -----------------------------------------------------------------
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "NumberVariables")]
-pub struct PrActivityQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoPrActivity>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "NumberVariables")]
-pub struct RepoPrActivity {
-    #[arguments(number: $number)]
-    pub pull_request: Option<WirePrActivity>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "PullRequest")]
 pub struct WirePrActivity {
     pub id: cynic::Id,
@@ -1142,7 +1185,7 @@ pub struct WirePrActivity {
     #[arguments(first: 100)]
     pub latest_reviews: Option<timeline::LatestReviews>,
     #[arguments(first: 10)]
-    pub closing_issues_references: Option<timeline::Closing>,
+    pub closing_issues_references: Option<timeline::Issues>,
     pub merge_commit: Option<crate::api::queries::CommitOid>,
     /// Your pending review: GitHub shows it only to you.
     #[arguments(first: 1, states: [PENDING])]
@@ -1190,21 +1233,6 @@ pub struct CommitCard {
 
 // ---- commits -------------------------------------------------------------------------
 
-/// A commit by revision (`<sha>`, short or full).
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "RepoVariables")]
-pub struct CommitQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoCommit>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "RepoVariables")]
-pub struct RepoCommit {
-    #[arguments(expression: $expression)]
-    pub object: Option<CommitObject>,
-}
-
 #[derive(cynic::InlineFragments, Debug)]
 #[cynic(graphql_type = "GitObject")]
 pub enum CommitObject {
@@ -1231,13 +1259,6 @@ pub struct WireCommit {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CommitConnection")]
-pub struct CommitParents {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<ParentCommit>>>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Commit")]
 pub struct ParentCommit {
     pub oid: GitObjectId,
@@ -1258,21 +1279,6 @@ pub struct HistoryVariables {
     pub after: Option<String>,
 }
 
-/// A revision's commits, newest first (touching `path`, if given).
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "HistoryVariables")]
-pub struct HistoryQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoHistory>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "HistoryVariables")]
-pub struct RepoHistory {
-    #[arguments(expression: $expression)]
-    pub object: Option<HistoryObject>,
-}
-
 #[derive(cynic::InlineFragments, Debug)]
 #[cynic(graphql_type = "GitObject", variables = "HistoryVariables")]
 pub enum HistoryObject {
@@ -1288,40 +1294,15 @@ pub struct HistoryCommit {
     pub history: CommitHistory,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CommitHistoryConnection")]
-pub struct CommitHistory {
-    pub total_count: i32,
-    pub page_info: PageInfo,
-    pub nodes: Option<Vec<Option<CommitCard>>>,
-}
-
 impl CommitHistory {
     pub(crate) fn into_results(self) -> Results<CommitInfo> {
-        Results {
-            total: count(self.total_count),
-            items: nodes(self.nodes).map(CommitCard::into_info).collect(),
-            next: self.page_info.next(),
-        }
+        Results::from_page(self.total_count, self.page_info, self.nodes, |c| {
+            Some(c.into_info())
+        })
     }
 }
 
 // ---- checks --------------------------------------------------------------------------
-
-/// The checks on a pull request's head.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "NumberVariables")]
-pub struct PrChecksQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoPrChecks>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "NumberVariables")]
-pub struct RepoPrChecks {
-    #[arguments(number: $number)]
-    pub pull_request: Option<PrChecks>,
-}
 
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "PullRequest")]
@@ -1366,14 +1347,6 @@ pub struct WireRollup {
     pub contexts: RollupContexts,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "StatusCheckRollupContextConnection")]
-pub struct RollupContexts {
-    pub total_count: i32,
-    pub page_info: crate::api::queries::PageInfo,
-    pub nodes: Option<Vec<Option<RollupContext>>>,
-}
-
 /// A later page of a commit's checks (by its oid in `expression`): a
 /// re-run on a later page is a check's newest run.
 #[derive(cynic::QueryVariables, Debug)]
@@ -1382,20 +1355,6 @@ pub struct ContextsVariables {
     pub name: String,
     pub expression: String,
     pub after: Option<String>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "ContextsVariables")]
-pub struct ContextsQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<ContextsRepo>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "ContextsVariables")]
-pub struct ContextsRepo {
-    #[arguments(expression: $expression)]
-    pub object: Option<ContextsTarget>,
 }
 
 #[derive(cynic::InlineFragments, Debug)]
@@ -1539,11 +1498,7 @@ pub(crate) fn rollup_contexts(rollup: Option<WireRollup>) -> Results<RollupConte
 
 impl RollupContexts {
     pub(crate) fn into_results(self) -> Results<RollupContext> {
-        Results {
-            total: count(self.total_count),
-            items: nodes(self.nodes).collect(),
-            next: self.page_info.next(),
-        }
+        Results::from_page(self.total_count, self.page_info, self.nodes, Some)
     }
 }
 
@@ -1574,16 +1529,26 @@ pub(crate) fn checks(oid: String, contexts: Capped<RollupContext>) -> Checks {
 /// every run in the rollup; GitHub shows only the newest. One not started
 /// yet is the newest.
 fn latest_runs(items: Vec<CheckItem>) -> Vec<CheckItem> {
-    let newness = |i: &CheckItem| (i.started_at.is_none(), i.started_at.clone());
+    use std::collections::hash_map::{Entry, HashMap};
+    fn newness(i: &CheckItem) -> (bool, Option<&str>) {
+        (i.started_at.is_none(), i.started_at.as_deref())
+    }
+    // Where each check is kept, so the first-seen order stays.
+    let mut at: HashMap<(String, String), usize> = HashMap::new();
     let mut out: Vec<CheckItem> = Vec::new();
     for item in items {
-        match out
-            .iter_mut()
-            .find(|o| o.group == item.group && o.name == item.name)
-        {
-            Some(kept) if newness(&item) > newness(kept) => *kept = item,
-            Some(_) => {}
-            None => out.push(item),
+        match at.entry((item.group.clone(), item.name.clone())) {
+            Entry::Occupied(e) => {
+                if let Some(kept) = out.get_mut(*e.get())
+                    && newness(&item) > newness(kept)
+                {
+                    *kept = item;
+                }
+            }
+            Entry::Vacant(e) => {
+                e.insert(out.len());
+                out.push(item);
+            }
         }
     }
     out
@@ -2693,21 +2658,6 @@ impl rest_actions::Job {
     }
 }
 
-/// The checks on a commit, by revision.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "RepoVariables")]
-pub struct CommitChecksQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoCommitChecks>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Repository", variables = "RepoVariables")]
-pub struct RepoCommitChecks {
-    #[arguments(expression: $expression)]
-    pub object: Option<ChecksTarget>,
-}
-
 // ---- branches ---------------------------------------------------------------------------------
 
 /// A branch, and its latest commit.
@@ -2773,12 +2723,9 @@ impl wire_branches::Branch {
             ),
             None => (None, None, None, None),
         };
-        let name = self.name.as_str();
+        let (name, full) = (self.name.as_str(), repo.to_string());
         let ours = |p: &wire_branches::Pr| {
-            p.head_ref_name == name
-                && p.repository
-                    .name_with_owner
-                    .eq_ignore_ascii_case(&repo.to_string())
+            p.head_ref_name == name && p.repository.name_with_owner.eq_ignore_ascii_case(&full)
         };
         let pr = self
             .associated_pull_requests
@@ -3832,7 +3779,8 @@ impl wire_discussions::Detail {
                 reason: self.active_lock_reason,
             }),
             closed: (self.closed).then(|| {
-                crate::api::manage::DiscussionReason::from_wire(self.state_reason.as_deref())
+                (self.state_reason.as_deref())
+                    .and_then(crate::api::manage::DiscussionReason::from_wire)
             }),
             can_close: self.viewer_can_close,
             can_reopen: self.viewer_can_reopen,
@@ -3901,29 +3849,9 @@ pub struct WireSocial {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "OrganizationConnection")]
-pub struct OrgLogins {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<OrgLogin>>>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Organization")]
 pub struct OrgLogin {
     pub login: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "OrganizationMemberConnection")]
-pub struct MemberList {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<UserLogin>>>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "StarredRepositoryConnection")]
-pub struct StarCount {
-    pub total_count: i32,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -3972,19 +3900,21 @@ pub enum ContributionLevel {
     FourthQuartile,
 }
 
+// A profile's contributions of each kind, and how many there are.
+fragments! {
+    counted:
+    CommitContributions = "CreatedCommitContributionConnection" => WireCommitContribution,
+    PrContributions = "CreatedPullRequestContributionConnection" => WirePrContribution,
+    IssueContributions = "CreatedIssueContributionConnection" => WireIssueContribution,
+    ReviewContributions = "CreatedPullRequestReviewContributionConnection" => WireReviewContribution,
+}
+
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "CommitContributionsByRepository")]
 pub struct WireRepoCommits {
     pub repository: RepositoryName,
     #[arguments(first: 100)]
     pub contributions: CommitContributions,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CreatedCommitContributionConnection")]
-pub struct CommitContributions {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<WireCommitContribution>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -3995,13 +3925,6 @@ pub struct WireCommitContribution {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CreatedPullRequestContributionConnection")]
-pub struct PrContributions {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<WirePrContribution>>>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "CreatedPullRequestContribution")]
 pub struct WirePrContribution {
     pub occurred_at: DateTime,
@@ -4009,24 +3932,10 @@ pub struct WirePrContribution {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CreatedIssueContributionConnection")]
-pub struct IssueContributions {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<WireIssueContribution>>>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "CreatedIssueContribution")]
 pub struct WireIssueContribution {
     pub occurred_at: DateTime,
     pub issue: ContributedIssue,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CreatedPullRequestReviewContributionConnection")]
-pub struct ReviewContributions {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<WireReviewContribution>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -4077,19 +3986,8 @@ impl WireContributions {
                 Some(Week { start, days })
             })
             .collect();
-        let month = |at: &DateTime| at.0.get(..7).unwrap_or_default().to_owned();
-        let mut months: Vec<MonthActivity> = Vec::new();
-        let mut found = Vec::new();
+        let mut months: BTreeMap<String, MonthActivity> = BTreeMap::new();
         let mut short = Short::default();
-        // A list cut short has all of its kind from its oldest month on;
-        // in that month and before, there may be more.
-        let cut = |total: i32, list: &[DateTime]| {
-            let oldest = list.iter().min_by(|a, b| a.0.cmp(&b.0));
-            oldest
-                .filter(|_| usize::try_from(total).unwrap_or_default() > list.len())
-                .map(month)
-        };
-        let later = |a: Option<String>, b: Option<String>| a.max(b);
         if usize::try_from(self.total_repositories_with_contributed_commits).unwrap_or_default()
             > self.commit_contributions_by_repository.len()
         {
@@ -4099,19 +3997,15 @@ impl WireContributions {
         for repo in self.commit_contributions_by_repository {
             let contributions: Vec<WireCommitContribution> =
                 nodes(repo.contributions.nodes).collect();
-            let at: Vec<DateTime> = contributions
-                .iter()
-                .map(|c| c.occurred_at.clone())
-                .collect();
-            short.commits = later(short.commits, cut(repo.contributions.total_count, &at));
+            let at = contributions.iter().map(|c| &c.occurred_at);
+            short.commits = short.commits.max(cut(repo.contributions.total_count, at));
+            let name = repo.repository.name_with_owner;
             for c in contributions {
-                found.push((
-                    month(&c.occurred_at),
-                    Event::Commits(
-                        repo.repository.name_with_owner.clone(),
-                        count(c.commit_count),
-                    ),
-                ));
+                let (m, n) = (month_of(&mut months, &c.occurred_at), count(c.commit_count));
+                match m.commits.iter_mut().find(|(r, _)| *r == name) {
+                    Some((_, total)) => *total += n,
+                    None => m.commits.push((name.clone(), n)),
+                }
             }
         }
         let item = |repo: RepositoryName, number: i32, title: String| Contributed {
@@ -4122,82 +4016,36 @@ impl WireContributions {
         let pulls: Vec<_> = nodes(self.pull_request_contributions.nodes).collect();
         let issues: Vec<_> = nodes(self.issue_contributions.nodes).collect();
         let reviews: Vec<_> = nodes(self.pull_request_review_contributions.nodes).collect();
-        short.pulls = cut(
-            self.pull_request_contributions.total_count,
-            &pulls
-                .iter()
-                .map(|p| p.occurred_at.clone())
-                .collect::<Vec<_>>(),
-        );
-        short.issues = cut(
-            self.issue_contributions.total_count,
-            &issues
-                .iter()
-                .map(|i| i.occurred_at.clone())
-                .collect::<Vec<_>>(),
-        );
-        short.reviews = cut(
-            self.pull_request_review_contributions.total_count,
-            &reviews
-                .iter()
-                .map(|r| r.occurred_at.clone())
-                .collect::<Vec<_>>(),
-        );
+        let total = self.pull_request_contributions.total_count;
+        short.pulls = cut(total, pulls.iter().map(|p| &p.occurred_at));
+        let total = self.issue_contributions.total_count;
+        short.issues = cut(total, issues.iter().map(|i| &i.occurred_at));
+        let total = self.pull_request_review_contributions.total_count;
+        short.reviews = cut(total, reviews.iter().map(|r| &r.occurred_at));
         for p in pulls {
             let pr = p.pull_request;
-            found.push((
-                month(&p.occurred_at),
-                Event::Pull(item(pr.repository, pr.number, pr.title)),
-            ));
+            let c = item(pr.repository, pr.number, pr.title);
+            month_of(&mut months, &p.occurred_at).pulls.push(c);
         }
         for i in issues {
             let issue = i.issue;
-            found.push((
-                month(&i.occurred_at),
-                Event::Issue(item(issue.repository, issue.number, issue.title)),
-            ));
+            let c = item(issue.repository, issue.number, issue.title);
+            month_of(&mut months, &i.occurred_at).issues.push(c);
         }
         for r in reviews {
             let pr = r.pull_request;
-            found.push((
-                month(&r.occurred_at),
-                Event::Review(item(pr.repository, pr.number, pr.title)),
-            ));
-        }
-        for (key, event) in found {
-            let i = match months.iter().position(|m| m.month == key) {
-                Some(i) => i,
-                None => {
-                    months.push(MonthActivity {
-                        month: key,
-                        ..MonthActivity::default()
-                    });
-                    months.len() - 1
-                }
-            };
-            let Some(m) = months.get_mut(i) else {
-                continue;
-            };
-            match event {
-                Event::Commits(repo, n) => match m.commits.iter_mut().find(|(r, _)| *r == repo) {
-                    Some((_, total)) => *total += n,
-                    None => m.commits.push((repo, n)),
-                },
-                Event::Pull(c) => m.pulls.push(c),
-                Event::Issue(c) => m.issues.push(c),
-                Event::Review(c) => {
-                    if !m
-                        .reviews
-                        .iter()
-                        .any(|r| r.repo == c.repo && r.number == c.number)
-                    {
-                        m.reviews.push(c);
-                    }
-                }
+            let c = item(pr.repository, pr.number, pr.title);
+            let m = month_of(&mut months, &r.occurred_at);
+            if !m
+                .reviews
+                .iter()
+                .any(|r| r.repo == c.repo && r.number == c.number)
+            {
+                m.reviews.push(c);
             }
         }
-        months.sort_by(|a, b| b.month.cmp(&a.month));
-        months.truncate(ACTIVITY_MONTHS);
+        let mut months: Vec<MonthActivity> =
+            months.into_values().rev().take(ACTIVITY_MONTHS).collect();
         for m in &mut months {
             m.commits
                 .sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
@@ -4211,12 +4059,31 @@ impl WireContributions {
     }
 }
 
-/// One contribution, before it's filed under its month.
-enum Event {
-    Commits(String, u64),
-    Pull(Contributed),
-    Issue(Contributed),
-    Review(Contributed),
+/// The `YYYY-MM` a contribution is filed under.
+fn month(at: &DateTime) -> String {
+    at.0.get(..7).unwrap_or_default().to_owned()
+}
+
+/// The month `at` is in, filed the first time it's asked for.
+fn month_of<'m>(
+    months: &'m mut BTreeMap<String, MonthActivity>,
+    at: &DateTime,
+) -> &'m mut MonthActivity {
+    let key = month(at);
+    months.entry(key.clone()).or_insert_with(|| MonthActivity {
+        month: key,
+        ..MonthActivity::default()
+    })
+}
+
+/// A list cut short has all of its kind from its oldest month on; in that
+/// month and before, there may be more: that month, if `total` says so.
+fn cut<'a>(total: i32, at: impl Iterator<Item = &'a DateTime>) -> Option<String> {
+    let at: Vec<&DateTime> = at.collect();
+    let oldest = at.iter().min_by(|a, b| a.0.cmp(&b.0));
+    oldest
+        .filter(|_| usize::try_from(total).unwrap_or_default() > at.len())
+        .map(|a| month(a))
 }
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -4289,26 +4156,11 @@ pub enum PinnedItem {
     Other,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "RepositoryConnection")]
-pub struct RepoList {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<RepoCard>>>,
-}
-
 #[derive(cynic::QueryVariables, Debug)]
 pub struct ListVariables {
     pub owner: String,
     pub name: String,
     pub after: Option<String>,
-}
-
-/// A repository's forks, most starred first.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "ListVariables")]
-pub struct ForksQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoForks>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -4318,24 +4170,14 @@ pub struct RepoForks {
     pub forks: PagedRepos,
 }
 
-/// A page of repositories.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "RepositoryConnection")]
-pub struct PagedRepos {
-    pub total_count: i32,
-    pub page_info: PageInfo,
-    pub nodes: Option<Vec<Option<RepoCard>>>,
-}
-
 impl PagedRepos {
     pub(crate) fn into_results(self) -> Results<RepoSummary> {
-        Results {
-            total: count(self.total_count),
-            items: nodes(self.nodes)
-                .filter_map(RepoCard::into_summary)
-                .collect(),
-            next: self.page_info.next(),
-        }
+        Results::from_page(
+            self.total_count,
+            self.page_info,
+            self.nodes,
+            RepoCard::into_summary,
+        )
     }
 }
 
@@ -4414,49 +4256,24 @@ pub struct UserStarred {
     pub starred_repositories: PagedStars,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "StarredRepositoryConnection")]
-pub struct PagedStars {
-    pub total_count: i32,
-    pub page_info: PageInfo,
-    pub nodes: Option<Vec<Option<RepoCard>>>,
-}
-
 impl PagedStars {
     pub(crate) fn into_results(self) -> Results<RepoSummary> {
-        Results {
-            total: count(self.total_count),
-            items: nodes(self.nodes)
-                .filter_map(RepoCard::into_summary)
-                .collect(),
-            next: self.page_info.next(),
-        }
+        Results::from_page(
+            self.total_count,
+            self.page_info,
+            self.nodes,
+            RepoCard::into_summary,
+        )
     }
 }
 
 // ---- releases and tags ---------------------------------------------------------------------
-
-/// A repository's releases, newest first.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "ListVariables")]
-pub struct ReleasesQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoReleases>,
-}
 
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Repository", variables = "ListVariables")]
 pub struct RepoReleases {
     #[arguments(first: 20, after: $after, orderBy: { field: CREATED_AT, direction: DESC })]
     pub releases: ReleaseList,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ReleaseConnection")]
-pub struct ReleaseList {
-    pub total_count: i32,
-    pub page_info: PageInfo,
-    pub nodes: Option<Vec<Option<WireRelease>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -4479,14 +4296,6 @@ pub struct ReleaseVariables {
     pub tag: String,
 }
 
-/// One release, with its notes and assets.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "ReleaseVariables")]
-pub struct ReleaseQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoRelease>,
-}
-
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Repository", variables = "ReleaseVariables")]
 pub struct RepoRelease {
@@ -4505,13 +4314,6 @@ pub struct WireReleaseFull {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "ReleaseAssetConnection")]
-pub struct AssetList {
-    pub total_count: i32,
-    pub nodes: Option<Vec<Option<WireAsset>>>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "ReleaseAsset")]
 pub struct WireAsset {
     pub name: String,
@@ -4520,27 +4322,11 @@ pub struct WireAsset {
     pub download_url: Uri,
 }
 
-/// A repository's tags, most recently committed first.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Query", variables = "ListVariables")]
-pub struct TagsQuery {
-    #[arguments(owner: $owner, name: $name)]
-    pub repository: Option<RepoTags>,
-}
-
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Repository", variables = "ListVariables")]
 pub struct RepoTags {
     #[arguments(refPrefix: "refs/tags/", first: 30, after: $after, orderBy: { field: TAG_COMMIT_DATE, direction: DESC })]
     pub refs: Option<TagRefs>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "RefConnection")]
-pub struct TagRefs {
-    pub total_count: i32,
-    pub page_info: PageInfo,
-    pub nodes: Option<Vec<Option<TagRef>>>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -4604,11 +4390,9 @@ impl WireRelease {
 
 impl ReleaseList {
     pub(crate) fn into_results(self) -> Results<Release> {
-        Results {
-            total: count(self.total_count),
-            items: nodes(self.nodes).map(WireRelease::into_release).collect(),
-            next: self.page_info.next(),
-        }
+        Results::from_page(self.total_count, self.page_info, self.nodes, |r| {
+            Some(r.into_release())
+        })
     }
 }
 
@@ -4633,28 +4417,21 @@ impl WireReleaseFull {
 
 impl TagRefs {
     pub(crate) fn into_results(self) -> Results<TagInfo> {
-        let items = nodes(self.nodes)
-            .map(|r| {
-                let commit = match r.target {
-                    Some(TagTarget::Commit(c)) => Some(c),
-                    Some(TagTarget::Tag(t)) => match t.target {
-                        TaggedObject::Commit(c) => Some(c),
-                        TaggedObject::Other => None,
-                    },
-                    _ => None,
-                };
-                TagInfo {
-                    name: r.name,
-                    oid: commit.as_ref().map(|c| c.oid.0.clone()),
-                    date: commit.map(|c| c.committed_date.0),
-                }
+        Results::from_page(self.total_count, self.page_info, self.nodes, |r| {
+            let commit = match r.target {
+                Some(TagTarget::Commit(c)) => Some(c),
+                Some(TagTarget::Tag(t)) => match t.target {
+                    TaggedObject::Commit(c) => Some(c),
+                    TaggedObject::Other => None,
+                },
+                _ => None,
+            };
+            Some(TagInfo {
+                name: r.name,
+                oid: commit.as_ref().map(|c| c.oid.0.clone()),
+                date: commit.map(|c| c.committed_date.0),
             })
-            .collect();
-        Results {
-            total: count(self.total_count),
-            items,
-            next: self.page_info.next(),
-        }
+        })
     }
 }
 
@@ -4882,10 +4659,10 @@ impl IssueFull {
                 .map_or_else(Capped::default, timeline::linked_prs),
             branches: timeline::branches(self.linked_branches),
             parent: self.parent.and_then(timeline::LinkedIssue::into_linked),
-            sub_issues: timeline::sub_issues(self.sub_issues),
+            sub_issues: timeline::linked_issues(self.sub_issues),
             progress: timeline::progress(&self.sub_issues_summary),
-            blocked_by: timeline::sub_issues(self.blocked_by),
-            blocking: timeline::sub_issues(self.blocking),
+            blocked_by: timeline::linked_issues(self.blocked_by),
+            blocking: timeline::linked_issues(self.blocking),
             locked: (self.locked).then_some(crate::api::manage::Locked {
                 reason: self.active_lock_reason,
             }),

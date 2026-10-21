@@ -39,15 +39,7 @@ fn mine_key(state: &State) -> DataKey {
 /// Home's second section's fetch failed.
 fn mine_failed(state: &mut State, err: ApiError) {
     let key = mine_key(state);
-    update(
-        state,
-        Msg::Fetched {
-            key,
-            result: Err(err),
-            cached_at: None,
-            source: None,
-        },
-    );
+    update(state, Msg::fetched(key, Err(err)));
 }
 
 /// Home with `n` of your pull requests and nothing else.
@@ -81,6 +73,24 @@ fn selected_text(state: &State) -> String {
     let p = page(state);
     let item = p.page().items[p.selected.expect("a selection")];
     p.page().lines[item.start].text()
+}
+
+/// Fires the watch's next timer: what that sends, and how long it waited.
+fn next_watch(s: &mut State) -> (Vec<Cmd>, u64) {
+    let timer = timers(s).into_iter().find_map(|cmd| match cmd {
+        Cmd::Timer(Timer::Watch(id), ms) => Some((id, ms)),
+        _ => None,
+    });
+    let (id, ms) = timer.expect("an ask scheduled");
+    (update(s, Msg::Timer(Timer::Watch(id))), ms)
+}
+
+/// GitHub's answer to a watch: changed, to `body` with `etag`.
+fn changed(etag: &str, body: &str) -> Result<crate::api::Polled, ApiError> {
+    Ok(crate::api::Polled::Changed {
+        etag: etag.into(),
+        body: body.into(),
+    })
 }
 
 /// Fetching `key`, the cached copy first.

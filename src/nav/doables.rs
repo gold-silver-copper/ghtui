@@ -128,20 +128,22 @@ impl State {
             "Search GitHub or go to a page",
             "",
         ));
-        if !self.chrome().tabs.is_empty() {
+        // Only the screen's own tabs count here, not the header's right.
+        let chrome = self.screen_chrome();
+        if !chrome.tabs.is_empty() {
             out.push(go(Action::NextTab, "Next tab", "tabs"));
             out.push(go(Action::PrevTab, "Previous tab", ""));
         }
         if let Screen::Diff(_) = self.screen() {
             out.push(go(Action::Tab1, "Back to the conversation", ""));
         }
-        if let Some(n) = self.review_tab() {
+        if let Some(n) = review_tab(&chrome) {
             let mut glance = go(
                 Action::ReviewGlance,
                 "The review at a glance: drafts, threads, reviewers",
                 "",
             );
-            if self.chrome().active == Some(n - 1) {
+            if chrome.active == Some(n - 1) {
                 glance.unavailable = Some("this is it".into());
             }
             out.push(glance);
@@ -385,40 +387,7 @@ impl State {
     /// lists decides, so which-key, the palette and the menu agree; moving
     /// and going places work everywhere.
     pub fn availability(&self, action: Action) -> Result<(), String> {
-        use Action::*;
-        if let Some(d) = self.doables().into_iter().find(|d| d.action == action) {
-            return d.unavailable.map_or(Ok(()), Err);
-        }
-        let everywhere = action.moves()
-            || Action::OPEN_TABS.contains(&action)
-            || matches!(
-                action,
-                Back | Forward
-                    | Quit
-                    | Menu
-                    | CommandPalette
-                    | Messages
-                    | Search
-                    | SearchNext
-                    | SearchPrev
-                    | SearchGithub
-                    | GoHome
-                    | Notifications
-                    | Refresh
-                    | Copy
-                    | OpenInBrowser
-                    | OpenLink
-                    | OpenInTab
-                    | NextOpenTab
-                    | PrevOpenTab
-                    | CloseTab
-                    | UpLevel
-            );
-        if everywhere {
-            Ok(())
-        } else {
-            Err("not here".to_owned())
-        }
+        availability_in(&self.doables(), action)
     }
 
     /// The status bar's key hints.
@@ -616,5 +585,44 @@ pub(super) fn describe(link: &Link) -> String {
         Link::Review(link) => crate::talk::describe(link).into(),
         Link::Setting(link) => crate::settings::describe(link).into(),
         Link::Queued(_) => "Open the page it was written on".into(),
+    }
+}
+
+/// [`State::availability`], with the screen's [`State::doables`] already
+/// built: the palette asks for every action at once.
+pub fn availability_in(doables: &[Doable], action: Action) -> Result<(), String> {
+    use Action::*;
+    if let Some(d) = doables.iter().find(|d| d.action == action) {
+        return d.unavailable.clone().map_or(Ok(()), Err);
+    }
+    let everywhere = action.moves()
+        || Action::OPEN_TABS.contains(&action)
+        || matches!(
+            action,
+            Back | Forward
+                | Quit
+                | Menu
+                | CommandPalette
+                | Messages
+                | Search
+                | SearchNext
+                | SearchPrev
+                | SearchGithub
+                | GoHome
+                | Notifications
+                | Refresh
+                | Copy
+                | OpenInBrowser
+                | OpenLink
+                | OpenInTab
+                | NextOpenTab
+                | PrevOpenTab
+                | CloseTab
+                | UpLevel
+        );
+    if everywhere {
+        Ok(())
+    } else {
+        Err("not here".to_owned())
     }
 }

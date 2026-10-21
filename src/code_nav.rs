@@ -69,6 +69,23 @@ pub struct Place {
     pub label: String,
 }
 
+impl Place {
+    /// Where definition `d` of file `f` is.
+    fn of((f, d): (&crate::code_index::FileDefs, &crate::code_index::Def)) -> Self {
+        Self {
+            path: f.path.clone(),
+            line: d.line,
+            label: d.name.clone(),
+        }
+    }
+}
+
+/// The notes there are, said together.
+fn notes(parts: impl IntoIterator<Item = Option<String>>) -> Option<String> {
+    let said: Vec<String> = parts.into_iter().flatten().collect();
+    (!said.is_empty()).then(|| said.join(" · "))
+}
+
 /// What the repository answered.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Answer {
@@ -103,7 +120,7 @@ impl Here {
 }
 
 /// GitHub's name for a language whose symbols ghtui reads.
-fn github_language(lang: Language) -> Option<&'static str> {
+pub(crate) fn github_language(lang: Language) -> Option<&'static str> {
     Some(match lang {
         Language::Rust => "Rust",
         Language::TypeScript => "TypeScript",
@@ -138,8 +155,9 @@ fn no_symbols(path: &str) -> String {
     }
 }
 
-/// The file on screen, or why there's none to read.
-fn here(state: &State) -> Result<Here, String> {
+/// The file on screen, or why there's none to read. A page's file is
+/// parsed for its `scopes` only when they're asked for.
+fn here(state: &State, scopes: bool) -> Result<Here, String> {
     match state.screen() {
         Screen::Page(p) => {
             let (Route::Code(code::Blob {
@@ -166,7 +184,10 @@ fn here(state: &State) -> Result<Here, String> {
                 repo: repo.clone(),
                 rev: Some(rev.clone()),
                 path: path.clone(),
-                scopes: scope::scopes(lang, &Text::new(source.as_bytes())),
+                scopes: match scopes {
+                    true => scope::scopes(lang, &Text::new(source.as_bytes())),
+                    false => Vec::new(),
+                },
                 word,
             })
         }
@@ -241,7 +262,7 @@ fn ask(state: &mut State, here: &Here, want: Want) -> Vec<Cmd> {
 /// repository's index starts building, for what comes next.
 #[must_use]
 pub fn symbols(state: &mut State) -> Vec<Cmd> {
-    match here(state) {
+    match here(state, true) {
         Ok(here) if here.scopes.is_empty() => state.info(no_symbols(&here.path)),
         Ok(here) => {
             let rows = symbol_rows(&here.scopes);
@@ -260,7 +281,7 @@ pub fn symbols(state: &mut State) -> Vec<Cmd> {
 /// `gS`: the symbols of the whole repository, at the revision on screen.
 #[must_use]
 pub fn repo_symbols(state: &mut State) -> Vec<Cmd> {
-    match here(state) {
+    match here(state, false) {
         Ok(here) => ask(state, &here, Want::Symbols),
         Err(why) => state.just_say(why),
     }
@@ -270,11 +291,9 @@ pub fn repo_symbols(state: &mut State) -> Vec<Cmd> {
 /// the revision on screen.
 #[must_use]
 pub fn references(state: &mut State) -> Vec<Cmd> {
-    let here = match here(state) {
+    let here = match here(state, false) {
         Ok(here) => here,
-        Err(why) => {
-            return state.just_say(why);
-        }
+        Err(why) => return state.just_say(why),
     };
     let Some(word) = name_here(state, here.word.clone()) else {
         return Vec::new();
@@ -317,11 +336,9 @@ pub fn go_to_line(state: &mut State, line: u32) -> Vec<Cmd> {
 /// is gone to (several are offered); else the repository is asked.
 #[must_use]
 pub fn definition(state: &mut State) -> Vec<Cmd> {
-    let here = match here(state) {
+    let here = match here(state, true) {
         Ok(here) => here,
-        Err(why) => {
-            return state.just_say(why);
-        }
+        Err(why) => return state.just_say(why),
     };
     let Some(word) = name_here(state, here.word.clone()) else {
         return Vec::new();
@@ -370,7 +387,7 @@ fn land_on(state: &mut State, name: &str) {
 /// isn't on screen.
 #[must_use]
 pub fn answered(state: &mut State, ask: &Ask, answer: Result<Answer, String>) -> Vec<Cmd> {
-    let still = here(state).is_ok_and(|h| h.repo == ask.repo && h.path == ask.path);
+    let still = here(state, false).is_ok_and(|h| h.repo == ask.repo && h.path == ask.path);
     if !still {
         return Vec::new();
     }
@@ -468,13 +485,7 @@ async fn definitions(
     let defs = snap
         .index
         .definitions(word, |p| p != ask.path && family(p) == same);
-    let places: Vec<Place> = defs
-        .map(|(f, d)| Place {
-            path: f.path.clone(),
-            line: d.line,
-            label: d.name.clone(),
-        })
-        .collect();
+    let places: Vec<Place> = defs.map(Place::of).collect();
     let repo = &ask.repo;
     let short = snap.short_of(repo);
     if !places.is_empty() {
@@ -518,17 +529,10 @@ fn repo_symbol_places(ask: &Ask, snap: &Snapshot) -> Result<Answer, String> {
         return Err(format!("Couldn't index {}: {why}", ask.repo));
     }
     let all = snap.index.symbols();
-    let symbols = all.take(SYMBOLS).map(|(f, d)| Place {
-        path: f.path.clone(),
-        line: d.line,
-        label: d.name.clone(),
-    });
-    let symbols: Vec<Place> = symbols.collect();
+    let symbols: Vec<Place> = all.take(SYMBOLS).map(Place::of).collect();
     let more = (symbols.len() == SYMBOLS && snap.index.symbols().nth(SYMBOLS).is_some())
         .then(|| format!("Listing the {SYMBOLS} symbols nearest this file"));
-    let note = [snap.short_of(&ask.repo), more, snap.stale.clone()];
-    let note: Vec<String> = note.into_iter().flatten().collect();
-    let note = (!note.is_empty()).then(|| note.join(" · "));
+    let note = notes([snap.short_of(&ask.repo), more, snap.stale.clone()]);
     let none = match &note {
         Some(_) => "No symbols indexed yet".to_owned(),
         None => format!(
@@ -576,8 +580,6 @@ async fn uses(index: &Indexer, ask: &Ask, word: &str, snap: &Snapshot) -> Result
     let more = found
         .more
         .then(|| format!("Only the first {REFERENCES} are listed"));
-    let note = [read, more, snap.stale.clone()].into_iter().flatten();
-    let note: Vec<String> = note.collect();
     let places = found.hits.into_iter().map(|h| Place {
         label: h.text.trim().to_owned(),
         path: h.path,
@@ -585,7 +587,7 @@ async fn uses(index: &Indexer, ask: &Ask, word: &str, snap: &Snapshot) -> Result
     });
     Ok(Answer {
         places: places.collect(),
-        note: (!note.is_empty()).then(|| note.join(" · ")),
+        note: notes([read, more, snap.stale.clone()]),
         none: format!("“{word}” isn't used in {repo_id} at {}", snap.at()),
     })
 }

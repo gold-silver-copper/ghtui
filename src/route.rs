@@ -525,23 +525,36 @@ pub(crate) fn is_reserved(s: &str) -> bool {
     RESERVED.contains(&s)
 }
 
+/// Whether `s` can be a GitHub login: up to 39 letters, digits and
+/// dashes, not starting with a dash.
 pub(crate) fn valid_login(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    !s.is_empty()
+        && s.len() <= 39
+        && !s.starts_with('-')
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
-/// A revision as git allows ref names and SHAs to be written (roughly
-/// `git check-ref-format`): no spaces or control characters, none of
-/// `~^:?*[\`, no `..` or `@{`, and no `/`-separated part that is empty,
-/// starts with `.` or ends with `.lock`.
+/// Why `name` can't name a branch or tag, as `git check-ref-format
+/// --branch` has it: no spaces or control characters, none of `~^:?*[\`,
+/// no `..` or `@{`, not `@` or starting with `-`, and no `/`-separated
+/// part that is empty, starts with `.` or ends with `.lock`.
+pub(crate) fn ref_problem(name: &str) -> Option<&'static str> {
+    let bad = |c: char| c.is_whitespace() || c.is_control() || "~^:?*[\\".contains(c);
+    let part = |p: &str| p.is_empty() || p.starts_with('.') || p.ends_with(".lock");
+    if name.is_empty() {
+        Some("Type its name")
+    } else if name.chars().any(bad) || name.contains("..") || name.contains("@{") || name == "@" {
+        Some("A name can't have spaces, .., @{, or any of ~^:?*[\\")
+    } else if name.starts_with('-') || name.ends_with('.') || name.split('/').any(part) {
+        Some("A name can't start with / . or -, or end with / . or .lock")
+    } else {
+        None
+    }
+}
+
+/// A revision as git allows ref names and SHAs to be written.
 fn valid_rev(s: &str) -> bool {
-    s.split('/')
-        .all(|c| !c.is_empty() && !c.starts_with('.') && !c.ends_with(".lock"))
-        && !s.contains("..")
-        && !s.contains("@{")
-        && !s.ends_with('.')
-        && !s
-            .chars()
-            .any(|c| c.is_control() || c.is_whitespace() || "~^:?*[\\".contains(c))
+    ref_problem(s).is_none()
 }
 
 /// A team's slug: its name, lowercased, its other characters dashes.
@@ -598,6 +611,8 @@ pub(crate) mod arb {
                 // trip catches it rejecting a legal name.
                 !r.contains("..")
                     && !r.ends_with('.')
+                    && !r.starts_with('-')
+                    && r != "@"
                     && !r.split('/').any(|c| c.ends_with(".lock"))
             })
     }
@@ -610,6 +625,24 @@ pub(crate) mod tests {
     use crate::api::project::{ProjectOwner, ProjectRef, ProjectsOf};
     use crate::git::Oid;
     use crate::route::security::valid_ghsa;
+
+    #[test]
+    fn ref_names_are_gits() {
+        assert_eq!(ref_problem("feature/x"), None);
+        assert_eq!(ref_problem("v1.2.0"), None);
+        for bad in [
+            "has space",
+            "a..b",
+            "-x",
+            "x.lock",
+            "a.lock/b",
+            "a/.b",
+            "a//b",
+            "@",
+        ] {
+            assert!(ref_problem(bad).is_some(), "{bad}");
+        }
+    }
 
     /// Names GitHub can't have aren't pages (found by fuzzing: a user
     /// named `https:` and NULs opened, and its URL led elsewhere).
@@ -762,12 +795,219 @@ pub(crate) mod tests {
     #[test]
     fn parses_github_urls() {
         let repo = RepoId::new("o", "r");
-        assert_eq!(page("https://github.com/"), Route::App(app::Home));
-        assert_eq!(page("https://github.com/octocat"), Route::user("octocat"));
-        assert_eq!(
-            page("https://github.com/o/r"),
-            Route::Code(code::Repo(repo.clone()))
-        );
+        let pr = PrRef {
+            repo: repo.clone(),
+            number: 7,
+        };
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let other = "f".repeat(40);
+        let commit = |oid: &str, pr| {
+            Route::Code(code::Commit {
+                repo: repo.clone(),
+                oid: oid.into(),
+                pr,
+            })
+        };
+        let commits = |rev: &str| {
+            Route::Code(code::Commits {
+                repo: repo.clone(),
+                rev: rev.into(),
+                path: String::new(),
+            })
+        };
+        let issues = |query: &str| {
+            Route::Issues(issues::Issues {
+                repo: repo.clone(),
+                query: query.into(),
+            })
+        };
+        let user = |login: &str, tab| {
+            Route::People(people::User {
+                login: login.into(),
+                tab,
+            })
+        };
+        let notifications = |query: &str| {
+            Route::Search(search::Notifications {
+                query: query.into(),
+            })
+        };
+        let pr_tab = |tab| {
+            Route::Pulls(pulls::Pr {
+                pr: pr.clone(),
+                tab,
+            })
+        };
+        let compare = |spec: String| {
+            Route::Code(code::Compare {
+                repo: repo.clone(),
+                spec,
+            })
+        };
+        let search = |kind, query: &str| {
+            Route::Search(search::Search {
+                kind,
+                query: query.into(),
+            })
+        };
+        for (url, want) in [
+            ("https://github.com/".to_owned(), Route::App(app::Home)),
+            ("https://github.com/octocat".into(), Route::user("octocat")),
+            (
+                "https://github.com/o/r".into(),
+                Route::Code(code::Repo(repo.clone())),
+            ),
+            (
+                "https://github.com/o/r/issues?q=is%3Aissue+is%3Aclosed".into(),
+                issues("is:closed"),
+            ),
+            (
+                "https://github.com/o/r/pulls".into(),
+                Route::Pulls(pulls::Pulls {
+                    repo: repo.clone(),
+                    query: OPEN.into(),
+                }),
+            ),
+            (
+                "https://github.com/o/r/issues/5".into(),
+                Route::Issues(issues::Issue {
+                    repo: repo.clone(),
+                    number: 5,
+                }),
+            ),
+            (
+                "https://github.com/o/r/pull/7/commits".into(),
+                pr_tab(PrTab::Commits),
+            ),
+            (
+                "https://github.com/o/r/pull/7/checks".into(),
+                pr_tab(PrTab::Checks),
+            ),
+            (
+                format!("https://github.com/o/r/commit/{sha}"),
+                commit(sha, None),
+            ),
+            (
+                "https://github.com/o/r/commit/0123abc".into(),
+                commit("0123abc", None),
+            ),
+            // A pull request's commit knows it.
+            (
+                format!("https://github.com/o/r/pull/7/commits/{sha}"),
+                commit(sha, Some(7)),
+            ),
+            ("https://github.com/o/r/commits".into(), commits("HEAD")),
+            (
+                "https://github.com/o/r/actions".into(),
+                Route::actions(repo.clone()),
+            ),
+            (
+                "https://github.com/o/r/actions?query=branch%3Amain+is%3Afailure".into(),
+                Route::Runs(runs::Actions {
+                    repo: repo.clone(),
+                    query: "branch:main is:failure".into(),
+                }),
+            ),
+            (
+                "https://github.com/o/r/actions/runs/9".into(),
+                Route::Runs(runs::WorkflowRun {
+                    repo: repo.clone(),
+                    run: 9,
+                    attempt: None,
+                }),
+            ),
+            (
+                "https://github.com/o/r/stargazers".into(),
+                Route::People(people::Stargazers(repo.clone())),
+            ),
+            (
+                "https://github.com/o/r/network/members".into(),
+                Route::People(people::Forks(repo.clone())),
+            ),
+            (
+                "https://github.com/o/r/releases/tag/v1.0/rc".into(),
+                Route::Releases(releases::Release {
+                    repo: repo.clone(),
+                    tag: "v1.0/rc".into(),
+                }),
+            ),
+            (
+                "https://github.com/o/r/releases/latest".into(),
+                Route::Releases(releases::Releases(repo.clone())),
+            ),
+            (
+                "https://github.com/o/r/tags".into(),
+                Route::Code(code::Tags(repo.clone())),
+            ),
+            (
+                "https://github.com/search?q=tui+lang%3Arust&type=repositories".into(),
+                search(SearchKind::Repos, "tui lang:rust"),
+            ),
+            // A topic search without a topic is an empty search, not `topic:`.
+            (
+                "https://github.com/search?type=topics".into(),
+                search(SearchKind::Repos, ""),
+            ),
+            (
+                "https://github.com/o/r/labels/good%20first%20issue".into(),
+                issues("is:open label:\"good first issue\""),
+            ),
+            (
+                "https://github.com/o/r/labels/bug".into(),
+                issues("is:open label:bug"),
+            ),
+            (
+                "https://github.com/octocat?tab=repositories&sort=stargazers".into(),
+                user("octocat", ProfileTab::Repositories(RepoSort::Stars)),
+            ),
+            (
+                "https://github.com/octocat?tab=followers".into(),
+                user("octocat", ProfileTab::Followers),
+            ),
+            (
+                "https://github.com/orgs/rust-lang/people".into(),
+                user("rust-lang", ProfileTab::People),
+            ),
+            (
+                "https://github.com/orgs/rust-lang/repositories".into(),
+                user("rust-lang", ProfileTab::Repositories(RepoSort::Updated)),
+            ),
+            (
+                "https://github.com/o/r/milestone/3".into(),
+                Route::Issues(issues::Milestone {
+                    repo: repo.clone(),
+                    number: 3,
+                }),
+            ),
+            (
+                "https://github.com/o/r/compare/v1...fork:feature/x".into(),
+                compare("v1...fork:feature/x".into()),
+            ),
+            // Three dots diff from the merge base, which the comparison finds.
+            (
+                format!("https://github.com/o/r/compare/{sha}...{other}#files"),
+                compare(format!("{sha}...{other}")),
+            ),
+            // A short number alone is someone's gists; a long one, an old gist.
+            (
+                "https://gist.github.com/2000".into(),
+                Route::Gists(gists::Gists("2000".into())),
+            ),
+            (
+                "https://gist.github.com/1162032".into(),
+                Route::Gists(gists::Gist {
+                    owner: None,
+                    id: "1162032".into(),
+                }),
+            ),
+            ("https://github.com/notifications".into(), notifications("")),
+            (
+                "https://github.com/notifications?query=is%3Aunread+repo%3Ao%2Fr".into(),
+                notifications("is:unread repo:o/r"),
+            ),
+        ] {
+            assert_eq!(page(&url), want, "{url}");
+        }
         assert_eq!(
             page("https://github.com/o/r/tree/main/src/ui").split(Some("main")),
             Some(Route::Code(code::Tree {
@@ -789,219 +1029,41 @@ pub(crate) mod tests {
             );
         }
         assert_eq!(
-            page("https://github.com/o/r/issues?q=is%3Aissue+is%3Aclosed"),
-            Route::Issues(issues::Issues {
-                repo: repo.clone(),
-                query: "is:closed".into()
-            })
-        );
-        assert_eq!(
-            page("https://github.com/o/r/pulls"),
-            Route::Pulls(pulls::Pulls {
-                repo: repo.clone(),
-                query: OPEN.into()
-            })
-        );
-        assert_eq!(
-            page("https://github.com/o/r/issues/5"),
-            Route::Issues(issues::Issue {
-                repo: repo.clone(),
-                number: 5
-            })
-        );
-        let pr = PrRef { repo, number: 7 };
-        assert_eq!(
-            page("https://github.com/o/r/pull/7/commits"),
-            Route::Pulls(pulls::Pr {
-                pr: pr.clone(),
-                tab: PrTab::Commits
-            })
-        );
-        assert_eq!(
-            Dest::from_url("https://github.com/o/r/pull/7/files").target,
-            Target::Files(DiffOf::Pr(pr.clone()))
-        );
-        let sha = "0123456789abcdef0123456789abcdef01234567";
-        let commit = |oid: &str| {
-            Route::Code(code::Commit {
-                repo: pr.repo.clone(),
-                oid: oid.into(),
-                pr: None,
-            })
-        };
-        assert_eq!(
-            page(&format!("https://github.com/o/r/commit/{sha}")),
-            commit(sha)
-        );
-        let commits = |rev: &str, path: &str| {
-            Route::Code(code::Commits {
-                repo: pr.repo.clone(),
-                rev: rev.into(),
-                path: path.into(),
-            })
-        };
-        assert_eq!(
             page("https://github.com/o/r/commits/main/src/ui").split(None),
-            Some(commits("main", "src/ui"))
+            Some(Route::Code(code::Commits {
+                repo: repo.clone(),
+                rev: "main".into(),
+                path: "src/ui".into(),
+            }))
         );
-        assert_eq!(page("https://github.com/o/r/commits"), commits("HEAD", ""));
-        assert_eq!(
-            page("https://github.com/o/r/actions"),
-            Route::actions(pr.repo.clone())
-        );
-        assert_eq!(
-            page("https://github.com/o/r/actions?query=branch%3Amain+is%3Afailure"),
-            Route::Runs(runs::Actions {
-                repo: pr.repo.clone(),
-                query: "branch:main is:failure".into()
-            })
-        );
-        assert_eq!(
-            page("https://github.com/o/r/stargazers"),
-            Route::People(people::Stargazers(pr.repo.clone()))
-        );
-        assert_eq!(
-            page("https://github.com/o/r/network/members"),
-            Route::People(people::Forks(pr.repo.clone()))
-        );
-        assert_eq!(
-            page("https://github.com/o/r/releases/tag/v1.0/rc"),
-            Route::Releases(releases::Release {
-                repo: pr.repo.clone(),
-                tag: "v1.0/rc".into()
-            })
-        );
-        assert_eq!(
-            page("https://github.com/o/r/releases/latest"),
-            Route::Releases(releases::Releases(pr.repo.clone()))
-        );
-        assert_eq!(
-            page("https://github.com/o/r/tags"),
-            Route::Code(code::Tags(pr.repo.clone()))
-        );
-        assert!(matches!(
-            Dest::from_url("https://github.com/o/r/releases/download/v1/x.tgz").target,
-            Target::External(_)
-        ));
-        assert_eq!(
-            page("https://github.com/o/r/pull/7/checks"),
-            Route::Pulls(pulls::Pr {
-                pr: pr.clone(),
-                tab: PrTab::Checks
-            })
-        );
-        assert_eq!(
-            page("https://github.com/o/r/commit/0123abc"),
-            commit("0123abc")
-        );
-        // A pull request's commit knows it.
-        assert_eq!(
-            page(&format!("https://github.com/o/r/pull/7/commits/{sha}")),
-            Route::Code(code::Commit {
-                repo: pr.repo.clone(),
-                oid: sha.into(),
-                pr: Some(7),
-            })
-        );
-        assert_eq!(
-            Dest::from_url(&format!("https://github.com/o/r/commit/{sha}#diff-abc")).target,
-            Target::Files(DiffOf::Commit(pr.repo.clone(), Oid::parse(sha).unwrap()))
-        );
-        assert_eq!(
-            page("https://github.com/search?q=tui+lang%3Arust&type=repositories"),
-            Route::Search(search::Search {
-                kind: SearchKind::Repos,
-                query: "tui lang:rust".into()
-            })
-        );
-        assert_eq!(
-            page("https://github.com/o/r/labels/good%20first%20issue"),
-            Route::Issues(issues::Issues {
-                repo: RepoId::new("o", "r"),
-                query: "is:open label:\"good first issue\"".into()
-            })
-        );
-        assert_eq!(
-            page("https://github.com/o/r/labels/bug"),
-            Route::Issues(issues::Issues {
-                repo: RepoId::new("o", "r"),
-                query: "is:open label:bug".into()
-            })
-        );
-        assert_eq!(
-            page("https://github.com/octocat?tab=repositories&sort=stargazers"),
-            Route::People(people::User {
-                login: "octocat".into(),
-                tab: ProfileTab::Repositories(RepoSort::Stars)
-            })
-        );
-        assert_eq!(
-            page("https://github.com/octocat?tab=followers"),
-            Route::People(people::User {
-                login: "octocat".into(),
-                tab: ProfileTab::Followers
-            })
-        );
-        assert_eq!(
-            page("https://github.com/orgs/rust-lang/people"),
-            Route::People(people::User {
-                login: "rust-lang".into(),
-                tab: ProfileTab::People
-            })
-        );
-        assert_eq!(
-            page("https://github.com/orgs/rust-lang/repositories"),
-            Route::People(people::User {
-                login: "rust-lang".into(),
-                tab: ProfileTab::Repositories(RepoSort::Updated)
-            })
-        );
-        assert_eq!(
-            page("https://github.com/o/r/actions/runs/9"),
-            Route::Runs(runs::WorkflowRun {
-                repo: pr.repo.clone(),
-                run: 9,
-                attempt: None
-            })
-        );
-        assert_eq!(
-            page("https://github.com/o/r/milestone/3"),
-            Route::Issues(issues::Milestone {
-                repo: pr.repo.clone(),
-                number: 3
-            })
-        );
-        assert_eq!(
-            page("https://github.com/o/r/compare/v1...fork:feature/x"),
-            Route::Code(code::Compare {
-                repo: pr.repo.clone(),
-                spec: "v1...fork:feature/x".into()
-            })
-        );
-        let other = "f".repeat(40);
-        assert_eq!(
-            Dest::from_url(&format!(
-                "https://github.com/o/r/compare/{sha}..{other}#files"
-            ))
-            .target,
-            Target::Files(DiffOf::Range(
-                pr.repo.clone(),
-                Oid::parse(sha).unwrap(),
-                Oid::parse(&other).unwrap()
-            ))
-        );
-        // Three dots diff from the merge base, which the comparison finds.
-        assert_eq!(
-            page(&format!(
-                "https://github.com/o/r/compare/{sha}...{other}#files"
-            )),
-            Route::Code(code::Compare {
-                repo: pr.repo.clone(),
-                spec: format!("{sha}...{other}")
-            })
-        );
-        // A diff's link leads back to it, and a link to its lines to them.
         let (from, to) = (Oid::parse(sha).unwrap(), Oid::parse(&other).unwrap());
+        for (url, want) in [
+            (
+                "https://github.com/o/r/pull/7/files".to_owned(),
+                DiffOf::Pr(pr.clone()),
+            ),
+            (
+                format!("https://github.com/o/r/commit/{sha}#diff-abc"),
+                DiffOf::Commit(repo.clone(), from.clone()),
+            ),
+            (
+                format!("https://github.com/o/r/compare/{sha}..{other}#files"),
+                DiffOf::Range(repo.clone(), from.clone(), to.clone()),
+            ),
+        ] {
+            assert_eq!(Dest::from_url(&url).target, Target::Files(want), "{url}");
+        }
+        for url in [
+            "https://github.com/o/r/releases/download/v1/x.tgz",
+            "https://github.com/settings/tokens",
+            "https://example.com/o/r",
+        ] {
+            assert!(
+                matches!(Dest::from_url(url).target, Target::External(_)),
+                "{url}"
+            );
+        }
+        // A diff's link leads back to it, and a link to its lines to them.
         let line = |side, line| crate::diff::anchor::LinePos { side, line };
         let lines = (
             line(crate::diff::anchor::Side::Left, 3),
@@ -1010,34 +1072,14 @@ pub(crate) mod tests {
         let anchor = format!("diff-{}L3-R5", crate::ui::pages::url::path_hash("a.rs"));
         for of in [
             DiffOf::Pr(pr.clone()),
-            DiffOf::Commit(pr.repo.clone(), from.clone()),
-            DiffOf::Range(pr.repo.clone(), from, to),
+            DiffOf::Commit(repo.clone(), from.clone()),
+            DiffOf::Range(repo.clone(), from, to),
         ] {
             assert_eq!(Dest::from_url(&of.url()).target, Target::Files(of.clone()));
             let dest = Dest::from_url(&of.file_url("a.rs", Some(lines)));
             assert_eq!(dest.target, Target::Files(of.clone()));
             assert_eq!(dest.anchor.as_deref(), Some(anchor.as_str()));
         }
-        // A topic search without a topic is an empty search, not `topic:`.
-        assert_eq!(
-            page("https://github.com/search?type=topics"),
-            Route::Search(search::Search {
-                kind: SearchKind::Repos,
-                query: String::new()
-            })
-        );
-        // A short number alone is someone's gists; a long one, an old gist.
-        assert_eq!(
-            page("https://gist.github.com/2000"),
-            Route::Gists(gists::Gists("2000".into()))
-        );
-        assert_eq!(
-            page("https://gist.github.com/1162032"),
-            Route::Gists(gists::Gist {
-                owner: None,
-                id: "1162032".into()
-            })
-        );
         // A repository (or owner) named `blob` keeps its blame.
         let blame = Route::Code(code::Blame {
             repo: RepoId::new("blob", "blob"),
@@ -1046,26 +1088,6 @@ pub(crate) mod tests {
             lines: None,
         });
         assert_eq!(reopened(&blame), Target::Page(blame));
-        assert_eq!(
-            page("https://github.com/notifications"),
-            Route::Search(search::Notifications {
-                query: String::new()
-            })
-        );
-        assert_eq!(
-            page("https://github.com/notifications?query=is%3Aunread+repo%3Ao%2Fr"),
-            Route::Search(search::Notifications {
-                query: "is:unread repo:o/r".into()
-            })
-        );
-        assert!(matches!(
-            Dest::from_url("https://github.com/settings/tokens").target,
-            Target::External(_)
-        ));
-        assert!(matches!(
-            Dest::from_url("https://example.com/o/r").target,
-            Target::External(_)
-        ));
     }
 
     /// Why a github.com link may open the browser (see the corpus).
@@ -1114,12 +1136,12 @@ pub(crate) mod tests {
         }
     }
 
-    /// Whether `target` is what the corpus says (`todo` pages aren't built
-    /// yet, so they still open the browser).
+    /// Whether `target` is what the corpus says: "not built yet" isn't a
+    /// reason to open the browser.
     pub(crate) fn as_expected(target: &Target, expect: &str, reason: Option<&str>) -> bool {
         match (expect, target) {
             ("external", Target::External(_)) => reason.is_some_and(|r| REASONS.contains(&r)),
-            ("todo", Target::External(_)) | ("files", Target::Files(_)) => true,
+            ("files", Target::Files(_)) => true,
             (variant_name, Target::Page(route)) => variant(route) == variant_name,
             _ => false,
         }
@@ -1142,22 +1164,6 @@ pub(crate) mod tests {
             "{} wrong:\n{}",
             wrong.len(),
             wrong.join("\n")
-        );
-    }
-
-    /// "Not built yet" isn't a reason: every link opens a page, the diff
-    /// viewer, or the browser for a reason the corpus states.
-    #[test]
-    fn no_link_waits_for_a_page() {
-        let todo: Vec<&str> = corpus()
-            .iter()
-            .filter(|(_, expect, _)| *expect == "todo")
-            .map(|(url, _, _)| *url)
-            .collect();
-        assert!(
-            todo.is_empty(),
-            "pages still to build:\n{}",
-            todo.join("\n")
         );
     }
 

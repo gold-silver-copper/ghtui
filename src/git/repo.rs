@@ -18,7 +18,7 @@ use tokio::task::JoinHandle;
 use crate::git::blobs::BlobReader;
 use crate::git::credentials::Credentials;
 use crate::git::files::{ChangedFile, parse_raw};
-use crate::git::{GitError, Oid, Version, git, piped, stdout};
+use crate::git::{GitError, Oid, Version, checked, git, piped, stdout};
 
 /// `GIT_NO_LAZY_FETCH` lets us ask which objects are missing without
 /// fetching them.
@@ -64,10 +64,7 @@ pub struct Commit {
 /// conflict on ref and pack locks.
 fn repo_lock(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
     static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
-    let mut locks = LOCKS
-        .get_or_init(Mutex::default)
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut locks = crate::lock(LOCKS.get_or_init(Mutex::default));
     locks.entry(path.to_owned()).or_default().clone()
 }
 
@@ -182,24 +179,8 @@ impl Repo {
     /// What `git <args>` printed, as bytes (a file's contents).
     pub(crate) async fn run_bytes(&self, args: &[&str]) -> Result<Vec<u8>, GitError> {
         let output = self.cmd().args(args).output().await?;
-        if !output.status.success() {
-            return Err(GitError::Failed {
-                args: args.join(" "),
-                stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-            });
-        }
+        checked(&output, &args.join(" "))?;
         Ok(output.stdout)
-    }
-
-    /// `git <args>` with `input` on its stdin.
-    pub(crate) async fn run_with_input(
-        &self,
-        args: &[&str],
-        input: String,
-    ) -> Result<String, GitError> {
-        let mut cmd = self.cmd();
-        cmd.args(args);
-        run_with_stdin(cmd, &args.join(" "), input).await
     }
 
     async fn is_promisor(&self) -> bool {
@@ -523,7 +504,12 @@ impl Drop for Unfinished {
     }
 }
 
-async fn run_with_stdin(mut cmd: Command, what: &str, input: String) -> Result<String, GitError> {
+/// `cmd` with `input` on its stdin, and what it printed.
+pub(crate) async fn run_with_stdin(
+    mut cmd: Command,
+    what: &str,
+    input: String,
+) -> Result<String, GitError> {
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

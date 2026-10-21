@@ -1,6 +1,8 @@
 //! Line diffs with context, as hunks.
 
 pub use imara_diff::Algorithm;
+use std::borrow::Cow;
+
 use imara_diff::{Diff, InternedInput};
 
 use crate::diff::anchor::{LinePos, Side};
@@ -93,21 +95,10 @@ pub fn align(
     algorithm: Algorithm,
     whitespace: Whitespace,
 ) -> Vec<DiffLine> {
-    let key = |text: &Text, i: usize| -> String {
-        match whitespace {
-            Whitespace::Exact => text.token(i),
-            Whitespace::Ignore => text
-                .line(i)
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect(),
-        }
-    };
-    let before: Vec<String> = (0..old.len()).map(|i| key(old, i)).collect();
-    let after: Vec<String> = (0..new.len()).map(|i| key(new, i)).collect();
+    let (before, after) = (keys(old, whitespace), keys(new, whitespace));
     let mut input = InternedInput::default();
-    input.update_before(before.iter().map(String::as_str));
-    input.update_after(after.iter().map(String::as_str));
+    input.update_before(before.iter().map(AsRef::as_ref));
+    input.update_after(after.iter().map(AsRef::as_ref));
     let mut diff = Diff::compute(algorithm, &input);
     diff.postprocess_lines(&input);
 
@@ -128,6 +119,22 @@ pub fn align(
         (o, n) = (before.end, after.end);
     }
     lines
+}
+
+/// Each line of `text` as `whitespace` compares it: exact compares the
+/// source's own bytes, so only ignoring whitespace copies.
+fn keys(text: &Text, whitespace: Whitespace) -> Vec<Cow<'_, str>> {
+    (0..text.len())
+        .map(|i| match whitespace {
+            Whitespace::Exact => Cow::Borrowed(text.token(i)),
+            Whitespace::Ignore => Cow::Owned(
+                text.line(i)
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect(),
+            ),
+        })
+        .collect()
 }
 
 /// Ranges of `lines` to show: everything within `context` lines of a

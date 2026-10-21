@@ -17,17 +17,10 @@ use crate::ui::form::Row;
 fn form(action: Action) -> (State, Vec<Cmd>) {
     let mut s = with_repo();
     let cmds = act(&mut s, action);
-    let form = Data::NewForm(Box::new(crate::fixtures::new_form()));
+    let form = Data::from(crate::fixtures::new_form());
     let mut more = fetched(&mut s, DataKey::NewForm(ghtui()), form);
     more.extend(cmds);
     (s, more)
-}
-
-fn composer(s: &mut State) -> &mut crate::compose::Compose {
-    match &mut s.overlay {
-        Some(Overlay::Compose(c)) => c,
-        _ => panic!("no composer"),
-    }
 }
 
 /// The new issue's form, from the bug report template, its composer open.
@@ -52,7 +45,7 @@ fn a_new_issue_starts_from_its_template_and_opens_once_made() {
         assert!(text.contains(starter), "{text}");
     }
     press(&mut s, "<Enter>");
-    let c = composer(&mut s);
+    let c = fixtures::composer(&mut s);
     assert_eq!(c.text(), "[Bug]: \n\n### What happened?\n\n### Version");
     c.input.move_cursor(CursorMove::Top);
     c.input.move_cursor(CursorMove::End);
@@ -72,7 +65,7 @@ fn a_new_issue_starts_from_its_template_and_opens_once_made() {
         new: Submission::Issue(new),
     };
     assert_eq!(sent, [fixtures::start(submit.clone())]);
-    assert!(composer(&mut s).sent.sending);
+    assert!(fixtures::composer(&mut s).sent.sending);
 
     let cmds = fixtures::done(&mut s, submit, Ok(42));
     let issue = Route::Issues(issues::Issue {
@@ -97,7 +90,7 @@ fn a_refused_issue_says_why_in_the_composer() {
     let submit = fixtures::sent::<Submit>(&press(&mut s, "<C-s>"));
     let refused = ApiError::GraphQl(vec!["Title can't be blank".into()]);
     fixtures::done(&mut s, submit, Err(refused.into()));
-    let c = composer(&mut s);
+    let c = fixtures::composer(&mut s);
     assert!(!c.sent.sending);
     assert_eq!(
         c.sent.error.as_deref(),
@@ -111,7 +104,7 @@ fn a_refused_issue_says_why_in_the_composer() {
 #[test]
 fn labels_are_picked_and_text_is_kept() {
     let mut s = bug_report();
-    composer(&mut s).input.insert_str("\nMore.");
+    fixtures::composer(&mut s).input.insert_str("\nMore.");
     press(&mut s, "<Esc>");
     assert!(s.overlay.is_none());
     assert!(page_text(&s).contains("More."), "{}", page_text(&s));
@@ -162,7 +155,7 @@ fn head(s: &mut State, on_github: Option<&str>) -> Vec<Cmd> {
         )]
         .into(),
     };
-    fixtures::fetched(s, compare(), Data::Head(Box::new(hs)))
+    fixtures::fetched(s, compare(), Data::from(hs))
 }
 
 /// Where `fix-parser` stands against main, as it's asked for.

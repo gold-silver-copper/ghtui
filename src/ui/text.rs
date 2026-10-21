@@ -1,5 +1,6 @@
 //! Width-aware text helpers.
 
+use std::borrow::Cow;
 use std::ops::Range;
 
 use ratatui::buffer::CellWidth;
@@ -87,11 +88,17 @@ pub fn graphemes(s: &str) -> impl Iterator<Item = (&str, usize)> {
 
 /// Cuts `s` to at most `max` columns, ending in `…` when shortened.
 pub fn truncate(s: &str, max: usize) -> String {
+    fit(s, max).into_owned()
+}
+
+/// [`truncate`], without copying `s` when it fits: what drawing each
+/// frame uses, where nearly everything does.
+pub fn fit(s: &str, max: usize) -> Cow<'_, str> {
     if width(s) <= max {
-        return s.to_owned();
+        return Cow::Borrowed(s);
     }
     if max == 0 {
-        return String::new();
+        return Cow::Borrowed("");
     }
     let mut out = String::new();
     let mut used = 0;
@@ -103,7 +110,7 @@ pub fn truncate(s: &str, max: usize) -> String {
         used += w;
     }
     out.push('…');
-    out
+    Cow::Owned(out)
 }
 
 /// `word` as `n` of it: "file" or "files", "reply" or "replies", "branch"

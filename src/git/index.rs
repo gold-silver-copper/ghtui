@@ -6,10 +6,10 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 
-use crate::git::repo::Repo;
-use crate::git::{GitError, Oid, piped, stdout};
+use crate::git::repo::{Repo, run_with_stdin};
+use crate::git::{GitError, Oid, checked, piped, stdout};
 
 /// A file in a commit's tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,7 +112,7 @@ async fn fetch_trees(repo: &Repo, commit: &Oid) -> Result<(), GitError> {
 }
 
 /// `<mode> blob <oid> <size>\t<path>` records, NUL-terminated.
-fn parse_tree(out: &str) -> Vec<TreeFile> {
+pub(crate) fn parse_tree(out: &str) -> Vec<TreeFile> {
     let file = |record: &str| {
         let (meta, path) = record.split_once('\t')?;
         let mut meta = meta.split_whitespace();
@@ -140,18 +140,8 @@ pub async fn tree_of(repo: &Repo, files: &[(&str, &str)], scratch: &Path) -> Res
     let mut cmd = repo.cmd();
     cmd.env("GIT_INDEX_FILE", scratch)
         .env("GIT_NO_LAZY_FETCH", "1")
-        .args(["update-index", "--index-info"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = cmd.spawn()?;
-    let mut stdin = piped(child.stdin.take(), "stdin")?;
-    let writer = tokio::spawn(async move {
-        let _ = stdin.write_all(input.as_bytes()).await;
-    });
-    let output = child.wait_with_output().await?;
-    let _ = writer.await;
-    stdout(&output, "update-index --index-info")?;
+        .args(["update-index", "--index-info"]);
+    run_with_stdin(cmd, "update-index --index-info", input).await?;
     let mut cmd = repo.cmd();
     cmd.env("GIT_INDEX_FILE", scratch)
         .env("GIT_NO_LAZY_FETCH", "1")
@@ -208,11 +198,8 @@ pub async fn grep_word(
     }
     let output = child.wait_with_output().await?;
     // 1: no line matched.
-    if !output.status.success() && output.status.code() != Some(1) {
-        return Err(GitError::Failed {
-            args: "grep".to_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        });
+    if output.status.code() != Some(1) {
+        checked(&output, "grep")?;
     }
     Ok(found)
 }
@@ -232,31 +219,17 @@ fn parse_hit(line: &str, prefix: &str) -> Option<Hit> {
 mod tests {
     use super::*;
 
-    use crate::git::set_up as git;
-
     /// A repository with a commit of two Rust files and a binary one.
     async fn repo() -> (tempfile::TempDir, Repo, Oid) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path();
-        git(path, &["init", "-q", "-b", "main"]).await;
-        std::fs::create_dir(path.join("src")).unwrap();
-        std::fs::write(path.join("src/a.rs"), "fn run() {}\nfn rung() { run() }\n").unwrap();
-        std::fs::write(path.join("b.rs"), "// run, run\nfn other() {}\n").unwrap();
-        std::fs::write(path.join("bin"), b"run\0\x01").unwrap();
-        git(path, &["add", "."]).await;
-        git(
-            path,
-            &[
-                "-c",
-                "user.name=a",
-                "-c",
-                "user.email=a@b",
-                "commit",
-                "-qm",
-                "x",
-            ],
-        )
-        .await;
+        let files = [
+            ("src/a.rs", "fn run() {}\nfn rung() { run() }\n"),
+            ("b.rs", "// run, run\nfn other() {}\n"),
+            ("bin", "run\0\x01"),
+        ];
+        crate::git::fixture::origin(path).await;
+        crate::git::fixture::commit(path, &files, "x").await;
         let repo = Repo::open_local(path, "origin").await.unwrap();
         let head = repo.rev_parse("HEAD").await.unwrap();
         (dir, repo, head)

@@ -582,7 +582,6 @@ pub fn apply(
         .max(1)
         .cast_signed();
     let tree_focused = screen.focus == Pane::Tree && lay.tree.is_some();
-    let tree = unfolded(&state.tree, &screen.folded);
     let before = (screen.top, screen.cursor, screen.shift);
     let scrolls = matches!(action, Action::ScrollLeft | Action::ScrollRight);
     let mut cmds = Vec::new();
@@ -604,35 +603,28 @@ pub fn apply(
         Action::ToggleSplit => {
             screen.prefs.split_override = Some(!screen.options(content, &state.tree).split);
         }
-        Action::IgnoreWhitespace => {
-            screen.prefs.ignore_whitespace = !screen.prefs.ignore_whitespace;
-            notice.info(if screen.prefs.ignore_whitespace {
-                "Ignoring whitespace changes"
-            } else {
-                "Showing whitespace changes"
-            });
-        }
+        Action::IgnoreWhitespace => flip(
+            &mut screen.prefs.ignore_whitespace,
+            notice,
+            ["Ignoring whitespace changes", "Showing whitespace changes"],
+        ),
         Action::WrapLines => {
-            screen.prefs.wrap = !screen.prefs.wrap;
             screen.shift = 0;
-            notice.info(if screen.prefs.wrap {
-                "Long lines wrap"
-            } else {
-                "Long lines are cut at the edge"
-            });
+            let said = ["Long lines wrap", "Long lines are cut at the edge"];
+            flip(&mut screen.prefs.wrap, notice, said);
         }
         Action::ScrollLeft | Action::ScrollRight if screen.prefs.wrap => {
             notice.info("Long lines wrap: there's nothing to the side");
             return Vec::new();
         }
-        Action::BySyntax => {
-            screen.prefs.by_syntax = !screen.prefs.by_syntax;
-            notice.info(if screen.prefs.by_syntax {
-                "Comparing by syntax: only the code that changed stands out"
-            } else {
-                "Comparing by lines"
-            });
-        }
+        Action::BySyntax => flip(
+            &mut screen.prefs.by_syntax,
+            notice,
+            [
+                "Comparing by syntax: only the code that changed stands out",
+                "Comparing by lines",
+            ],
+        ),
         Action::TreeNarrower | Action::TreeWider => match lay.tree {
             Some(tree) => {
                 let wider = action == Action::TreeWider;
@@ -681,6 +673,7 @@ pub fn apply(
             select_tree_row(screen, state, row);
         }
         Action::Fold | Action::Unfold | Action::Open | Action::FoldToggle if tree_focused => {
+            let tree = unfolded(&state.tree, &screen.folded);
             let at = screen.tree_selected;
             let row = tree.get(at);
             // The folder the row is in.
@@ -792,6 +785,7 @@ pub fn apply(
         Action::ScrollRight => screen.shift = screen.shift.saturating_add(SHIFT).min(MAX_SHIFT),
         // The tree's sections are its folders.
         Action::NextSection | Action::PrevSection if tree_focused => {
+            let tree = unfolded(&state.tree, &screen.folded);
             let mut dirs = (tree.iter().enumerate())
                 .filter(|(_, r)| matches!(r, TreeRow::Dir { .. }))
                 .map(|(i, _)| i);
@@ -937,6 +931,14 @@ pub fn apply(
         });
     }
     cmds
+}
+
+/// Flips `flag` and says which way it went: `said` is what's said on,
+/// then off.
+fn flip(flag: &mut bool, notice: &mut Notices, said: [&'static str; 2]) {
+    *flag = !*flag;
+    let [on, off] = said;
+    notice.info(if *flag { on } else { off });
 }
 
 /// Selects row `row` of the file tree as shown (or its last), and shows

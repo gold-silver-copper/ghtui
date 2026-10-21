@@ -82,23 +82,22 @@ async fn answer(
 ) -> Result<Data, ApiError> {
     use DataKey as K;
     Ok(match key {
-        K::Repo(repo) => Data::Repo(Box::new(gh.repo(repo).await?)),
+        K::Repo(repo) => gh.repo(repo).await?.into(),
         K::Readme(repo) => Data::Readme(gh.readme(repo).await?.map(Box::new)),
         K::Tree(repo, rev, path) => Data::Tree(gh.tree(repo, rev, path).await?),
-        K::Blob(repo, rev, path) => Data::Blob(Box::new(gh.blob(repo, rev, path).await?)),
+        K::Blob(repo, rev, path) => gh.blob(repo, rev, path).await?.into(),
         K::Search(kind, query) => {
             let found = |r: &crate::api::browse::SearchResults| {
                 if let Some(tx) = early {
-                    let _ = tx.send(Msg::Fetched {
-                        key: key.clone(),
-                        result: Ok(Data::Search(Box::new(r.clone()))),
-                        cached_at: Some(crate::store::now()),
-                        source: None,
-                    });
+                    let _ = tx.send(Msg::fetched_at(
+                        key.clone(),
+                        Ok(Data::from(r.clone())),
+                        Some(crate::store::now()),
+                    ));
                 }
             };
             let results = gh.search_showing(*kind, query, after, found).await?;
-            Data::Search(Box::new(results))
+            Data::from(results)
         }
         K::StateCounts(query) => Data::StateCounts(gh.state_counts(query).await?),
         K::Issue(repo, number) => Data::Issue(gh.issue(repo, *number).await?.map(Box::new)),
@@ -106,31 +105,24 @@ async fn answer(
             let detail = gh.pull_request_alone(pr).await?;
             // Shown before how far behind its base it is arrives.
             if let Some(tx) = early.filter(|_| detail.state.is_open()) {
-                let _ = tx.send(Msg::Fetched {
-                    key: key.clone(),
-                    result: Ok(Data::Pr(Box::new(detail.clone()))),
-                    cached_at: None,
-                    source: None,
-                });
+                let _ = tx.send(Msg::fetched(key.clone(), Ok(Data::from(detail.clone()))));
             }
-            Data::Pr(Box::new(gh.with_behind(pr, detail).await))
+            Data::from(gh.with_behind(pr, detail).await)
         }
-        K::PrActivity(pr) => Data::PrActivity(Box::new(gh.pr_activity(pr).await?)),
-        K::Reviews(pr) => Data::Reviews(Box::new(gh.reviews(pr).await?)),
-        K::InProjects(repo, n) => Data::InProjects(Box::new(gh.projects_of(repo, *n).await?)),
+        K::PrActivity(pr) => gh.pr_activity(pr).await?.into(),
+        K::Reviews(pr) => gh.reviews(pr).await?.into(),
+        K::InProjects(repo, n) => gh.projects_of(repo, *n).await?.into(),
         K::Lines(repo, commit, path) => {
             let lines = crate::talk::read_lines(git, repo, commit, path).await?;
             Data::Lines(Arc::new(lines))
         }
-        K::CommitComments(repo, oid) => {
-            Data::CommitComments(Box::new(gh.commit_comments(repo, oid).await?))
-        }
-        K::Profile(login) => Data::Profile(Box::new(gh.profile(login).await?)),
+        K::CommitComments(repo, oid) => gh.commit_comments(repo, oid).await?.into(),
+        K::Profile(login) => gh.profile(login).await?.into(),
         K::Files(repo, rev) => {
             let (files, truncated) = gh.file_list(repo, rev).await?;
             Data::Files(Arc::new(files), truncated)
         }
-        K::Refs(repo) => Data::Refs(Box::new(gh.refs(repo).await?)),
+        K::Refs(repo) => gh.refs(repo).await?.into(),
         K::RefIn(repo, spot) => Data::RefIn(gh.ref_in(repo, spot).await?),
         K::LastCommits(repo, rev, path) => {
             let names: Vec<String> = (gh.tree(repo, rev, path).await?.into_iter())
@@ -139,103 +131,77 @@ async fn answer(
             let found = gh.last_commits(repo, rev, path, &names).await?;
             Data::LastCommits(Arc::new(found))
         }
-        K::Commit(repo, oid) => Data::Commit(Box::new(gh.commit(repo, oid).await?)),
-        K::History(repo, rev, path) => {
-            Data::History(Box::new(gh.history(repo, rev, path, after).await?))
+        K::Commit(repo, oid) => gh.commit(repo, oid).await?.into(),
+        K::History(repo, rev, path) => gh.history(repo, rev, path, after).await?.into(),
+        K::PrChecks(pr) => gh.pr_checks(pr).await?.into(),
+        K::Users(list) => gh.users(list, after).await?.into(),
+        K::Forks(repo) => gh.forks(repo, after).await?.into(),
+        K::Releases(repo) => gh.releases(repo, after).await?.into(),
+        K::Release(repo, tag) => gh.release(repo, tag).await?.into(),
+        K::Tags(repo) => gh.tags(repo, after).await?.into(),
+        K::Branches(repo) => gh.branches(repo, after).await?.into(),
+        K::Wiki(repo, page) => crate::wiki::page(git, repo, page.as_deref()).await?.into(),
+        K::Advisories(repo) => gh.advisories(repo.as_ref(), after).await?.into(),
+        K::Advisory(repo, ghsa) => gh.advisory(repo.as_ref(), ghsa).await?.into(),
+        K::Teams(org) => gh.teams(org, after).await?.into(),
+        K::Team(org, slug) => gh.team(org, slug).await?.into(),
+        K::Gist(id) => gh.gist(id).await?.into(),
+        K::Gists(login) => gh.gists(login, after).await?.into(),
+        K::Blame(repo, rev, path) => gh.blame(repo, rev, path).await?.into(),
+        K::Compare(repo, spec) => gh.compare(repo, spec).await?.into(),
+        K::Deployments(repo, env) => gh.deployments(repo, env.as_deref(), after).await?.into(),
+        K::Milestones(repo, closed) => gh.milestones(repo, *closed, after).await?.into(),
+        K::Milestone(repo, n) => gh.milestone(repo, *n, after).await?.into(),
+        K::Discussions(of, category) => {
+            Data::from(gh.discussions(of, category.as_deref(), after).await?)
         }
-        K::PrChecks(pr) => Data::Checks(Box::new(gh.pr_checks(pr).await?)),
-        K::Users(list) => Data::Users(Box::new(gh.users(list, after).await?)),
-        K::Forks(repo) => Data::RepoPage(Box::new(gh.forks(repo, after).await?)),
-        K::Releases(repo) => Data::Releases(Box::new(gh.releases(repo, after).await?)),
-        K::Release(repo, tag) => Data::Release(Box::new(gh.release(repo, tag).await?)),
-        K::Tags(repo) => Data::Tags(Box::new(gh.tags(repo, after).await?)),
-        K::Branches(repo) => Data::Branches(Box::new(gh.branches(repo, after).await?)),
-        K::Wiki(repo, page) => Data::Wiki(Box::new(
-            crate::wiki::page(git, repo, page.as_deref()).await?,
-        )),
-        K::Advisories(repo) => {
-            Data::Advisories(Box::new(gh.advisories(repo.as_ref(), after).await?))
-        }
-        K::Advisory(repo, ghsa) => {
-            Data::Advisory(Box::new(gh.advisory(repo.as_ref(), ghsa).await?))
-        }
-        K::Teams(org) => Data::Teams(Box::new(gh.teams(org, after).await?)),
-        K::Team(org, slug) => Data::Team(Box::new(gh.team(org, slug).await?)),
-        K::Gist(id) => Data::Gist(Box::new(gh.gist(id).await?)),
-        K::Gists(login) => Data::Gists(Box::new(gh.gists(login, after).await?)),
-        K::Blame(repo, rev, path) => Data::Blame(Box::new(gh.blame(repo, rev, path).await?)),
-        K::Compare(repo, spec) => Data::Compare(Box::new(gh.compare(repo, spec).await?)),
-        K::Deployments(repo, env) => {
-            Data::Deployments(Box::new(gh.deployments(repo, env.as_deref(), after).await?))
-        }
-        K::Milestones(repo, closed) => {
-            Data::Milestones(Box::new(gh.milestones(repo, *closed, after).await?))
-        }
-        K::Milestone(repo, n) => Data::Milestone(Box::new(gh.milestone(repo, *n, after).await?)),
-        K::Discussions(of, category) => Data::Discussions(Box::new(
-            gh.discussions(of, category.as_deref(), after).await?,
-        )),
-        K::Discussion(of, n) => Data::Discussion(Box::new(gh.discussion(of, *n).await?)),
-        K::Run(repo, run, attempt) => {
-            Data::Run(Box::new(gh.workflow_run(repo, *run, *attempt).await?))
-        }
-        K::Job(repo, job) => Data::Job(Box::new(gh.job(repo, *job).await?)),
+        K::Discussion(of, n) => gh.discussion(of, *n).await?.into(),
+        K::Run(repo, run, attempt) => gh.workflow_run(repo, *run, *attempt).await?.into(),
+        K::Job(repo, job) => gh.job(repo, *job).await?.into(),
         K::JobLog(repo, job) => Data::Log(Arc::new(gh.job_log(repo, *job).await?)),
-        K::Workflow(repo, file) => Data::Workflow(Box::new(gh.workflow(repo, file).await?)),
-        K::Runs(repo, query) => Data::Runs(Box::new(gh.runs(repo, query, after).await?)),
-        K::CommitChecks(repo, oid) => Data::Checks(Box::new(gh.commit_checks(repo, oid).await?)),
-        K::OwnerRepos(login, sort) => {
-            Data::RepoPage(Box::new(gh.owner_repos(login, *sort, after).await?))
-        }
-        K::Stars(login) => Data::RepoPage(Box::new(gh.starred(login, after).await?)),
-        K::Notifications(query) => {
-            Data::Notifications(Box::new(gh.notifications(query, after).await?))
-        }
-        K::Sidebar(repo, number) => Data::Sidebar(Box::new(gh.sidebar(repo, *number).await?)),
-        K::NewForm(repo) => Data::NewForm(Box::new(gh.new_form(repo).await?)),
-        K::Projects(of) => Data::Projects(Box::new(gh.projects(of, after).await?)),
-        K::Project(p, view) => Data::Project(Box::new(gh.project(p, *view, after).await?)),
-        K::Alerts(repo, kind, query) => {
-            Data::Alerts(Box::new(gh.alerts(repo, *kind, query, after).await?))
-        }
-        K::Alert(a) => Data::Alert(Box::new(gh.alert(a).await?)),
-        K::Subscription(of) => Data::Subscription(Box::new(gh.subscription(of).await?)),
-        K::Settings(repo, page) => Data::Settings(Box::new(gh.settings(repo, *page).await?)),
-        K::Activity(repo) => Data::Activity(Box::new(gh.activity(repo).await?)),
-        K::Traffic(repo) => Data::Traffic(Box::new(gh.traffic(repo).await?)),
-        K::Dependencies(repo) => Data::Dependencies(Box::new(gh.dependencies(repo).await?)),
-        K::Featured => Data::Topics(Box::new(gh.featured_topics().await?)),
-        K::Topic(name) => Data::Topic(Box::new(gh.topic(name).await?)),
-        K::StarLists(login) => Data::StarLists(Box::new(gh.star_lists(login).await?)),
-        K::StarList(login, slug) => {
-            Data::StarList(Box::new(gh.star_list(login, slug, after).await?))
-        }
-        K::MyLists(repo) => Data::MyLists(Box::new(gh.my_lists(repo).await?)),
-        K::Packages(of) => Data::Packages(Box::new(gh.packages(of).await?)),
-        K::Package(p) => Data::Package(Box::new(gh.package(p, after).await?)),
-        K::SavedReplies => Data::SavedReplies(Box::new(gh.saved_replies().await?)),
-        K::Labels(repo) => Data::Labels(Box::new(gh.labels(repo, after).await?)),
-        K::Owners => Data::Owners(Box::new(gh.owners().await?)),
-        K::Templates => Data::Templates(Box::new(gh.templates().await?)),
-        K::OpenIssues(repo) => Data::OpenIssues(Box::new(gh.open_issues(repo).await?)),
-        K::MoveTargets(owner) => Data::MoveTargets(Box::new(gh.transfer_targets(owner).await?)),
-        K::Categories(repo) => Data::Categories(Box::new(gh.categories(repo).await?)),
+        K::Workflow(repo, file) => gh.workflow(repo, file).await?.into(),
+        K::Runs(repo, query) => gh.runs(repo, query, after).await?.into(),
+        K::CommitChecks(repo, oid) => gh.commit_checks(repo, oid).await?.into(),
+        K::OwnerRepos(login, sort) => gh.owner_repos(login, *sort, after).await?.into(),
+        K::Stars(login) => gh.starred(login, after).await?.into(),
+        K::Notifications(query) => gh.notifications(query, after).await?.into(),
+        K::Sidebar(repo, number) => gh.sidebar(repo, *number).await?.into(),
+        K::NewForm(repo) => gh.new_form(repo).await?.into(),
+        K::Projects(of) => gh.projects(of, after).await?.into(),
+        K::Project(p, view) => gh.project(p, *view, after).await?.into(),
+        K::Alerts(repo, kind, query) => gh.alerts(repo, *kind, query, after).await?.into(),
+        K::Alert(a) => gh.alert(a).await?.into(),
+        K::Subscription(of) => gh.subscription(of).await?.into(),
+        K::Settings(repo, page) => gh.settings(repo, *page).await?.into(),
+        K::Activity(repo) => gh.activity(repo).await?.into(),
+        K::Traffic(repo) => gh.traffic(repo).await?.into(),
+        K::Dependencies(repo) => gh.dependencies(repo).await?.into(),
+        K::Featured => gh.featured_topics().await?.into(),
+        K::Topic(name) => gh.topic(name).await?.into(),
+        K::StarLists(login) => gh.star_lists(login).await?.into(),
+        K::StarList(login, slug) => gh.star_list(login, slug, after).await?.into(),
+        K::MyLists(repo) => gh.my_lists(repo).await?.into(),
+        K::Packages(of) => gh.packages(of).await?.into(),
+        K::Package(p) => gh.package(p, after).await?.into(),
+        K::SavedReplies => gh.saved_replies().await?.into(),
+        K::Labels(repo) => gh.labels(repo, after).await?.into(),
+        K::Owners => gh.owners().await?.into(),
+        K::Templates => gh.templates().await?.into(),
+        K::OpenIssues(repo) => gh.open_issues(repo).await?.into(),
+        K::MoveTargets(owner) => gh.transfer_targets(owner).await?.into(),
+        K::Categories(repo) => gh.categories(repo).await?.into(),
         K::Clone(repo) => {
             let clone = crate::git::local::clone_of(&git.cwd, &repo.owner, &repo.name).await?;
             Data::Clone(clone.map(Box::new))
         }
         K::Head { repo, base, head } => {
             let found = crate::create::head_state(gh, &git.cwd, repo, base, head).await;
-            Data::Head(Box::new(found?))
+            Data::from(found?)
         }
-        K::TagLook(repo, tag) => Data::TagLook(Box::new(gh.tag_look(repo, tag).await?)),
-        K::BranchRules(repo, name) => {
-            Data::BranchRules(Box::new(gh.branch_rules(repo, name).await?))
-        }
-        K::FileLook(repo, rev, path) => {
-            Data::FileLook(Box::new(gh.file_look(repo, rev, path).await?))
-        }
-        K::Mentionable(repo) => Data::Mentionable(Box::new(gh.mentionable(repo).await?)),
+        K::TagLook(repo, tag) => gh.tag_look(repo, tag).await?.into(),
+        K::BranchRules(repo, name) => gh.branch_rules(repo, name).await?.into(),
+        K::FileLook(repo, rev, path) => gh.file_look(repo, rev, path).await?.into(),
+        K::Mentionable(repo) => gh.mentionable(repo).await?.into(),
         K::Unread => Data::Unread(gh.unread().await?),
         K::Suggest(q) => match gh.search(SearchKind::Repos, q, None).await? {
             SearchResults::Repos(r) => Data::Suggestions(r.items.into_iter().take(6).collect()),

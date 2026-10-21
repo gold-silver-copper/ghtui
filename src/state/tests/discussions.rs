@@ -16,28 +16,15 @@ fn deliver(s: &mut State, f: impl FnOnce(&mut DiscussionDetail)) -> Vec<Cmd> {
     let mut d = fixtures::discussion();
     f(&mut d);
     let key = DataKey::Discussion(DiscussionsOf::Repo(ghtui()), 14603);
-    fetched(s, key, Data::Discussion(Box::new(d)))
+    fetched(s, key, Data::from(d))
 }
 
 /// Selects the comment `author` wrote that starts with `text`.
 fn select(s: &mut State, author: &str, text: &str) {
-    let on = |s: &State| match s.screen() {
-        Screen::Page(p) => matches!(p.selected_link(),
-            Some(Link::Quote { author: a, body, .. }) if a == author && body.starts_with(text)),
-        Screen::Diff(_) => false,
-    };
-    press(s, "<Home>");
-    for _ in 0..200 {
-        if on(s) {
-            return;
-        }
-        press(s, "<Down>");
-    }
-    panic!("{author}'s “{text}” isn't selected");
-}
-
-fn sent(cmds: &[Cmd]) -> (&Change, &By) {
-    fixtures::sent_change(cmds)
+    fixtures::select_by(
+        s,
+        |l| matches!(l, Link::Quote { author: a, body, .. } if a == author && body.starts_with(text)),
+    );
 }
 
 /// `c` with no comment selected writes an answer (it's a Q&A); on a
@@ -47,20 +34,16 @@ fn sent(cmds: &[Cmd]) -> (&Change, &By) {
 fn c_answers_or_replies_in_the_thread() {
     let mut s = with_discussion();
     press(&mut s, "c");
-    let Some(Overlay::Compose(c)) = &s.overlay else {
-        panic!("no composer");
-    };
-    assert_eq!(
-        c.target.title(&s),
-        "Answer on “How do I review a PR offline?”"
-    );
+    let target = crate::fixtures::composer(&mut s).target.clone();
+    let title = target.title(&s);
+    assert_eq!(title, "Answer on “How do I review a PR offline?”");
     let cmds = press(&mut s, "Use git<C-s>");
     let comment = Change::Discussion(Discuss::Comment {
         discussion: NodeId::new("D_14603"),
         reply_to: None,
         body: "Use git".into(),
     });
-    assert_eq!(sent(&cmds), (&comment, &By::Edit(about())));
+    assert_eq!(fixtures::sent_change(&cmds), (&comment, &By::Edit(about())));
     answer(&mut s, &cmds, Ok(()));
     says(&s, "Comment posted");
     assert!(s.following.is_some(), "until GitHub shows it");
@@ -85,7 +68,7 @@ fn c_answers_or_replies_in_the_thread() {
             reply_to: Some(NodeId::new("DC_18765024")),
             body: "Thanks".into(),
         });
-        assert_eq!(sent(&cmds).0, &reply, "on {author}'s");
+        assert_eq!(fixtures::sent_change(&cmds).0, &reply, "on {author}'s");
         press(&mut s, "<Esc><Esc>");
         s.overlay = None;
     }
@@ -102,7 +85,7 @@ fn the_answer_is_marked_and_unmarked() {
         comment: NodeId::new("DC_18765100"),
         on: true,
     });
-    assert_eq!(sent(&cmds), (&mark, &By::Act(about())));
+    assert_eq!(fixtures::sent_change(&cmds), (&mark, &By::Act(about())));
     answer(&mut s, &cmds, Ok(()));
     says(&s, "Marked as the answer");
     deliver(&mut s, |d| {
@@ -118,7 +101,7 @@ fn the_answer_is_marked_and_unmarked() {
         comment: NodeId::new("DC_18765024"),
         on: false,
     });
-    assert_eq!(sent(&cmds).0, &unmark);
+    assert_eq!(fixtures::sent_change(&cmds).0, &unmark);
 
     select(&mut s, "octocat", "That works");
     assert!(act(&mut s, Action::MarkAnswer).is_empty());
@@ -144,7 +127,7 @@ fn comments_are_reacted_to_edited_and_deleted() {
         content: ReactionContent::ThumbsUp,
         on: true,
     });
-    assert_eq!(sent(&cmds), (&react, &By::Edit(about())));
+    assert_eq!(fixtures::sent_change(&cmds), (&react, &By::Edit(about())));
     answer(&mut s, &cmds, Ok(()));
     assert!(s.following.is_some());
     deliver(&mut s, |d| {
@@ -167,9 +150,7 @@ fn comments_are_reacted_to_edited_and_deleted() {
     says(&s, "GitHub doesn't let you edit monalisa's comment");
     select(&mut s, "octocat", "That works");
     press(&mut s, "e");
-    let Some(Overlay::Compose(c)) = &s.overlay else {
-        panic!("no composer");
-    };
+    let c = crate::fixtures::composer(&mut s);
     assert_eq!(c.text(), "That works, thanks!");
     s.overlay = None;
     press(&mut s, "D");
@@ -181,5 +162,8 @@ fn comments_are_reacted_to_edited_and_deleted() {
     let delete = Change::Discussion(Discuss::Delete {
         id: NodeId::new("DC_18765030"),
     });
-    assert_eq!(sent(&cmds), (&delete, &By::Confirm(about())));
+    assert_eq!(
+        fixtures::sent_change(&cmds),
+        (&delete, &By::Confirm(about()))
+    );
 }

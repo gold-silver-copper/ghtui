@@ -13,7 +13,7 @@ fn an_empty_repository_shows_its_about() {
         let _ = s.push(Route::Code(code::Repo(ghtui())));
         let mut o = crate::fixtures::overview();
         (o.entries, o.default_branch) = (Vec::new(), None);
-        fetched(&mut s, DataKey::Repo(ghtui()), Data::Repo(Box::new(o)));
+        fetched(&mut s, DataKey::Repo(ghtui()), Data::from(o));
         let page = page(&s).page();
         let aside = page.aside.iter().flat_map(|a| &a.lines);
         let lines = page.lines.iter().chain(aside);

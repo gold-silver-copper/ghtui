@@ -130,7 +130,7 @@ fn a_repository_is_put_in_a_list_and_followed() {
     for l in &mut mine.lists.iter_mut() {
         l.has = Some(true);
     }
-    fetched(&mut s, key, Data::MyLists(Box::new(mine)));
+    fetched(&mut s, key, Data::from(mine));
     assert!(s.following.is_none());
 
     // A new name makes the list, and puts the repository in it too.
@@ -164,7 +164,7 @@ fn a_packages_version_is_deleted_after_asking() {
     let mut detail = fixtures::package_detail();
     detail.versions.items.retain(|v| v.id != 101);
     let key = DataKey::Package(fixtures::package_ref());
-    fetched(&mut s, key, Data::Package(Box::new(detail)));
+    fetched(&mut s, key, Data::from(detail));
     assert!(s.following.is_none());
 }
 
@@ -178,12 +178,10 @@ fn packages_say_what_the_token_lacks() {
     let why = "Packages take your token's read:packages scope, which it lacks: `gh auth refresh -s read:packages` adds it";
     update(
         &mut s,
-        Msg::Fetched {
-            key: DataKey::Packages(of),
-            result: Err(crate::api::ApiError::Denied(why.into())),
-            cached_at: None,
-            source: None,
-        },
+        Msg::fetched(
+            DataKey::Packages(of),
+            Err(crate::api::ApiError::Denied(why.into())),
+        ),
     );
     let text = page_text(&s);
     assert!(text.contains("gh auth refresh -s read:packages"), "{text}");

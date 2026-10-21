@@ -44,50 +44,25 @@ pub struct Topics {
     pub total: u64,
 }
 
-/// How far back "new" goes, as GitHub's Trending periods.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-pub enum Since {
+words! {
+    /// How far back "new" goes, as GitHub's Trending periods.
+    #[derive(Hash, Default, Serialize, Deserialize)]
+    pub enum Since {
+        /// As GitHub's URLs say it (`?since=weekly`).
+        pub fn slug -> pub fn from_slug,
+        /// As its tab says it.
+        pub fn label,
+        /// In a sentence: "made in the past week".
+        pub fn span,
+    }
     /// As GitHub's Trending starts.
     #[default]
-    Daily,
-    Weekly,
-    Monthly,
+    Daily   "daily"   "Today"      "the past day";
+    Weekly  "weekly"  "This week"  "the past week";
+    Monthly "monthly" "This month" "the past month";
 }
 
 impl Since {
-    pub const ALL: [Since; 3] = [Since::Daily, Since::Weekly, Since::Monthly];
-
-    /// As GitHub's URLs say it (`?since=weekly`).
-    pub fn slug(self) -> &'static str {
-        match self {
-            Since::Daily => "daily",
-            Since::Weekly => "weekly",
-            Since::Monthly => "monthly",
-        }
-    }
-
-    pub fn from_slug(slug: &str) -> Option<Since> {
-        Since::ALL.into_iter().find(|s| s.slug() == slug)
-    }
-
-    /// As its tab says it.
-    pub fn label(self) -> &'static str {
-        match self {
-            Since::Daily => "Today",
-            Since::Weekly => "This week",
-            Since::Monthly => "This month",
-        }
-    }
-
-    /// In a sentence: "made in the past week".
-    pub fn span(self) -> &'static str {
-        match self {
-            Since::Daily => "the past day",
-            Since::Weekly => "the past week",
-            Since::Monthly => "the past month",
-        }
-    }
-
     fn days(self) -> u64 {
         match self {
             Since::Daily => 1,
@@ -159,7 +134,12 @@ impl GitHub {
             "/search/topics?q={}&per_page=10",
             url::form_urlencoded::byte_serialize(name.as_bytes()).collect::<String>()
         );
-        let found: wire::Found = serde_json::from_str(&self.rest_get(&path, name).await?)?;
+        let vars = serde_json::json!({ "name": name });
+        let (found, graph) = tokio::join!(
+            self.rest_get(&path, name),
+            self.graphql_json(crate::api::raw::TOPIC, vars, name, "/topic"),
+        );
+        let found: wire::Found = serde_json::from_str(&found?)?;
         let mut topic = (found.items.into_iter())
             .find(|t| t.name.eq_ignore_ascii_case(name))
             .map_or_else(
@@ -169,10 +149,7 @@ impl GitHub {
                 },
                 wire::Topic::into_topic,
             );
-        let vars = serde_json::json!({ "name": name });
-        let graph: Result<Graph, _> = self
-            .graphql_json(crate::api::raw::TOPIC, vars, name, "/topic")
-            .await;
+        let graph: Result<Graph, _> = graph;
         match graph {
             Ok(g) => {
                 topic.stars = Some(g.stargazer_count);

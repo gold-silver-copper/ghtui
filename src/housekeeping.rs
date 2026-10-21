@@ -570,8 +570,10 @@ fn selected<'a, T>(state: &State, items: &'a [T], url: impl Fn(&T) -> String) ->
         return None;
     };
     // Rows come in order; links in them (a milestone's pull request) don't
-    // count.
-    items.iter().find(|item| url(item) == *link)
+    // count. The row at its place is the one, unless the page has others.
+    let at = p.selected.and_then(|i| items.get(i));
+    at.filter(|item| url(item) == *link)
+        .or_else(|| items.iter().find(|item| url(item) == *link))
 }
 
 // ---- the menu --------------------------------------------------------------------------
@@ -714,8 +716,8 @@ fn follow(state: &mut State) -> Vec<Cmd> {
     match &of {
         FormOf::Label { repo, name } => labels::follow(state, &route, repo, name.as_ref()),
         FormOf::Milestone { repo, number } => milestones::follow(state, &route, repo, *number),
-        FormOf::Fork(repo) => repos::follow_fork(state, &route, repo),
-        FormOf::NewRepo => repos::follow_new(state, &route),
+        FormOf::Fork(repo) => repos::follow(state, &route, Some(repo)),
+        FormOf::NewRepo => repos::follow(state, &route, None),
         FormOf::File { .. } => files::follow(state, &route, &of),
     }
 }
@@ -876,7 +878,7 @@ pub fn build(b: Build<'_>, page: &mut Page, repo: &RepoId) {
         edit: b.state.first_key(Action::EditComment),
         delete: b.state.first_key(Action::DeleteComment),
     };
-    crate::ui::pages::labels_page(page, repo, list, &keys, b.cx.now);
+    crate::ui::pages::labels_page(page, repo, list, &keys);
 }
 
 /// Whether a form's data (but its repository's header) is in; else the

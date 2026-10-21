@@ -23,6 +23,13 @@ pub fn chip<'a>(ctx: Ctx<'_>, text: impl Into<String>, style: Style, parent: Bg)
     }
 }
 
+/// Adds a chip filled with `fill` to `out`, and the space after it.
+pub fn push(out: &mut Vec<Span<'_>>, ctx: Ctx<'_>, text: impl Into<String>, fill: Bg, parent: Bg) {
+    let theme = ctx.theme;
+    out.extend(chip(ctx, text, theme.fill(fill), parent));
+    out.push(Span::styled(" ", theme.body(parent)));
+}
+
 /// A reaction's chip: the ones you gave stand out, as on the website.
 pub fn reaction_fill(mine: bool) -> Bg {
     if mine {

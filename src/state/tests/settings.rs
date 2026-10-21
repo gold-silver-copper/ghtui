@@ -19,21 +19,13 @@ pub(super) fn on(at: SettingsPage) -> State {
         can_admin: true,
         ..fixtures::overview()
     };
-    fetched(
-        &mut s,
-        DataKey::Repo(ghtui()),
-        Data::Repo(Box::new(overview)),
-    );
+    fetched(&mut s, DataKey::Repo(ghtui()), Data::from(overview));
     deliver(&mut s, at, page(at));
     s
 }
 
 fn deliver(s: &mut State, at: SettingsPage, data: Settings) -> Vec<Cmd> {
-    fetched(
-        s,
-        DataKey::Settings(ghtui(), at),
-        Data::Settings(Box::new(data)),
-    )
+    fetched(s, DataKey::Settings(ghtui(), at), Data::from(data))
 }
 
 /// The one change `cmds` sends.
@@ -53,25 +45,12 @@ fn asked(s: &State) -> String {
 
 /// Selects the first row that `is`.
 fn select(s: &mut State, is: impl Fn(&SettingLink) -> bool) {
-    let selected = |s: &State| match s.screen() {
-        Screen::Page(p) => matches!(p.selected_link(), Some(Link::Setting(l)) if is(l)),
-        Screen::Diff(_) => false,
-    };
-    press(s, "<Home>");
-    for _ in 0..200 {
-        if selected(s) {
-            return;
-        }
-        press(s, "<Down>");
-    }
-    assert!(selected(s), "nothing selected is what's wanted");
+    fixtures::select_by(s, |l| matches!(l, Link::Setting(l) if is(l)));
 }
 
 /// Writes `text` in the open composer, in place of what's there.
 fn write(s: &mut State, text: &str) {
-    let Some(Overlay::Compose(c)) = &s.overlay else {
-        panic!("no composer");
-    };
+    let c = crate::fixtures::composer(s);
     let target = c.target.clone();
     let _ = s.compose(target, text);
 }
@@ -166,9 +145,7 @@ fn a_new_rule_refused_comes_back_to_edit() {
     assert!(matches!(sent(&cmds).0, SettingsChange::CreateRule { .. }));
     let refused = crate::api::ApiError::GraphQl(vec!["Name already protected: release/*".into()]);
     answer(&mut s, &cmds, Err(refused));
-    let Some(Overlay::Compose(c)) = &s.overlay else {
-        panic!("the form isn't back");
-    };
+    let c = crate::fixtures::composer(&mut s);
     assert!(c.text().contains("release/*"));
     assert!(
         c.sent

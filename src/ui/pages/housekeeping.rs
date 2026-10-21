@@ -27,11 +27,7 @@ pub fn labels_and_milestones(page: &mut Page, repo: &RepoId) {
         format!("{}/milestones", url::repo(repo)),
         Role::Link,
     );
-    page.wrapped(
-        vec![labels, Seg::new(" · ", Role::Meta), milestones],
-        0,
-        Frame::None,
-    );
+    page.wrapped(vec![labels, meta(" · "), milestones], 0, Frame::None);
 }
 
 /// A repository's labels by name: each one's chip, description, and its
@@ -41,19 +37,15 @@ pub fn labels_page(
     repo: &RepoId,
     list: Fetched<'_, Results<LabelInfo>>,
     keys: &LabelKeys,
-    _now: u64,
 ) {
     let new = button(page, "New label", Link::Form(Row::New));
     page.wrapped(
         vec![
             new,
-            Seg::new(
-                format!(
-                    "  {} · {} edits the selected label · {} deletes it",
-                    keys.new, keys.edit, keys.delete
-                ),
-                Role::Meta,
-            ),
+            meta(format!(
+                "  {} · {} edits the selected label · {} deletes it",
+                keys.new, keys.edit, keys.delete
+            )),
         ],
         0,
         Frame::None,
@@ -62,7 +54,7 @@ pub fn labels_page(
     let Some(l) = list.show(page, "labels") else {
         return;
     };
-    let title = vec![Seg::new(format!("Labels  {}", count_of(l)), Role::Strong)];
+    let title = counted("Labels", l);
     list_box(
         page,
         title,
@@ -81,10 +73,10 @@ pub fn labels_page(
                     0 => String::new(),
                     n => format!("{} open", compact(n)),
                 };
-                let right = vec![Seg::new(open, Role::Meta)];
+                let right = vec![meta(open)];
                 page.box_line(vec![chip], right, 0);
                 if !label.description.is_empty() {
-                    body(page, vec![Seg::new(label.description.clone(), Role::Meta)]);
+                    body(page, vec![meta(label.description.clone())]);
                 }
             });
         },

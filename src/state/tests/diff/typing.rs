@@ -32,7 +32,7 @@ fn completion_offers_participants_and_inserts_the_mention() {
         users: vec!["alicia".into(), "bob".into()],
         issues: vec![(12, "Fix the parser".into()), (9, "Docs".into())],
     };
-    fixtures::fetched(&mut s, key, Data::Mentionable(Box::new(known)));
+    fixtures::fetched(&mut s, key, Data::from(known));
 
     press(&mut s, "cc @al");
     assert_eq!(completions(&s), ["@alice", "@alicia"]);
@@ -108,18 +108,10 @@ fn saved_replies(s: &mut State, result: Result<Vec<(&str, &str)>, ApiError>) {
                 body: body.into(),
             })
             .collect::<Vec<_>>();
-        Data::SavedReplies(Box::new(replies.into()))
+        Data::from(crate::api::model::Capped::from(replies))
     });
     let key = DataKey::SavedReplies;
-    update(
-        s,
-        Msg::Fetched {
-            key,
-            result,
-            cached_at: None,
-            source: None,
-        },
-    );
+    update(s, Msg::fetched(key, result));
 }
 
 /// ctrl-g lists your saved replies (asking GitHub for them), typing

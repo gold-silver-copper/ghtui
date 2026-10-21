@@ -15,11 +15,13 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use redb::{Database, Durability, ReadableDatabase, TableDefinition, TableHandle};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+
+use crate::lock;
 
 /// Bump whenever the meaning or encoding of any table changes.
 pub const SCHEMA_VERSION: u64 = 17;
@@ -99,10 +101,12 @@ pub struct Cached<T> {
     pub fetched_at: u64,
 }
 
+/// A query's row: written from a borrow and read straight into `T`, with
+/// no JSON tree between.
 #[derive(Serialize, Deserialize)]
-struct QueryEntry {
+struct QueryEntry<T> {
     fetched_at: u64,
-    value: serde_json::Value,
+    value: T,
 }
 
 /// What we remember about a PR between sessions.
@@ -252,27 +256,14 @@ impl Store {
     }
 
     pub fn query_get<T: DeserializeOwned>(&self, key: &str) -> Option<Cached<T>> {
-        let entry: QueryEntry = self.read_json(QUERIES, &self.scoped(key))?;
-        match serde_json::from_value(entry.value) {
-            Ok(value) => Some(Cached {
-                value,
-                fetched_at: entry.fetched_at,
-            }),
-            Err(err) => {
-                tracing::debug!(key, %err, "cached query no longer decodes; ignoring");
-                None
-            }
-        }
+        let entry: QueryEntry<T> = self.read_json(QUERIES, &self.scoped(key))?;
+        Some(Cached {
+            value: entry.value,
+            fetched_at: entry.fetched_at,
+        })
     }
 
     pub fn query_put<T: Serialize>(&self, key: &str, value: &T) {
-        let value = match serde_json::to_value(value) {
-            Ok(value) => value,
-            Err(err) => {
-                tracing::warn!(key, %err, "cannot encode query result for cache");
-                return;
-            }
-        };
         let entry = QueryEntry {
             fetched_at: now(),
             value,
@@ -295,14 +286,12 @@ impl Store {
     ) -> Option<T> {
         let db = self.db.as_ref()?;
         let result = (|| -> Result<Option<T>, StoreError> {
-            if let Some(bytes) = db.later().rows.get(&(table.name(), key.to_owned())) {
+            if let Some(bytes) = lock(&db.later).rows.get(&(table.name(), key.to_owned())) {
                 return Ok(Some(serde_json::from_slice(bytes)?));
             }
             let txn = db.database.begin_read()?;
-            let table = match txn.open_table(table) {
-                Ok(table) => table,
-                Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
-                Err(err) => return Err(err.into()),
+            let Some(table) = open(&txn, table)? else {
+                return Ok(None);
             };
             let Some(bytes) = table.get(key)? else {
                 return Ok(None);
@@ -310,9 +299,35 @@ impl Store {
             Ok(Some(serde_json::from_slice(bytes.value())?))
         })();
         result.unwrap_or_else(|err| {
-            tracing::warn!(key, %err, "cache read failed");
+            // What an older build wrote is fetched again.
+            if matches!(err, StoreError::Encoding(_)) {
+                tracing::debug!(key, %err, "cached row no longer decodes");
+            } else {
+                tracing::warn!(key, %err, "cache read failed");
+            }
             None
         })
+    }
+
+    /// Runs `f` in one transaction, committed durably before returning;
+    /// false when it couldn't (the store is disabled, or the disk refused).
+    fn write(
+        &self,
+        key: &str,
+        f: impl FnOnce(&redb::WriteTransaction) -> Result<(), StoreError>,
+    ) -> bool {
+        let Some(db) = self.db.as_ref() else {
+            return false;
+        };
+        let result = (|| -> Result<(), StoreError> {
+            let txn = db.database.begin_write()?;
+            f(&txn)?;
+            txn.commit()?;
+            Ok(())
+        })();
+        result
+            .inspect_err(|err| tracing::warn!(key, %err, "cache write failed"))
+            .is_ok()
     }
 
     fn write_json<T: Serialize + ?Sized>(
@@ -320,21 +335,12 @@ impl Store {
         table: TableDefinition<&str, &[u8]>,
         key: &str,
         value: &T,
-    ) {
-        let Some(db) = self.db.as_ref() else { return };
-        let result = (|| -> Result<(), StoreError> {
+    ) -> bool {
+        self.write(key, |txn| {
             let bytes = serde_json::to_vec(value)?;
-            let txn = db.database.begin_write()?;
-            {
-                let mut table = txn.open_table(table)?;
-                table.insert(key, bytes.as_slice())?;
-            }
-            txn.commit()?;
+            txn.open_table(table)?.insert(key, bytes.as_slice())?;
             Ok(())
-        })();
-        if let Err(err) = result {
-            tracing::warn!(key, %err, "cache write failed");
-        }
+        })
     }
 
     /// Writes `value` behind ([`Db::flush`]): reads see it at once.
@@ -345,7 +351,7 @@ impl Store {
             Err(err) => return tracing::warn!(key, %err, "cannot encode for the cache"),
         };
         let start = {
-            let mut later = db.later();
+            let mut later = lock(&db.later);
             later.rows.insert((table, key.to_owned()), bytes.into());
             !std::mem::replace(&mut later.flushing, true)
         };
@@ -383,17 +389,13 @@ struct Later {
 const SYNC_EVERY: Duration = Duration::from_secs(30);
 
 impl Db {
-    fn later(&self) -> MutexGuard<'_, Later> {
-        self.later.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
     /// Commits the rows written behind, together, until none are left:
     /// those written meanwhile go in the next commit. Synced only every
     /// [`SYNC_EVERY`].
     fn flush(&self) {
         loop {
             let (rows, due) = {
-                let mut later = self.later();
+                let mut later = lock(&self.later);
                 if later.rows.is_empty() {
                     later.flushing = false;
                     return;
@@ -414,7 +416,7 @@ impl Db {
                     Durability::None
                 },
             );
-            let mut later = self.later();
+            let mut later = lock(&self.later);
             if due {
                 later.durable = Some(Instant::now());
             }
@@ -433,7 +435,7 @@ impl Db {
 
     /// Commits whatever is written behind, durably.
     fn sync(&self) {
-        let rows: Vec<_> = self.later().rows.drain().collect();
+        let rows: Vec<_> = lock(&self.later).rows.drain().collect();
         self.commit(&rows, Durability::Immediate);
     }
 
@@ -490,12 +492,22 @@ fn open_versioned(path: &Path) -> Result<Database, StoreError> {
 
 fn stored_version(db: &Database) -> Result<Option<u64>, StoreError> {
     let txn = db.begin_read()?;
-    let meta = match txn.open_table(META) {
-        Ok(meta) => meta,
-        Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
-        Err(err) => return Err(err.into()),
+    let Some(meta) = open(&txn, META)? else {
+        return Ok(None);
     };
     Ok(meta.get(VERSION_KEY)?.map(|v| v.value()))
+}
+
+/// Table `def` to read; `None` when nothing was ever written to it.
+fn open<K: redb::Key + 'static, V: redb::Value + 'static>(
+    txn: &redb::ReadTransaction,
+    def: TableDefinition<K, V>,
+) -> Result<Option<redb::ReadOnlyTable<K, V>>, StoreError> {
+    match txn.open_table(def) {
+        Ok(table) => Ok(Some(table)),
+        Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
+        Err(err) => Err(err.into()),
+    }
 }
 
 pub fn now() -> u64 {

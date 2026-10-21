@@ -300,7 +300,7 @@ fn spans(config: &HighlightConfiguration, text: &Text, cancel: &AtomicUsize) -> 
                 while text
                     .lines
                     .get(line)
-                    .is_some_and(|&(_, le)| le < start && line_end(text, line) <= start)
+                    .is_some_and(|&(_, le)| le < start && text.line_end(line) <= start)
                 {
                     line += 1;
                 }
@@ -322,13 +322,6 @@ fn spans(config: &HighlightConfiguration, text: &Text, cancel: &AtomicUsize) -> 
         }
     }
     out
-}
-
-/// Offset just past line `i`'s terminator.
-fn line_end(text: &Text, i: usize) -> u32 {
-    text.lines
-        .get(i + 1)
-        .map_or(sat_u32(text.source.len()), |next| next.0)
 }
 
 #[cfg(test)]

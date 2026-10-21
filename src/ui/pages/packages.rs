@@ -7,22 +7,13 @@ use crate::api::packages::{PackageDetail, PackageList, PackagesOf, install};
 fn visibility(v: &str) -> Option<Seg> {
     match v {
         "" | "public" => None,
-        v => {
-            let mut v = v.to_owned();
-            if let Some(first) = v.get_mut(..1) {
-                first.make_ascii_uppercase();
-            }
-            Some(chip(v, Bg::SecondaryContainer))
-        }
+        v => Some(chip(capitalized(v), Bg::SecondaryContainer)),
     }
 }
 
 /// An owner's packages, or a repository's.
 pub fn packages(page: &mut Page, of: &PackagesOf, list: &PackageList, now: u64) {
-    let title = vec![Seg::new(
-        format!("Packages  {}", list.items.len()),
-        Role::Strong,
-    )];
+    let title = vec![strong(format!("Packages  {}", list.items.len()))];
     let empty = match of {
         PackagesOf::Owner(_) => "No packages published.",
         PackagesOf::Repo(_) => "This repository hasn't published packages.",
@@ -44,14 +35,14 @@ pub fn packages(page: &mut Page, of: &PackagesOf, list: &PackageList, now: u64) 
                     segs.extend([space(), v]);
                 }
                 page.box_line(segs, Vec::new(), 0);
-                let mut meta = plural(p.versions, "version");
+                let mut subline = plural(p.versions, "version");
                 if let Some(at) = &p.updated_at {
-                    meta.push_str(&format!(" · updated {}", time::ago_iso(at, now)));
+                    subline.push_str(&format!(" · updated {}", time::ago_iso(at, now)));
                 }
                 if let (Some(repo), PackagesOf::Owner(_)) = (&p.repo, of) {
-                    meta.push_str(&format!(" · {repo}"));
+                    subline.push_str(&format!(" · {repo}"));
                 }
-                body(page, vec![Seg::new(meta, Role::Meta)]);
+                body(page, vec![meta(subline)]);
             });
         },
     );
@@ -61,7 +52,7 @@ pub fn packages(page: &mut Page, of: &PackagesOf, list: &PackageList, now: u64) 
             "Only the first 100 {} packages are listed.",
             kinds.join(", ")
         );
-        page.wrapped(vec![Seg::new(text, Role::Meta)], 0, Frame::None);
+        say(page, text, Role::Meta);
     }
 }
 
@@ -84,24 +75,18 @@ pub fn package(
         title.extend([space(), v]);
     }
     page.line(title);
-    let mut meta = vec![
-        Seg::new("By ", Role::Meta),
-        login_seg(page, &p.at.owner, Role::Link),
-    ];
+    let mut subline = vec![meta("By "), login_seg(page, &p.at.owner, Role::Link)];
     if let Some(repo) = &p.repo {
-        meta.push(Seg::new(" · from ", Role::Meta));
-        meta.push(link_seg(
+        subline.push(meta(" · from "));
+        subline.push(link_seg(
             page,
             repo.to_string(),
             url::repo(repo),
             Role::Link,
         ));
     }
-    meta.push(Seg::new(
-        format!(" · {}", plural(p.versions, "version")),
-        Role::Meta,
-    ));
-    page.wrapped(meta, 0, Frame::None);
+    subline.push(meta(format!(" · {}", plural(p.versions, "version"))));
+    page.wrapped(subline, 0, Frame::None);
     page.blank();
     let shown = match version {
         Some(id) => d.versions.items.iter().find(|v| v.id == id),
@@ -109,7 +94,7 @@ pub fn package(
     };
     if let Some(v) = shown {
         let name = v.tags.first().unwrap_or(&v.name);
-        let title = vec![Seg::new(format!("Install {name}"), Role::Strong)];
+        let title = vec![strong(format!("Install {name}"))];
         page.box_top(title, Vec::new());
         for line in install(&p.at, p.repo.as_ref(), v) {
             page.wrapped(vec![Seg::new(line, Role::Code)], 0, Frame::Body);
@@ -118,14 +103,11 @@ pub fn package(
         page.blank();
     } else if let Some(id) = version {
         let text = format!("Version {id} isn't among those loaded.");
-        page.wrapped(vec![Seg::new(text, Role::Meta)], 0, Frame::None);
+        say(page, text, Role::Meta);
         page.blank();
     }
-    let title = vec![Seg::new(
-        format!("Versions  {}", count_of(&d.versions)),
-        Role::Strong,
-    )];
-    let right = vec![Seg::new(format!("{delete_key} deletes one"), Role::Meta)];
+    let title = counted("Versions", &d.versions);
+    let right = vec![meta(format!("{delete_key} deletes one"))];
     list_box(
         page,
         title,
@@ -140,13 +122,13 @@ pub fn package(
                     Role::Link
                 };
                 let mut segs = vec![Seg::linked(v.name.clone(), role, link)];
-                for tag in &v.tags {
-                    segs.extend([space(), chip(tag, Bg::TertiaryContainer)]);
+                for t in &v.tags {
+                    tag(&mut segs, t, Bg::TertiaryContainer);
                 }
                 page.box_line(segs, Vec::new(), 0);
                 if let Some(at) = &v.created_at {
-                    let meta = format!("published {}", time::ago_iso(at, now));
-                    body(page, vec![Seg::new(meta, Role::Meta)]);
+                    let subline = format!("published {}", time::ago_iso(at, now));
+                    body(page, vec![meta(subline)]);
                 }
             });
         },

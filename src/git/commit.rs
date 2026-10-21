@@ -21,7 +21,7 @@ pub struct Change<'a> {
 pub async fn blob(repo: &Repo, rev: &str, path: &str) -> Option<String> {
     let spec = format!("{rev}:{path}");
     let args = ["rev-parse", "--verify", "--quiet", &spec];
-    let out = repo.git(&args, &[], None).await;
+    let out = repo.run(&args).await;
     out.ok().map(|o| o.trim().to_owned())
 }
 
@@ -35,7 +35,7 @@ pub fn moved_on(err: &GitError) -> bool {
 /// The mode of `path` at `rev` (an executable stays one), else a plain
 /// file's.
 async fn mode(repo: &Repo, rev: &str, path: &str) -> String {
-    let out = repo.git(&["ls-tree", rev, "--", path], &[], None).await;
+    let out = repo.run(&["ls-tree", rev, "--", path]).await;
     out.ok()
         .and_then(|o| o.split_whitespace().next().map(str::to_owned))
         .filter(|m| m == "100755")
@@ -46,7 +46,7 @@ async fn mode(repo: &Repo, rev: &str, path: &str) -> String {
 /// your login's GitHub address).
 pub async fn make(repo: &Repo, parent: &str, change: &Change<'_>) -> Result<String, GitError> {
     let index = repo
-        .git(&["rev-parse", "--git-path", "ghtui-edit-index"], &[], None)
+        .run(&["rev-parse", "--git-path", "ghtui-edit-index"])
         .await?;
     let index = repo.path.join(index.trim());
     let index = index.with_file_name(format!("ghtui-edit-index-{}", std::process::id()));
@@ -79,7 +79,7 @@ pub async fn make(repo: &Repo, parent: &str, change: &Change<'_>) -> Result<Stri
     let _ = std::fs::remove_file(&index);
     let tree = tree?;
     let config = |key: &'static str| async move {
-        let value = repo.git(&["config", key], &[], None).await.ok()?;
+        let value = repo.run(&["config", key]).await.ok()?;
         Some(value.trim().to_owned()).filter(|v| !v.is_empty())
     };
     let login = change.login.unwrap_or("ghtui");

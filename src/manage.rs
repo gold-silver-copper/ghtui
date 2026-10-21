@@ -11,18 +11,18 @@
 //! [`Start`]), whose answer opens
 //! what it made.
 
-use crate::route::{Route, discussions, issues, pulls};
+use crate::route::{Route, discussions, issues};
 
 use crate::api::browse::{DiscussionDetail, DiscussionsOf, IssueDetail, IssueState, PrState};
 use crate::api::change::Change;
 use crate::api::manage::{
     Categories, Category, DiscussionReason, HideReason, IssueAt, LockReason, Manage, Target,
 };
-use crate::api::model::{Capped, NodeId, PrDetail, PrRef, RepoId};
+use crate::api::model::{Capped, NodeId, PrRef, RepoId};
 use crate::ui::overlays::PaletteItem;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::act::{Step, Subject};
+use crate::act::{Step, Subject, issue};
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
@@ -50,31 +50,12 @@ pub const ACTIONS: [Action; 10] = [
 /// The issue, pull request or discussion on screen (a pull request's
 /// files are it too).
 fn here(state: &State) -> Option<Subject> {
-    match state.screen() {
-        Screen::Diff(d) => d.of.pr().cloned().map(Subject::Pr),
-        Screen::Page(p) => match &p.route {
-            Route::Issues(issues::Issue { repo, number }) => {
-                Some(Subject::Issue(repo.clone(), *number))
-            }
-            Route::Pulls(pulls::Pr { pr, .. }) => Some(Subject::Pr(pr.clone())),
-            Route::Discussions(discussions::Discussion { of, number }) => {
-                Some(Subject::Discussion(of.clone(), *number))
-            }
-            _ => None,
-        },
-    }
-}
-
-fn issue<'a>(state: &'a State, repo: &RepoId, number: u64) -> Option<&'a IssueDetail> {
-    let key = DataKey::Issue(repo.clone(), number);
-    match state.picked::<Option<Box<IssueDetail>>>(&key) {
-        Some(Some(d)) => Some(d),
-        _ => None,
-    }
-}
-
-fn pr<'a>(state: &'a State, pr: &PrRef) -> Option<&'a PrDetail> {
-    state.pr(pr)
+    Subject::on_screen(state).filter(|s| {
+        matches!(
+            s,
+            Subject::Pr(_) | Subject::Issue(..) | Subject::Discussion(..)
+        )
+    })
 }
 
 fn discussion<'a>(state: &'a State, of: &DiscussionsOf, n: u64) -> Option<&'a DiscussionDetail> {
@@ -171,15 +152,6 @@ fn selected_comment(state: &State, about: &Subject) -> Result<Said, String> {
 
 // ---- what a key does --------------------------------------------------------------
 
-fn ask(
-    action: Action,
-    about: Subject,
-    title: String,
-    facts: Vec<(String, bool)>,
-) -> crate::forms::Ask {
-    crate::act::confirm(action, about, title, facts, Vec::new())
-}
-
 /// Where `action` works, for when it doesn't here.
 fn elsewhere(action: Action) -> String {
     match action {
@@ -261,24 +233,21 @@ fn lock_plan(
             id: id.clone(),
         });
     }
-    let mut confirm = ask(
+    let unlock = Change::Manage(Manage::Unlock {
+        subject: id.clone(),
+    });
+    Ok(crate::act::ask_one(
         Action::Lock,
         about,
         format!("Unlock the conversation on this {what}?"),
         vec![("Everyone will be able to comment again".into(), false)],
-    );
-    let unlock = Change::Manage(Manage::Unlock {
-        subject: id.clone(),
-    });
-    confirm.choices = vec![(
-        "Unlock conversation".into(),
-        crate::forms::Answer::Change(unlock),
-    )];
-    Ok(Step::Ask(Box::new(confirm)))
+        "Unlock conversation",
+        unlock,
+    ))
 }
 
 fn pr_plan(state: &State, r: &PrRef, action: Action, about: Subject) -> Result<Step, String> {
-    let d = pr(state, r).ok_or(LOADING)?;
+    let d = state.pr(r).ok_or(LOADING)?;
     let same_repo =
         (d.head_repo.as_deref()).is_some_and(|h| h.eq_ignore_ascii_case(&r.repo.to_string()));
     match action {
@@ -333,7 +302,8 @@ fn pr_plan(state: &State, r: &PrRef, action: Action, about: Subject) -> Result<S
             Err(format!("Reverting it takes write access to {}", r.repo))
         }
         Action::Revert => {
-            let mut confirm = ask(
+            let revert = Change::Manage(Manage::Revert { pr: d.id.clone() });
+            Ok(crate::act::ask_one(
                 action,
                 about,
                 format!("Revert #{}?", r.number),
@@ -347,10 +317,9 @@ fn pr_plan(state: &State, r: &PrRef, action: Action, about: Subject) -> Result<S
                     ),
                     ("The new pull request opens".into(), false),
                 ],
-            );
-            let revert = Change::Manage(Manage::Revert { pr: d.id.clone() });
-            confirm.choices = vec![("Revert".into(), crate::forms::Answer::Change(revert))];
-            Ok(Step::Ask(Box::new(confirm)))
+                "Revert",
+                revert,
+            ))
         }
         _ => Err(elsewhere(action)),
     }
@@ -447,7 +416,7 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
         return;
     };
     let locked = match &about {
-        Subject::Pr(r) => pr(state, r).map(|d| d.locked.is_some()),
+        Subject::Pr(r) => state.pr(r).map(|d| d.locked.is_some()),
         Subject::Issue(repo, n) => issue(state, repo, *n).map(|d| d.locked.is_some()),
         Subject::Discussion(of, n) => discussion(state, of, *n).map(|d| d.locked.is_some()),
         _ => None,
@@ -466,7 +435,7 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
     }
     match &about {
         Subject::Pr(r) => {
-            let gone = pr(state, r).is_some_and(|d| d.head_gone);
+            let gone = state.pr(r).is_some_and(|d| d.head_gone);
             let branch = if gone {
                 "Restore the branch"
             } else {
@@ -658,7 +627,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
                 LockReason::Resolved,
                 LockReason::Spam,
             ] {
-                let said = crate::api::manage::lock_said(reason);
+                let said = reason.said();
                 let label = format!("Lock as {said}");
                 if fuzzy_score(q, &label).is_some() {
                     rows.push(crate::picker::entry(label, "", Some(lock(Some(reason)))));
@@ -707,12 +676,8 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
             if name.is_empty() {
                 return vec![crate::picker::entry("Type the branch's name", "", None)];
             }
-            if name.contains(char::is_whitespace) || name.contains("..") {
-                return vec![crate::picker::entry(
-                    "A branch's name has no spaces or ..",
-                    "",
-                    None,
-                )];
+            if let Some(why) = crate::route::ref_problem(name) {
+                return vec![crate::picker::entry(why, "", None)];
             }
             let default = state
                 .overview(&issue.repo)
@@ -770,7 +735,11 @@ fn base_rows(state: &State, pr: &PrRef, id: &NodeId, from: &str, head: &str, q: 
     let mut rows: Rows = hits
         .into_iter()
         .map(|(_, base)| {
-            let mut confirm = ask(
+            let change = Change::Manage(Manage::ChangeBase {
+                pr: id.clone(),
+                base: base.clone(),
+            });
+            let confirm = crate::act::ask_one(
                 Action::ChangeBase,
                 about.clone(),
                 format!("Change #{}'s base to {base}?", pr.number),
@@ -781,13 +750,10 @@ fn base_rows(state: &State, pr: &PrRef, id: &NodeId, from: &str, head: &str, q: 
                         false,
                     ),
                 ],
+                "Change base",
+                change,
             );
-            let change = Change::Manage(Manage::ChangeBase {
-                pr: id.clone(),
-                base: base.clone(),
-            });
-            confirm.choices = vec![("Change base".into(), crate::forms::Answer::Change(change))];
-            crate::picker::entry(base.clone(), "", Some(Step::Ask(Box::new(confirm))))
+            crate::picker::entry(base.clone(), "", Some(confirm))
         })
         .collect();
     if rows.is_empty() {
@@ -816,7 +782,12 @@ fn transfer_rows(state: &State, issue: &IssueAt, id: &NodeId, q: &str) -> Rows {
         .filter(|t| t.repo != issue.repo)
         .filter(|t| fuzzy_score(q, &t.repo.to_string()).is_some())
         .map(|t| {
-            let mut confirm = ask(
+            let change = Change::Manage(Manage::Transfer {
+                issue: id.clone(),
+                to: t.id.clone(),
+                repo: t.repo.clone(),
+            });
+            let confirm = crate::act::ask_one(
                 Action::Transfer,
                 about.clone(),
                 format!("Transfer #{} to {}?", issue.number, t.repo),
@@ -827,17 +798,10 @@ fn transfer_rows(state: &State, issue: &IssueAt, id: &NodeId, q: &str) -> Rows {
                     ),
                     (format!("Its page then is in {}", t.repo), false),
                 ],
+                "Transfer issue",
+                change,
             );
-            let change = Change::Manage(Manage::Transfer {
-                issue: id.clone(),
-                to: t.id.clone(),
-                repo: t.repo.clone(),
-            });
-            confirm.choices = vec![(
-                "Transfer issue".into(),
-                crate::forms::Answer::Change(change),
-            )];
-            crate::picker::entry(t.repo.to_string(), "", Some(Step::Ask(Box::new(confirm))))
+            crate::picker::entry(t.repo.to_string(), "", Some(confirm))
         })
         .collect();
     if rows.is_empty() {
@@ -1394,7 +1358,7 @@ fn at(l: &crate::api::timeline::Linked) -> IssueAt {
 pub fn shows(state: &State, m: &Manage, about: &Subject) -> bool {
     match about {
         Subject::Pr(r) => {
-            let Some(d) = pr(state, r) else {
+            let Some(d) = state.pr(r) else {
                 return false;
             };
             match m {
@@ -1528,29 +1492,31 @@ pub fn discussion_close(
 
 // ---- what changes say ------------------------------------------------------------
 
-/// What it's doing while GitHub answers.
-pub fn doing(m: &Manage) -> &'static str {
+/// What it's doing while GitHub answers, and what it is, for "GitHub refused …".
+pub fn said(m: &Manage) -> (&'static str, &'static str) {
     match m {
-        Manage::DeleteBranch { .. } => "Deleting the branch",
-        Manage::RestoreBranch { .. } => "Restoring the branch",
-        Manage::ConvertToDraft { .. } => "Converting it to a draft",
-        Manage::ChangeBase { .. } => "Changing the base",
-        Manage::Lock { .. } => "Locking the conversation",
-        Manage::Unlock { .. } => "Unlocking the conversation",
-        Manage::Pin { on: true, .. } => "Pinning it",
-        Manage::Pin { .. } => "Unpinning it",
-        Manage::Hide { .. } => "Hiding the comment",
-        Manage::Unhide { .. } => "Unhiding the comment",
-        Manage::CloseAsDuplicate { .. } | Manage::CloseDiscussion { .. } => "Closing",
-        Manage::ReopenDiscussion { .. } => "Reopening",
-        Manage::Revert { .. } => "Reverting it",
-        Manage::Transfer { .. } => "Transferring it",
-        Manage::SubIssue { add: true, .. } => "Adding the sub-issue",
-        Manage::SubIssue { .. } => "Removing the sub-issue",
-        Manage::MoveSubIssue { .. } => "Moving the sub-issue",
-        Manage::BlockedBy { add: true, .. } => "Marking it blocked",
-        Manage::BlockedBy { .. } => "Marking it no longer blocked",
-        Manage::LinkBranch { .. } => "Creating the branch",
+        Manage::DeleteBranch { .. } => ("Deleting the branch", "deleting the branch"),
+        Manage::RestoreBranch { .. } => ("Restoring the branch", "restoring the branch"),
+        Manage::ConvertToDraft { .. } => ("Converting it to a draft", "converting it to a draft"),
+        Manage::ChangeBase { .. } => ("Changing the base", "changing the base"),
+        Manage::Lock { .. } => ("Locking the conversation", "locking it"),
+        Manage::Unlock { .. } => ("Unlocking the conversation", "unlocking it"),
+        Manage::Pin { on: true, .. } => ("Pinning it", "pinning it"),
+        Manage::Pin { .. } => ("Unpinning it", "unpinning it"),
+        Manage::Hide { .. } => ("Hiding the comment", "hiding the comment"),
+        Manage::Unhide { .. } => ("Unhiding the comment", "unhiding the comment"),
+        Manage::CloseAsDuplicate { .. } | Manage::CloseDiscussion { .. } => {
+            ("Closing", "closing it")
+        }
+        Manage::ReopenDiscussion { .. } => ("Reopening", "reopening it"),
+        Manage::Revert { .. } => ("Reverting it", "the revert"),
+        Manage::Transfer { .. } => ("Transferring it", "the transfer"),
+        Manage::SubIssue { add: true, .. } => ("Adding the sub-issue", "adding the sub-issue"),
+        Manage::SubIssue { .. } => ("Removing the sub-issue", "removing the sub-issue"),
+        Manage::MoveSubIssue { .. } => ("Moving the sub-issue", "moving the sub-issue"),
+        Manage::BlockedBy { add: true, .. } => ("Marking it blocked", "changing what blocks it"),
+        Manage::BlockedBy { .. } => ("Marking it no longer blocked", "changing what blocks it"),
+        Manage::LinkBranch { .. } => ("Creating the branch", "creating the branch"),
     }
 }
 
@@ -1566,7 +1532,7 @@ pub fn done(m: &Manage) -> String {
             ..
         } => format!(
             "Locked as {}: only collaborators can comment",
-            crate::api::manage::lock_said(*reason)
+            reason.said()
         ),
         Manage::Lock { .. } => "Locked: only collaborators can comment".into(),
         Manage::Unlock { .. } => "Unlocked".into(),
@@ -1588,31 +1554,6 @@ pub fn done(m: &Manage) -> String {
         Manage::BlockedBy { by, add: true, .. } => format!("Blocked by {by}"),
         Manage::BlockedBy { by, .. } => format!("No longer blocked by {by}"),
         Manage::LinkBranch { name, .. } => format!("Created {name}"),
-    }
-}
-
-/// What it is, for "GitHub refused …".
-pub fn what(m: &Manage) -> &'static str {
-    match m {
-        Manage::DeleteBranch { .. } => "deleting the branch",
-        Manage::RestoreBranch { .. } => "restoring the branch",
-        Manage::ConvertToDraft { .. } => "converting it to a draft",
-        Manage::ChangeBase { .. } => "changing the base",
-        Manage::Lock { .. } => "locking it",
-        Manage::Unlock { .. } => "unlocking it",
-        Manage::Pin { on: true, .. } => "pinning it",
-        Manage::Pin { .. } => "unpinning it",
-        Manage::Hide { .. } => "hiding the comment",
-        Manage::Unhide { .. } => "unhiding the comment",
-        Manage::CloseAsDuplicate { .. } | Manage::CloseDiscussion { .. } => "closing it",
-        Manage::ReopenDiscussion { .. } => "reopening it",
-        Manage::Revert { .. } => "the revert",
-        Manage::Transfer { .. } => "the transfer",
-        Manage::SubIssue { add: true, .. } => "adding the sub-issue",
-        Manage::SubIssue { .. } => "removing the sub-issue",
-        Manage::MoveSubIssue { .. } => "moving the sub-issue",
-        Manage::BlockedBy { .. } => "changing what blocks it",
-        Manage::LinkBranch { .. } => "creating the branch",
     }
 }
 

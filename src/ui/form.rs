@@ -78,68 +78,35 @@ impl Row {
     }
 }
 
-/// A field of a label's, a milestone's, a fork's, a new repository's or
-/// a file's form.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Field {
-    Name,
-    Colour,
-    Description,
-    Title,
-    Due,
-    Owner,
-    Private,
-    Readme,
-    Gitignore,
-    License,
-    AllBranches,
-    Path,
+words! {
+    /// A field of a label's, a milestone's, a fork's, a new repository's or
+    /// a file's form.
+    #[derive(Hash, PartialOrd, Ord)]
+    pub enum Field {
+        /// Its row's name.
+        pub fn name,
+        fn describe,
+    }
+    Name        "Name"        "Name it";
+    Colour      "Colour"      "Choose the colour";
+    Description "Description" "Describe it";
+    Title       "Title"       "Name it";
+    Due         "Due date"    "Set the due date";
+    Owner       "Owner"       "Choose the owner";
+    Private     "Visibility"  "Make it public or private";
+    Readme      "README"      "Add a README, or not";
+    Gitignore   ".gitignore"  "Choose a .gitignore template";
+    License     "Licence"     "Choose a licence";
+    AllBranches "Branches"    "Copy all branches, or the default one";
+    Path        "Path"        "Name the file, or move it";
     /// A file's commit's branch: empty for the one it's on, else a new one.
-    Branch,
-    Message,
+    Branch      "Commit to"   "Choose the branch to commit to";
+    Message     "Message"     "Write the commit message";
 }
 
 impl Field {
-    /// Its row's name.
-    pub fn name(self) -> &'static str {
-        match self {
-            Field::Name => "Name",
-            Field::Colour => "Colour",
-            Field::Description => "Description",
-            Field::Title => "Title",
-            Field::Due => "Due date",
-            Field::Owner => "Owner",
-            Field::Private => "Visibility",
-            Field::Readme => "README",
-            Field::Gitignore => ".gitignore",
-            Field::License => "Licence",
-            Field::AllBranches => "Branches",
-            Field::Path => "Path",
-            Field::Branch => "Commit to",
-            Field::Message => "Message",
-        }
-    }
-
     /// Set by Enter alone: yes or no.
     pub fn toggles(self) -> bool {
         matches!(self, Field::Private | Field::Readme | Field::AllBranches)
-    }
-
-    fn describe(self) -> &'static str {
-        match self {
-            Field::Private => "Make it public or private",
-            Field::Readme => "Add a README, or not",
-            Field::AllBranches => "Copy all branches, or the default one",
-            Field::Owner => "Choose the owner",
-            Field::Colour => "Choose the colour",
-            Field::Due => "Set the due date",
-            Field::Gitignore => "Choose a .gitignore template",
-            Field::License => "Choose a licence",
-            Field::Path => "Name the file, or move it",
-            Field::Branch => "Choose the branch to commit to",
-            Field::Message => "Write the commit message",
-            Field::Name | Field::Title => "Name it",
-            Field::Description => "Describe it",
-        }
     }
 }

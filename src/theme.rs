@@ -16,6 +16,7 @@ pub mod color;
 mod detect;
 mod labels;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use material_colors::blend::harmonize;
@@ -70,7 +71,6 @@ pub enum ColorDepth {
 pub enum Bg {
     /// Unfocused panes, diff context lines.
     Surface,
-    ContainerLowest,
     /// Focused pane.
     ContainerLow,
     /// Top bar and status bar.
@@ -97,25 +97,15 @@ pub enum Bg {
     DiffSelected(DiffBg),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DiffBg {
-    Context,
-    Added,
-    Removed,
-    AddedToken,
-    RemovedToken,
-    Moved,
-}
-
-impl DiffBg {
-    pub const ALL: [DiffBg; 6] = [
-        DiffBg::Context,
-        DiffBg::Added,
-        DiffBg::Removed,
-        DiffBg::AddedToken,
-        DiffBg::RemovedToken,
-        DiffBg::Moved,
-    ];
+words! {
+    #[derive(Hash)]
+    pub enum DiffBg {}
+    Context;
+    Added;
+    Removed;
+    AddedToken;
+    RemovedToken;
+    Moved;
 }
 
 /// Foreground roles.
@@ -146,44 +136,27 @@ pub enum Fg {
     Heat(u8),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Syntax {
-    Default,
-    Keyword,
-    String,
-    Comment,
-    Function,
-    Type,
-    Number,
-    Constant,
-    Operator,
-    Punctuation,
-    Attribute,
-    Property,
-}
-
-impl Syntax {
-    pub const ALL: [Syntax; 12] = [
-        Syntax::Default,
-        Syntax::Keyword,
-        Syntax::String,
-        Syntax::Comment,
-        Syntax::Function,
-        Syntax::Type,
-        Syntax::Number,
-        Syntax::Constant,
-        Syntax::Operator,
-        Syntax::Punctuation,
-        Syntax::Attribute,
-        Syntax::Property,
-    ];
+words! {
+    #[derive(Hash)]
+    pub enum Syntax {}
+    Default;
+    Keyword;
+    String;
+    Comment;
+    Function;
+    Type;
+    Number;
+    Constant;
+    Operator;
+    Punctuation;
+    Attribute;
+    Property;
 }
 
 impl Bg {
     /// Plain UI surfaces that regular text may sit on.
-    const NEUTRAL: [Bg; 9] = [
+    const NEUTRAL: [Bg; 8] = [
         Bg::Surface,
-        Bg::ContainerLowest,
         Bg::ContainerLow,
         Bg::Container,
         Bg::ContainerHigh,
@@ -202,8 +175,6 @@ impl Bg {
         (Bg::ErrorContainer, Fg::OnErrorContainer),
         (Bg::SuccessContainer, Fg::OnSuccessContainer),
     ];
-
-    const COUNT: usize = Bg::NEUTRAL.len() + Bg::FILLED.len() + 2 * DiffBg::ALL.len();
 
     /// Where this role is in [`Bg::all`].
     fn slot(self) -> Option<usize> {
@@ -254,8 +225,6 @@ impl Fg {
         Fg::DiffAddedSign,
         Fg::DiffRemovedSign,
     ];
-
-    const COUNT: usize = Fg::PLAIN.len() + Syntax::ALL.len() + HEAT_LEVELS.len();
 
     /// Where this role is in [`Fg::all`].
     fn slot(self) -> Option<usize> {
@@ -323,36 +292,17 @@ pub fn requirement(fg: Fg, bg: Bg) -> Option<Requirement> {
     }
 }
 
-/// One declared pair, resolved to the colors that will be displayed.
-#[derive(Debug, Clone, Copy)]
-pub struct Pair {
-    pub fg: Fg,
-    pub bg: Bg,
-    pub requirement: Requirement,
-    pub fg_color: Rgb,
-    pub bg_color: Rgb,
-}
-
-impl Pair {
-    pub fn ratio(&self) -> f64 {
-        contrast(self.fg_color, self.bg_color)
-    }
-
-    pub fn passes(&self) -> bool {
-        self.ratio() >= self.requirement.min_ratio()
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Theme {
     pub mode: Mode,
     pub depth: ColorDepth,
-    bg: HashMap<Bg, Rgb>,
-    fg: HashMap<Fg, Rgb>,
-    /// Each role's color as the terminal is sent it, by its slot: what
-    /// [`Theme::style`] looks up (finding a 256-color one is slow).
-    bg_term: [Color; Bg::COUNT],
-    fg_term: [Color; Fg::COUNT],
+    /// Each role's color, by its slot.
+    bg: Vec<Rgb>,
+    fg: Vec<Rgb>,
+    /// The same as the terminal is sent them: what [`Theme::style`] looks
+    /// up (finding a 256-color one is slow).
+    bg_term: Vec<Color>,
+    fg_term: Vec<Color>,
 }
 
 impl Theme {
@@ -410,64 +360,25 @@ impl Theme {
                 opacity += 0.02;
             }
         };
-        let mut bg = HashMap::from([
-            (Bg::Surface, surface),
-            (Bg::ContainerLowest, rgb(scheme.surface_container_lowest)),
-            (Bg::ContainerLow, container_low),
-            (Bg::Container, rgb(scheme.surface_container)),
-            (Bg::ContainerHigh, container_high),
-            (Bg::ContainerHighest, rgb(scheme.surface_container_highest)),
-            (Bg::Selected, layer(container_low, 0.12)),
-            (Bg::SelectedInactive, layer(surface, 0.08)),
-            (Bg::SelectedHigh, layer(container_high, 0.14)),
-            (Bg::Primary, primary),
-            (Bg::PrimaryContainer, rgb(scheme.primary_container)),
-            (Bg::SecondaryContainer, rgb(scheme.secondary_container)),
-            (Bg::TertiaryContainer, rgb(scheme.tertiary_container)),
-            (Bg::ErrorContainer, rgb(scheme.error_container)),
-            (Bg::SuccessContainer, hct(green, 36.0, container_tone)),
-        ]);
-        bg.extend(DiffBg::ALL.map(|d| (Bg::Diff(d), diff(d))));
-        bg.extend(DiffBg::ALL.map(|d| (Bg::DiffSelected(d), layer(diff(d), 0.14))));
-
-        let on_surface = rgb(scheme.on_surface);
-        let on_surface_variant = rgb(scheme.on_surface_variant);
-        let mut fg = HashMap::from([
-            (Fg::OnSurface, on_surface),
-            (Fg::OnSurfaceVariant, on_surface_variant),
-            (Fg::Primary, primary),
-            (Fg::Tertiary, rgb(scheme.tertiary)),
-            (Fg::Error, rgb(scheme.error)),
-            (Fg::Success, hct(green, 48.0, text_tone)),
-            (Fg::Disabled, surface.blend(on_surface, 0.38)),
-            (Fg::OutlineVariant, rgb(scheme.outline_variant)),
-            (Fg::OnPrimary, rgb(scheme.on_primary)),
-            (Fg::OnPrimaryContainer, rgb(scheme.on_primary_container)),
-            (Fg::OnSecondaryContainer, rgb(scheme.on_secondary_container)),
-            (Fg::OnTertiaryContainer, rgb(scheme.on_tertiary_container)),
-            (Fg::OnErrorContainer, rgb(scheme.on_error_container)),
-            (Fg::OnSuccessContainer, hct(green, 36.0, on_container_tone)),
-            (Fg::DiffAddedSign, hct(green, 48.0, text_tone)),
-            (Fg::DiffRemovedSign, hct(red, 48.0, text_tone)),
-        ]);
-
-        // Syntax: keywords primary, strings tertiary, comments and
-        // punctuation on-surface-variant, the rest spread around the seed.
-        let syntax = [
-            (Syntax::Default, on_surface),
-            (Syntax::Keyword, hct(primary_hue, 52.0, text_tone)),
-            (Syntax::String, hct(tertiary_hue, 40.0, text_tone)),
-            (Syntax::Comment, on_surface_variant),
-            (Syntax::Function, hct(primary_hue - 50.0, 36.0, text_tone)),
-            (Syntax::Type, hct(tertiary_hue + 50.0, 36.0, text_tone)),
-            (Syntax::Number, hct(orange, 48.0, text_tone)),
-            (Syntax::Constant, hct(orange, 40.0, text_tone)),
-            (Syntax::Operator, on_surface_variant),
-            (Syntax::Punctuation, on_surface_variant),
-            (Syntax::Attribute, hct(primary_hue + 180.0, 32.0, text_tone)),
-            (Syntax::Property, hct(primary_hue, 16.0, text_tone)),
-        ];
-        fg.extend(syntax.map(|(role, c)| (Fg::Syntax(role), c)));
+        let bg = Bg::all().into_iter().map(|role| match role {
+            Bg::Surface => surface,
+            Bg::ContainerLow => container_low,
+            Bg::Container => rgb(scheme.surface_container),
+            Bg::ContainerHigh => container_high,
+            Bg::ContainerHighest => rgb(scheme.surface_container_highest),
+            Bg::Selected => layer(container_low, 0.12),
+            Bg::SelectedInactive => layer(surface, 0.08),
+            Bg::SelectedHigh => layer(container_high, 0.14),
+            Bg::Primary => primary,
+            Bg::PrimaryContainer => rgb(scheme.primary_container),
+            Bg::SecondaryContainer => rgb(scheme.secondary_container),
+            Bg::TertiaryContainer => rgb(scheme.tertiary_container),
+            Bg::ErrorContainer => rgb(scheme.error_container),
+            Bg::SuccessContainer => hct(green, 36.0, container_tone),
+            Bg::Diff(d) => diff(d),
+            Bg::DiffSelected(d) => layer(diff(d), 0.14),
+        });
+        let bg: Vec<Rgb> = bg.collect();
 
         // The contribution graph: a faint surface shade, then the primary
         // hue from faint to strong. Each level must differ from the last (and
@@ -478,46 +389,72 @@ impl Theme {
             Mode::Light => ([90.0, 80.0, 66.0, 50.0, 34.0], -3.0),
         };
         let mut previous = container_low;
-        for (level, tone) in HEAT_LEVELS.into_iter().zip(heat_tones) {
-            let chroma = if level == 0 { 6.0 } else { 48.0 };
-            let mut tone: f64 = tone;
-            let mut color = hct(primary_hue, chroma, tone);
-            while displayed(depth, color) == displayed(depth, previous)
-                && (0.0..=100.0).contains(&tone)
-            {
-                tone += step;
-                color = hct(primary_hue, chroma, tone);
-            }
-            fg.insert(Fg::Heat(level), color);
-            previous = color;
-        }
+        let heat: Vec<Rgb> = HEAT_LEVELS
+            .into_iter()
+            .zip(heat_tones)
+            .map(|(level, tone)| {
+                let chroma = if level == 0 { 6.0 } else { 48.0 };
+                let mut tone: f64 = tone;
+                let mut color = hct(primary_hue, chroma, tone);
+                while displayed(depth, color) == displayed(depth, previous)
+                    && (0.0..=100.0).contains(&tone)
+                {
+                    tone += step;
+                    color = hct(primary_hue, chroma, tone);
+                }
+                previous = color;
+                color
+            })
+            .collect();
 
-        let missing = term_color(depth, MISSING);
-        let mut theme = Theme {
+        let on_surface = rgb(scheme.on_surface);
+        let on_surface_variant = rgb(scheme.on_surface_variant);
+        let fg = Fg::all().into_iter().map(|role| {
+            let color = match role {
+                Fg::OnSurface => on_surface,
+                Fg::OnSurfaceVariant => on_surface_variant,
+                Fg::Primary => primary,
+                Fg::Tertiary => rgb(scheme.tertiary),
+                Fg::Error => rgb(scheme.error),
+                Fg::Success | Fg::DiffAddedSign => hct(green, 48.0, text_tone),
+                Fg::Disabled => surface.blend(on_surface, 0.38),
+                Fg::OutlineVariant => rgb(scheme.outline_variant),
+                Fg::OnPrimary => rgb(scheme.on_primary),
+                Fg::OnPrimaryContainer => rgb(scheme.on_primary_container),
+                Fg::OnSecondaryContainer => rgb(scheme.on_secondary_container),
+                Fg::OnTertiaryContainer => rgb(scheme.on_tertiary_container),
+                Fg::OnErrorContainer => rgb(scheme.on_error_container),
+                Fg::OnSuccessContainer => hct(green, 36.0, on_container_tone),
+                Fg::DiffRemovedSign => hct(red, 48.0, text_tone),
+                // Keywords primary, strings tertiary, comments and
+                // punctuation on-surface-variant, the rest spread around
+                // the seed.
+                Fg::Syntax(syntax) => match syntax {
+                    Syntax::Default => on_surface,
+                    Syntax::Keyword => hct(primary_hue, 52.0, text_tone),
+                    Syntax::String => hct(tertiary_hue, 40.0, text_tone),
+                    Syntax::Comment | Syntax::Operator | Syntax::Punctuation => on_surface_variant,
+                    Syntax::Function => hct(primary_hue - 50.0, 36.0, text_tone),
+                    Syntax::Type => hct(tertiary_hue + 50.0, 36.0, text_tone),
+                    Syntax::Number => hct(orange, 48.0, text_tone),
+                    Syntax::Constant => hct(orange, 40.0, text_tone),
+                    Syntax::Attribute => hct(primary_hue + 180.0, 32.0, text_tone),
+                    Syntax::Property => hct(primary_hue, 16.0, text_tone),
+                },
+                Fg::Heat(level) => heat.get(usize::from(level)).copied().unwrap_or(MISSING),
+            };
+            enforce_contrast(depth, &bg, role, color)
+        });
+        let fg: Vec<Rgb> = fg.collect();
+
+        Theme {
             mode,
             depth,
+            bg_term: bg.iter().map(|&c| term_color(depth, c)).collect(),
+            fg_term: fg.iter().map(|&c| term_color(depth, c)).collect(),
             bg,
             fg,
-            bg_term: [missing; Bg::COUNT],
-            fg_term: [missing; Fg::COUNT],
-        };
-        for role in Fg::all() {
-            let adjusted = enforce_contrast(&theme, role);
-            theme.fg.insert(role, adjusted);
         }
-        for role in Bg::all() {
-            let color = term_color(depth, theme.bg_rgb(role));
-            if let Some(slot) = role.slot().and_then(|i| theme.bg_term.get_mut(i)) {
-                *slot = color;
-            }
-        }
-        for role in Fg::all() {
-            let color = term_color(depth, theme.fg_rgb(role));
-            if let Some(slot) = role.slot().and_then(|i| theme.fg_term.get_mut(i)) {
-                *slot = color;
-            }
-        }
-        theme
     }
 
     /// The color shown on screen for a design color, after quantization.
@@ -530,11 +467,17 @@ impl Theme {
     }
 
     pub fn bg_rgb(&self, bg: Bg) -> Rgb {
-        self.bg.get(&bg).copied().unwrap_or(MISSING)
+        bg.slot()
+            .and_then(|i| self.bg.get(i))
+            .copied()
+            .unwrap_or(MISSING)
     }
 
     pub fn fg_rgb(&self, fg: Fg) -> Rgb {
-        self.fg.get(&fg).copied().unwrap_or(MISSING)
+        fg.slot()
+            .and_then(|i| self.fg.get(i))
+            .copied()
+            .unwrap_or(MISSING)
     }
 
     pub fn bg_color(&self, bg: Bg) -> Color {
@@ -607,34 +550,27 @@ impl Theme {
             || self.tones_collapse(context, Bg::Diff(DiffBg::Removed))
     }
 
-    /// Every declared pair, resolved to displayed colors.
-    pub fn pairs(&self) -> Vec<Pair> {
-        let pair = |fg, bg| {
-            Some(Pair {
-                fg,
-                bg,
-                requirement: requirement(fg, bg)?,
-                fg_color: self.displayed(self.fg_rgb(fg)),
-                bg_color: self.displayed(self.bg_rgb(bg)),
-            })
-        };
-        Fg::all()
-            .into_iter()
-            .flat_map(|fg| Bg::all().into_iter().filter_map(move |bg| pair(fg, bg)))
-            .collect()
-    }
-
     /// Chip style for a GitHub label color (`rrggbb`). Keeps the label's hue,
     /// moves it to a container tone for this scheme and picks a readable
     /// foreground. Unparseable colors fall back to the secondary container.
     pub fn label_chip(&self, github_hex: &str) -> Style {
-        match Rgb::parse_hex(github_hex) {
-            Some(color) => {
-                let (bg, fg) = labels::chip_colors(color, self);
-                Style::new().fg(self.term_color(fg)).bg(self.term_color(bg))
-            }
-            None => self.fill(Bg::SecondaryContainer),
+        thread_local! {
+            /// Chips drawn so far: finding a readable one takes many tone
+            /// steps, and the same labels are drawn every frame.
+            static CHIPS: RefCell<HashMap<(Rgb, Mode, ColorDepth), Style>> =
+                RefCell::new(HashMap::new());
         }
+        let Some(color) = Rgb::parse_hex(github_hex) else {
+            return self.fill(Bg::SecondaryContainer);
+        };
+        CHIPS.with_borrow_mut(|chips| {
+            *chips
+                .entry((color, self.mode, self.depth))
+                .or_insert_with(|| {
+                    let (bg, fg) = labels::chip_colors(color, self);
+                    Style::new().fg(self.term_color(fg)).bg(self.term_color(bg))
+                })
+        })
     }
 }
 
@@ -652,17 +588,19 @@ fn displayed(depth: ColorDepth, c: Rgb) -> Rgb {
     }
 }
 
-/// Moves `role`'s tone away from its backgrounds until it meets the strictest
-/// requirement against all of them, as displayed.
-fn enforce_contrast(theme: &Theme, role: Fg) -> Rgb {
+/// Moves `role`'s tone (`base`) away from its backgrounds (`bg`, by slot)
+/// until it meets the strictest requirement against all of them, as
+/// displayed.
+fn enforce_contrast(depth: ColorDepth, bg: &[Rgb], role: Fg, base: Rgb) -> Rgb {
     let targets: Vec<(Rgb, f64)> = Bg::all()
         .into_iter()
-        .filter_map(|bg| {
-            let req = requirement(role, bg).filter(|r| *r != Requirement::Exempt)?;
-            Some((theme.displayed(theme.bg_rgb(bg)), req.min_ratio()))
+        .zip(bg)
+        .filter_map(|(on, &color)| {
+            let req = requirement(role, on).filter(|r| *r != Requirement::Exempt)?;
+            Some((displayed(depth, color), req.min_ratio()))
         })
         .collect();
-    adjust_tone(theme.fg_rgb(role), &targets, |c| theme.displayed(c))
+    adjust_tone(base, &targets, |c| displayed(depth, c))
 }
 
 /// Shifts `base` in HCT tone (keeping hue and, where the gamut allows,
@@ -703,12 +641,39 @@ pub(crate) fn adjust_tone(base: Rgb, targets: &[(Rgb, f64)], display: impl Fn(Rg
 mod tests {
     use super::*;
 
+    /// One declared pair, resolved to the colors that will be displayed.
+    struct Pair {
+        fg: Fg,
+        bg: Bg,
+        requirement: Requirement,
+        ratio: f64,
+    }
+
+    /// Every declared pair of `theme`.
+    fn pairs(theme: &Theme) -> Vec<Pair> {
+        let pair = |fg, bg| {
+            Some(Pair {
+                fg,
+                bg,
+                requirement: requirement(fg, bg)?,
+                ratio: contrast(
+                    theme.displayed(theme.fg_rgb(fg)),
+                    theme.displayed(theme.bg_rgb(bg)),
+                ),
+            })
+        };
+        Fg::all()
+            .into_iter()
+            .flat_map(|fg| Bg::all().into_iter().filter_map(move |bg| pair(fg, bg)))
+            .collect()
+    }
+
     #[test]
     fn each_role_has_its_own_slot() {
         let slots: Vec<_> = Bg::all().into_iter().map(Bg::slot).collect();
-        assert_eq!(slots, (0..Bg::COUNT).map(Some).collect::<Vec<_>>());
+        assert_eq!(slots, (0..slots.len()).map(Some).collect::<Vec<_>>());
         let slots: Vec<_> = Fg::all().into_iter().map(Fg::slot).collect();
-        assert_eq!(slots, (0..Fg::COUNT).map(Some).collect::<Vec<_>>());
+        assert_eq!(slots, (0..slots.len()).map(Some).collect::<Vec<_>>());
         assert_eq!(Fg::Heat(9).slot(), None);
     }
 
@@ -738,13 +703,13 @@ mod tests {
             for mode in [Mode::Light, Mode::Dark] {
                 for depth in [ColorDepth::TrueColor, ColorDepth::Ansi256] {
                     let theme = Theme::new(seed, mode, depth);
-                    for pair in theme.pairs() {
-                        if !pair.passes() {
+                    for pair in pairs(&theme) {
+                        if pair.ratio < pair.requirement.min_ratio() {
                             failures.push(format!(
                                 "seed {seed} {mode:?} {depth:?}: {:?} on {:?} = {:.2} (< {})",
                                 pair.fg,
                                 pair.bg,
-                                pair.ratio(),
+                                pair.ratio,
                                 pair.requirement.min_ratio()
                             ));
                         }
@@ -786,7 +751,7 @@ mod tests {
     #[test]
     fn syntax_on_diff_backgrounds_is_covered() {
         let theme = Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::TrueColor);
-        let pairs = theme.pairs();
+        let pairs = pairs(&theme);
         for role in Syntax::ALL {
             for d in DiffBg::ALL {
                 for bg in [Bg::Diff(d), Bg::DiffSelected(d)] {
@@ -818,7 +783,6 @@ mod tests {
             let theme = Theme::new(DEFAULT_SEED, mode, ColorDepth::TrueColor);
             let tone = |bg| theme.bg_rgb(bg).to_hct().get_tone();
             let levels = [
-                Bg::ContainerLowest,
                 Bg::ContainerLow,
                 Bg::Container,
                 Bg::ContainerHigh,

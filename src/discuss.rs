@@ -432,8 +432,9 @@ fn all(d: &DiscussionDetail) -> impl Iterator<Item = (&Editable, &str)> {
 }
 
 /// The same text, but for line endings and the ends' whitespace.
-fn same(a: &str, b: &str) -> bool {
-    a.replace("\r\n", "\n").trim() == b.replace("\r\n", "\n").trim()
+pub fn same_text(a: &str, b: &str) -> bool {
+    // `lines` drops each line's `\r`, so nothing is copied.
+    a.trim().lines().eq(b.trim().lines())
 }
 
 /// Whether the discussion, as loaded, shows `change`.
@@ -446,7 +447,7 @@ pub fn shows(state: &State, change: &Change, of: &DiscussionsOf, number: u64) ->
     match change {
         Change::Discussion(Discuss::Comment { body, reply_to, .. }) => {
             let me = state.viewer.as_deref();
-            let mine = |c: &Comment| Some(c.author.as_str()) == me && same(&c.body, body);
+            let mine = |c: &Comment| Some(c.author.as_str()) == me && same_text(&c.body, body);
             // Past the comments loaded, it can't be seen: don't wait.
             let more = match reply_to {
                 Some(_) => d.comments.iter().any(|c| c.replies.left_out() > 0),
@@ -458,7 +459,7 @@ pub fn shows(state: &State, change: &Change, of: &DiscussionsOf, number: u64) ->
                 .any(|c| mine(&c.comment) || c.replies.iter().any(mine))
         }
         Change::Discussion(Discuss::Edit { id, body, .. }) => {
-            find(id).is_none_or(|(_, now)| same(now, body))
+            find(id).is_none_or(|(_, now)| same_text(now, body))
         }
         Change::Discussion(Discuss::Delete { id }) => find(id).is_none(),
         Change::Discussion(Discuss::Answer { comment, on }) => {

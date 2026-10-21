@@ -30,11 +30,7 @@ fn long_conversations_say_what_is_left_out() {
     activity.comment_count = 101;
     activity.commits = Capped::new(activity.commits.items, 250);
     let mut state = with_pr();
-    fetched(
-        &mut state,
-        DataKey::PrActivity(pr),
-        Data::PrActivity(Box::new(activity)),
-    );
+    fetched(&mut state, DataKey::PrActivity(pr), Data::from(activity));
     let page = page_text(&state);
     assert!(
         page.contains("… 1 earlier comment or event on GitHub"),
@@ -70,11 +66,7 @@ fn a_dismissed_review_reads_as_dismissed() {
     );
     activity.timeline = vec![crate::api::timeline::Item::Review(dismissed)].into();
     let mut state = with_pr();
-    fetched(
-        &mut state,
-        DataKey::PrActivity(pr),
-        Data::PrActivity(Box::new(activity)),
-    );
+    fetched(&mut state, DataKey::PrActivity(pr), Data::from(activity));
     let page = page_text(&state);
     let hubot: Vec<&str> = page.lines().filter(|l| l.contains("hubot")).collect();
     assert!(
@@ -92,15 +84,7 @@ fn a_failed_home_section_says_why_and_the_others_show() {
     state.data.remove(&key);
     let _ = state.load_visible(false);
     let err = ApiError::Network("connection refused".into());
-    update(
-        &mut state,
-        Msg::Fetched {
-            key,
-            result: Err(err),
-            cached_at: None,
-            source: None,
-        },
-    );
+    update(&mut state, Msg::fetched(key, Err(err)));
     let page = page_text(&state);
     let why = "Couldn't load your pull requests: network error: connection refused";
     assert!(page.contains(why), "{page}");
@@ -148,7 +132,7 @@ fn a_link_to_lines_opens_on_them() {
         panic!("{url}");
     };
     let route = route.split(None).unwrap_or(route);
-    open(&mut state, route, Data::Blob(Box::new(blob)));
+    open(&mut state, route, Data::from(blob));
     let screen = screen_text(&state);
     assert!(screen.contains("let x62 = 62;"), "{screen}");
     assert!(!screen.contains("let x1 = 1;"), "{screen}");
@@ -215,7 +199,7 @@ fn unlisted_stargazers_say_why() {
     open(
         &mut state,
         Route::People(people::Stargazers(ghtui())),
-        Data::Users(Box::new(none)),
+        Data::from(none),
     );
     let page = page_text(&state);
     assert!(

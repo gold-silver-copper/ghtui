@@ -18,7 +18,7 @@ fn commit_history_loads_more() {
     fetched(
         &mut state,
         key.clone(),
-        Data::History(Box::new(crate::fixtures::history(Some("h1")))),
+        Data::from(crate::fixtures::history(Some("h1"))),
     );
     press(&mut state, "<End>");
     assert!(selected_text(&state).starts_with("Load more"));
@@ -38,12 +38,7 @@ fn commit_history_loads_more() {
     }
     update(
         &mut state,
-        Msg::FetchedMore(
-            key.clone(),
-            "h1".into(),
-            Ok(Data::History(Box::new(more))),
-            None,
-        ),
+        Msg::FetchedMore(key.clone(), "h1".into(), Ok(Data::from(more)), None),
     );
     let Some(Data::History(h)) = state.get(&key) else {
         panic!()
@@ -75,7 +70,7 @@ fn an_extended_list_is_kept_until_asked() {
             (run.id, run.outcome) = (id + i as u64, crate::api::browse::CheckOutcome::Pending);
         }
         runs.next = next.map(str::to_owned);
-        Data::Runs(Box::new(runs))
+        Data::from(runs)
     };
     let refetch = Cmd::Api(Api::Fetch {
         key: key.clone(),
@@ -125,7 +120,7 @@ fn a_next_page_from_before_a_refresh_is_not_appended() {
         for (i, commit) in page.items.iter_mut().enumerate() {
             commit.oid = format!("{c}{i}");
         }
-        Data::History(Box::new(page))
+        Data::from(page)
     };
     fetched(&mut state, key.clone(), page('a', Some("h1")));
     press(&mut state, "<End>");
@@ -180,7 +175,7 @@ fn load_more_during_a_refresh_waits_for_it() {
     };
     let key = DataKey::History(ghtui(), "main".into(), "src".into());
     let _ = state.push(route);
-    let page = |next| Data::History(Box::new(crate::fixtures::history(next)));
+    let page = |next| Data::from(crate::fixtures::history(next));
     fetched(&mut state, key.clone(), page(Some("h1")));
     let _ = press(&mut state, "r");
     press(&mut state, "<End>");
@@ -204,22 +199,14 @@ fn a_next_page_survives_a_failed_refresh() {
     };
     let key = DataKey::History(ghtui(), "main".into(), "src".into());
     let _ = state.push(route);
-    let page = |next: Option<&str>| Data::History(Box::new(crate::fixtures::history(next)));
+    let page = |next: Option<&str>| Data::from(crate::fixtures::history(next));
     fetched(&mut state, key.clone(), page(Some("h1")));
     press(&mut state, "<End>");
     press(&mut state, "<Enter>");
     let _ = press(&mut state, "r");
     let result = Err(ApiError::Network("offline".into()));
     let cached_at = None;
-    update(
-        &mut state,
-        Msg::Fetched {
-            key: key.clone(),
-            result,
-            cached_at,
-            source: None,
-        },
-    );
+    update(&mut state, Msg::fetched_at(key.clone(), result, cached_at));
     update(
         &mut state,
         Msg::FetchedMore(key.clone(), "h1".into(), Ok(page(None)), None),
@@ -241,7 +228,7 @@ fn advisories_load_more() {
     let cmds = state.push(route);
     assert!(cmds.contains(&fetch(key.clone())), "{cmds:?}");
     let list = crate::fixtures::page(3, crate::fixtures::advisories(), Some("c1"));
-    fetched(&mut state, key.clone(), Data::Advisories(Box::new(list)));
+    fetched(&mut state, key.clone(), Data::from(list));
     press(&mut state, "<End>");
     assert!(
         selected_text(&state).starts_with("Load more"),
@@ -300,7 +287,7 @@ fn a_list_cut_short_keeps_its_count() {
     fetched(
         &mut state,
         DataKey::Milestone(repo, number),
-        Data::Milestone(Box::new(milestone)),
+        Data::from(milestone),
     );
     let text: String = page(&state)
         .page()
@@ -345,21 +332,21 @@ fn profile_repositories_sort_and_filter() {
 #[test]
 fn every_list_appends_its_next_page() {
     use crate::fixtures::{forks, people};
-    let mut users = Data::Users(Box::new(people()));
+    let mut users = Data::from(people());
     assert_eq!(users.next_cursor(), Some("u1"));
     let mut more = people();
     for u in &mut more.items {
         u.login.push_str("-2");
     }
-    users.append(Data::Users(Box::new(more)));
+    users.append(Data::from(more));
     assert!(matches!(&users, Data::Users(r) if r.items.len() == 6));
-    let mut repos = Data::RepoPage(Box::new(forks()));
+    let mut repos = Data::from(forks());
     assert_eq!(repos.next_cursor(), Some("f1"));
     let mut more = forks();
     for r in &mut more.items {
         r.repo = RepoId::new(&r.repo.owner, format!("{}-2", r.repo.name));
     }
-    repos.append(Data::RepoPage(Box::new(more)));
+    repos.append(Data::from(more));
     assert!(matches!(&repos, Data::RepoPage(r) if r.items.len() == 4));
 }
 
@@ -385,7 +372,7 @@ fn a_filtered_list_counts_what_it_finds() {
         query,
         "repo:gold-silver-copper/ghtui is:issue author:octocat"
     );
-    let overview = Data::Repo(Box::new(crate::fixtures::overview()));
+    let overview = Data::from(crate::fixtures::overview());
     let _ = fetched(&mut s, DataKey::Repo(ghtui()), overview);
     let header = |s: &State| {
         let lines = page(s).page().lines.iter();

@@ -235,10 +235,7 @@ impl DiffView<'_> {
         let meta = &file.meta;
 
         let mut left: Vec<Span<'static>> = Vec::new();
-        let mut chip = |text: String, chip_bg: Bg| {
-            left.extend(chips::chip(ctx, text, theme.fill(chip_bg), bg));
-            left.push(Span::styled(" ", theme.body(bg)));
-        };
+        let mut chip = |text: String, chip_bg| chips::push(&mut left, ctx, text, chip_bg, bg);
         let passed = ctx.icons.checks(crate::api::model::ChecksState::Passing);
         match file.viewed {
             Viewed::Viewed => chip(format!("{passed} Viewed"), Bg::SuccessContainer),
@@ -387,7 +384,7 @@ impl DiffView<'_> {
         };
         let inner = inset(area, PAD_X, 0);
         Span::styled(
-            text::truncate(&text, usize::from(inner.width)),
+            text::fit(&text, usize::from(inner.width)),
             theme.style(fg, bg),
         )
         .render(inner, buf);
@@ -610,13 +607,7 @@ impl DiffView<'_> {
                 spans.push(Span::styled(format!("{mark} "), theme.style(fg, bg)));
                 spans.extend(self.state_chips(ann, bg));
                 if ann.comments.iter().any(|c| c.new) {
-                    spans.extend(chips::chip(
-                        ctx,
-                        "New",
-                        theme.fill(Bg::TertiaryContainer),
-                        bg,
-                    ));
-                    spans.push(Span::styled(" ", theme.body(bg)));
+                    chips::push(&mut spans, ctx, "New", Bg::TertiaryContainer, bg);
                 }
                 let n = ann.comments.len();
                 let tail = format!("  {n} comment{}", if n == 1 { "" } else { "s" });
@@ -698,8 +689,7 @@ impl DiffView<'_> {
                 for r in given.iter().flat_map(|e| &e.reactions) {
                     let fill = chips::reaction_fill(r.mine);
                     let text = format!("{} {}", r.content.emoji(), r.count);
-                    spans.extend(chips::chip(ctx, text, theme.fill(fill), bg));
-                    spans.push(Span::styled(" ", theme.body(bg)));
+                    chips::push(&mut spans, ctx, text, fill, bg);
                 }
             }
             ThreadRowKind::Gap | ThreadRowKind::Error => {
@@ -735,12 +725,8 @@ impl DiffView<'_> {
 
     fn state_chips(&self, ann: &Annotation, bg: Bg) -> Vec<Span<'static>> {
         let ctx = self.ctx;
-        let theme = ctx.theme;
         let mut out = Vec::new();
-        let mut chip = |text: &str, chip_bg: Bg| {
-            out.extend(chips::chip(ctx, text.to_owned(), theme.fill(chip_bg), bg));
-            out.push(Span::styled(" ", theme.body(bg)));
-        };
+        let mut chip = |text: &str, chip_bg| chips::push(&mut out, ctx, text, chip_bg, bg);
         if ann.is_draft() {
             chip("Draft", Bg::TertiaryContainer);
             if ann.error.is_some() {
@@ -1090,6 +1076,34 @@ mod tests {
     use super::*;
     use crate::theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
 
+    fn theme() -> Theme {
+        Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::TrueColor)
+    }
+
+    fn ctx(theme: &Theme) -> Ctx<'_> {
+        Ctx {
+            theme,
+            icons: crate::ui::Icons::default(),
+            now: 0,
+        }
+    }
+
+    /// The text `code_spans` shows for an added `line`, cut `cut` to `room`.
+    fn shown(line: &str, room: usize, cut: Cut) -> String {
+        let theme = theme();
+        let spans = code_spans(
+            ctx(&theme),
+            line,
+            &[],
+            DiffBg::Added,
+            false,
+            (room, cut),
+            &[],
+            None,
+        );
+        spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
     /// Short of room, outer scopes go first; the innermost stays.
     #[test]
     fn scope_labels_keep_the_innermost() {
@@ -1104,54 +1118,17 @@ mod tests {
     /// silently dropped; tabs expand without per-character allocation.
     #[test]
     fn hidden_characters_in_code_are_shown() {
-        let theme = Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::TrueColor);
-        let ctx = Ctx {
-            theme: &theme,
-            icons: crate::ui::Icons::default(),
-            now: 0,
-        };
         let line = "if a\u{202e} {\tb\u{200b}c";
-        let spans = code_spans(
-            ctx,
-            line,
-            &[],
-            DiffBg::Added,
-            false,
-            (80, Cut::Shift(0)),
-            &[],
-            None,
-        );
-        let shown: String = spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(shown, "if a� { b�c");
+        assert_eq!(shown(line, 80, Cut::Shift(0)), "if a� { b�c");
     }
 
     /// Wrapped, a long line's code goes on under it, all of it, with no
     /// `…`; tabs are as wide as they are unwrapped.
     #[test]
     fn wrapped_code_shows_all_of_the_line() {
-        let theme = Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::TrueColor);
-        let ctx = Ctx {
-            theme: &theme,
-            icons: crate::ui::Icons::default(),
-            now: 0,
-        };
         let line = format!("\t{}", "abcdefghij".repeat(5));
         let shown: Vec<String> = (0..code_rows(&line, 20))
-            .map(|n| {
-                code_spans(
-                    ctx,
-                    &line,
-                    &[],
-                    DiffBg::Added,
-                    false,
-                    (20, Cut::Wrap(n)),
-                    &[],
-                    None,
-                )
-                .iter()
-                .map(|s| s.content.as_ref())
-                .collect()
-            })
+            .map(|n| shown(&line, 20, Cut::Wrap(n)))
             .collect();
         assert_eq!(shown.len(), 3, "{shown:?}");
         assert!(shown.iter().all(|s| text::width(s) <= 20), "{shown:?}");
@@ -1168,12 +1145,7 @@ mod tests {
         use std::collections::HashSet;
         use std::sync::Arc;
 
-        let theme = Theme::new(DEFAULT_SEED, Mode::Dark, ColorDepth::TrueColor);
-        let ctx = Ctx {
-            theme: &theme,
-            icons: crate::ui::Icons::default(),
-            now: 0,
-        };
+        let theme = theme();
         let mut doc = Doc::new(
             vec![crate::ui::diff_doc::tests::changed("a.rs")],
             &HashSet::new(),
@@ -1206,7 +1178,7 @@ mod tests {
         let area = Rect::new(0, 0, 80, 12);
         let mut buf = Buffer::empty(area);
         DiffView {
-            ctx,
+            ctx: ctx(&theme),
             doc: &doc,
             cursor: Pos::default(),
             half: Side::Right,

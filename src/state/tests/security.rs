@@ -35,7 +35,7 @@ pub(super) fn with_alert(kind: AlertKind, dismissed: bool) -> State {
     } else {
         fixtures::alert(kind, 2)
     };
-    open(&mut s, route, Data::Alert(Box::new(alert)));
+    open(&mut s, route, Data::from(alert));
     s
 }
 
@@ -115,10 +115,10 @@ fn an_alert_is_dismissed_with_a_reason_and_followed() {
     says(&s, "Alert dismissed: Used in tests");
     let key = DataKey::Alert(a);
     let open = fixtures::alert(AlertKind::CodeScanning, 2);
-    fetched(&mut s, key.clone(), Data::Alert(Box::new(open)));
+    fetched(&mut s, key.clone(), Data::from(open));
     assert!(s.following.is_some());
     let dismissed = fixtures::dismissed(AlertKind::CodeScanning, 2);
-    fetched(&mut s, key, Data::Alert(Box::new(dismissed)));
+    fetched(&mut s, key, Data::from(dismissed));
     assert!(s.following.is_none());
     assert!(page_text(&s).contains("Dismissed"));
 }
@@ -159,6 +159,6 @@ fn a_rows_alert_loads_then_is_dismissed() {
     let key = DataKey::Alert(alert_ref(AlertKind::Dependabot, 2));
     assert!(crate::fixtures::asks(&cmds, &key), "{cmds:?}");
     let alert = fixtures::alert(AlertKind::Dependabot, 2);
-    fetched(&mut s, key, Data::Alert(Box::new(alert)));
+    fetched(&mut s, key, Data::from(alert));
     assert!(matches!(s.overlay, Some(Overlay::Picker(_))));
 }

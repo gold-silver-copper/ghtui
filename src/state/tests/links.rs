@@ -31,7 +31,7 @@ fn comment_links_scroll_to_the_comment() {
     let comment = "https://github.com/cli/cli/discussions/14603#discussioncomment-18765100";
     let _ = s.follow(&crate::ui::page::Link::Url(comment.into()));
     let of = crate::api::browse::DiscussionsOf::Repo(RepoId::new("cli", "cli"));
-    let detail = Data::Discussion(Box::new(crate::fixtures::discussion()));
+    let detail = Data::from(crate::fixtures::discussion());
     fetched(&mut s, DataKey::Discussion(of, 14603), detail);
     let Screen::Page(p) = s.screen() else {
         panic!()
@@ -75,15 +75,7 @@ fn a_comment_link_follows_its_comment_when_the_issue_refreshes() {
         let _ = s.follow(&crate::ui::page::Link::Url(url));
         let key = DataKey::Issue(ghtui(), 14);
         let cached = Data::Issue(Some(Box::new(crate::fixtures::issue())));
-        let _ = update(
-            &mut s,
-            Msg::Fetched {
-                key: key.clone(),
-                result: Ok(cached),
-                cached_at: Some(0),
-                source: None,
-            },
-        );
+        let _ = update(&mut s, Msg::fetched_at(key.clone(), Ok(cached), Some(0)));
         moved(&mut s);
         let shown = |s: &State| {
             let p = page(s);
@@ -244,12 +236,7 @@ fn the_header_counts_the_unread_and_opens_the_inbox() {
     polled(&mut state, 0, false, 60);
     assert_eq!(header(&state), ["@octocat"]);
     polled(&mut state, 2, false, 60);
-    let failed = Msg::Fetched {
-        key: DataKey::Unread,
-        result: Err(ApiError::Network("down".into())),
-        cached_at: None,
-        source: None,
-    };
+    let failed = Msg::fetched(DataKey::Unread, Err(ApiError::Network("down".into())));
     assert_eq!(
         update(&mut state, failed),
         vec![Cmd::Timer(Timer::Unread(5), 60_000)]
