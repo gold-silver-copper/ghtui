@@ -240,10 +240,7 @@ async fn line_counts(repo: &Repo, from: &str, to: &str, files: &[ChangedFile]) -
             files.len()
         )));
     }
-    let blobs: Vec<String> = (files.iter())
-        .flat_map(|f| f.blob_oids().map(str::to_owned))
-        .collect();
-    repo.prefetch(&blobs).await?;
+    repo.prefetch(&crate::git::files::blobs(files)).await?;
     let out = repo
         .run(&["diff", "--numstat", "-z", "--no-renames", from, to])
         .await?;
