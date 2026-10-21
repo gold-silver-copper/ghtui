@@ -846,14 +846,6 @@ pub struct Anchor {
 }
 
 impl Anchor {
-    /// Line `at` of the file at `path`.
-    pub fn line(path: &str, at: LinePos) -> Self {
-        Self {
-            path: path.to_owned(),
-            held: Held::Line(at),
-        }
-    }
-
     /// The side of the line held, for the half of a split row to be on.
     pub fn side(&self) -> Option<Side> {
         match &self.held {

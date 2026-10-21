@@ -39,7 +39,6 @@ pub mod timeline;
 pub mod watch;
 pub mod workflows;
 
-pub use crate::store::Cached;
 pub use client::{ApiError, GitHub, Polled};
 
 /// The `gh` command that adds `scope` to the token, naming an Enterprise

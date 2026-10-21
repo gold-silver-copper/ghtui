@@ -72,7 +72,7 @@ pub use review::*;
 pub use runs::*;
 pub use security::*;
 pub use settings::*;
-pub use timeline::{FOLD_AFTER, LinesAt, Marks, commit_comments, pinned_issues};
+pub use timeline::{LinesAt, Marks, commit_comments, pinned_issues};
 pub use writes::*;
 
 pub use explore::*;
