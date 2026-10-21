@@ -63,10 +63,7 @@ pub(super) fn act(state: &mut State, action: Action) -> Cmds {
 }
 
 fn page(state: &State) -> &PageScreen {
-    match state.screen() {
-        Screen::Page(p) => p,
-        Screen::Diff(_) => panic!("not on a page"),
-    }
+    state.screen().page().expect("on a page")
 }
 
 /// The selected line of a file, and the word under the cursor.
@@ -77,10 +74,7 @@ fn word_here(s: &State) -> (Option<u32>, Option<String>) {
 }
 
 fn on_diff(state: &State) -> &DiffScreen {
-    match state.screen() {
-        Screen::Diff(d) => d,
-        Screen::Page(_) => panic!("not on the diff"),
-    }
+    state.screen().diff().expect("on the diff")
 }
 
 /// The open picker's rows: each one's label and hint.
