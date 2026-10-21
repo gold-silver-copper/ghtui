@@ -111,13 +111,7 @@ fn pick_commit(s: &mut State, pr: &PrRef, keys: &str) -> crate::diff_job::JobId 
         }])),
     );
     assert!(matches!(s.overlay, Some(Overlay::Picker(_))));
-    let cmds = press(s, keys);
-    cmds.iter()
-        .find_map(|c| match c {
-            Cmd::Git(Git::LoadDiff { job, .. }) => Some(*job),
-            _ => None,
-        })
-        .unwrap_or_else(|| panic!("{cmds:?}"))
+    fixtures::diff_job(&press(s, keys))
 }
 
 /// GitHub's patches usually arrive before git has listed the

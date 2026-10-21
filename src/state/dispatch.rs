@@ -390,16 +390,11 @@ pub fn apply(state: &mut State, action: Action) -> Cmds {
 /// Actions on the diff screen: reviewing, and the rest on the diff itself.
 pub(super) fn diff_action(state: &mut State, action: Action) -> Cmds {
     let content = state.layout().content;
-    let on_annotation = match (state.screen(), state.diff()) {
-        (Screen::Diff(screen), Some(diff)) => {
-            screen.focus == Pane::Diff
-                && diff
-                    .doc
-                    .annotation_under(screen.cursor, screen.half)
-                    .is_some()
-        }
-        _ => false,
-    };
+    let here = state.screen().diff().zip(state.diff());
+    let on_annotation = here.is_some_and(|(screen, diff)| {
+        let under = diff.doc.annotation_under(screen.cursor, screen.half);
+        screen.focus == Pane::Diff && under.is_some()
+    });
     match action {
         Action::Comment
         | Action::FileComment

@@ -447,7 +447,7 @@ fn write(form: Form, text: String) -> Result<Step, String> {
 /// The menu's rows on a settings page.
 pub fn doables(state: &State, out: &mut Vec<Doable>) {
     let Some((repo, page)) = here(state) else { return };
-    let row = |action, label: &str| {
+    let row = |action, label: &'static str| {
         // The status bar names the page's main ones.
         let short = match action {
             Action::AddSetting => "add",

@@ -119,7 +119,7 @@ fn the_menu_filters_as_you_type() {
     press(&mut state, "<Space>/");
     press(&mut state, "go to f");
     let menu = overlay!(state, Menu);
-    let shown: Vec<&str> = menu.shown().iter().map(|d| d.label.as_str()).collect();
+    let shown: Vec<&str> = menu.shown().iter().map(|d| &*d.label).collect();
     assert_eq!(shown, ["Go to file"]);
     press(&mut state, "<Esc>");
     let menu = overlay!(state, Menu);
@@ -210,7 +210,7 @@ fn the_menu_lists_and_runs_what_you_can_do() {
     let mut state = with_repo();
     press(&mut state, "<Space>");
     let menu = overlay!(state, Menu);
-    let labels: Vec<&str> = menu.rows.iter().map(|d| d.label.as_str()).collect();
+    let labels: Vec<&str> = menu.rows.iter().map(|d| &*d.label).collect();
     assert!(labels.contains(&"Go to file"), "{labels:?}");
     assert!(labels.contains(&"Star"), "{labels:?}");
     let fwd = menu

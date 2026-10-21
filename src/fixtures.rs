@@ -281,6 +281,32 @@ pub(crate) fn diff_msg(state: &mut State, pr: &PrRef, msg: DiffMsg) -> Cmds {
     update(state, Msg::Diff(DiffOf::Pr(pr.clone()), msg))
 }
 
+/// The diff job `cmds` start.
+#[track_caller]
+pub(crate) fn diff_job(cmds: &[Cmd]) -> crate::diff_job::JobId {
+    let job = cmds.iter().find_map(|c| match c {
+        Cmd::Git(crate::state::Git::LoadDiff { job, .. }) => Some(*job),
+        _ => None,
+    });
+    job.unwrap_or_else(|| panic!("no diff job in {cmds:?}"))
+}
+
+/// git's listing of a pull request's diff: at `head`, with no files.
+pub(crate) fn no_files(job: crate::diff_job::JobId, head: &str) -> DiffMsg {
+    let base = crate::git::Oid::parse(&"b".repeat(40)).unwrap();
+    let refs = crate::git::repo::PrRefs {
+        head: crate::git::Oid::parse(head).unwrap(),
+        base: base.clone(),
+        merge_base: base,
+    };
+    let files = crate::diff_job::DiffFiles {
+        refs,
+        files: Vec::new(),
+        generated: std::collections::HashSet::new(),
+    };
+    DiffMsg::Job(job, crate::diff_job::JobMsg::Files(Box::new(files)))
+}
+
 /// A draft comment on new line `line` of `src/point.rs`.
 pub(crate) fn draft(id: u64, line: u32, body: &str) -> DraftComment {
     DraftComment {

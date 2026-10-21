@@ -404,7 +404,7 @@ fn send(state: &mut State, change: Change, about: Subject) -> Cmds {
 
 /// The menu's rows where they apply.
 pub fn doables(state: &State, out: &mut Vec<Doable>) {
-    let row = |action, label: &str| {
+    let row = |action, label: &'static str| {
         crate::nav::row("Change", action, label, "", plan(state, action).err())
     };
     if discussions_repo(state).is_some() {

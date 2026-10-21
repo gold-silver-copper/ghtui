@@ -172,8 +172,8 @@ fn offers(state: &State, out: &mut Vec<Doable>) {
 /// short name), unless it's being sent or `why` it can't be.
 pub(crate) fn offer(
     state: &State,
-    write: Option<&str>,
-    save: (&str, &'static str),
+    write: Option<&'static str>,
+    save: (impl Into<std::borrow::Cow<'static, str>>, &'static str),
     why: Option<String>,
     out: &mut Vec<Doable>,
 ) {

@@ -188,7 +188,7 @@ pub fn switch_tab(state: &mut State, n: usize) -> Cmds {
         },
     };
     if let Screen::Page(p) = &screen {
-        cmds.extend(state.record_visit(&p.route.clone()));
+        cmds.extend(state.record_visit(&p.route));
     }
     let left = mem::replace(state.screen_mut(), screen);
     state.park(left);

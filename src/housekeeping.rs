@@ -616,7 +616,7 @@ fn form_doables(state: &State, route: &Route, of: &FormOf, out: &mut Vec<Doable>
     crate::forms::offer(
         state,
         write,
-        (&button, "save"),
+        (button, "save"),
         problem(state, route, of),
         out,
     );
