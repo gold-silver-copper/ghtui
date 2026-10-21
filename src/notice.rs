@@ -16,8 +16,7 @@ const KEPT: usize = 50;
 pub struct Notices {
     /// The notice showing, and its number.
     shown: Option<(u64, Notice)>,
-    /// The last number given, and the last given a timer.
-    said: u64,
+    /// The last number given a timer.
     timed: u64,
     /// Notices shown this session, newest first, with when (Unix seconds).
     log: VecDeque<(u64, Notice)>,
@@ -36,8 +35,7 @@ impl Notices {
 
     /// Shows `notice`, under a new number.
     pub fn say(&mut self, notice: Notice) {
-        self.said += 1;
-        self.shown = Some((self.said, notice));
+        self.shown = Some((crate::fresh(), notice));
     }
 
     /// Clears the notice showing, and gives it back.

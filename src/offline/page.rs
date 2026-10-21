@@ -75,7 +75,7 @@ pub fn build(state: &State, page: &mut Page, now: u64) {
 
 /// The writes queued on `route`'s page, in a box at its top.
 pub fn queued_here(state: &State, route: &Route, page: &mut Page, now: u64) {
-    if *route == Route::App(app::Offline) {
+    if *route == Route::App(app::Offline) || state.offline.queue.is_empty() {
         return;
     }
     let url = route.url();
@@ -136,18 +136,15 @@ fn entry_rows(page: &mut Page, entry: &Entry, now: u64, whole: bool) {
         Role::Meta,
     ));
     page.wrapped(head, 0, Frame::Body);
-    match &entry.status {
-        Status::Refused(why) => {
-            let why = format!("GitHub said: {why}");
-            page.wrapped(vec![Seg::new(why, Role::Error)], 2, Frame::Body);
-        }
-        Status::Unsure(why) => {
-            let why = format!(
-                "It may have reached GitHub ({why}): check, then send it again or throw it away."
-            );
-            page.wrapped(vec![Seg::new(why, Role::Error)], 2, Frame::Body);
-        }
-        Status::Queued | Status::Sending => {}
+    let why = match &entry.status {
+        Status::Refused(why) => format!("GitHub said: {why}"),
+        Status::Unsure(why) => format!(
+            "It may have reached GitHub ({why}): check, then send it again or throw it away."
+        ),
+        Status::Queued | Status::Sending => String::new(),
+    };
+    if !why.is_empty() {
+        page.wrapped(vec![Seg::new(why, Role::Error)], 2, Frame::Body);
     }
     if let Some(text) = entry.write.text() {
         let lines: Vec<&str> = text.lines().collect();

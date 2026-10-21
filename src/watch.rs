@@ -114,6 +114,12 @@ pub fn subject(state: &State) -> Option<Watched> {
             Some(Watched::Thread(pr.repo.clone(), pr.number))
         }
         Screen::Page(p) => {
+            // A page is about itself; a list's row (on a repository's
+            // pages too) is what it's about.
+            let here = of_route(&p.route);
+            if !matches!(here, Some(Watched::Repo(_)) | None) {
+                return here;
+            }
             let row = p.selected_link().and_then(crate::ui::page::Link::url);
             let row = row.and_then(|url| match Dest::from_url(url).target {
                 Target::Page(
@@ -127,11 +133,7 @@ pub fn subject(state: &State) -> Option<Watched> {
                 }
                 _ => None,
             });
-            // A list's row is what it's about; a page is about itself.
-            match of_route(&p.route) {
-                Some(Watched::Repo(_)) | None => row.or_else(|| of_route(&p.route)),
-                here => here,
-            }
+            row.or(here)
         }
     }
 }

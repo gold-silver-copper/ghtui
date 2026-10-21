@@ -30,19 +30,10 @@ impl Dismissing {
 
 /// What `,x` does on alert `a`, or why it can't.
 pub(crate) fn plan(state: &State, a: &AlertRef) -> Result<Plan, String> {
-    let key = DataKey::Alert(a.clone());
-    let Some(remote) = state
-        .data
-        .get(&key)
-        .filter(|r| r.data.is_some() || !r.loading)
-    else {
-        return Ok(Plan::Load);
-    };
-    let Some(alert) = state.picked::<Alert>(&key) else {
-        return match &remote.error {
-            Some(err) => Err(format!("Couldn't load the alert: {err}")),
-            None => Ok(Plan::Load),
-        };
+    let alert = match state.answer::<Alert>(&DataKey::Alert(a.clone())) {
+        None => return Ok(Plan::Load),
+        Some(Err(err)) => return Err(format!("Couldn't load the alert: {err}")),
+        Some(Ok(alert)) => alert,
     };
     if state.overview(&a.repo).is_some_and(|o| !o.can_write) {
         return Err("GitHub lets only people with write access close its alerts".into());

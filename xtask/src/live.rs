@@ -129,20 +129,11 @@ impl Cx<'_> {
         for pane in self.panes.drain(..) {
             pane.kill();
         }
-        let mut env = vec![
-            (
-                "XDG_CACHE_HOME".to_owned(),
-                path(&self.env.work.join("xdg/cache")),
-            ),
-            (
-                "XDG_DATA_HOME".to_owned(),
-                path(&self.env.work.join("xdg/data")),
-            ),
-            (
-                "XDG_STATE_HOME".to_owned(),
-                path(&self.env.work.join("xdg/state")),
-            ),
-        ];
+        let xdg = |dir: &str| {
+            let home = path(&self.env.work.join("xdg").join(dir));
+            (format!("XDG_{}_HOME", dir.to_uppercase()), home)
+        };
+        let mut env = vec![xdg("cache"), xdg("data"), xdg("state")];
         env.extend(launch.env.iter().cloned());
         let cwd = launch.cwd.clone().unwrap_or_else(|| self.env.work.clone());
         let mut argv = vec![
@@ -247,10 +238,7 @@ fn run(args: &Args) -> Result<bool> {
     std::fs::write(&config, "")?;
     let token = gh::token()?;
     let fux = fux::Fux::start(&fux_bin, &work, &[("GH_ENTERPRISE_TOKEN", token.as_str())])?;
-    let run_id = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs().to_string())
-        .unwrap_or_default();
+    let run_id = gh::epoch().to_string();
     let env = Env {
         work,
         ghtui,

@@ -945,32 +945,18 @@ fn doables(state: &State, out: &mut Vec<Doable>) {
     let Some(repo) = route.repo() else { return };
     if matches!(route, Route::Releases(releases::Release { .. })) {
         let why = unchangeable(state);
-        out.push(row(
-            "Edit",
-            Action::EditComment,
-            "Edit the release",
-            "edit",
-            why.clone(),
-        ));
         let delete = if assets::selected(state).is_some() {
             "Delete the asset"
         } else {
             "Delete the release"
         };
-        out.push(row(
-            "Edit",
-            Action::DeleteComment,
-            delete,
-            "delete",
-            why.clone(),
-        ));
-        out.push(row(
-            "Change",
-            Action::UploadAsset,
-            "Upload an asset",
-            "upload",
-            why,
-        ));
+        for (section, action, label, short) in [
+            ("Edit", Action::EditComment, "Edit the release", "edit"),
+            ("Edit", Action::DeleteComment, delete, "delete"),
+            ("Change", Action::UploadAsset, "Upload an asset", "upload"),
+        ] {
+            out.push(row(section, action, label, short, why.clone()));
+        }
     }
     out.push(row(
         "New",
@@ -1038,15 +1024,14 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
         form_row("Pre-release", pre, false, Some(Row::Prerelease)),
         form_row("Latest", latest, form.prerelease, Some(Row::Latest)),
     ];
-    let (title, notes) = templates::split(&form.text);
     let why_not = match &form.tag {
         None => Some("Choose a tag first".to_owned()),
         Some(_) => problem(state, repo, form),
     };
     let (title, notes) = if composing {
-        (String::new(), String::new())
+        Default::default()
     } else {
-        (title, notes)
+        templates::split(&form.text)
     };
     let (heading, button) = match &form.editing {
         Some(e) => (

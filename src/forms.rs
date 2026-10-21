@@ -250,9 +250,6 @@ struct Entry {
 #[derive(Default)]
 pub struct Forms {
     map: HashMap<Route, Entry>,
-    /// The last version given out: never given again, so a form taken
-    /// and begun anew is a new version.
-    stamp: u64,
 }
 
 impl Forms {
@@ -269,13 +266,13 @@ impl Forms {
     }
 
     fn entry(&mut self, route: &Route) -> &mut Entry {
-        self.stamp += 1;
         let entry = (self.map.entry(route.clone())).or_insert_with(|| Entry {
             version: 0,
             sent: Sent::default(),
             fields: Box::new(()),
         });
-        entry.version = self.stamp;
+        // Never given again: a form taken and begun anew is a new version.
+        entry.version = crate::fresh();
         entry
     }
 

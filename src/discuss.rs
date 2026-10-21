@@ -226,29 +226,24 @@ fn plan(state: &State, h: &Here<'_>, action: Action) -> Result<Step, String> {
                 }
                 _ => String::new(),
             };
-            let what = if d.answerable { "Answer" } else { "Comment" };
-            Ok(
-                match selected.as_ref().and_then(|s| Some((s, s.thread()?))) {
-                    Some((s, thread)) => {
-                        let id = editable(&thread.comment)?.id.clone();
-                        let replied = s.comment().map(|c| c.author.clone()).unwrap_or_default();
-                        let at = s.comment().map(|c| c.created_at.clone());
-                        let writes = Writes::Comment {
-                            discussion: d.id.clone(),
-                            reply_to: Some(id),
-                        };
-                        write(writes, format!("Reply to {replied}"), at, quoted)
-                    }
-                    None => {
-                        let writes = Writes::Comment {
-                            discussion: d.id.clone(),
-                            reply_to: None,
-                        };
-                        let title = format!("{what} on “{}”", d.title);
-                        write(writes, title, None, quoted)
-                    }
-                },
-            )
+            let thread = selected.as_ref().and_then(|s| Some((s, s.thread()?)));
+            let (reply_to, title, at) = match thread {
+                Some((s, thread)) => {
+                    let id = editable(&thread.comment)?.id.clone();
+                    let replied = s.comment().map_or("", |c| c.author.as_str());
+                    let at = s.comment().map(|c| c.created_at.clone());
+                    (Some(id), format!("Reply to {replied}"), at)
+                }
+                None => {
+                    let what = if d.answerable { "Answer" } else { "Comment" };
+                    (None, format!("{what} on “{}”", d.title), None)
+                }
+            };
+            let writes = Writes::Comment {
+                discussion: d.id.clone(),
+                reply_to,
+            };
+            Ok(write(writes, title, at, quoted))
         }
         Action::React => {
             let target = match selected.as_ref().and_then(Spot::comment) {
@@ -282,18 +277,20 @@ fn plan(state: &State, h: &Here<'_>, action: Action) -> Result<Step, String> {
                 ));
             }
             let comment = editable(&c.comment)?.id.clone();
-            match (c.answer, c.can_unmark, c.can_mark) {
-                (true, true, _) => send(Discuss::Answer { comment, on: false }),
-                (true, false, _) => Err(
-                    "GitHub doesn't let you unmark the answer: that takes the discussion's author or triage access"
-                        .into(),
-                ),
-                (false, _, true) => send(Discuss::Answer { comment, on: true }),
-                (false, _, false) => Err(
-                    "GitHub doesn't let you mark the answer: that takes the discussion's author or triage access"
-                        .into(),
-                ),
+            let (can, verb) = if c.answer {
+                (c.can_unmark, "unmark")
+            } else {
+                (c.can_mark, "mark")
+            };
+            if !can {
+                return Err(format!(
+                    "GitHub doesn't let you {verb} the answer: that takes the discussion's author or triage access"
+                ));
             }
+            send(Discuss::Answer {
+                comment,
+                on: !c.answer,
+            })
         }
         Action::EditComment => {
             let s = selected.unwrap_or(Spot::Post);

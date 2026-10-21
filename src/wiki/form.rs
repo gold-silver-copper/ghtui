@@ -194,28 +194,26 @@ fn to_save(state: &State, repo: &RepoId, form: &Form) -> Result<crate::wiki::Sav
     if let Some(why) = problem(form) {
         return Err(why.into());
     }
-    let login = state.viewer.clone();
-    match &form.page {
-        Some((title, file, commit)) => Ok(crate::wiki::Save {
-            repo: repo.clone(),
-            title: title.clone(),
-            file: Some(file.clone()),
-            base: Some(commit.clone()),
-            text: form.text.clone(),
-            login,
-        }),
+    let (title, file, base, text) = match &form.page {
+        Some((title, file, commit)) => (
+            title.clone(),
+            Some(file.clone()),
+            Some(commit.clone()),
+            form.text.clone(),
+        ),
         None => {
             let (title, text) = templates::split(&form.text);
-            Ok(crate::wiki::Save {
-                repo: repo.clone(),
-                title,
-                file: None,
-                base: None,
-                text,
-                login,
-            })
+            (title, None, None, text)
         }
-    }
+    };
+    Ok(crate::wiki::Save {
+        repo: repo.clone(),
+        title,
+        file,
+        base,
+        text,
+        login: state.viewer.clone(),
+    })
 }
 
 /// `,s`, ctrl-s or its button: commits and pushes the page.
@@ -226,9 +224,7 @@ fn submit(state: &mut State) -> Cmds {
     }
     let save = match to_save(state, &repo, &form) {
         Ok(save) => save,
-        Err(why) => {
-            return say(state, why);
-        }
+        Err(why) => return say(state, why),
     };
     crate::forms::form_sending(state, &route);
     state.info(format!("Saving {}…", save.title));

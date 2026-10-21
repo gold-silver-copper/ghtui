@@ -157,25 +157,22 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> crate::picker::Rows {
                 return note("The form isn't on screen".into());
             };
             let set = |value: &str| Some(filling(&route, Row::Input(name.clone()), value));
-            match &input.kind {
-                InputKind::Choice(options) => (options.iter())
-                    .filter(|o| crate::picker::fuzzy_score(q, o).is_some())
-                    .map(|o| (item(o.clone(), ""), set(o)))
-                    .collect(),
-                InputKind::Boolean => ["true", "false"]
-                    .into_iter()
-                    .filter(|o| crate::picker::fuzzy_score(q, o).is_some())
-                    .map(|o| (item(o.to_owned(), ""), set(o)))
-                    .collect(),
+            let options: Vec<&str> = match &input.kind {
+                InputKind::Choice(options) => options.iter().map(String::as_str).collect(),
+                InputKind::Boolean => vec!["true", "false"],
                 InputKind::Text => {
                     let label = if q.is_empty() {
                         "Set it empty".to_owned()
                     } else {
                         format!("Set it to “{q}”")
                     };
-                    vec![(item(label, &input.description), set(q))]
+                    return vec![(item(label, &input.description), set(q))];
                 }
-            }
+            };
+            (options.into_iter())
+                .filter(|o| crate::picker::fuzzy_score(q, o).is_some())
+                .map(|o| (item(o.to_owned(), ""), set(o)))
+                .collect()
         }
     }
 }

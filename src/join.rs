@@ -16,6 +16,8 @@ use crate::ui::text::short_sha;
 #[derive(Debug, Default)]
 pub struct Joins {
     moves: Option<JobId>,
+    /// The version of a commit's comments its threads were last made from.
+    comments: Option<u64>,
     /// The job, and the version of the inputs whose outdated threads were
     /// last found: only a change to them can change those.
     looked: Option<(JobId, u64)>,
@@ -55,8 +57,10 @@ pub(crate) fn join(state: &mut State) -> Cmds {
         // A commit's comments on its lines show as threads of its diff.
         if let DiffOf::Commit(repo, oid) = of {
             let key = DataKey::CommitComments(repo.clone(), oid.to_string());
-            let comments = state.data.get(&key).and_then(|r| r.data.as_ref());
-            if let Some(crate::data::Data::CommitComments(c)) = comments {
+            if let Some(remote) = state.data.get(&key)
+                && let Some(crate::data::Data::CommitComments(c)) = &remote.data
+                && claim(&mut diff.joins.comments, remote.version)
+            {
                 let threads: Vec<_> = c
                     .iter()
                     .filter_map(crate::api::commit_comments::CommitComment::as_thread)
