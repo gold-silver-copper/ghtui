@@ -6,8 +6,8 @@ use std::borrow::Cow;
 use imara_diff::{Diff, InternedInput};
 
 use crate::diff::anchor::{LinePos, Side};
-use crate::diff::sat_u32;
 use crate::diff::text::Text;
+use crate::diff::{runs, sat_u32};
 
 /// One entry of an alignment: a line on both sides, or on one. Line
 /// numbers are 1-based, as in files and in GitHub's comment API.
@@ -57,14 +57,14 @@ impl DiffLine {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Where a hunk is on each side: 1-based start and length, as in
+/// `@@ -a,b +c,d @@`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Hunk {
-    /// 1-based start and length, as in `@@ -a,b +c,d @@`.
     pub old_start: u32,
     pub old_len: u32,
     pub new_start: u32,
     pub new_len: u32,
-    pub lines: Vec<DiffLine>,
 }
 
 impl Hunk {
@@ -188,14 +188,9 @@ pub fn segments_by(
     for window in windows {
         show(window.start as usize..window.end as usize);
     }
-    let mut end = 0;
-    visible
-        .chunk_by(|a, b| a == b)
-        .filter_map(|run| {
-            let start = end;
-            end += run.len();
-            (run.first() == Some(&true)).then_some(start..end)
-        })
+    runs(&visible, |a, b| a == b)
+        .filter(|(_, run)| run.first() == Some(&true))
+        .map(|(start, run)| start..start + run.len())
         .collect()
 }
 
@@ -209,27 +204,20 @@ pub fn side_counts(lines: &[DiffLine]) -> (u32, u32) {
     })
 }
 
-/// The hunk for `range`, given how many old/new lines precede it.
-fn hunk(lines: &[DiffLine], range: std::ops::Range<usize>, before: (u32, u32)) -> Hunk {
-    let lines = lines.get(range).unwrap_or_default().to_vec();
-    let (old_len, new_len) = side_counts(&lines);
-    let start = |seen: u32, len: u32| if len > 0 { seen + 1 } else { seen };
-    Hunk {
-        old_start: start(before.0, old_len),
-        old_len,
-        new_start: start(before.1, new_len),
-        new_len,
-        lines,
-    }
-}
-
 /// The hunks of `lines` for ranges `segs`, in order.
 pub fn hunks(lines: &[DiffLine], segs: &[std::ops::Range<usize>]) -> Vec<Hunk> {
     let (mut seen, mut before) = (0, (0, 0));
+    let start = |before: u32, len: u32| if len > 0 { before + 1 } else { before };
     let hunk_at = |seg: &std::ops::Range<usize>| {
         let (o, n) = side_counts(lines.get(seen..seg.start).unwrap_or_default());
         (seen, before) = (seg.start, (before.0 + o, before.1 + n));
-        hunk(lines, seg.clone(), before)
+        let (old_len, new_len) = side_counts(lines.get(seg.clone()).unwrap_or_default());
+        Hunk {
+            old_start: start(before.0, old_len),
+            old_len,
+            new_start: start(before.1, new_len),
+            new_len,
+        }
     };
     segs.iter().map(hunk_at).collect()
 }
@@ -257,11 +245,13 @@ mod tests {
 
     fn render(old: &str, new: &str) -> String {
         let (old, new) = (Text::new(old.as_bytes()), Text::new(new.as_bytes()));
+        let lines = align(&old, &new, Algorithm::Histogram, Whitespace::Exact);
+        let segs = segments(&lines, 3, &[], false);
         let mut out = String::new();
-        for hunk in diff_lines(&old, &new, Algorithm::Histogram, 3) {
+        for (hunk, seg) in super::hunks(&lines, &segs).iter().zip(segs) {
             out.push_str(&hunk.header());
             out.push('\n');
-            for line in &hunk.lines {
+            for line in &lines[seg] {
                 let (sign, text) = match *line {
                     DiffLine::Context { new: n, .. } => (' ', new.line_no(n)),
                     DiffLine::Added(n) => ('+', new.line_no(n)),
