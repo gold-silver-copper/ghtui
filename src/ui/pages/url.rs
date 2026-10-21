@@ -2,6 +2,7 @@ use super::*;
 use crate::api::explore::Since;
 use crate::api::packages::{PackageRef, PackagesOf};
 use crate::api::project::ProjectRef;
+use std::fmt::Write as _;
 
 /// The website of the GitHub ghtui works with.
 pub fn base() -> String {
@@ -18,6 +19,10 @@ pub fn raw(repo: &RepoId, rev: &str, path: &str) -> String {
 
 pub fn user(login: &str) -> String {
     format!("{}/{login}", base())
+}
+/// A team, `org/slug`.
+pub fn team(org: &str, slug: &str) -> String {
+    format!("{}/orgs/{org}/teams/{slug}", base())
 }
 pub fn repo(repo: &RepoId) -> String {
     format!("{}/{repo}", base())
@@ -61,10 +66,11 @@ pub fn diff_file(page: &str, path: &str, lines: &str) -> String {
 /// in hex.
 pub fn path_hash(path: &str) -> String {
     use sha2::{Digest, Sha256};
-    Sha256::digest(path.as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    let mut hex = String::with_capacity(64);
+    for b in Sha256::digest(path.as_bytes()) {
+        let _ = write!(hex, "{b:02x}");
+    }
+    hex
 }
 /// A commit's or a comparison's files, from its page.
 pub fn files(page: &str) -> String {
@@ -81,6 +87,10 @@ pub fn search(kind: SearchKind, query: &str) -> String {
         SearchKind::Code => "code",
     };
     format!("{}/search?q={}&type={kind}", base(), encode(query))
+}
+/// A workflow run's page.
+pub fn run(repo: &RepoId, id: u64) -> String {
+    format!("{}/actions/runs/{id}", self::repo(repo))
 }
 pub fn commit(repo: &RepoId, oid: &str) -> String {
     at_rev(repo, "commit", oid, "")
@@ -126,14 +136,14 @@ pub fn encode(s: &str) -> String {
 /// `s` with every byte but ASCII alphanumerics and `safe` escaped, and
 /// spaces as `+` when `plus`.
 fn escape(s: &str, safe: &[u8], plus: bool) -> String {
-    let mut out = String::new();
+    let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
         if b.is_ascii_alphanumeric() || safe.contains(&b) {
             out.push(char::from(b));
         } else if b == b' ' && plus {
             out.push('+');
         } else {
-            out.push_str(&format!("%{b:02X}"));
+            let _ = write!(out, "%{b:02X}");
         }
     }
     out
@@ -154,7 +164,7 @@ pub fn explore(language: Option<&str>, since: Since) -> String {
         ));
     }
     if since != Since::Daily {
-        url.push_str(&format!("?since={}", since.slug()));
+        let _ = write!(url, "?since={}", since.slug());
     }
     url
 }

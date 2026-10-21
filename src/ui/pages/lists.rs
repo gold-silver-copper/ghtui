@@ -42,6 +42,17 @@ pub(super) fn repo_row(page: &mut Page, r: &RepoSummary, now: u64, show_owner: b
     });
 }
 
+/// A box's row of `text` following `link`, with `right` on its right.
+pub(super) fn link_line(
+    page: &mut Page,
+    text: impl Into<String>,
+    role: Role,
+    link: u32,
+    right: Vec<Seg>,
+) {
+    page.box_line(vec![Seg::linked(text, role, link)], right, 0);
+}
+
 /// Whether a list's search orders it by when its items were updated, so
 /// its rows say that time rather than when they were opened.
 pub(super) fn by_update(query: &str) -> bool {
@@ -267,12 +278,8 @@ pub fn issue_list(
         (text, Link::State(name.to_owned()), state == name)
     });
     let title = nav_strip(page, &Seg::new("   ", Role::Body), &Role::Meta, tabs);
-    let sort = link_seg(
-        page,
-        format!("Sort: {} ▾", sort_label(query)),
-        Link::Sort,
-        Role::Meta,
-    );
+    let sort = format!("Sort: {} ▾", sort_label(query));
+    let sort = link_seg(page, sort, Link::Sort, Role::Meta);
     let Some(r) = results.show_or(page, "the list", |page| {
         page.box_top(title.clone(), vec![sort.clone()]);
         skeleton(page);
@@ -322,10 +329,11 @@ pub fn search(
     if shown == 0 {
         empty_row(page, "Your search did not match anything.");
     }
+    let updated = by_update(query);
     match results {
         SearchResults::Repos(r) => box_rows(page, r, |page, r| repo_row(page, r, now, true)),
         SearchResults::Issues(r) => box_rows(page, r, |page, i| {
-            issue_row(page, i, (true, by_update(query)), icons, now, false);
+            issue_row(page, i, (true, updated), icons, now, false);
         }),
         SearchResults::Users(r) => box_rows(page, r, user_row),
         SearchResults::Discussions(r) => box_rows(page, r, |page, hit| {
@@ -337,11 +345,7 @@ pub fn search(
             let c = &hit.commit;
             item(page, url::commit(&hit.repo, &c.oid), |page, link| {
                 let right = vec![Seg::new(short_sha(&c.oid), Role::Code)];
-                page.box_line(
-                    vec![Seg::linked(c.headline.clone(), Role::Strong, link)],
-                    right,
-                    0,
-                );
+                link_line(page, c.headline.clone(), Role::Strong, link, right);
                 let subline = format!(
                     "{} · {} committed {}",
                     hit.repo,
@@ -356,11 +360,7 @@ pub fn search(
             let rev = hit.rev.as_deref().unwrap_or("HEAD");
             let file = url::blob(&hit.repo, rev, &hit.path);
             item(page, file.clone(), |page, link| {
-                page.box_line(
-                    vec![Seg::linked(hit.path.clone(), Role::Code, link)],
-                    Vec::new(),
-                    0,
-                );
+                link_line(page, hit.path.clone(), Role::Code, link, Vec::new());
                 body(page, vec![meta(hit.repo.to_string())]);
             });
             for (n, text) in &hit.lines {

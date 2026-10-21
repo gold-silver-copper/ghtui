@@ -2,6 +2,7 @@
 //! milestones.
 
 use super::*;
+use std::fmt::Write as _;
 
 pub(super) fn severity_chip(severity: Severity) -> Seg {
     let (name, bg) = match severity {
@@ -40,11 +41,11 @@ pub fn advisories(
             hanging(page, meta(""), segs, Frame::Body);
             let mut subline = a.ghsa.clone();
             if let Some(at) = &a.published_at {
-                subline.push_str(&format!(" · published {}", time::ago_iso(at, now)));
+                let _ = write!(subline, " · published {}", time::ago_iso(at, now));
             }
             let packages = unique(a.packages.iter().map(|p| &p.name));
             if !packages.is_empty() {
-                subline.push_str(&format!(" · {}", packages.join(", ")));
+                let _ = write!(subline, " · {}", packages.join(", "));
             }
             body(page, vec![meta(subline)]);
         });
@@ -61,13 +62,13 @@ pub fn advisory(page: &mut Page, a: &Advisory, now: u64) {
     }
     let mut subline = format!("  {}", a.ghsa);
     if let Some(cve) = &a.cve {
-        subline.push_str(&format!(" · {cve}"));
+        let _ = write!(subline, " · {cve}");
     }
     if let Some(at) = &a.published_at {
-        subline.push_str(&format!(" · published {}", time::ago_iso(at, now)));
+        let _ = write!(subline, " · published {}", time::ago_iso(at, now));
     }
     if let Some(at) = &a.updated_at {
-        subline.push_str(&format!(" · updated {}", time::ago_iso(at, now)));
+        let _ = write!(subline, " · updated {}", time::ago_iso(at, now));
     }
     segs.push(meta(subline));
     page.wrapped(segs, 0, Frame::None);
@@ -118,7 +119,7 @@ pub(super) fn wiki_links(text: &str) -> String {
         let (label, target) = inner.split_once('|').unwrap_or((inner, inner));
         out.push_str(before);
         let target = url::encode_path(&target.trim().replace(' ', "-"));
-        out.push_str(&format!("[{label}]({target})"));
+        let _ = write!(out, "[{label}]({target})");
         rest = tail;
     }
     out.push_str(rest);
@@ -154,11 +155,7 @@ pub fn wiki(page: &mut Page, repo: &RepoId, w: &WikiPage) {
                 url::encode_path(&title.replace(' ', "-"))
             );
             item(page, target, |page, link| {
-                page.box_line(
-                    vec![Seg::linked(title.clone(), Role::Link, link)],
-                    Vec::new(),
-                    0,
-                );
+                link_line(page, title.clone(), Role::Link, link, Vec::new());
             });
         },
     );
@@ -215,16 +212,10 @@ pub fn deployments(
             ];
             let right = vec![meta(time::ago_iso(&d.created_at, now))];
             page.box_line(segs, right, 0);
-            let sha = short_sha(&d.oid);
-            let mut subline = vec![link_seg(page, sha, url::commit(repo, &d.oid), Role::Code)];
+            let mut subline = vec![sha_seg(page, repo, &d.oid, Role::Code)];
             if let Some(branch) = &d.branch {
                 subline.push(meta(" · "));
-                subline.push(link_seg(
-                    page,
-                    branch.clone(),
-                    url::tree(repo, branch, ""),
-                    Role::Code,
-                ));
+                subline.push(branch_seg(page, repo, branch, Role::Code));
             }
             if let Some(who) = &d.creator {
                 subline.push(meta(" · "));
@@ -291,11 +282,12 @@ pub fn milestones(
     list_box(page, title, Vec::new(), r, "No milestones.", |page, m| {
         let target = format!("{}/milestone/{}", url::repo(repo), m.number);
         item(page, target, |page, link| {
-            let right = vec![meta(due(m))];
-            page.box_line(
-                vec![Seg::linked(m.title.clone(), Role::Strong, link)],
-                right,
-                0,
+            link_line(
+                page,
+                m.title.clone(),
+                Role::Strong,
+                link,
+                vec![meta(due(m))],
             );
             let mut segs = progress(m);
             segs.push(meta(format!(

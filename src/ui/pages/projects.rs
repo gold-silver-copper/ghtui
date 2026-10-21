@@ -23,19 +23,15 @@ pub fn projects(
     paged_list(page, "Projects", list, empty, |page, p| {
         item(page, p.url.clone(), |page, link| {
             let mut segs = vec![Seg::linked(p.title.clone(), Role::Strong, link)];
-            if p.closed {
-                tag(&mut segs, "Closed", Bg::TertiaryContainer);
-            }
-            if !p.public {
-                tag(&mut segs, "Private", Bg::SecondaryContainer);
-            }
+            closed_private(&mut segs, p.closed, p.public);
             let right = vec![meta(format!("#{}", p.number))];
             page.box_line(segs, right, 0);
-            let mut subline = plural(p.items, "item");
-            subline.push_str(&format!(" · updated {}", time::ago_iso(&p.updated_at, now)));
-            if !p.description.is_empty() {
-                subline = format!("{} · {subline}", p.description);
-            }
+            let items = plural(p.items, "item");
+            let updated = time::ago_iso(&p.updated_at, now);
+            let subline = match p.description.as_str() {
+                "" => format!("{items} · updated {updated}"),
+                about => format!("{about} · {items} · updated {updated}"),
+            };
             body(page, vec![meta(subline)]);
         });
     });
@@ -95,16 +91,21 @@ struct Spot<'a> {
     p: &'a Project,
 }
 
+/// Chips for a project that's closed, or private.
+fn closed_private(segs: &mut Vec<Seg>, closed: bool, public: bool) {
+    if closed {
+        tag(segs, "Closed", Bg::TertiaryContainer);
+    }
+    if !public {
+        tag(segs, "Private", Bg::SecondaryContainer);
+    }
+}
+
 /// The project's title, with whether it's closed or private, and its
 /// description.
 fn heading(page: &mut Page, p: &Project) {
     let mut title = vec![Seg::new(p.title.clone(), Role::Title)];
-    if p.closed {
-        tag(&mut title, "Closed", Bg::TertiaryContainer);
-    }
-    if !p.public {
-        tag(&mut title, "Private", Bg::SecondaryContainer);
-    }
+    closed_private(&mut title, p.closed, p.public);
     page.wrapped(title, 0, Frame::None);
     if !p.description.is_empty() {
         say(page, p.description.clone(), Role::Body);
@@ -349,10 +350,12 @@ fn group_box(
 
 /// A column's or group's name, in its option's color.
 fn group_chip(group: &Group<'_>) -> Seg {
-    Seg::new(
-        format!(" {} ", group.name),
-        Role::Label(hex(group.color).to_owned()),
-    )
+    Seg::new(format!(" {} ", group.name), colored(group.color))
+}
+
+/// An option's color, as a label's.
+fn colored(color: Option<&str>) -> Role {
+    Role::Label(hex(color).to_owned())
 }
 
 /// GitHub's colors for a project's options, as label colors.
@@ -435,11 +438,11 @@ fn value_segs(it: &ProjectItem, field: &ProjectField) -> Vec<Seg> {
             if who.is_empty() {
                 return Vec::new();
             }
-            let mut names = who.join(", ");
-            if who.left_out() > 0 {
-                names.push_str(&format!(" +{}", who.left_out()));
-            }
-            text(names)
+            let names = who.join(", ");
+            text(match who.left_out() {
+                0 => names,
+                n => format!("{names} +{n}"),
+            })
         }
         FieldKind::Labels => {
             let mut segs = Vec::new();
@@ -462,10 +465,7 @@ fn value_segs(it: &ProjectItem, field: &ProjectField) -> Vec<Seg> {
                 .iter()
                 .find(|o| o.name == value.text())
                 .map(|o| o.color.as_str());
-            vec![Seg::new(
-                format!(" {} ", value.text()),
-                Role::Label(hex(color).to_owned()),
-            )]
+            vec![Seg::new(format!(" {} ", value.text()), colored(color))]
         }
         FieldKind::Text | FieldKind::Number | FieldKind::Date | FieldKind::Iteration(_) => it
             .value(&field.id)
@@ -707,14 +707,11 @@ impl Timeline {
         if a == b && start == end {
             segs.push(strong("◆"));
         } else if len + 2 <= b - a + 1 {
-            let text = format!(" {}", pad(&said, b - a));
-            segs.push(Seg::new(text, Role::Label(hex(color).to_owned())));
-            return segs.into_iter().chain([gap(b + 1, self.width)]).collect();
+            segs.push(Seg::new(format!(" {}", pad(&said, b - a)), colored(color)));
+            segs.push(gap(b + 1, self.width));
+            return segs;
         } else {
-            segs.push(Seg::new(
-                " ".repeat(b - a + 1),
-                Role::Label(hex(color).to_owned()),
-            ));
+            segs.push(Seg::new(" ".repeat(b - a + 1), colored(color)));
         }
         // The dates after the bar, where they fit.
         if b + 2 + len <= self.width {
@@ -784,11 +781,7 @@ fn item_row(
 
 /// An item's title: strong where it opens, else gray.
 fn title_role(link: Option<u32>) -> Role {
-    if link.is_some() {
-        Role::Strong
-    } else {
-        Role::Meta
-    }
+    link.map_or(Role::Meta, |_| Role::Strong)
 }
 
 /// `s` padded with spaces to `cols` columns.
@@ -815,7 +808,7 @@ fn row(
                     .and_then(|v| options.iter().find(|o| o.name == v.text()))
                     .map(|o| o.color.as_str());
                 vec![
-                    Seg::new(text.clone(), Role::Label(hex(color).to_owned())),
+                    Seg::new(text.clone(), colored(color)),
                     Seg::new(" ".repeat(w + 2 - width(&text)), Role::Body),
                 ]
             }

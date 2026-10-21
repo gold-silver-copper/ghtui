@@ -98,8 +98,8 @@ pub fn home(page: &mut Page, sections: &[HomeSection<'_>], icons: Icons, now: u6
                 let title = title(Some(count_of(&start)));
                 // Asked to review: a row opens straight to the review.
                 let review = search.query.contains("review-requested:");
+                let shown = (true, by_update(search.query));
                 section_box(page, title, &start, (i, &empty), |page, it| {
-                    let shown = (true, by_update(search.query));
                     issue_row(page, it, shown, icons, now, review);
                 });
             }
@@ -135,10 +135,6 @@ pub(super) fn section_box<T>(
 /// wrong), so every section has a row to select and change it by.
 pub(super) fn section_note(page: &mut Page, i: usize, text: &str, role: Role) {
     item(page, Link::Section(i), |page, link| {
-        page.wrapped(
-            vec![Seg::linked(text.to_owned(), role, link)],
-            0,
-            Frame::Body,
-        );
+        page.wrapped(vec![Seg::linked(text, role, link)], 0, Frame::Body);
     });
 }

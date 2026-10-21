@@ -144,13 +144,8 @@ pub(super) fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons,
         )
     });
     for ((icon, role), text) in rows.chain(behind).chain(joins) {
-        body(
-            page,
-            vec![
-                Seg::new(format!("{icon}  "), role),
-                Seg::new(text, Role::Body),
-            ],
-        );
+        let mark = Seg::new(format!("{icon}  "), role);
+        body(page, vec![mark, Seg::new(text, Role::Body)]);
     }
     page.box_rule();
     item(page, url::pull_tab(pr, "files"), |page, link| {
@@ -158,13 +153,8 @@ pub(super) fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons,
             1 => "Review the changed file".to_owned(),
             n => format!("Review the {n} changed files"),
         };
-        body(
-            page,
-            vec![
-                meta(format!("{}  ", icons.external())),
-                Seg::linked(review, Role::Link, link),
-            ],
-        );
+        let external = meta(format!("{}  ", icons.external()));
+        body(page, vec![external, Seg::linked(review, Role::Link, link)]);
     });
     page.box_bottom();
 }
@@ -248,8 +238,7 @@ pub fn pr_conversation(
             timeline::linked_aside(side, icons, &pr.repo, "Closes", &a.closing, none);
             if let Some(oid) = &a.merge_commit {
                 aside_heading(side, "Merge commit");
-                let target = url::commit(&pr.repo, oid);
-                let sha = link_seg(side, short_sha(oid), target, Role::Link);
+                let sha = sha_seg(side, &pr.repo, oid, Role::Link);
                 side.wrapped(vec![sha], 0, Frame::None);
             }
         }
@@ -264,20 +253,17 @@ pub fn pr_conversation(
         timeline::pr_inline(page, icons, pr, d, a);
         timeline::projects_inline(page, projects);
     }
-    let op = &d.author;
     let talk = Conversation {
         base: LinkBase::new(&pr.repo, &d.head_oid, ""),
-        op,
+        op: &d.author,
         now,
         unfolded: marks.unfolded,
     };
-    talk.said(
+    talk.opened(
         page,
-        op,
         "opened",
         &d.created_at,
         &d.body,
-        true,
         &d.editable.reactions,
     );
     let Some(a) = activity.show_or(page, "the conversation", |page| {

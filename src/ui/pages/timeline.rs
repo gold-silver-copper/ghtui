@@ -190,8 +190,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
             match by {
                 Some(Closer::Commit(oid)) => {
                     segs.push(meta(" in "));
-                    let target = url::commit(here, oid);
-                    segs.push(link_seg(page, short_sha(oid), target, Role::Link));
+                    segs.push(sha_seg(page, here, oid, Role::Link));
                 }
                 Some(Closer::Pr(pr)) => {
                     segs.push(meta(" in"));
@@ -209,12 +208,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
             icon = ("⑃", Role::Accent);
             segs.push(meta(" merged commit "));
             if let Some(oid) = commit {
-                segs.push(link_seg(
-                    page,
-                    short_sha(oid),
-                    url::commit(here, oid),
-                    Role::Link,
-                ));
+                segs.push(sha_seg(page, here, oid, Role::Link));
             }
             segs.push(meta(" into "));
             segs.push(chip(into, Bg::PrimaryContainer));
@@ -239,14 +233,8 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
             icon = ("◆", Role::Meta);
             segs.push(meta(" added a commit that references this "));
             let repo = repo.as_ref().unwrap_or(here);
-            let target = url::commit(repo, commit);
-            segs.push(link_seg(
-                page,
-                short_sha(commit),
-                target.clone(),
-                Role::Link,
-            ));
-            link = Some(Link::Url(target));
+            segs.push(sha_seg(page, repo, commit, Role::Link));
+            link = Some(Link::Url(url::commit(repo, commit)));
         }
         What::Labeled { .. } => {
             icon = ("◈", Role::Meta);
@@ -323,8 +311,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
         }
         What::Project { .. } | What::ProjectStatus { .. } => {
             icon = ("▦", Role::Meta);
-            let Some(e) = run.last() else { return };
-            match &e.what {
+            match &last.what {
                 What::Project { added: true } => segs.push(meta(" added this to a project")),
                 What::Project { added: false } => {
                     segs.push(meta(" removed this from a project"));
@@ -397,8 +384,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
         }
         What::ReadyForReview | What::ConvertedToDraft => {
             icon = ("◌", Role::Meta);
-            let Some(e) = run.last() else { return };
-            segs.push(meta(match e.what {
+            segs.push(meta(match last.what {
                 What::ReadyForReview => " marked this pull request as ready for review",
                 _ => " marked this pull request as draft",
             }));
@@ -461,8 +447,7 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
         }
         What::Pinned { .. } => {
             icon = ("⚲", Role::Meta);
-            let Some(e) = run.last() else { return };
-            segs.push(meta(match e.what {
+            segs.push(meta(match last.what {
                 What::Pinned { pinned: true } => " pinned this issue",
                 _ => " unpinned this issue",
             }));
@@ -489,16 +474,14 @@ fn events(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&E
         }
         What::AutoMerge { .. } => {
             icon = ("⑃", Role::Meta);
-            let Some(e) = run.last() else { return };
-            segs.push(meta(match e.what {
+            segs.push(meta(match last.what {
                 What::AutoMerge { on: true } => " enabled auto-merge",
                 _ => " disabled auto-merge",
             }));
         }
         What::MergeQueue { .. } => {
             icon = ("⑃", Role::Meta);
-            let Some(e) = run.last() else { return };
-            match &e.what {
+            match &last.what {
                 What::MergeQueue { added: true, .. } => {
                     segs.push(meta(" added this to the merge queue"));
                 }
@@ -570,19 +553,13 @@ fn commits(page: &mut Page, talk: &Conversation<'_>, place: &Place<'_>, run: &[&
         return;
     };
     let one = run.iter().all(|e| e.actor == first.actor) && !first.actor.is_empty();
-    let mut segs = Vec::new();
-    if one {
-        segs.push(login_seg(page, &first.actor, Role::Strong));
-        segs.push(meta(format!(
-            " added {}",
-            plural(infos.len() as u64, "commit")
-        )));
+    let added = plural(infos.len() as u64, "commit");
+    let mut segs = if one {
+        let who = login_seg(page, &first.actor, Role::Strong);
+        vec![who, meta(format!(" added {added}"))]
     } else {
-        segs.push(meta(format!(
-            "{} added",
-            plural(infos.len() as u64, "commit")
-        )));
-    }
+        vec![meta(format!("{added} added"))]
+    };
     segs.push(meta(format!(" {}", time::ago_iso(&last.at, talk.now))));
     event_line(page, ("◆", Role::Meta), segs);
     for c in infos {
@@ -609,10 +586,7 @@ pub(super) fn reviewer_link(who: &Reviewer) -> (String, String) {
         Reviewer::User(login) => (login.clone(), url::user(login)),
         Reviewer::Team(team) => {
             let (org, slug) = team.split_once('/').unwrap_or(("", team));
-            (
-                team.clone(),
-                format!("{}/orgs/{org}/teams/{slug}", url::base()),
-            )
+            (team.clone(), url::team(org, slug))
         }
     }
 }
@@ -778,10 +752,8 @@ pub(super) fn review(
                 .map(|c| c.url.clone())
                 .unwrap_or_default();
             item(page, target, |page, link| {
-                body(
-                    page,
-                    vec![meta("↳ replied in "), Seg::linked(at, Role::Link, link)],
-                );
+                let at = Seg::linked(at, Role::Link, link);
+                body(page, vec![meta("↳ replied in "), at]);
             });
         }
     }
@@ -895,18 +867,18 @@ fn git_lines(page: &mut Page, t: &ReviewThread, lines: &LinesAt<'_>) -> bool {
             return n > start;
         };
         let tone = if on.contains(&n) {
-            crate::ui::page::Tone::Marked
+            Tone::Marked
         } else {
-            crate::ui::page::Tone::Code
+            Tone::Code
         };
         let code = truncate(&code.replace('\t', "    "), room);
         page.push(PageLine {
             segs: vec![meta(format!("{n:>width$} │ ")), Seg::new(code, Role::Code)],
             indent: 2,
-            right: Vec::new(),
             frame: Frame::Body,
             tone,
             fixed: 1,
+            ..PageLine::default()
         });
     }
     true
@@ -926,18 +898,17 @@ fn hunk_lines(page: &mut Page, t: &ReviewThread) {
     let room = usize::from(page.room(Frame::Body, 2));
     for l in lines.iter().skip(lines.len().saturating_sub(keep)) {
         let tone = match l.chars().next() {
-            Some('+') => crate::ui::page::Tone::Added,
-            Some('-') => crate::ui::page::Tone::Removed,
-            _ => crate::ui::page::Tone::Code,
+            Some('+') => Tone::Added,
+            Some('-') => Tone::Removed,
+            _ => Tone::Code,
         };
         let text = truncate(&l.replace('\t', "    "), room);
         page.push(PageLine {
             segs: vec![Seg::new(text, Role::Code)],
             indent: 2,
-            right: Vec::new(),
             frame: Frame::Body,
             tone,
-            fixed: 0,
+            ..PageLine::default()
         });
     }
 }
@@ -978,11 +949,7 @@ pub(super) fn reviewers_aside(
             who,
             meta(format!(" {what}")),
         ];
-        let stale = l.state == ReviewState::Approved
-            && l.commit
-                .as_deref()
-                .is_some_and(|c| !head.is_empty() && c != head);
-        if stale {
+        if stale(l, head) {
             segs.push(meta(" · before the last push"));
         }
         for team in &l.for_teams {
@@ -1003,6 +970,12 @@ pub(super) fn reviewers_aside(
         let more = format!("and {} more asked, unnamed", requested.left_out());
         say(page, more, Role::Meta);
     }
+}
+
+/// Whether `l` approved a commit before `head`.
+pub(super) fn stale(l: &Latest, head: &str) -> bool {
+    l.state == ReviewState::Approved
+        && (l.commit.as_deref()).is_some_and(|c| !head.is_empty() && c != head)
 }
 
 /// A list of issues or pull requests in a sidebar, each linked with its
@@ -1046,8 +1019,7 @@ pub(super) fn relations_aside(page: &mut Page, icons: Icons, d: &IssueDetail) {
         page.wrapped(segs, 2, Frame::None);
     }
     for b in &d.branches {
-        let target = url::tree(&d.repo, b, "");
-        let branch = link_seg(page, b.clone(), target, Role::Link);
+        let branch = branch_seg(page, &d.repo, b, Role::Link);
         page.wrapped(vec![meta("⌥ "), branch], 2, Frame::None);
     }
     if let Some(parent) = &d.parent {
@@ -1236,9 +1208,7 @@ pub(super) fn pr_inline(page: &mut Page, icons: Icons, pr: &PrRef, d: &PrDetail,
         let ((mark, role), _) = review_said(l.state);
         segs.push(Seg::new(format!("{mark} "), role));
         segs.push(login_seg(page, &l.author, Role::Link));
-        let stale = l.state == ReviewState::Approved
-            && l.commit.as_deref().is_some_and(|c| c != d.head_oid);
-        if stale {
+        if stale(l, &d.head_oid) {
             segs.push(meta(" (before the last push)"));
         }
     }
@@ -1261,7 +1231,7 @@ pub(super) fn pr_inline(page: &mut Page, icons: Icons, pr: &PrRef, d: &PrDetail,
     }
     inline(page, "Closes", closes);
     if let Some(oid) = &a.merge_commit {
-        let sha = link_seg(page, short_sha(oid), url::commit(&pr.repo, oid), Role::Link);
+        let sha = sha_seg(page, &pr.repo, oid, Role::Link);
         inline(page, "Merge commit", vec![sha]);
     }
 }
@@ -1304,9 +1274,8 @@ pub(super) fn relations_inline(page: &mut Page, icons: Icons, d: &IssueDetail) {
     }
     for b in &d.branches {
         sep(&mut dev, ", ");
-        let target = url::tree(&d.repo, b, "");
         dev.push(meta("⌥ "));
-        dev.push(link_seg(page, b.clone(), target, Role::Link));
+        dev.push(branch_seg(page, &d.repo, b, Role::Link));
     }
     inline(page, "Development", dev);
 }
