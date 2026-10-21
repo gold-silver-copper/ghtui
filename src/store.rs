@@ -15,11 +15,13 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use redb::{Database, Durability, ReadableDatabase, TableDefinition, TableHandle};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+
+use crate::lock;
 
 /// Bump whenever the meaning or encoding of any table changes.
 pub const SCHEMA_VERSION: u64 = 17;
@@ -295,7 +297,7 @@ impl Store {
     ) -> Option<T> {
         let db = self.db.as_ref()?;
         let result = (|| -> Result<Option<T>, StoreError> {
-            if let Some(bytes) = db.later().rows.get(&(table.name(), key.to_owned())) {
+            if let Some(bytes) = lock(&db.later).rows.get(&(table.name(), key.to_owned())) {
                 return Ok(Some(serde_json::from_slice(bytes)?));
             }
             let txn = db.database.begin_read()?;
@@ -345,7 +347,7 @@ impl Store {
             Err(err) => return tracing::warn!(key, %err, "cannot encode for the cache"),
         };
         let start = {
-            let mut later = db.later();
+            let mut later = lock(&db.later);
             later.rows.insert((table, key.to_owned()), bytes.into());
             !std::mem::replace(&mut later.flushing, true)
         };
@@ -383,17 +385,13 @@ struct Later {
 const SYNC_EVERY: Duration = Duration::from_secs(30);
 
 impl Db {
-    fn later(&self) -> MutexGuard<'_, Later> {
-        self.later.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
     /// Commits the rows written behind, together, until none are left:
     /// those written meanwhile go in the next commit. Synced only every
     /// [`SYNC_EVERY`].
     fn flush(&self) {
         loop {
             let (rows, due) = {
-                let mut later = self.later();
+                let mut later = lock(&self.later);
                 if later.rows.is_empty() {
                     later.flushing = false;
                     return;
@@ -414,7 +412,7 @@ impl Db {
                     Durability::None
                 },
             );
-            let mut later = self.later();
+            let mut later = lock(&self.later);
             if due {
                 later.durable = Some(Instant::now());
             }
@@ -433,7 +431,7 @@ impl Db {
 
     /// Commits whatever is written behind, durably.
     fn sync(&self) {
-        let rows: Vec<_> = self.later().rows.drain().collect();
+        let rows: Vec<_> = lock(&self.later).rows.drain().collect();
         self.commit(&rows, Durability::Immediate);
     }
 

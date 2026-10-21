@@ -64,10 +64,7 @@ pub struct Commit {
 /// conflict on ref and pack locks.
 fn repo_lock(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
     static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
-    let mut locks = LOCKS
-        .get_or_init(Mutex::default)
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut locks = crate::lock(LOCKS.get_or_init(Mutex::default));
     locks.entry(path.to_owned()).or_default().clone()
 }
 

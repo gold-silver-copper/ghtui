@@ -10,7 +10,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::diff::FileDiff;
 use crate::git::blobs::BlobReader;
@@ -18,6 +18,7 @@ use crate::git::credentials::Credentials;
 use crate::git::files::{ChangedFile, ZERO_OID, is_lockfile};
 use crate::git::repo::{PrRefs, Repo};
 use crate::git::{GitError, Oid};
+use crate::lock;
 use futures::{StreamExt, TryStreamExt};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
@@ -88,20 +89,15 @@ pub type RepoGit = (Arc<Repo>, Arc<BlobReader>);
 /// later work on the same repository such as mapping outdated comments).
 #[derive(Default)]
 pub struct JobControl {
+    /// The files still to diff.
     queue: Mutex<VecDeque<usize>>,
     git: OnceLock<RepoGit>,
 }
 
 impl JobControl {
-    /// The files still to diff. Every change to it is one call that can't
-    /// leave it half done, so a panic elsewhere doesn't poison it.
-    fn queue(&self) -> MutexGuard<'_, VecDeque<usize>> {
-        self.queue.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
     /// Moves `files` to the front of the queue, in order.
     pub fn prioritize(&self, files: &[usize]) {
-        let mut queue = self.queue();
+        let mut queue = lock(&self.queue);
         for file in files.iter().rev() {
             if let Some(pos) = queue.iter().position(|f| f == file) {
                 queue.remove(pos);
@@ -111,11 +107,11 @@ impl JobControl {
     }
 
     fn pop(&self) -> Option<usize> {
-        self.queue().pop_front()
+        lock(&self.queue).pop_front()
     }
 
     fn fill(&self, files: impl IntoIterator<Item = usize>) {
-        let mut queue = self.queue();
+        let mut queue = lock(&self.queue);
         queue.clear();
         queue.extend(files);
     }
@@ -126,7 +122,7 @@ impl JobControl {
     }
 
     fn front(&self) -> Option<usize> {
-        self.queue().front().copied()
+        lock(&self.queue).front().copied()
     }
 }
 

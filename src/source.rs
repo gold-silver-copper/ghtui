@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::api::browse::{Refs, Results, SearchKind, SearchResults};
@@ -24,6 +24,7 @@ use crate::diff_job::GitContext;
 use crate::git::read::{self, Grep, ReadError, RemoteRefs};
 use crate::git::repo::Repo;
 use crate::git::{GitError, Oid};
+use crate::lock;
 
 /// How long what GitHub says its branches and tags are is taken as true.
 const REFS_FRESH: Duration = Duration::from_secs(30);
@@ -322,14 +323,6 @@ impl Local {
         &self.git
     }
 
-    fn clones(&self) -> std::sync::MutexGuard<'_, HashMap<String, Slot>> {
-        self.clones.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn memo(&self) -> std::sync::MutexGuard<'_, HashMap<(Oid, String), LastCommits>> {
-        self.memo.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
     /// `key`'s data and where it came from: git when it can, else the API
     /// (see [`by_git`]). Git gets `wait`; past it, the API answers, and
     /// git goes on in the background, so the clone is ready next time.
@@ -404,7 +397,7 @@ impl Local {
         repo: &RepoId,
     ) -> Result<(Arc<Repo>, Clone), String> {
         let slug = slug(repo);
-        match self.clones().get(&slug) {
+        match lock(&self.clones).get(&slug) {
             Some(Slot::Ready(clone, whose)) => return Ok((clone.clone(), whose.clone())),
             Some(Slot::Cloning) => return Err(format!("ghtui is still cloning {repo} for git")),
             Some(Slot::Failed(why)) => return Err(why.clone()),
@@ -424,12 +417,12 @@ impl Local {
                 Ok(None) => None,
                 Err(err) => {
                     let why = format!("ghtui's clone of {repo} doesn't open: {err}");
-                    self.clones().insert(slug, Slot::Failed(why.clone()));
+                    lock(&self.clones).insert(slug, Slot::Failed(why.clone()));
                     return Err(why);
                 }
             },
         };
-        let mut clones = self.clones();
+        let mut clones = lock(&self.clones);
         if let Some((top, clone, yours)) = ready {
             let whose = if yours {
                 Clone::Yours(top)
@@ -461,7 +454,7 @@ impl Local {
                 Ok(clone) => Slot::Ready(Arc::new(clone), Clone::Cache),
                 Err(why) => Slot::Failed(why),
             };
-            local.clones().insert(slug, slot);
+            lock(&local.clones).insert(slug, slot);
         });
         Err(format!(
             "ghtui is cloning {repo} for git, in the background"
@@ -566,7 +559,7 @@ impl Local {
         let (clone, _) = loop {
             match self.clone_of(gh, repo).await {
                 Ok(found) => break found,
-                Err(_) if matches!(self.clones().get(&slug(repo)), Some(Slot::Cloning)) => {
+                Err(_) if matches!(lock(&self.clones).get(&slug(repo)), Some(Slot::Cloning)) => {
                     if started.elapsed() > KEEP_CLONE_WAIT {
                         return Err(format!("{repo} is still being cloned"));
                     }
@@ -609,7 +602,7 @@ impl Local {
     }
 
     fn refs_of(&self, repo: &RepoId) -> Arc<tokio::sync::Mutex<Known>> {
-        let mut all = self.refs.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut all = lock(&self.refs);
         all.entry(slug(repo)).or_default().clone()
     }
 
@@ -752,7 +745,7 @@ impl Local {
                 let oid = at(rev.clone()).await?;
                 // At one commit, the answer never changes.
                 let memo_key = (oid.clone(), path.clone());
-                if let Some(found) = self.memo().get(&memo_key) {
+                if let Some(found) = lock(&self.memo).get(&memo_key) {
                     return Ok(Answer::Data(Data::LastCommits(found.clone()), Some(oid)));
                 }
                 let Some(entries) = read::tree(clone, &oid, path).await? else {
@@ -778,7 +771,7 @@ impl Local {
                     found.extend(more.map_err(|e| ReadError::Limit(e.to_string()))?);
                 }
                 let found = Arc::new(found);
-                self.memo().insert(memo_key, found.clone());
+                lock(&self.memo).insert(memo_key, found.clone());
                 Answer::Data(Data::LastCommits(found), Some(oid))
             }
             DataKey::Refs(_) => {
@@ -1106,7 +1099,7 @@ mod tests {
             matches!(&from, From::Api(why) if why.contains("no clone")),
             "{from:?}"
         );
-        assert!(local.clones().get(&slug(&other)).is_none());
+        assert!(lock(&local.clones).get(&slug(&other)).is_none());
     }
 
     #[test]

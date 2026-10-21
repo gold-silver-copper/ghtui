@@ -88,6 +88,14 @@ use crate::diff_screen::DiffOf;
 use crate::keymap::Keymap;
 use crate::state::{Api, Remote, State};
 
+/// What `mutex` holds, though a panic poisoned it: what the crate keeps
+/// behind one is changed by calls that can't leave it half done.
+pub(crate) fn lock<T: ?Sized>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// How long to wait for the terminal to report its background color.
 const BACKGROUND_QUERY_TIMEOUT: Duration = Duration::from_millis(100);
 

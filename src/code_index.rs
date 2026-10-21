@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{OnceCell, Semaphore, watch};
@@ -26,6 +26,7 @@ use crate::git::blobs::BlobReader;
 use crate::git::index::{TreeFile, resolve, tree_files};
 use crate::git::repo::Repo;
 use crate::git::{GitError, Oid};
+use crate::lock;
 use crate::runtime::blocking;
 
 /// The limits of one build.
@@ -206,11 +207,7 @@ struct RepoIndexes {
     builds: Mutex<HashMap<String, (Instant, watch::Receiver<Snapshot>)>>,
 }
 
-impl RepoIndexes {
-    fn blobs(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<[Def]>>> {
-        self.blobs.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-}
+impl RepoIndexes {}
 
 /// Every repository's index: builds run once, in the background, and are
 /// shared by whoever asks.
@@ -247,10 +244,10 @@ impl Indexer {
     /// `near` is the path asked from, read first.
     pub fn get(&self, repo: &RepoId, rev: &str, near: &str) -> watch::Receiver<Snapshot> {
         let indexes = {
-            let mut repos = self.repos.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut repos = lock(&self.repos);
             repos.entry(repo.clone()).or_default().clone()
         };
-        let mut builds = (indexes.builds.lock()).unwrap_or_else(PoisonError::into_inner);
+        let mut builds = lock(&indexes.builds);
         if let Some((started, rx)) = builds.get(rev) {
             let fixed = Oid::parse(rev).is_ok();
             let failed = matches!(rx.borrow().stage, Stage::Failed(_));
@@ -352,12 +349,12 @@ impl Build {
         }
         let _turn = self.one.acquire().await.map_err(|e| e.to_string())?;
         {
-            let mut blobs = self.indexes.blobs();
+            let mut blobs = lock(&self.indexes.blobs);
             if blobs.len() > KEPT_BLOBS {
                 blobs.clear();
             }
         }
-        if self.indexes.blobs().is_empty() {
+        if lock(&self.indexes.blobs).is_empty() {
             let dir = dir.clone();
             if let Some(index) = blocking(move || newest(&dir).and_then(|f| load(&f))).await {
                 self.remember(&index);
@@ -371,7 +368,7 @@ impl Build {
         // revision went before.
         let started = Instant::now();
         let todo: Vec<&TreeFile> = {
-            let blobs = self.indexes.blobs();
+            let blobs = lock(&self.indexes.blobs);
             (chosen.iter())
                 .filter(|f| !blobs.contains_key(&f.blob))
                 .collect()
@@ -444,7 +441,7 @@ impl Build {
             })
             .await;
             read = read.saturating_add(parsed.len());
-            self.indexes.blobs().extend(parsed);
+            lock(&self.indexes.blobs).extend(parsed);
             let index = self.assemble(&chosen, eligible, None);
             self.tx.send_modify(|s| s.index = Arc::new(index));
         }
@@ -463,7 +460,7 @@ impl Build {
 
     /// The index of the files of `chosen` read so far.
     fn assemble(&self, chosen: &[TreeFile], eligible: usize, cut: Option<Cut>) -> Index {
-        let blobs = self.indexes.blobs();
+        let blobs = lock(&self.indexes.blobs);
         let files = chosen.iter().filter_map(|f| {
             Some(FileDefs {
                 path: f.path.clone(),
@@ -483,7 +480,7 @@ impl Build {
     }
 
     fn remember(&self, index: &Index) {
-        let mut blobs = self.indexes.blobs();
+        let mut blobs = lock(&self.indexes.blobs);
         for f in &index.files {
             blobs.insert(f.blob.clone(), f.defs.clone());
         }

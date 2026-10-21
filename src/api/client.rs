@@ -24,6 +24,7 @@ use crate::api::rate_limit::{RateLimits, retry_after};
 use crate::api::raw;
 use crate::api::timeline;
 use crate::host::Host;
+use crate::lock;
 
 const MAX_ATTEMPTS: u32 = 3;
 /// About when GitHub gives up on a request (it allows 10 seconds).
@@ -324,11 +325,7 @@ impl GitHub {
 
     /// Says, once each, what pages go without on `server`.
     fn missing(&self, server: crate::api::enterprise::Server, about: &[String]) {
-        let mut said = self
-            .enterprise
-            .said
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut said = lock(&self.enterprise.said);
         let (all, new) = &mut *said;
         let fresh: Vec<String> = (about.iter())
             .filter(|a| !all.contains(a))
@@ -348,11 +345,7 @@ impl GitHub {
     /// What an Enterprise Server lacks that pages go without, not yet
     /// said.
     pub fn take_missing(&self) -> Vec<String> {
-        let mut said = self
-            .enterprise
-            .said
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut said = lock(&self.enterprise.said);
         std::mem::take(&mut said.1)
     }
 
@@ -365,14 +358,7 @@ impl GitHub {
     ) -> (Value, Vec<(Vec<String>, Value)>) {
         use crate::api::enterprise::{lacks, rewrite};
         let mut lacks = lacks(server);
-        lacks.extend(
-            self.enterprise
-                .learned
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .iter()
-                .cloned(),
-        );
+        lacks.extend(lock(&self.enterprise.learned).iter().cloned());
         let query = body
             .get("query")
             .and_then(Value::as_str)
@@ -396,11 +382,7 @@ impl GitHub {
     /// Learns what a server's refusal says it lacks; whether it learned
     /// anything new.
     fn learn(&self, messages: &[String]) -> bool {
-        let mut learned = self
-            .enterprise
-            .learned
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut learned = lock(&self.enterprise.learned);
         let mut new = false;
         for lack in messages
             .iter()
@@ -440,37 +422,21 @@ impl GitHub {
     /// its errors for data the token can't see (an organization's SSO,
     /// a fine-grained token's permissions), which come back as nulls.
     pub fn take_left_out(&self) -> Vec<String> {
-        std::mem::take(
-            &mut *self
-                .left_out
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        )
+        std::mem::take(&mut *lock(&self.left_out))
     }
 
     /// Where GitHub's answers didn't add up since this was last asked: a
     /// comparison whose last commit isn't its head, more items than the
     /// total, … (see [`Self::doubt`]).
     pub fn take_doubts(&self) -> Vec<String> {
-        std::mem::take(
-            &mut *self
-                .doubts
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        )
+        std::mem::take(&mut *lock(&self.doubts))
     }
 
     /// Notes that an answer doesn't add up: logged, and reported. What's
     /// shown is still GitHub's answer; this says not to trust it.
     fn doubt(&self, what: String) {
         tracing::warn!(what, "GitHub's answer doesn't add up");
-        let mut doubts = self
-            .doubts
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !doubts.contains(&what) {
-            doubts.push(what);
-        }
+        note(&self.doubts, [what]);
     }
 
     /// A page of a list, checked it adds up: no more items than GitHub
@@ -554,15 +520,7 @@ impl GitHub {
             return;
         }
         tracing::warn!(?errors, "partial GraphQL result");
-        let mut left_out = self
-            .left_out
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for error in errors {
-            if !left_out.contains(&error) {
-                left_out.push(error);
-            }
-        }
+        note(&self.left_out, errors);
     }
 
     /// Whether GitHub started (`Some(true)`) or stopped rejecting the token
@@ -574,10 +532,7 @@ impl GitHub {
     }
 
     pub fn rate_limits(&self) -> RateLimits {
-        *self
-            .limits
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        *lock(&self.limits)
     }
 
     async fn send(&self, request: &Request<'_>) -> Result<Response, ApiError> {
@@ -666,10 +621,7 @@ impl GitHub {
                 .0
                 .store(status == StatusCode::UNAUTHORIZED, Ordering::Relaxed);
             let headers = response.headers().clone();
-            self.limits
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .update(&headers);
+            lock(&self.limits).update(&headers);
 
             if let Some(wait) = retry_after(status, &headers, crate::store::now()) {
                 if last || wait > MAX_INLINE_WAIT_SECS {
@@ -3272,6 +3224,16 @@ fn escape(s: &str, plus: bool) -> String {
 /// The HTTP client: the token on every request, rustls with the platform's
 /// roots (loading those is why this runs on a blocking thread), GitHub's
 /// JSON media type, and no retries of its own.
+/// Adds what `list` doesn't have yet.
+fn note(list: &Mutex<Vec<String>>, said: impl IntoIterator<Item = String>) {
+    let mut list = lock(list);
+    for what in said {
+        if !list.contains(&what) {
+            list.push(what);
+        }
+    }
+}
+
 fn build_client(token: &str) -> Result<reqwest::Client, ApiError> {
     // rustls needs a process-wide crypto provider; a second install is a no-op.
     let _ = rustls::crypto::ring::default_provider().install_default();
