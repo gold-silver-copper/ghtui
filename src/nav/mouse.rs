@@ -142,8 +142,8 @@ pub(super) fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> C
     }
 }
 
-/// The repository the screen is about.
 impl State {
+    /// The repository the screen is about.
     pub fn context_repo(&self) -> Option<&RepoId> {
         match self.screen() {
             Screen::Page(p) => p.route.repo(),

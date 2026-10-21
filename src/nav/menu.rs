@@ -74,7 +74,7 @@ impl State {
                     dim: true,
                     ..KeyRow::key(key, format!("{} ({why})", d.label))
                 },
-                None => KeyRow::key(key, &d.label),
+                None => KeyRow::key(key, &*d.label),
             });
         }
         (rows, selected)

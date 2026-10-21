@@ -21,7 +21,7 @@ fn choices(s: &State) -> Vec<(&str, &Change)> {
 fn merge_row(s: &State) -> (String, Option<String>) {
     let row = s.doables().into_iter().find(|d| d.action == Action::Merge);
     let row = row.unwrap();
-    (row.label, row.unavailable)
+    (row.label.into_owned(), row.unavailable)
 }
 
 /// Required checks still running.

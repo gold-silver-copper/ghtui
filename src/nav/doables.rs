@@ -3,14 +3,16 @@
 
 use super::*;
 use crate::route::{code, issues, pulls, runs, search};
+use std::borrow::Cow;
 
 /// Something you can do here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Doable {
     pub section: &'static str,
     pub action: Action,
-    /// For the menu.
-    pub label: String,
+    /// For the menu: most are written in, so the status bar's rebuild
+    /// each frame copies none.
+    pub label: Cow<'static, str>,
     /// For the status bar; empty keeps it out.
     pub short: &'static str,
     pub unavailable: Option<String>,
@@ -20,7 +22,7 @@ pub struct Doable {
 pub(crate) fn row(
     section: &'static str,
     action: Action,
-    label: impl Into<String>,
+    label: impl Into<Cow<'static, str>>,
     short: &'static str,
     unavailable: Option<String>,
 ) -> Doable {
@@ -132,7 +134,7 @@ impl State {
             }
         };
         crate::features::offers(self, &mut out);
-        let go = |action, label: &str, short| row("Go", action, label, short, None);
+        let go = |action, label: &'static str, short| row("Go", action, label, short, None);
         out.push(go(
             Action::SearchGithub,
             "Search GitHub or go to a page",
@@ -184,7 +186,7 @@ impl State {
         }
         let messages = go(Action::Messages, "Recent messages and errors", "");
         out.push(messages.unavailable_if(self.notices.log().is_empty(), "nothing yet"));
-        let tab = |action, label: &str| row("Tabs", action, label, "", None);
+        let tab = |action, label: &'static str| row("Tabs", action, label, "", None);
         out.push(tab(Action::OpenInTab, "Open in a new tab"));
         if self.tab_count() > 1 {
             out.push(tab(Action::NextOpenTab, "Next open tab"));
@@ -214,8 +216,14 @@ impl State {
     }
 
     pub(super) fn page_doables(&self, p: &PageScreen, out: &mut Vec<Doable>) {
-        let here = |action, label: &str, short| row("This page", action, label, short, None);
+        let here =
+            |action, label: &'static str, short| row("This page", action, label, short, None);
         let route = &p.route;
+        // The list state shown next: open or closed, unread or read.
+        let toggle = |query: &str, short| {
+            let show = format!("Show {}", next_list_state(route, query));
+            row("This page", Action::ToggleState, show, short, None)
+        };
         let file = matches!(route, Route::Code(code::Blob { .. } | code::Blame { .. }));
         let job = matches!(route, Route::Runs(runs::Job { .. }));
         // A file's line is this page, as a log's is: nothing to open.
@@ -284,8 +292,7 @@ impl State {
             ));
         }
         if let Route::Search(search::Notifications { query }) = route {
-            let show = format!("Show {}", next_list_state(route, query));
-            out.push(here(Action::ToggleState, &show, "unread/read"));
+            out.push(toggle(query, "unread/read"));
         }
         // A word cursor moves along a line of code; in a file, code
         // navigation goes from a name to its definition and references.
@@ -307,8 +314,7 @@ impl State {
             // Open, closed and sorting are issues', pull requests' and
             // discussions'; repositories, people, commits and code have none.
             if super::lists::plain_search(route).is_none() {
-                let show = format!("Show {}", next_list_state(route, query));
-                out.push(here(Action::ToggleState, &show, "open/closed"));
+                out.push(toggle(query, "open/closed"));
                 out.push(here(Action::Sort, "Change the sort", "sort"));
             }
         }
@@ -530,19 +536,19 @@ impl State {
 }
 
 /// What following `link` does, for the menu.
-pub(super) fn describe(link: &Link) -> String {
+pub(super) fn describe(link: &Link) -> Cow<'static, str> {
     match link {
         Link::Url(url) => match Dest::from_url(url).target {
-            Target::Page(r) => format!("Open {}", r.title()),
-            Target::Files(of) => format!("Files changed in {of}"),
-            Target::External(u) => format!("Open {u} in the browser"),
+            Target::Page(r) => format!("Open {}", r.title()).into(),
+            Target::Files(of) => format!("Files changed in {of}").into(),
+            Target::External(u) => format!("Open {u} in the browser").into(),
         },
         Link::More => "Load more".into(),
         Link::Comment => "Write a comment".into(),
         Link::Star => "Star or unstar".into(),
         Link::Filter => "Edit the filter".into(),
         Link::Sort => "Change the sort".into(),
-        Link::State(state) => format!("Show {state}"),
+        Link::State(state) => format!("Show {state}").into(),
         Link::Branch => "Switch branches".into(),
         Link::FindFile => "Go to file".into(),
         Link::Quote { .. } => "Quote reply".into(),
