@@ -169,6 +169,18 @@ pub(super) fn user_row(page: &mut Page, u: &UserSummary) {
     });
 }
 
+/// A list in a box titled `name` and how many it has, a row each.
+pub(super) fn counted_box<T>(
+    page: &mut Page,
+    name: &str,
+    right: Vec<Seg>,
+    list: &impl Rows<T>,
+    empty: &str,
+    row: impl FnMut(&mut Page, &T),
+) {
+    list_box(page, counted(name, list), right, list, empty, row);
+}
+
 /// A list of people (stargazers, watchers, followers…) that loads more.
 pub fn people_list(
     page: &mut Page,

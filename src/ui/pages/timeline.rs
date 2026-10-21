@@ -1049,12 +1049,7 @@ pub fn commit_comments(
     let Some(comments) = comments.show_or(page, "the commit's comments", loading) else {
         return;
     };
-    let talk = Conversation {
-        base: LinkBase::new(repo, &d.oid, ""),
-        op: "",
-        now: cx.now,
-        unfolded: Marks::none().unfolded,
-    };
+    let talk = Conversation::new(repo, &d.oid, "", cx.now, Marks::none().unfolded);
     let diff = crate::git::Oid::parse(&d.oid).is_ok();
     page.blank();
     let title = match comments.total() {

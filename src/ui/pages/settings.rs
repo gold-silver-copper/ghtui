@@ -116,34 +116,18 @@ fn setting_row(
     });
 }
 
-/// A list's first page in a box titled `name` and how many it shows.
-fn listed<T>(
-    page: &mut Page,
-    name: &str,
-    right: Vec<Seg>,
-    list: &Listed<T>,
-    empty: &str,
-    row: impl FnMut(&mut Page, &T),
-) {
-    let title = counted(name, list);
-    list_box(page, title, right, list, empty, row);
-}
-
 fn general(page: &mut Page, repo: &RepoId, g: &General, keys: SettingKeys<'_>) {
     page.box_top(vec![strong("General")], Vec::new());
-    let visibility = capitalized(&g.visibility);
+    let archived = if g.archived {
+        "yes: it's read-only"
+    } else {
+        "no"
+    };
     for (name, value) in [
         ("Repository", repo.to_string()),
-        ("Visibility", visibility),
+        ("Visibility", capitalized(&g.visibility)),
         ("Default branch", g.default_branch.clone()),
-        (
-            "Archived",
-            if g.archived {
-                "yes: it's read-only".into()
-            } else {
-                "no".into()
-            },
-        ),
+        ("Archived", archived.to_owned()),
     ] {
         let name = meta(format!("{name:<14}  "));
         body(page, vec![name, Seg::new(value, Role::Body)]);
@@ -151,11 +135,8 @@ fn general(page: &mut Page, repo: &RepoId, g: &General, keys: SettingKeys<'_>) {
     page.box_bottom();
     page.blank();
     if !g.admin {
-        say(
-            page,
-            "You don't administer it: GitHub shows its settings only to admins.",
-            Role::Meta,
-        );
+        let why = "You don't administer it: GitHub shows its settings only to admins.";
+        say(page, why, Role::Meta);
         return;
     }
     page.box_top(vec![strong("Danger zone")], Vec::new());
@@ -170,24 +151,12 @@ fn general(page: &mut Page, repo: &RepoId, g: &General, keys: SettingKeys<'_>) {
             "It becomes read-only: no pushes, issues, pull requests or comments",
         )
     };
-    let toggle = vec![meta(keys.toggle.to_owned())];
-    setting_row(
-        page,
-        SettingLink::Archive,
-        label,
-        toggle,
-        Some(about.into()),
-    );
+    let (toggle, about) = (vec![meta(keys.toggle.to_owned())], Some(about.into()));
+    setting_row(page, SettingLink::Archive, label, toggle, about);
     page.box_rule();
-    let about = "On github.com only: ghtui never deletes a repository".to_owned();
+    let about = Some("On github.com only: ghtui never deletes a repository".to_owned());
     let delete = "Delete this repository";
-    setting_row(
-        page,
-        SettingLink::DeleteRepo,
-        delete,
-        Vec::new(),
-        Some(about),
-    );
+    setting_row(page, SettingLink::DeleteRepo, delete, Vec::new(), about);
     page.box_bottom();
 }
 
@@ -232,14 +201,14 @@ fn rule_meta(r: &Rule) -> String {
 }
 
 fn branches(page: &mut Page, b: &Branches, keys: SettingKeys<'_>) {
-    let title = counted("Branch protection rules", &b.rules);
     let right = add_button(page, "Add rule", keys);
-    list_box(
+    let none = "No branch protection rules: any branch can be pushed to, force-pushed and deleted.";
+    counted_box(
         page,
-        title,
+        "Branch protection rules",
         right,
         &b.rules,
-        "No branch protection rules: any branch can be pushed to, force-pushed and deleted.",
+        none,
         |page, r| {
             let applies = match r.matching.total() {
                 0 => "applies to no branch yet".to_owned(),
@@ -277,39 +246,30 @@ fn branches(page: &mut Page, b: &Branches, keys: SettingKeys<'_>) {
                 Some(org) => format!("{} ruleset · from {org}", r.target),
                 None => format!("{} ruleset · {} turns it on or off", r.target, keys.toggle),
             };
-            let right = vec![chip(r.enforcement.label(), bg)];
-            setting_row(
-                page,
+            let (to, right) = (
                 SettingLink::Ruleset(r.id),
-                r.name.clone(),
-                right,
-                Some(about),
+                vec![chip(r.enforcement.label(), bg)],
             );
+            setting_row(page, to, r.name.clone(), right, Some(about));
         },
     );
 }
 
 fn access(page: &mut Page, a: &Access, keys: SettingKeys<'_>, now: u64) {
     let right = add_button(page, "Add people", keys);
-    listed(
-        page,
-        "Collaborators",
-        right,
-        &a.people,
-        "Nobody has direct access.",
-        |page, p| {
-            let bg = match &p.role {
-                Given::Is(crate::api::settings::Permission::Admin) => Bg::PrimaryContainer,
-                _ => Bg::SecondaryContainer,
-            };
-            let to = SettingLink::Person(p.login.clone());
-            let right = vec![chip(p.role.name(), bg)];
-            setting_row(page, to, format!("@{}", p.login), right, None);
-        },
-    );
+    let none = "Nobody has direct access.";
+    counted_box(page, "Collaborators", right, &a.people, none, |page, p| {
+        let bg = match &p.role {
+            Given::Is(crate::api::settings::Permission::Admin) => Bg::PrimaryContainer,
+            _ => Bg::SecondaryContainer,
+        };
+        let to = SettingLink::Person(p.login.clone());
+        let right = vec![chip(p.role.name(), bg)];
+        setting_row(page, to, format!("@{}", p.login), right, None);
+    });
     page.blank();
     let (invitations, none) = (&a.invitations, "No invitations waiting.");
-    listed(
+    counted_box(
         page,
         "Pending invitations",
         Vec::new(),
@@ -364,7 +324,7 @@ fn active_chip(active: bool) -> Seg {
 
 fn hooks(page: &mut Page, list: &Listed<Hook>, keys: SettingKeys<'_>, now: u64) {
     let right = add_button(page, "Add webhook", keys);
-    listed(page, "Webhooks", right, list, "No webhooks.", |page, h| {
+    counted_box(page, "Webhooks", right, list, "No webhooks.", |page, h| {
         let about = format!(
             "{} · {} · {} · changed {}",
             events(h),
@@ -372,14 +332,8 @@ fn hooks(page: &mut Page, list: &Listed<Hook>, keys: SettingKeys<'_>, now: u64) 
             last_said(h),
             time::ago_iso(&h.updated_at, now)
         );
-        let right = vec![active_chip(h.form.active)];
-        setting_row(
-            page,
-            SettingLink::Hook(h.id),
-            h.form.url.clone(),
-            right,
-            Some(about),
-        );
+        let (to, right) = (SettingLink::Hook(h.id), vec![active_chip(h.form.active)]);
+        setting_row(page, to, h.form.url.clone(), right, Some(about));
     });
 }
 
@@ -413,44 +367,35 @@ fn hook(page: &mut Page, h: &HookPage, keys: SettingKeys<'_>, now: u64) {
         keys.redeliver
     ))];
     let none = "Nothing delivered yet.";
-    listed(
+    counted_box(
         page,
         "Recent deliveries",
         right,
         &h.deliveries,
         none,
         |page, d| {
+            let (mark, role) = if (200..300).contains(&d.code) {
+                ("✓", Role::Success)
+            } else {
+                ("✗", Role::Error)
+            };
+            let event = match &d.action {
+                Some(action) => format!("{}.{action}", d.event),
+                None => d.event.clone(),
+            };
+            let when = time::ago_iso(&d.delivered_at, now);
+            let about = meta(format!("  {} · {when}", short(&d.guid)));
+            let mut right = vec![meta(format!("{} {}", d.code, d.status))];
+            if d.redelivery {
+                right.insert(0, meta("redelivery · "));
+            }
+            let mark = Seg::new(format!("{mark} "), role);
             item(
                 page,
                 Link::Setting(SettingLink::Delivery(d.id)),
                 |page, link| {
-                    let ok = (200..300).contains(&d.code);
-                    let (mark, role) = if ok {
-                        ("✓", Role::Success)
-                    } else {
-                        ("✗", Role::Error)
-                    };
-                    let event = match &d.action {
-                        Some(action) => format!("{}.{action}", d.event),
-                        None => d.event.clone(),
-                    };
-                    let mut right = vec![meta(format!("{} {}", d.code, d.status))];
-                    if d.redelivery {
-                        right.insert(0, meta("redelivery · "));
-                    }
-                    page.box_line(
-                        vec![
-                            Seg::new(format!("{mark} "), role),
-                            Seg::linked(event, Role::Strong, link),
-                            meta(format!(
-                                "  {} · {}",
-                                short(&d.guid),
-                                time::ago_iso(&d.delivered_at, now)
-                            )),
-                        ],
-                        right,
-                        0,
-                    );
+                    let segs = vec![mark, Seg::linked(event, Role::Strong, link), about];
+                    page.box_line(segs, right, 0);
                 },
             );
         },
@@ -474,7 +419,7 @@ fn key_text(k: &DeployKey) -> String {
 
 fn deploy_keys(page: &mut Page, list: &Listed<DeployKey>, keys: SettingKeys<'_>, now: u64) {
     let right = add_button(page, "Add deploy key", keys);
-    listed(
+    counted_box(
         page,
         "Deploy keys",
         right,

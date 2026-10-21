@@ -209,11 +209,11 @@ impl State {
             c.crumbs.push((crumb(format!("‹ {first}"), false), None));
             c.open_tabs.push(first - 1);
         }
-        for (i, title) in titles.iter().enumerate().take(last + 1).skip(first) {
-            c.crumbs.push((crumb(title.clone(), i == active), None));
+        let hidden = titles.len() - last - 1;
+        for (i, title) in titles.into_iter().enumerate().take(last + 1).skip(first) {
+            c.crumbs.push((crumb(title, i == active), None));
             c.open_tabs.push(i);
         }
-        let hidden = titles.len() - last - 1;
         if hidden > 0 {
             c.crumbs.push((crumb(format!("{hidden} ›"), false), None));
             c.open_tabs.push(last + 1);
@@ -241,15 +241,14 @@ impl State {
             Some(ProfileTab::Repositories(sort)) => sort,
             _ => RepoSort::Updated,
         };
-        let mut tabs = vec![
-            ("◫", "Overview", None, user(ProfileTab::Overview)),
-            (
-                "▤",
-                "Repositories",
-                profile.map(|p| p.repos.total()),
-                user(ProfileTab::Repositories(sort)),
-            ),
-        ];
+        c.tab("◫", "Overview", None, user(ProfileTab::Overview));
+        let repos = profile.map(|p| p.repos.total());
+        c.tab(
+            "▤",
+            "Repositories",
+            repos,
+            user(ProfileTab::Repositories(sort)),
+        );
         // An organization's projects or a user's, once that's known.
         let projects = org.map(|org| {
             let owner = if org {
@@ -262,70 +261,46 @@ impl State {
             ))))
         });
         if let Some(projects) = &projects {
-            tabs.push(("▥", "Projects", None, projects.clone()));
+            c.tab("▥", "Projects", None, projects.clone());
         }
         let packages =
             crate::site::Page::Packages(crate::api::packages::PackagesOf::Owner(login.to_owned()));
-        tabs.push(("⬢", "Packages", None, Target::Page(Route::Site(packages))));
+        c.tab("⬢", "Packages", None, Route::Site(packages));
         if org == Some(true) {
-            tabs.push((
-                "⚇",
-                "People",
-                profile.map(|p| p.people.total()),
-                user(ProfileTab::People),
-            ));
+            let people = profile.map(|p| p.people.total());
+            c.tab("⚇", "People", people, user(ProfileTab::People));
         } else {
-            tabs.extend([
-                (
-                    "☆",
-                    "Stars",
-                    profile.map(|p| p.star_count),
-                    user(ProfileTab::Stars),
-                ),
-                (
-                    "⚇",
-                    "Followers",
-                    profile.and_then(|p| p.followers),
-                    user(ProfileTab::Followers),
-                ),
-                (
-                    "⚇",
-                    "Following",
-                    profile.and_then(|p| p.following),
-                    user(ProfileTab::Following),
-                ),
-            ]);
+            let stars = profile.map(|p| p.star_count);
+            c.tab("☆", "Stars", stars, user(ProfileTab::Stars));
+            let followers = profile.and_then(|p| p.followers);
+            c.tab("⚇", "Followers", followers, user(ProfileTab::Followers));
+            let following = profile.and_then(|p| p.following);
+            c.tab("⚇", "Following", following, user(ProfileTab::Following));
         }
         let active = tab.map(user).or(projects);
-        c.active = tabs.iter().position(|(.., t)| Some(t) == active.as_ref());
-        for (icon, label, count, target) in tabs {
-            c.tab(icon, label, count, target);
-        }
+        c.active = c.tabs.iter().position(|(_, t)| Some(t) == active.as_ref());
     }
 
     /// A commit's tabs: the commit, and its files.
     pub(crate) fn commit_tabs(&self, repo: &RepoId, oid: &str, pr: Option<u64>, c: &mut Chrome) {
         let detail = self.picked::<CommitDetail>(&DataKey::Commit(repo.clone(), oid.to_owned()));
-        let (repo, full) = (repo.clone(), detail.map_or(oid, |d| d.oid.as_str()));
-        let oid = full.to_owned();
-        let commit = Route::Code(code::Commit {
+        let full = detail.map_or(oid, |d| d.oid.as_str());
+        let commit = code::Commit {
             repo: repo.clone(),
-            oid: oid.clone(),
+            oid: full.to_owned(),
             pr,
-        });
-        c.tab("◷", "Commit", None, commit);
+        };
+        c.tab("◷", "Commit", None, Route::Code(commit));
         let checks = code::CommitChecks {
             repo: repo.clone(),
-            oid,
+            oid: full.to_owned(),
         };
         c.tab("✓", "Checks", None, Route::Code(checks));
         // A short SHA or a ref has files once its full ID is known.
         if let Ok(oid) = Oid::parse(full) {
-            let (files, diff) = (
-                detail.and_then(|d| d.changed_files),
-                DiffOf::Commit(repo, oid),
-            );
-            c.tab("±", "Files changed", files, Target::Files(diff));
+            let files = detail.and_then(|d| d.changed_files);
+            let diff = Target::Files(DiffOf::Commit(repo.clone(), oid));
+            c.tab("±", "Files changed", files, diff);
         }
     }
 

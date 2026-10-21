@@ -79,10 +79,10 @@ fn reviewers(page: &mut Page, pr: &PrRef, d: &PrDetail, activity: Fetched<'_, Pr
             body(page, vec![Seg::new("●  ", Role::Accent), name, meta(what)]);
         });
     }
-    if a.requested.left_out() > 0 {
+    let unnamed = a.requested.left_out();
+    if unnamed > 0 {
         let more = format!(
-            "And {} more asked, that GitHub's API doesn't name (a team you can't see, say).",
-            a.requested.left_out()
+            "And {unnamed} more asked, that GitHub's API doesn't name (a team you can't see, say)."
         );
         empty_row(page, &more);
     }
@@ -189,12 +189,7 @@ pub fn pr_reviewed(
         say(page, what, Role::Meta);
         return;
     };
-    let talk = Conversation {
-        base: LinkBase::new(&pr.repo, &d.head_oid, ""),
-        op: &d.author,
-        now: cx.now,
-        unfolded: marks.unfolded,
-    };
+    let talk = Conversation::new(&pr.repo, &d.head_oid, &d.author, cx.now, marks.unfolded);
     let place = timeline::Place {
         repo: &pr.repo,
         pr: Some(pr),
@@ -214,11 +209,11 @@ pub fn pr_reviewed(
         pr: pr.clone(),
         commit: commit.clone(),
     });
+    let text = format!(
+        "The changes it reviewed, as they were at {}",
+        short_sha(commit)
+    );
     item(page, reviewed, |page, link| {
-        let text = format!(
-            "The changes it reviewed, as they were at {}",
-            short_sha(commit)
-        );
         body(page, vec![Seg::linked(text, Role::Link, link)]);
     });
     if *commit == d.head_oid {
@@ -228,12 +223,9 @@ pub fn pr_reviewed(
             pr: pr.clone(),
             commit: commit.clone(),
         });
+        let (from, to) = (short_sha(commit), short_sha(&d.head_oid));
+        let text = format!("What changed since, from {from} to {to}");
         item(page, since, |page, link| {
-            let text = format!(
-                "What changed since, from {} to {}",
-                short_sha(commit),
-                short_sha(&d.head_oid)
-            );
             body(page, vec![Seg::linked(text, Role::Link, link)]);
         });
     }
@@ -306,9 +298,7 @@ pub(super) fn open_threads(
     now: u64,
 ) {
     let heading = "Unresolved threads";
-    let loading = |page: &mut Page| {
-        empty_box(page, strong(heading), "Loading…");
-    };
+    let loading = |page: &mut Page| empty_box(page, strong(heading), "Loading…");
     let Some(threads) = threads.show_or(page, "the review threads", loading) else {
         return;
     };
