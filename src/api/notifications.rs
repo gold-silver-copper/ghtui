@@ -217,7 +217,7 @@ impl InboxFilter {
     /// The REST path of page `page`, `per_page` threads a page.
     pub fn path(&self, page: u64, per_page: u64) -> String {
         let list = match &self.repo {
-            Some(repo) => format!("/repos/{}/{}/notifications", repo.owner, repo.name),
+            Some(repo) => format!("/repos/{repo}/notifications"),
             None => "/notifications".to_owned(),
         };
         // Read threads too, unless only unread ones are asked for.

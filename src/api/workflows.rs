@@ -283,7 +283,7 @@ impl GitHub {
         repo: &RepoId,
         job: u64,
     ) -> Result<Capped<Annotation>, ApiError> {
-        let base = format!("/repos/{}/{}/check-runs/{job}", repo.owner, repo.name);
+        let base = format!("/repos/{repo}/check-runs/{job}");
         let what = format!("{repo}'s check run {job}");
         let run: rest::CheckRun = serde_json::from_str(&self.rest_get(&base, &what).await?)?;
         let total = run.output.annotations_count;
@@ -314,10 +314,7 @@ impl GitHub {
 
     /// A run's artifacts, newest first.
     pub async fn artifacts(&self, repo: &RepoId, run: u64) -> Result<Capped<Artifact>, ApiError> {
-        let path = format!(
-            "/repos/{}/{}/actions/runs/{run}/artifacts?per_page={ARTIFACTS}",
-            repo.owner, repo.name
-        );
+        let path = format!("/repos/{repo}/actions/runs/{run}/artifacts?per_page={ARTIFACTS}");
         let wire: rest::Artifacts = serde_json::from_str(
             &self
                 .rest_get(&path, format!("run {run}'s artifacts"))
@@ -342,10 +339,7 @@ impl GitHub {
         dest: &std::path::Path,
         replace: bool,
     ) -> Result<u64, ApiError> {
-        let path = format!(
-            "/repos/{}/{}/actions/artifacts/{id}/zip",
-            repo.owner, repo.name
-        );
+        let path = format!("/repos/{repo}/actions/artifacts/{id}/zip");
         self.download(&path, dest, replace).await
     }
 
@@ -359,12 +353,8 @@ impl GitHub {
         git_ref: &str,
         inputs: &[(String, String)],
     ) -> Result<Option<u64>, ApiError> {
-        let path = format!(
-            "/repos/{}/{}/actions/workflows/{}/dispatches",
-            repo.owner,
-            repo.name,
-            crate::ui::pages::url::encode_path(file)
-        );
+        let file = crate::ui::pages::url::encode_path(file);
+        let path = format!("/repos/{repo}/actions/workflows/{file}/dispatches");
         let inputs: serde_json::Map<String, serde_json::Value> = (inputs.iter())
             .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
             .collect();

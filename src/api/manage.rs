@@ -317,8 +317,8 @@ impl GitHub {
                 sibling,
                 before,
             } => {
-                let child = self.issue_id(child).await?;
-                let sibling = self.issue_id(sibling).await?;
+                let (child, sibling) =
+                    tokio::try_join!(self.issue_id(child), self.issue_id(sibling))?;
                 let (before, after) = if *before {
                     (Some(sibling.as_str()), None)
                 } else {

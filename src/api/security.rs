@@ -71,40 +71,22 @@ impl AlertKind {
     }
 
     /// The reasons to dismiss (for secrets, resolve) an alert of this
-    /// kind: GitHub's word for each, a label, and what it means.
+    /// kind: GitHub's word for each, a label, and what it means. One row
+    /// each, so rustfmt is kept off.
+    #[rustfmt::skip]
     pub fn reasons(self) -> &'static [(&'static str, &'static str, &'static str)] {
         match self {
             AlertKind::Dependabot => &[
-                (
-                    "fix_started",
-                    "A fix has already been started",
-                    "fix started",
-                ),
+                ("fix_started", "A fix has already been started", "fix started"),
                 ("no_bandwidth", "No bandwidth to fix this", "no bandwidth"),
-                (
-                    "tolerable_risk",
-                    "Risk is tolerable to this project",
-                    "tolerable risk",
-                ),
-                (
-                    "inaccurate",
-                    "This alert is inaccurate or incorrect",
-                    "inaccurate",
-                ),
-                (
-                    "not_used",
-                    "Vulnerable code is not actually used",
-                    "not used",
-                ),
+                ("tolerable_risk", "Risk is tolerable to this project", "tolerable risk"),
+                ("inaccurate", "This alert is inaccurate or incorrect", "inaccurate"),
+                ("not_used", "Vulnerable code is not actually used", "not used"),
             ],
             AlertKind::CodeScanning => &[
                 ("false positive", "False positive", "the alert isn't valid"),
                 ("won't fix", "Won't fix", "the alert isn't relevant"),
-                (
-                    "used in tests",
-                    "Used in tests",
-                    "the code is only in tests",
-                ),
+                ("used in tests", "Used in tests", "the code is only in tests"),
             ],
             AlertKind::SecretScanning => &[
                 ("revoked", "Revoked", "the secret no longer works"),
@@ -329,32 +311,27 @@ pub fn filter(kind: AlertKind, query: &str) -> Filter {
             f.ignored.push(word.to_owned());
             continue;
         };
+        let to = |name, value: &str| Some((name, value.to_owned()));
         let param = match (kind, key, value) {
-            (_, "is" | "state", "open") => Some(("state", "open".to_owned())),
             (K::Dependabot, "is" | "state", "closed") => {
-                Some(("state", "dismissed,fixed,auto_dismissed".to_owned()))
+                to("state", "dismissed,fixed,auto_dismissed")
             }
-            (K::CodeScanning, "is" | "state", "closed") => Some(("state", "closed".to_owned())),
-            (K::SecretScanning, "is" | "state", "closed") => Some(("state", "resolved".to_owned())),
-            (K::Dependabot, "is" | "state", "dismissed" | "fixed" | "auto_dismissed")
-            | (K::CodeScanning, "is" | "state", "dismissed" | "fixed") => {
-                Some(("state", value.to_owned()))
-            }
-            (K::Dependabot | K::CodeScanning, "severity", _) => {
-                Some(("severity", value.to_owned()))
-            }
-            (K::Dependabot, "ecosystem", _) => Some(("ecosystem", value.to_owned())),
-            (K::Dependabot, "package", _) => Some(("package", value.to_owned())),
-            (K::Dependabot, "manifest", _) => Some(("manifest", value.to_owned())),
-            (K::Dependabot, "scope", "runtime" | "development") => {
-                Some(("scope", value.to_owned()))
-            }
-            (K::CodeScanning, "tool", _) => Some(("tool_name", value.to_owned())),
-            (K::CodeScanning, "branch", _) => Some(("ref", format!("refs/heads/{value}"))),
-            (K::CodeScanning, "ref", _) => Some(("ref", value.to_owned())),
-            (K::SecretScanning, "secret-type", _) => Some(("secret_type", value.to_owned())),
-            (K::SecretScanning, "resolution", _) => Some(("resolution", value.to_owned())),
-            (K::SecretScanning, "validity", _) => Some(("validity", value.to_owned())),
+            (K::CodeScanning, "is" | "state", "closed") => to("state", "closed"),
+            (K::SecretScanning, "is" | "state", "closed") => to("state", "resolved"),
+            (_, "is" | "state", "open")
+            | (K::Dependabot, "is" | "state", "dismissed" | "fixed" | "auto_dismissed")
+            | (K::CodeScanning, "is" | "state", "dismissed" | "fixed") => to("state", value),
+            (K::Dependabot | K::CodeScanning, "severity", _) => to("severity", value),
+            (K::Dependabot, "ecosystem", _) => to("ecosystem", value),
+            (K::Dependabot, "package", _) => to("package", value),
+            (K::Dependabot, "manifest", _) => to("manifest", value),
+            (K::Dependabot, "scope", "runtime" | "development") => to("scope", value),
+            (K::CodeScanning, "tool", _) => to("tool_name", value),
+            (K::CodeScanning, "branch", _) => to("ref", &format!("refs/heads/{value}")),
+            (K::CodeScanning, "ref", _) => to("ref", value),
+            (K::SecretScanning, "secret-type", _) => to("secret_type", value),
+            (K::SecretScanning, "resolution", _) => to("resolution", value),
+            (K::SecretScanning, "validity", _) => to("validity", value),
             _ => None,
         };
         match param {
@@ -470,14 +447,11 @@ impl GitHub {
     ) -> Result<AlertList, ApiError> {
         let mut path = format!("/repos/{repo}/{}/alerts?per_page={PAGE}", kind.slug());
         for (name, value) in filter(kind, query).params {
-            path.push_str(&format!(
-                "&{name}={}",
-                url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>()
-            ));
+            path.extend(["&", name, "="]);
+            path.extend(url::form_urlencoded::byte_serialize(value.as_bytes()));
         }
         if let Some(after) = &after {
-            path.push('&');
-            path.push_str(after);
+            path.extend(["&", after]);
         }
         let what = format!("{repo}'s {}", kind.alerts().to_lowercase());
         let list = match self.alerts_answer(kind, &path, &what).await? {

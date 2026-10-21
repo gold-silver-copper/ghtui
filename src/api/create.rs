@@ -230,12 +230,7 @@ impl GitHub {
             Some((owner, branch)) => format!("{}:{}", encode_path(owner), encode_path(branch)),
             None => encode_path(head),
         };
-        let path = format!(
-            "/repos/{}/{}/compare/{}...{head}",
-            repo.owner,
-            repo.name,
-            encode_path(base)
-        );
+        let path = format!("/repos/{repo}/compare/{}...{head}", encode_path(base));
         let what = format!("{repo}'s comparison {base}...{head}");
         let wire: wire::Compare = serde_json::from_str(&self.rest_get(&path, what).await?)?;
         let commits = (wire.commits.into_iter())

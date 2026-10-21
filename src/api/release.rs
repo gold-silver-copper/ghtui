@@ -45,19 +45,8 @@ pub struct Notes {
 
 impl GitHub {
     pub async fn create_release(&self, new: &NewRelease) -> Result<Made, ApiError> {
-        let mut body = serde_json::json!({
-            "tag_name": new.tag,
-            "name": new.name,
-            "body": new.notes,
-            "draft": new.draft,
-            "prerelease": new.prerelease,
-            // A pre-release is never the latest.
-            "make_latest": if new.latest && !new.prerelease { "true" } else { "false" },
-        });
-        if let (Some(target), Some(map)) = (&new.target, body.as_object_mut()) {
-            map.insert("target_commitish".into(), target.clone().into());
-        }
         let path = format!("/repos/{}/releases", new.repo);
+        let body = release_body(new, true);
         self.rest_write_json(http::Method::POST, &path, Some(&body))
             .await
     }
@@ -66,23 +55,8 @@ impl GitHub {
     /// title, notes, and whether it's a draft, a pre-release or the
     /// latest).
     pub async fn update_release(&self, id: u64, new: &NewRelease) -> Result<Made, ApiError> {
-        let mut body = serde_json::json!({
-            "tag_name": new.tag,
-            "name": new.name,
-            "body": new.notes,
-            "draft": new.draft,
-            "prerelease": new.prerelease,
-        });
-        if let Some(map) = body.as_object_mut() {
-            // A draft is never the latest; GitHub refuses to be told so.
-            if !new.draft {
-                let latest = new.latest && !new.prerelease;
-                map.insert("make_latest".into(), latest.to_string().into());
-            }
-            if let Some(target) = &new.target {
-                map.insert("target_commitish".into(), target.clone().into());
-            }
-        }
+        // A draft is never the latest; GitHub refuses to be told so.
+        let body = release_body(new, !new.draft);
         let path = format!("/repos/{}/releases/{id}", new.repo);
         self.rest_write_json(http::Method::PATCH, &path, Some(&body))
             .await
@@ -205,6 +179,29 @@ impl GitHub {
         })
         .await
     }
+}
+
+/// A release's fields as REST takes them; whether it's the latest only
+/// if `latest_said`.
+fn release_body(new: &NewRelease, latest_said: bool) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "tag_name": new.tag,
+        "name": new.name,
+        "body": new.notes,
+        "draft": new.draft,
+        "prerelease": new.prerelease,
+    });
+    if let Some(map) = body.as_object_mut() {
+        if latest_said {
+            // A pre-release is never the latest.
+            let latest = new.latest && !new.prerelease;
+            map.insert("make_latest".into(), latest.to_string().into());
+        }
+        if let Some(target) = &new.target {
+            map.insert("target_commitish".into(), target.clone().into());
+        }
+    }
+    body
 }
 
 /// What an asset named `name` is sent as, by its extension, as GitHub's
