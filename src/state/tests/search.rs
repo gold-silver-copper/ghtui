@@ -3,6 +3,12 @@
 use super::*;
 use crate::route::{app, issues, search};
 
+/// What choosing each of the search box's suggestions does.
+fn picks(state: &State) -> Vec<nav::Pick> {
+    let rows = state.suggestions(overlay!(state, Search));
+    rows.into_iter().filter_map(|(_, p)| p).collect()
+}
+
 #[test]
 fn palette_goes_places_and_runs_actions() {
     let mut state = with_prs(1);
@@ -67,14 +73,8 @@ fn an_older_suggestion_reply_does_not_replace_a_newer_one() {
     let repos = |name: &str| Data::Suggestions(vec![fixtures::repo_summary(name, 5)]);
     fixtures::fetched(&mut state, suggest("rat"), repos("o/ratatui"));
     fixtures::fetched(&mut state, suggest("ra"), repos("o/rails"));
-    let sb = overlay!(state, Search);
-    let picks: Vec<nav::Pick> = state
-        .suggestions(sb)
-        .into_iter()
-        .filter_map(|(_, p)| p)
-        .collect();
     assert_eq!(
-        picks.last(),
+        picks(&state).last(),
         Some(&nav::Pick::Go(
             Target::Page(Route::code(RepoId::new("o", "ratatui"))).into()
         )),
@@ -225,10 +225,8 @@ fn search_box_jumps_searches_and_loads_more() {
     let sb = overlay!(state, Search);
     assert!(!sb.filter);
     press(&mut state, "bug");
-    let sb = overlay!(state, Search);
-    let rows: Vec<Option<nav::Pick>> = state.suggestions(sb).into_iter().map(|(_, p)| p).collect();
     assert_eq!(
-        rows.iter().flatten().next(),
+        picks(&state).first(),
         Some(&nav::Pick::Search(
             crate::api::browse::SearchKind::Issues,
             "repo:gold-silver-copper/ghtui bug".into()
@@ -241,14 +239,8 @@ fn search_box_jumps_searches_and_loads_more() {
     assert!(fixtures::asks(&cmds, &key));
     let bugs = vec![fixtures::repo_summary("o/bugs", 5)];
     fixtures::fetched(&mut state, key, Data::Suggestions(bugs));
-    let sb = overlay!(state, Search);
-    let picks: Vec<nav::Pick> = state
-        .suggestions(sb)
-        .into_iter()
-        .filter_map(|(_, p)| p)
-        .collect();
     assert_eq!(
-        picks.last(),
+        picks(&state).last(),
         Some(&nav::Pick::Go(
             Target::Page(Route::code(RepoId::new("o", "bugs"))).into()
         ))
@@ -264,14 +256,7 @@ fn search_box_jumps_searches_and_loads_more() {
     );
     press(&mut state, "<End>");
     assert!(selected_text(&state).starts_with("Load more"));
-    let cmds = press(&mut state, "<Enter>");
-    assert_eq!(
-        cmds,
-        vec![Cmd::Api(Api::FetchMore {
-            key: key.clone(),
-            after: "c1".into()
-        })]
-    );
+    assert_eq!(press(&mut state, "<Enter>"), [more(&key, "c1")]);
     // The next page: other issues.
     let mut more = fixtures::issue_results(None);
     if let SearchResults::Issues(r) = &mut more {

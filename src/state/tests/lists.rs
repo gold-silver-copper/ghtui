@@ -17,12 +17,6 @@ fn with_history() -> (State, DataKey) {
     (state, key)
 }
 
-/// Asking for `key`'s next page, after `after`.
-fn more(key: &DataKey, after: &str) -> Cmd {
-    let (key, after) = (key.clone(), after.to_owned());
-    Cmd::Api(Api::FetchMore { key, after })
-}
-
 /// A branch's commits page: the code toolbar's link opens it, and it
 /// loads more like any list.
 #[test]

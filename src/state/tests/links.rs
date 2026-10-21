@@ -143,16 +143,12 @@ fn the_mouse_follows_links_switches_tabs_and_scrolls() {
     let _ = state.back();
     // Tabs.
     let lay = state.layout();
-    let tabs: Vec<_> = state.chrome().tabs.into_iter().map(|(t, _)| t).collect();
-    let rects = crate::ui::chrome::tab_layout(lay.tabs.unwrap(), &tabs, state.chrome().active);
+    let rects = nav::tabs_of(&state.chrome(), lay.tabs.unwrap());
     let _ = click(&mut state, rects[2].x + 1, rects[2].y);
     assert!(matches!(route(&state), Route::Pulls(pulls::Pulls { .. })));
     // The header's search field.
     let field = crate::ui::chrome::header_layout(lay.header, &[], &[]).search;
-    let chrome = state.chrome();
-    let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
-    let right: Vec<_> = chrome.right.iter().map(|(t, _)| t.clone()).collect();
-    let field2 = crate::ui::chrome::header_layout(lay.header, &crumbs, &right).search;
+    let field2 = nav::header_of(&state.chrome(), lay.header).search;
     assert_eq!(field.y, field2.y);
     let _ = click(&mut state, field2.x + 1, field2.y);
     assert!(matches!(state.overlay, Some(Overlay::Search(_))));
@@ -208,10 +204,7 @@ fn the_header_counts_the_unread_and_opens_the_inbox() {
     assert!(header(&state).contains(&"● 50+ unread".to_owned()));
 
     // Clicked.
-    let lay = state.layout();
-    let chrome = state.chrome();
-    let crumbs: Vec<_> = chrome.crumbs.iter().map(|(c, _)| c.clone()).collect();
-    let rects = crate::ui::chrome::header_layout(lay.header, &crumbs, &header(&state)).right;
+    let rects = nav::header_of(&state.chrome(), state.layout().header).right;
     let _ = click(&mut state, rects[0].x + 1, rects[0].y);
     assert_eq!(route(&state), inbox);
 

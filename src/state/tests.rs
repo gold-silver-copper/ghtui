@@ -128,6 +128,12 @@ fn fetch(key: DataKey) -> Cmd {
     Cmd::Api(Api::Fetch { key, cached: true })
 }
 
+/// Asking for `key`'s next page, after `after`.
+fn more(key: &DataKey, after: &str) -> Cmd {
+    let (key, after) = (key.clone(), after.to_owned());
+    Cmd::Api(Api::FetchMore { key, after })
+}
+
 /// Commands other than saving visits.
 fn fetches(cmds: Cmds) -> Cmds {
     cmds.into_iter()
