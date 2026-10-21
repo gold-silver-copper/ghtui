@@ -2,6 +2,7 @@
 
 use material_colors::color::{Lab, Rgb as McRgb};
 use material_colors::hct::Hct;
+use std::sync::LazyLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Rgb {
@@ -134,15 +135,21 @@ pub fn xterm_color(index: u8) -> Rgb {
 /// keeps the contrast the truecolor scheme was designed with.
 pub fn nearest_xterm(c: Rgb) -> u8 {
     const LIGHTNESS_WEIGHT: f64 = 3.0;
+    // The palette's own colors never change, so they're converted once.
+    static PALETTE: LazyLock<Vec<(Lab, u8)>> = LazyLock::new(|| {
+        (16..=255u8)
+            .map(|index| (Lab::from(McRgb::from(xterm_color(index))), index))
+            .collect()
+    });
     let target = Lab::from(McRgb::from(c));
-    let distance = |index| {
-        let lab = Lab::from(McRgb::from(xterm_color(index)));
+    let distance = |lab: &Lab| {
         (LIGHTNESS_WEIGHT * (lab.l - target.l)).powi(2)
             + (lab.a - target.a).powi(2)
             + (lab.b - target.b).powi(2)
     };
-    (16..=255u8)
-        .map(|index| (distance(index), index))
+    PALETTE
+        .iter()
+        .map(|(lab, index)| (distance(lab), *index))
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .map_or(16, |(_, index)| index)
 }

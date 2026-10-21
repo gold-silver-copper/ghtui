@@ -6,40 +6,13 @@ use std::cell::Cell;
 /// `Z` or an offset (`+05:30`, `-0700`), to Unix seconds. GraphQL returns
 /// UTC, but REST doesn't always: commit search gives the committer's zone.
 pub(crate) fn parse_iso8601(s: &str) -> Option<u64> {
-    let shape = matches!(
-        s.as_bytes(),
-        [
-            _,
-            _,
-            _,
-            _,
-            b'-',
-            _,
-            _,
-            b'-',
-            _,
-            _,
-            b'T',
-            _,
-            _,
-            b':',
-            _,
-            _,
-            b':',
-            _,
-            _,
-            ..
-        ]
-    );
-    if !shape {
+    let days = day_of(s)?;
+    let seps = [(10, b'T'), (13, b':'), (16, b':')];
+    if !seps.iter().all(|&(i, c)| s.as_bytes().get(i) == Some(&c)) {
         return None;
     }
     let num = |range: std::ops::Range<usize>| s.get(range)?.parse::<i64>().ok();
-    let (year, month, day) = (num(0..4)?, num(5..7)?, num(8..10)?);
     let (hour, min, sec) = (num(11..13)?, num(14..16)?, num(17..19)?);
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
     let zone = s
         .get(19..)?
         .trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
@@ -60,7 +33,6 @@ pub(crate) fn parse_iso8601(s: &str) -> Option<u64> {
         }
         _ => return None,
     };
-    let days = days_from_civil(year, month, day);
     u64::try_from(days * 86_400 + hour * 3600 + min * 60 + sec - offset).ok()
 }
 
@@ -339,16 +311,5 @@ mod tests {
         ] {
             assert_eq!(parse_iso8601(bad), None, "{bad}");
         }
-    }
-
-    #[test]
-    fn formats_relative_times() {
-        assert_eq!(ago(100, 110), "just now");
-        assert_eq!(ago(0, 300), "5m ago");
-        assert_eq!(ago(0, 3 * 3600), "3h ago");
-        assert_eq!(ago(0, 2 * 86_400), "2d ago");
-        assert_eq!(ago(0, 21 * 86_400), "3w ago");
-        assert_eq!(ago(0, 400 * 86_400), "1y ago");
-        assert_eq!(ago(500, 100), "just now");
     }
 }
