@@ -170,14 +170,7 @@ fn blob_of(path: &str, bytes: &[u8]) -> Blob {
 /// Every file's path at `at`, and whether the list was cut at
 /// [`FILES_MAX`].
 pub async fn files(repo: &Repo, at: &Oid) -> Read<(Vec<String>, bool)> {
-    let out = repo
-        .run(&["ls-tree", "-r", "-z", "--name-only", at])
-        .await?;
-    let mut files: Vec<String> = (out.split('\0'))
-        .filter(|p| !p.is_empty())
-        .take(FILES_MAX + 1)
-        .map(str::to_owned)
-        .collect();
+    let mut files = repo.file_names(at).await?;
     let cut = files.len() > FILES_MAX;
     files.truncate(FILES_MAX);
     Ok((files, cut))
@@ -261,7 +254,7 @@ async fn line_counts(repo: &Repo, from: &str, to: &str, files: &[ChangedFile]) -
 /// first parent. `None` when there's no such commit here.
 pub async fn commit(repo: &Repo, rev: &str) -> Read<Option<CommitDetail>> {
     let Ok(oid) = repo.rev_parse(rev).await else { return Ok(None) };
-    let format = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%ct%x1f%cn%x1f%ce%x1f%ct%x1f%B";
+    let format = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ce%x1f%ct%x1f%B";
     let out = repo.run(&["show", "-s", format, &oid]).await?;
     let bad = || GitError::Parse(format!("show {oid}"));
     let mut f = out.splitn(9, '\u{1f}');

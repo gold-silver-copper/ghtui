@@ -75,9 +75,7 @@ impl Credentials {
     }
 
     pub(crate) fn apply(&self, cmd: &mut Command) {
-        for (k, v) in self.env() {
-            cmd.env(k, v);
-        }
+        cmd.envs(self.env());
     }
 }
 

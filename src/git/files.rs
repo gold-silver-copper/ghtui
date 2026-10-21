@@ -58,9 +58,10 @@ impl ChangedFile {
     /// Blob IDs whose contents the diff needs (none for submodules).
     pub fn blob_oids(&self) -> impl Iterator<Item = &str> {
         let submodule = self.is_submodule();
-        [&*self.old_oid, &*self.new_oid]
+        [&self.old_oid, &self.new_oid]
             .into_iter()
-            .filter(move |oid| !submodule && *oid != ZERO_OID)
+            .filter(move |oid| !submodule && !oid.is_zero())
+            .map(|oid| &**oid)
     }
 }
 
