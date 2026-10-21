@@ -121,12 +121,8 @@ pub fn alerts(
     let Some(l) = list.show_or(page, &alerts, loading) else { return };
     let ignored = crate::api::security::filter(kind, query).ignored;
     if !ignored.is_empty() {
-        let ignored = ignored.join(" ");
-        say(
-            page,
-            format!("Not a filter of {alerts}: {ignored}"),
-            Role::Meta,
-        );
+        let note = format!("Not a filter of {alerts}: {}", ignored.join(" "));
+        say(page, note, Role::Meta);
         page.blank();
     }
     if let Some(off) = &l.off {

@@ -1058,16 +1058,8 @@ pub fn commit_comments(
             Some((place, _)) => format!("commented on {place}"),
             None => "commented".to_owned(),
         };
-        talk.said_at(
-            page,
-            Some(c.anchor()),
-            &c.author,
-            &verb,
-            &c.created_at,
-            &c.body,
-            None,
-            &[],
-        );
+        let (anchor, when) = (Some(c.anchor()), &c.created_at);
+        talk.said_at(page, anchor, &c.author, &verb, when, &c.body, None, &[]);
         if let Some((place, target)) = at {
             let text = format!("Open {place} in the diff");
             item(page, target, |page, link| {

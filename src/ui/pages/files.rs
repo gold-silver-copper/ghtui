@@ -23,11 +23,8 @@ pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
     code_toolbar(page, repo, rev, path, true, None, keys);
     let size = size(blob.size);
     let Some(text) = &blob.text else {
-        empty_box(
-            page,
-            meta(size),
-            "Binary file not shown here: open it on GitHub.",
-        );
+        let why = "Binary file not shown here: open it on GitHub.";
+        empty_box(page, meta(size), why);
         return;
     };
     let lines = text.lines().count() as u64;

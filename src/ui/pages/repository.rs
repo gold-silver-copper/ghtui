@@ -20,11 +20,8 @@ pub fn repo_title(page: &mut Page, repo: &RepoId, overview: Option<&RepoOverview
             tag(&mut segs, "Archived", Bg::TertiaryContainer);
         }
         let star = if o.starred { "★ Starred" } else { "☆ Star" };
-        right.push(button(
-            page,
-            format!("{star}  {}", compact(s.stars)),
-            Link::Star,
-        ));
+        let star = format!("{star}  {}", compact(s.stars));
+        right.push(button(page, star, Link::Star));
         for (text, n, tab) in [
             ("⑂ Fork", s.forks, "forks"),
             ("◉ Watch", o.watchers, "watchers"),

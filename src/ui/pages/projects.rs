@@ -831,11 +831,8 @@ pub fn project_item(
         let link = link_seg(page, p.title.clone(), back, Role::Link);
         let why = "This item isn't among those loaded from ";
         page.wrapped(vec![meta(why), link], 0, Frame::None);
-        say(
-            page,
-            "It may be further down the view, past Load more, or no longer in it.",
-            Role::Meta,
-        );
+        let where_ = "It may be further down the view, past Load more, or no longer in it.";
+        say(page, where_, Role::Meta);
         return;
     };
     let (icon, role) = item_icon(it, cx.icons);
