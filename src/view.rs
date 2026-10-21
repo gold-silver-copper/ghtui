@@ -82,7 +82,7 @@ pub fn view(state: &State, frame: &mut Frame, now: u64) {
                 Some(Overlay::Hints(h)) => h.shown(),
                 _ => Vec::new(),
             };
-            let area = state.page_area();
+            let area = State::page_area_in(content);
             let page = p.page();
             // The composer takes the comment box's place, goes under the
             // comment it quotes, or takes the place of the comment it

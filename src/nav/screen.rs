@@ -172,7 +172,11 @@ impl PageScreen {
 impl State {
     /// Where pages draw: the content area below a row of breathing room.
     pub fn page_area(&self) -> Rect {
-        let c = self.layout().content;
+        Self::page_area_in(self.layout().content)
+    }
+
+    /// Where pages draw in content area `c`.
+    pub fn page_area_in(c: Rect) -> Rect {
         Rect {
             y: c.y + PAD_Y.min(c.height),
             height: c.height.saturating_sub(PAD_Y),
