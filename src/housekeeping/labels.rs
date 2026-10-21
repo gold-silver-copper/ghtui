@@ -95,15 +95,14 @@ pub(super) fn follow(
     if form(state, route).started {
         return Cmds::new();
     }
-    let label = match name {
-        Some(name) => {
-            let Some(l) = list(state, repo).and_then(|l| l.items.iter().find(|l| l.name == *name))
-            else {
-                return Cmds::new();
-            };
-            Some(l.clone())
-        }
-        None => None,
+    let find = |name: &String| {
+        let found = list(state, repo)?.items.iter().find(|l| l.name == *name);
+        found.cloned()
+    };
+    // An edited label's form waits for it.
+    let label = match name.map(find) {
+        Some(None) => return Cmds::new(),
+        label => label.flatten(),
     };
     // A colour of GitHub's, picked by the time: new labels differ.
     let n = usize::try_from((state.clock)() / 1000).unwrap_or_default();
@@ -185,9 +184,7 @@ pub(super) fn submit(state: &mut State, route: &Route, repo: &RepoId, was: Optio
     }
     let change = match change(&form(state, route)) {
         Ok(c) => c,
-        Err(why) => {
-            return crate::forms::say(state, why);
-        }
+        Err(why) => return crate::forms::say(state, why),
     };
     let taken = list(state, repo).is_some_and(|l| {
         (l.items.iter())
@@ -213,19 +210,20 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId) -> Cmds {
     if let Some(why) = refused(state, repo, "Changing labels") {
         return state.just_say(why);
     }
-    let Some(l) = picked(state).cloned() else {
+    let Some((name, open)) = picked(state).map(|l| (l.name.clone(), l.open)) else {
         return state.just_say("Select a label first");
     };
-    let on = match l.open {
+    let on = match open {
         0 => "No open issue or pull request has it".to_owned(),
         1 => "It comes off its open issue or pull request (and any closed ones)".to_owned(),
         n => format!("It comes off its {n} open issues and pull requests (and any closed ones)"),
     };
-    let subject = Subject::Label(repo.clone(), l.name.clone());
+    let title = format!("Delete the label {name}?");
+    let subject = Subject::Label(repo.clone(), name);
     ask(
         state,
-        format!("Delete the label {}?", l.name),
-        vec![(on, l.open > 0), ("It can't be brought back".into(), true)],
+        title,
+        vec![(on, open > 0), ("It can't be brought back".into(), true)],
         vec![("Delete label".into(), super::Answer::Delete(subject))],
     )
 }
@@ -255,8 +253,7 @@ impl Job for Save {
 
     /// GitHub's answer: the labels page follows it until it shows the change.
     fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
-        let work = self;
-        let Save { repo, was, change } = work;
+        let Save { repo, was, change } = self;
         let form = Route::Housekeeping(FormOf::Label {
             repo: repo.clone(),
             name: was.clone().filter(|_| change.is_some()),

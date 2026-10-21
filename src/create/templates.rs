@@ -116,24 +116,25 @@ fn markdown(file: &str, source: &str) -> IssueTemplate {
         ))
     }) {
         Some((front, body)) => (yaml::parse(&front), body),
-        None => (Value::Null, source.clone()),
+        None => (Value::Null, source),
     };
-    let name = text_or(&front, "name", stem(file));
-    IssueTemplate {
-        file: file.to_owned(),
-        name,
-        about: text(&front, "about"),
-        title: text(&front, "title"),
-        body,
-        labels: front.get("labels").map(Value::names).unwrap_or_default(),
-        assignees: front.get("assignees").map(Value::names).unwrap_or_default(),
-    }
+    template(file, &front, "about", body)
 }
 
-fn text_or(value: &Value, key: &str, or: String) -> String {
-    Some(text(value, key))
-        .filter(|t| !t.trim().is_empty())
-        .unwrap_or(or)
+/// A template from its file, what it says of itself (`about` names its
+/// description), and its body.
+fn template(file: &str, yaml: &Value, about: &str, body: String) -> IssueTemplate {
+    let names = |key| yaml.get(key).map(Value::names).unwrap_or_default();
+    let name = Some(text(yaml, "name")).filter(|t| !t.trim().is_empty());
+    IssueTemplate {
+        file: file.to_owned(),
+        name: name.unwrap_or_else(|| stem(file)),
+        about: text(yaml, about),
+        title: text(yaml, "title"),
+        body,
+        labels: names("labels"),
+        assignees: names("assignees"),
+    }
 }
 
 /// An issue form: each field becomes a heading to answer under, as GitHub
@@ -176,15 +177,7 @@ fn form(file: &str, form: &Value) -> IssueTemplate {
         let section = format!("### {label}\n\n{answer}");
         sections.push(section.trim_end().to_owned());
     }
-    IssueTemplate {
-        file: file.to_owned(),
-        name: text_or(form, "name", stem(file)),
-        about: text(form, "description"),
-        title: text(form, "title"),
-        body: sections.join("\n\n"),
-        labels: form.get("labels").map(Value::names).unwrap_or_default(),
-        assignees: form.get("assignees").map(Value::names).unwrap_or_default(),
-    }
+    template(file, form, "description", sections.join("\n\n"))
 }
 
 fn with_newline(text: &str) -> String {

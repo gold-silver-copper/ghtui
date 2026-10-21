@@ -288,9 +288,7 @@ impl Job for Make {
         let Make { route, .. } = &self;
         let made = match result {
             Ok(made) => made,
-            Err(why) => {
-                return crate::forms::failed(state, route, why.to_string());
-            }
+            Err(why) => return crate::forms::failed(state, route, why.to_string()),
         };
         state.info(format!("Created {}", made.full_name));
         let on_form = state.route() == Some(route);

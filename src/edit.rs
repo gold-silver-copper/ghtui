@@ -17,6 +17,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::act::{By, Step, Subject, issue};
 use crate::compose;
 use crate::data::DataKey;
+use crate::discuss::same_text;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::{self, Choice};
@@ -56,6 +57,16 @@ pub enum Field {
     Labels,
     Assignees,
     Reviewers,
+}
+
+impl Field {
+    fn name(self) -> &'static str {
+        match self {
+            Field::Labels => "Labels",
+            Field::Assignees => "Assignees",
+            Field::Reviewers => "Reviewers",
+        }
+    }
 }
 
 /// What a picker is choosing.
@@ -98,18 +109,7 @@ pub enum Pick {
 impl Choosing {
     pub fn title(&self) -> &'static str {
         match self {
-            Choosing::Many {
-                field: Field::Labels,
-                ..
-            } => "Labels",
-            Choosing::Many {
-                field: Field::Assignees,
-                ..
-            } => "Assignees",
-            Choosing::Many {
-                field: Field::Reviewers,
-                ..
-            } => "Reviewers",
+            Choosing::Many { field, .. } => field.name(),
             Choosing::Milestone { .. } => "Milestone",
             Choosing::React { .. } => "React",
             Choosing::Title { .. } => "Edit the title",
@@ -510,9 +510,9 @@ pub fn doables(state: &State) -> Vec<Doable> {
                 Action::DeleteComment if what != "the description" => format!("Delete {what}"),
                 Action::React => format!("React to {what}"),
                 Action::EditTitle => "Edit the title".into(),
-                Action::EditLabels => "Labels".into(),
-                Action::EditAssignees => "Assignees".into(),
-                Action::RequestReviews => "Reviewers".into(),
+                Action::EditLabels => Field::Labels.name().into(),
+                Action::EditAssignees => Field::Assignees.name().into(),
+                Action::RequestReviews => Field::Reviewers.name().into(),
                 Action::EditMilestone => "Milestone".into(),
                 _ => action.description().into(),
             };
@@ -932,11 +932,6 @@ fn written<'a>(state: &'a State, about: &Subject) -> Option<Vec<(&'a Editable, &
     )
 }
 
-/// The same text, but for line endings and the ends' whitespace.
-fn same(a: &str, b: &str) -> bool {
-    a.replace("\r\n", "\n").trim() == b.replace("\r\n", "\n").trim()
-}
-
 /// Whether the names in `list` have every one of `want` and none of
 /// `gone`.
 fn has(list: &[String], want: &[Named], gone: &[Named]) -> bool {
@@ -970,7 +965,7 @@ pub fn shown(state: &State, edit: &Edit, about: &Subject) -> bool {
             ..
         } => true,
         Edit::Body { id, body, .. } => match find(id) {
-            Some(Some((_, now))) => same(now, body),
+            Some(Some((_, now))) => same_text(now, body),
             Some(None) => true,
             None => false,
         },
@@ -984,7 +979,7 @@ pub fn shown(state: &State, edit: &Edit, about: &Subject) -> bool {
             Some(None) => true,
             None => false,
         },
-        Edit::Title { title: new, .. } => same(title, new),
+        Edit::Title { title: new, .. } => same_text(title, new),
         Edit::Labels { add, remove, .. } => {
             let names: Vec<String> = labels.iter().map(|l| l.name.clone()).collect();
             has(&names, add, remove)

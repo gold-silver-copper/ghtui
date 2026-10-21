@@ -349,14 +349,13 @@ impl Job for Save {
 
     /// GitHub's answer: the list follows it until it shows the change.
     fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
-        let work = self;
         let Save {
             repo,
             kind,
             name,
             write,
             ..
-        } = work;
+        } = self;
         if let Err(why) = result {
             return crate::forms::say(state, why.to_string());
         }

@@ -294,10 +294,7 @@ impl Subject {
     fn route(&self) -> Route {
         match self {
             Subject::Pr(pr) => Route::pr(pr.clone()),
-            Subject::Issue(repo, number) => Route::Issues(issues::Issue {
-                repo: repo.clone(),
-                number: *number,
-            }),
+            Subject::Issue(repo, number) => Route::issue(repo.clone(), *number),
             Subject::Run(repo, run, attempt) => Route::Runs(runs::WorkflowRun {
                 repo: repo.clone(),
                 run: *run,
@@ -742,20 +739,17 @@ fn behind(d: &PrDetail) -> String {
 /// What's worth knowing before merging (what stops it is refused before).
 fn merge_facts(state: &State, d: &PrDetail) -> Vec<(String, bool)> {
     let mut facts = vec![(format!("Into {} from {}", d.base_ref, d.head_ref), false)];
-    match d.checks {
-        Some(ChecksState::Passing) => facts.push(("Checks passed".into(), false)),
-        Some(ChecksState::Failing) => facts.push(("Some checks failed".into(), true)),
-        Some(ChecksState::Pending) => facts.push(("Checks are still running".into(), true)),
-        None => facts.push(("No checks".into(), false)),
-    }
-    match d.review {
-        Some(ReviewDecision::Approved) => facts.push(("Approved".into(), false)),
-        Some(ReviewDecision::ChangesRequested) => {
-            facts.push(("Changes were requested".into(), true));
-        }
-        Some(ReviewDecision::ReviewRequired) => facts.push(("A review is required".into(), true)),
-        None => {}
-    }
+    facts.push(match d.checks {
+        Some(ChecksState::Passing) => ("Checks passed".into(), false),
+        Some(ChecksState::Failing) => ("Some checks failed".into(), true),
+        Some(ChecksState::Pending) => ("Checks are still running".into(), true),
+        None => ("No checks".into(), false),
+    });
+    facts.extend(d.review.map(|review| match review {
+        ReviewDecision::Approved => ("Approved".into(), false),
+        ReviewDecision::ChangesRequested => ("Changes were requested".into(), true),
+        ReviewDecision::ReviewRequired => ("A review is required".into(), true),
+    }));
     facts.push(match d.readiness() {
         Readiness::Checking => (
             "GitHub is still working out whether it can merge".into(),
