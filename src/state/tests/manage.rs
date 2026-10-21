@@ -469,9 +469,7 @@ fn a_new_discussion_starts_from_its_categorys_form() {
     };
     fixtures::fetched(&mut s, key, Data::from(found));
     press(&mut s, "<Enter>");
-    let Some(Overlay::Compose(c)) = &s.overlay else {
-        panic!("no composer");
-    };
+    let c = crate::fixtures::composer(&mut s);
     let text = c.text();
     assert!(text.starts_with("[Idea]"), "{text}");
     assert!(text.contains("### What would it do"), "{text}");

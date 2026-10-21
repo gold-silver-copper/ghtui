@@ -41,9 +41,7 @@ fn a_comment_is_edited_in_place_and_followed() {
         fixtures::asked(&opened) == [DataKey::Mentionable(ghtui())] && opened.len() == 1,
         "{opened:?}"
     );
-    let Some(Overlay::Compose(c)) = &s.overlay else {
-        panic!("e opens the composer")
-    };
+    let c = crate::fixtures::composer(&mut s);
     assert_eq!(c.text(), "Agreed. 120 columns, centered?");
     let screen = screen_text(&s);
     let editor = screen
@@ -111,9 +109,7 @@ fn edits_are_offered_only_where_github_allows_them() {
     press(&mut s, "D");
     says(&s, "Select a comment first");
     press(&mut s, "e");
-    let Some(Overlay::Compose(c)) = &s.overlay else {
-        panic!("the description opens")
-    };
+    let c = crate::fixtures::composer(&mut s);
     assert!(c.text().starts_with("On a 200-column terminal"));
 
     // Elsewhere, they say where they work.

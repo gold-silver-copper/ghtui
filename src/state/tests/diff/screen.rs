@@ -600,9 +600,7 @@ fn a_review_comment_is_edited_in_its_thread() {
         };
     }
     press(&mut s, "e");
-    let Some(Overlay::Compose(c)) = &s.overlay else {
-        panic!("e opens the composer")
-    };
+    let c = crate::fixtures::composer(&mut s);
     assert_eq!(c.text(), "Good point, I'll spell it out.");
     let cmds = press(&mut s, "!<C-s>");
     let edit = Edit::Body {

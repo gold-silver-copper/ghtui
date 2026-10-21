@@ -4,23 +4,11 @@ use crate::live::{Ask, Probe};
 
 /// The ask the watch's next timer sends, and how long it waits first.
 fn next_ask(s: &mut State) -> (Vec<Ask>, u64) {
-    let timer = timers(s).into_iter().find_map(|cmd| match cmd {
-        Cmd::Timer(Timer::Watch(id), ms) => Some((id, ms)),
-        _ => None,
-    });
-    let (id, ms) = timer.expect("an ask scheduled");
-    let cmds = update(s, Msg::Timer(Timer::Watch(id)));
+    let (cmds, ms) = next_watch(s);
     match &cmds[..] {
         [Cmd::Api(Api::Poll { asks, .. })] => (asks.clone(), ms),
         _ => panic!("{cmds:?}"),
     }
-}
-
-fn changed(etag: &str, body: &str) -> Result<Polled, ApiError> {
-    Ok(Polled::Changed {
-        etag: etag.into(),
-        body: body.into(),
-    })
 }
 
 /// While Files changed is on screen, ghtui asks GitHub whether the pull

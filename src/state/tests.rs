@@ -75,6 +75,24 @@ fn selected_text(state: &State) -> String {
     p.page().lines[item.start].text()
 }
 
+/// Fires the watch's next timer: what that sends, and how long it waited.
+fn next_watch(s: &mut State) -> (Vec<Cmd>, u64) {
+    let timer = timers(s).into_iter().find_map(|cmd| match cmd {
+        Cmd::Timer(Timer::Watch(id), ms) => Some((id, ms)),
+        _ => None,
+    });
+    let (id, ms) = timer.expect("an ask scheduled");
+    (update(s, Msg::Timer(Timer::Watch(id))), ms)
+}
+
+/// GitHub's answer to a watch: changed, to `body` with `etag`.
+fn changed(etag: &str, body: &str) -> Result<crate::api::Polled, ApiError> {
+    Ok(crate::api::Polled::Changed {
+        etag: etag.into(),
+        body: body.into(),
+    })
+}
+
 /// Fetching `key`, the cached copy first.
 fn fetch(key: DataKey) -> Cmd {
     Cmd::Api(Api::Fetch { key, cached: true })
