@@ -23,10 +23,9 @@ pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
     code_toolbar(page, repo, rev, path, true, None, keys);
     let size = size(blob.size);
     let Some(text) = &blob.text else {
-        let title = meta(size);
         empty_box(
             page,
-            title,
+            meta(size),
             "Binary file not shown here: open it on GitHub.",
         );
         return;
@@ -87,7 +86,9 @@ pub fn blame(
         return;
     };
     let file = link_seg(page, "File", url::blob(repo, rev, path), Role::Link);
-    let commits = unique(blame.ranges.iter().map(|r| &r.commit.oid)).len() as u64;
+    let commits = (blame.ranges.iter().map(|r| &r.commit.oid))
+        .collect::<std::collections::HashSet<_>>()
+        .len() as u64;
     let info = format!("Blame · {}", plural(commits, "commit"));
     page.box_top(vec![meta(info)], vec![file]);
     let lines = markdown::highlighted_file(text, crate::diff::Language::from_path(path));
@@ -125,13 +126,9 @@ pub fn blame(
                 run_start = page.lines.len();
                 let c = &r.commit;
                 let author = truncate(c.author.name(), author_w);
-                let mut gutter = vec![
-                    sha_seg(page, repo, &c.oid, Role::Code),
-                    meta(format!(
-                        " {author:<author_w$} {:>8}  ",
-                        time::ago_iso(&c.date, now)
-                    )),
-                ];
+                let ago = time::ago_iso(&c.date, now);
+                let who = meta(format!(" {author:<author_w$} {ago:>8}  "));
+                let mut gutter = vec![sha_seg(page, repo, &c.oid, Role::Code), who];
                 if message_w >= 8 {
                     let message = truncate(&c.headline, message_w);
                     gutter.push(Seg::new(format!("{message:<message_w$}  "), Role::Body));
