@@ -350,17 +350,18 @@ impl Theme {
         // State layers: primary composited over the base surface. In 256-color
         // mode, raise the opacity until the selection is actually visible.
         let primary = rgb(scheme.primary);
-        let layer = |base: Rgb, opacity: f64| -> Rgb {
-            let mut opacity = opacity;
+        let layer = |base: Rgb, mut opacity: f64| -> Rgb {
+            let shown = displayed(depth, base);
             loop {
                 let c = base.blend(primary, opacity);
-                if opacity >= 0.4 || displayed(depth, c) != displayed(depth, base) {
+                if opacity >= 0.4 || displayed(depth, c) != shown {
                     return c;
                 }
                 opacity += 0.02;
             }
         };
-        let bg = Bg::all().into_iter().map(|role| match role {
+        let bg_roles = Bg::all();
+        let bg = bg_roles.iter().map(|role| match *role {
             Bg::Surface => surface,
             Bg::ContainerLow => container_low,
             Bg::Container => rgb(scheme.surface_container),
@@ -379,6 +380,10 @@ impl Theme {
             Bg::DiffSelected(d) => layer(diff(d), 0.14),
         });
         let bg: Vec<Rgb> = bg.collect();
+        // As displayed, measured against once for every foreground.
+        let bg_shown: Vec<(Bg, Rgb)> = (bg_roles.into_iter().zip(&bg))
+            .map(|(role, &c)| (role, displayed(depth, c)))
+            .collect();
 
         // The contribution graph: a faint surface shade, then the primary
         // hue from faint to strong. Each level must differ from the last (and
@@ -396,9 +401,8 @@ impl Theme {
                 let chroma = if level == 0 { 6.0 } else { 48.0 };
                 let mut tone: f64 = tone;
                 let mut color = hct(primary_hue, chroma, tone);
-                while displayed(depth, color) == displayed(depth, previous)
-                    && (0.0..=100.0).contains(&tone)
-                {
+                let below = displayed(depth, previous);
+                while displayed(depth, color) == below && (0.0..=100.0).contains(&tone) {
                     tone += step;
                     color = hct(primary_hue, chroma, tone);
                 }
@@ -443,7 +447,7 @@ impl Theme {
                 },
                 Fg::Heat(level) => heat.get(usize::from(level)).copied().unwrap_or(MISSING),
             };
-            enforce_contrast(depth, &bg, role, color)
+            enforce_contrast(depth, &bg_shown, role, color)
         });
         let fg: Vec<Rgb> = fg.collect();
 
@@ -462,32 +466,20 @@ impl Theme {
         displayed(self.depth, c)
     }
 
-    fn term_color(&self, c: Rgb) -> Color {
-        term_color(self.depth, c)
-    }
-
     pub fn bg_rgb(&self, bg: Bg) -> Rgb {
-        bg.slot()
-            .and_then(|i| self.bg.get(i))
-            .copied()
-            .unwrap_or(MISSING)
+        slot_of(&self.bg, bg.slot()).unwrap_or(MISSING)
     }
 
     pub fn fg_rgb(&self, fg: Fg) -> Rgb {
-        fg.slot()
-            .and_then(|i| self.fg.get(i))
-            .copied()
-            .unwrap_or(MISSING)
+        slot_of(&self.fg, fg.slot()).unwrap_or(MISSING)
     }
 
     pub fn bg_color(&self, bg: Bg) -> Color {
-        let shown = bg.slot().and_then(|i| self.bg_term.get(i)).copied();
-        shown.unwrap_or_else(|| self.term_color(MISSING))
+        slot_of(&self.bg_term, bg.slot()).unwrap_or_else(|| term_color(self.depth, MISSING))
     }
 
     pub fn fg_color(&self, fg: Fg) -> Color {
-        let shown = fg.slot().and_then(|i| self.fg_term.get(i)).copied();
-        shown.unwrap_or_else(|| self.term_color(MISSING))
+        slot_of(&self.fg_term, fg.slot()).unwrap_or_else(|| term_color(self.depth, MISSING))
     }
 
     /// The style for `fg` text on `bg`. Panics in debug builds if the pair
@@ -568,10 +560,17 @@ impl Theme {
                 .entry((color, self.mode, self.depth))
                 .or_insert_with(|| {
                     let (bg, fg) = labels::chip_colors(color, self);
-                    Style::new().fg(self.term_color(fg)).bg(self.term_color(bg))
+                    let color = |c| term_color(self.depth, c);
+                    Style::new().fg(color(fg)).bg(color(bg))
                 })
         })
     }
+}
+
+/// The color in `slot` of `colors`, a role's place in [`Bg::all`] or
+/// [`Fg::all`].
+fn slot_of<T: Copy>(colors: &[T], slot: Option<usize>) -> Option<T> {
+    colors.get(slot?).copied()
 }
 
 fn term_color(depth: ColorDepth, c: Rgb) -> Color {
@@ -588,16 +587,14 @@ fn displayed(depth: ColorDepth, c: Rgb) -> Rgb {
     }
 }
 
-/// Moves `role`'s tone (`base`) away from its backgrounds (`bg`, by slot)
-/// until it meets the strictest requirement against all of them, as
-/// displayed.
-fn enforce_contrast(depth: ColorDepth, bg: &[Rgb], role: Fg, base: Rgb) -> Rgb {
-    let targets: Vec<(Rgb, f64)> = Bg::all()
-        .into_iter()
-        .zip(bg)
-        .filter_map(|(on, &color)| {
+/// Moves `role`'s tone (`base`) away from its backgrounds (`bg`, each as
+/// displayed) until it meets the strictest requirement against all of them,
+/// as displayed.
+fn enforce_contrast(depth: ColorDepth, bg: &[(Bg, Rgb)], role: Fg, base: Rgb) -> Rgb {
+    let targets: Vec<(Rgb, f64)> = (bg.iter())
+        .filter_map(|&(on, shown)| {
             let req = requirement(role, on).filter(|r| *r != Requirement::Exempt)?;
-            Some((displayed(depth, color), req.min_ratio()))
+            Some((shown, req.min_ratio()))
         })
         .collect();
     adjust_tone(base, &targets, |c| displayed(depth, c))
