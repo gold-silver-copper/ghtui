@@ -84,23 +84,22 @@ pub enum Probe {
 impl Probe {
     /// Where a REST probe asks; `None` for one asked another way.
     pub fn path(&self) -> Option<String> {
-        let repo = |r: &RepoId| format!("/repos/{}/{}", r.owner, r.name);
         let run = |r: &RepoId, run: u64, attempt: Option<u64>| {
-            let base = format!("{}/actions/runs/{run}", repo(r));
+            let base = format!("/repos/{r}/actions/runs/{run}");
             match attempt {
                 Some(n) => format!("{base}/attempts/{n}"),
                 None => base,
             }
         };
         Some(match self {
-            Probe::Job(r, job) => format!("{}/actions/jobs/{job}", repo(r)),
+            Probe::Job(r, job) => format!("/repos/{r}/actions/jobs/{job}"),
             Probe::Run(r, id, attempt) => run(r, *id, *attempt),
             Probe::RunJobs(r, id, attempt) => {
                 format!("{}/jobs?per_page=100", run(r, *id, *attempt))
             }
-            Probe::Issue(r, n) => format!("{}/issues/{n}", repo(r)),
+            Probe::Issue(r, n) => format!("/repos/{r}/issues/{n}"),
             Probe::IssueComments(r, n, since) => {
-                format!("{}/issues/{n}/comments?since={since}&per_page=100", repo(r))
+                format!("/repos/{r}/issues/{n}/comments?since={since}&per_page=100")
             }
             Probe::Runs(..) | Probe::Discussion(..) => return None,
         })
@@ -321,13 +320,9 @@ pub fn on_timer(state: &mut State, id: u64) -> Cmds {
     };
     let probes = match &what {
         // A job that ended in a run still going: the run's end shows on it.
-        Watched::Job { repo, job } => match run_going {
-            Some(run) => vec![
-                Probe::Job(repo.clone(), *job),
-                Probe::Run(repo.clone(), run, None),
-            ],
-            None => vec![Probe::Job(repo.clone(), *job)],
-        },
+        Watched::Job { repo, job } => std::iter::once(Probe::Job(repo.clone(), *job))
+            .chain(run_going.map(|run| Probe::Run(repo.clone(), run, None)))
+            .collect(),
         Watched::Run { repo, run, attempt } => vec![
             Probe::Run(repo.clone(), *run, *attempt),
             Probe::RunJobs(repo.clone(), *run, *attempt),
@@ -652,22 +647,22 @@ mod wire {
                 (_, Some("not_planned" | "duplicate")) => IssueState::NotPlanned,
                 _ => IssueState::Closed,
             };
-            let mut labels: Vec<&str> = self.labels.iter().map(|l| l.name.as_str()).collect();
-            let mut shown_labels: Vec<&str> =
-                shown.labels.iter().map(|l| l.name.as_str()).collect();
-            labels.sort_unstable();
-            shown_labels.sort_unstable();
-            let mut people: Vec<&str> = self.assignees.iter().map(|a| a.login.as_str()).collect();
-            let mut shown_people: Vec<&str> = shown.assignees.iter().map(String::as_str).collect();
-            people.sort_unstable();
-            shown_people.sort_unstable();
+            let labels = sorted(self.labels.iter().map(|l| l.name.as_str()));
+            let people = sorted(self.assignees.iter().map(|a| a.login.as_str()));
             self.title != shown.title
                 || !crate::discuss::same_text(&shown.body, self.body.as_deref().unwrap_or_default())
                 || state != shown.state
                 || self.comments != shown.comment_count
-                || labels != shown_labels
-                || people != shown_people
+                || labels != sorted(shown.labels.iter().map(|l| l.name.as_str()))
+                || people != sorted(shown.assignees.iter().map(String::as_str))
         }
+    }
+
+    /// Names in order, to compare as sets.
+    fn sorted<'a>(names: impl Iterator<Item = &'a str>) -> Vec<&'a str> {
+        let mut names: Vec<&str> = names.collect();
+        names.sort_unstable();
+        names
     }
 
     /// An issue's comment, as REST has it.

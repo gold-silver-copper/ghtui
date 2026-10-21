@@ -151,7 +151,8 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> crate::picker::Rows {
             rows
         }
         Pick::Input(name) => {
-            let input = inputs_here(state).and_then(|i| i.into_iter().find(|i| i.name == *name));
+            let input =
+                (inputs_of(state).ok()).and_then(|i| i.into_iter().find(|i| i.name == *name));
             let (Some(input), Some(route)) = (input, here(state).map(form_route)) else {
                 return note("The form isn't on screen".into());
             };
@@ -280,24 +281,26 @@ pub(crate) fn workflow_path(file: &str) -> String {
     format!(".github/workflows/{file}")
 }
 
+/// The form on screen, and the branch chosen on it, if one is.
+fn chosen(state: &State) -> Option<(RepoId, String, Option<String>)> {
+    let (repo, file) = here(state)?;
+    let form = state
+        .forms
+        .get::<Form>(&form_route((repo.clone(), file.clone())));
+    let git_ref = form.and_then(|f| f.git_ref.clone());
+    Some((repo, file, git_ref))
+}
+
 /// The branch the form on screen runs on: chosen, or the default.
 fn form_ref(state: &State) -> Option<String> {
-    let (repo, file) = here(state)?;
-    let chosen = state.forms.get::<Form>(&form_route((repo.clone(), file)));
-    chosen
-        .and_then(|f| f.git_ref.clone())
-        .or_else(|| state.overview(&repo)?.default_branch.clone())
+    let (repo, _, git_ref) = chosen(state)?;
+    git_ref.or_else(|| state.overview(&repo)?.default_branch.clone())
 }
 
 /// The workflow file on the form's branch.
 fn blob_need(state: &State) -> Option<DataKey> {
-    let (repo, file) = here(state)?;
-    let chosen = state
-        .forms
-        .get::<Form>(&form_route((repo.clone(), file.clone())));
-    let git_ref = chosen
-        .and_then(|f| f.git_ref.clone())
-        .unwrap_or_else(|| "HEAD".into());
+    let (repo, file, git_ref) = chosen(state)?;
+    let git_ref = git_ref.unwrap_or_else(|| "HEAD".into());
     Some(DataKey::Blob(repo, git_ref, workflow_path(&file)))
 }
 
@@ -317,10 +320,6 @@ fn inputs_of(state: &State) -> Result<Vec<Input>, String> {
     dispatch_inputs(text).ok_or_else(|| {
         "This workflow can't be run by hand: its file has no workflow_dispatch trigger".into()
     })
-}
-
-fn inputs_here(state: &State) -> Option<Vec<Input>> {
-    inputs_of(state).ok()
 }
 
 /// What the form page needs: the workflow (its name) and its file.
@@ -512,8 +511,10 @@ pub fn checks_loaded(state: &mut State, pr: &crate::api::model::PrRef) {
         return;
     };
     let list: Vec<(String, crate::api::workflows::Annotation)> = (checks.items.iter())
-        .flat_map(|c| c.annotations.iter().map(|a| (c.name.clone(), a.clone())))
-        .filter(|(_, a)| a.path.is_some())
+        .flat_map(|c| {
+            let placed = c.annotations.iter().filter(|a| a.path.is_some());
+            placed.map(|a| (c.name.clone(), a.clone()))
+        })
         .collect();
     let of = crate::diff_screen::DiffOf::Pr(pr.clone());
     if let Some(diff) = state.diffs.get_mut(&of)

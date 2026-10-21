@@ -36,13 +36,9 @@ pub fn build(state: &State, page: &mut Page, now: u64) {
         let none = "Nothing's waiting. A comment, a review, a reaction, labels or closing, written while GitHub can't be reached, waits here.";
         page.wrapped(vec![Seg::new(none, Role::Meta)], 0, Frame::Body);
     }
-    for (i, entry) in off.queue.iter().enumerate() {
-        if i > 0 {
-            page.box_rule();
-        }
+    ruled(page, &off.queue, |page, entry| {
         entry_rows(page, entry, now, true);
-    }
-    page.box_bottom();
+    });
     if !off.queue.is_empty() {
         let keys = format!(
             "On a write: {} sends a refused one again · {} copies its text · {} throws it away · ↵ opens its page",
@@ -65,13 +61,7 @@ pub fn build(state: &State, page: &mut Page, now: u64) {
         );
         page.wrapped(vec![Seg::new(none, Role::Meta)], 0, Frame::Body);
     }
-    for (i, kept) in off.kept.iter().enumerate() {
-        if i > 0 {
-            page.box_rule();
-        }
-        kept_rows(page, kept, now);
-    }
-    page.box_bottom();
+    ruled(page, &off.kept, |page, kept| kept_rows(page, kept, now));
     let cache = off
         .cache
         .map(|c| format!(" The cache takes {} now.", crate::ui::text::size(c)))
@@ -106,11 +96,18 @@ pub fn queued_here(state: &State, route: &Route, page: &mut Page, now: u64) {
         )],
         vec![Seg::new(right, Role::Meta)],
     );
-    for (i, entry) in here.into_iter().enumerate() {
+    ruled(page, here, |page, entry| {
+        entry_rows(page, entry, now, false);
+    });
+}
+
+/// Each of `items`' rows in the box, ruled apart, and the box's bottom.
+fn ruled<T>(page: &mut Page, items: impl IntoIterator<Item = T>, rows: impl Fn(&mut Page, T)) {
+    for (i, item) in items.into_iter().enumerate() {
         if i > 0 {
             page.box_rule();
         }
-        entry_rows(page, entry, now, false);
+        rows(page, item);
     }
     page.box_bottom();
 }

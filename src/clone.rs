@@ -93,8 +93,8 @@ fn checkout(state: &mut State) -> Cmds {
     if let Some(None) = state.clone_of(&pr.repo) {
         return state.just_say(format!("ghtui isn't running in a clone of {}", pr.repo));
     }
-    match state.pr(&pr) {
-        Some(d) => start_checkout(state, pr.clone(), &d.clone()),
+    match state.pr(&pr).map(|d| branch(&pr, d)) {
+        Some(branch) => start_checkout(state, pr, branch),
         None => crate::act::wait(state, Action::Checkout, Subject::Pr(pr), loaded),
     }
 }
@@ -104,30 +104,16 @@ fn loaded(state: &mut State, about: Subject, _: Action) -> Cmds {
     let Subject::Pr(pr) = about else {
         return Cmds::new();
     };
-    if let Some(d) = state.pr(&pr) {
-        let d = d.clone();
-        return start_checkout(state, pr, &d);
+    if let Some(branch) = state.pr(&pr).map(|d| branch(&pr, d)) {
+        return start_checkout(state, pr, branch);
     }
     let err = state.pr_remote(&pr).and_then(|r| r.error.clone());
     state.error(format!("Couldn't load {pr}: {}", err.unwrap_or_default()));
     Cmds::new()
 }
 
-/// Checks out `pr`: on its own branch's name when it's from this
-/// repository (tracking it), else `owner/branch` (a fork's).
-fn start_checkout(state: &mut State, pr: PrRef, d: &PrDetail) -> Cmds {
-    let same =
-        (d.head_repo.as_deref()).is_some_and(|r| r.eq_ignore_ascii_case(&pr.repo.to_string()));
-    let fork = d
-        .head_repo
-        .as_deref()
-        .and_then(|r| r.split_once('/'))
-        .map(|(o, _)| o);
-    let (name, track) = match fork {
-        _ if same => (d.head_ref.clone(), Some(d.head_ref.clone())),
-        Some(owner) => (format!("{owner}/{}", d.head_ref), None),
-        None => (format!("pr-{}", pr.number), None),
-    };
+/// Checks out `pr` on `branch` (and what it tracks).
+fn start_checkout(state: &mut State, pr: PrRef, (name, track): (String, Option<String>)) -> Cmds {
     state.info(format!("Checking out {pr} on {name}…"));
     work::start(Checkout {
         repo: pr.repo,
@@ -135,6 +121,24 @@ fn start_checkout(state: &mut State, pr: PrRef, d: &PrDetail) -> Cmds {
         name,
         track,
     })
+}
+
+/// The branch `pr` (as `d` has it) is checked out on: its own branch's
+/// name when it's from this repository (tracking it), else
+/// `owner/branch` (a fork's).
+fn branch(pr: &PrRef, d: &PrDetail) -> (String, Option<String>) {
+    let same =
+        (d.head_repo.as_deref()).is_some_and(|r| r.eq_ignore_ascii_case(&pr.repo.to_string()));
+    let fork = d
+        .head_repo
+        .as_deref()
+        .and_then(|r| r.split_once('/'))
+        .map(|(o, _)| o);
+    match fork {
+        _ if same => (d.head_ref.clone(), Some(d.head_ref.clone())),
+        Some(owner) => (format!("{owner}/{}", d.head_ref), None),
+        None => (format!("pr-{}", pr.number), None),
+    }
 }
 
 /// The menu's row for checking out the pull request here, if there is one.

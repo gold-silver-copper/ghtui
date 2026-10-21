@@ -107,10 +107,7 @@ impl Job for Delete {
         if let Err(why) = result {
             return crate::forms::say(state, format!("GitHub didn't delete {}: {why}", of.name));
         }
-        let route = Route::Releases(releases::Release {
-            repo: of.repo.clone(),
-            tag: of.tag.clone(),
-        });
+        let route = super::page(of.repo.clone(), of.tag.clone());
         crate::forms::close_sender(state, &route);
         state.info(format!("Deleted {}", of.name));
         follow(state, of, false)
@@ -263,7 +260,6 @@ pub fn upload_rows(state: &State, of: &Of, q: &str) -> crate::picker::Rows {
     rows
 }
 
-/// Choosing a row: saving, or uploading.
 /// `,D` on an asset: asks first, as GitHub does.
 pub fn ask_delete(state: &mut State, name: &str) -> Cmds {
     let Some((repo, tag, r)) = super::shown(state) else {
@@ -286,7 +282,7 @@ pub fn ask_delete(state: &mut State, name: &str) -> Cmds {
     )];
     crate::forms::ask(
         state,
-        Route::Releases(releases::Release { repo, tag }),
+        super::page(repo, tag),
         format!("Delete {name}?"),
         facts,
         vec![("Delete asset".into(), Answer::DeleteAsset(name.to_owned()))],
@@ -305,10 +301,7 @@ pub fn delete(state: &mut State, name: &str) -> Cmds {
 /// The release's page, if it's on screen, follows GitHub until it shows
 /// the asset there (or gone).
 fn follow(state: &mut State, of: Of, there: bool) -> Cmds {
-    let route = Route::Releases(releases::Release {
-        repo: of.repo.clone(),
-        tag: of.tag.clone(),
-    });
+    let route = super::page(of.repo.clone(), of.tag.clone());
     if state.route() != Some(&route) {
         return Cmds::new();
     }

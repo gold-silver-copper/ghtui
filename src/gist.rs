@@ -237,14 +237,12 @@ fn compose(state: &mut State, i: usize) -> Cmds {
 
 /// The gist's description, as written.
 pub fn description(state: &State, route: &Route) -> Option<String> {
-    let form = state.forms.get::<Form>(route)?;
-    Some(form.description.clone())
+    Some(state.forms.get::<Form>(route)?.description.clone())
 }
 
 /// File `i`'s name, as written.
 pub fn file_name(state: &State, route: &Route, i: usize) -> Option<String> {
-    let form = state.forms.get::<Form>(route)?;
-    Some(form.files.get(i)?.name.clone())
+    Some(state.forms.get::<Form>(route)?.files.get(i)?.name.clone())
 }
 
 /// What a gist's form does.
@@ -359,13 +357,20 @@ fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Cmds {
     Cmds::new()
 }
 
-/// The files to send: each named (GitHub's way, for a file without a
-/// name: `gistfile1.txt`), or why they can't be sent.
+/// The files to send, each named, or why they can't be sent.
 fn named(form: &Form) -> Result<Vec<(String, String)>, String> {
+    let texts = form.files.iter().map(|f| f.text.clone());
+    Ok(names(form)?.into_iter().zip(texts).collect())
+}
+
+/// Each file's name (GitHub's way, for a file without one:
+/// `gistfile1.txt`), or why they can't be sent: the page asks each
+/// frame, so no text is copied.
+fn names(form: &Form) -> Result<Vec<String>, String> {
     if form.files.iter().all(|f| f.text.trim().is_empty()) {
         return Err("A gist needs a file with something in it".into());
     }
-    let mut files: Vec<(String, String)> = Vec::new();
+    let mut names: Vec<String> = Vec::new();
     for (i, f) in form.files.iter().enumerate() {
         let name = match f.name.trim() {
             "" => format!("gistfile{}.txt", i + 1),
@@ -379,12 +384,12 @@ fn named(form: &Form) -> Result<Vec<(String, String)>, String> {
         if let Some(why) = name_problem(form, Some(i), &name) {
             return Err(why);
         }
-        if files.iter().any(|(n, _)| n.eq_ignore_ascii_case(&name)) {
+        if names.iter().any(|n| n.eq_ignore_ascii_case(&name)) {
             return Err(format!("Two files are named {name}"));
         }
-        files.push((name, f.text.clone()));
+        names.push(name);
     }
-    Ok(files)
+    Ok(names)
 }
 
 /// The change an edit makes: only the files that changed.
@@ -423,9 +428,7 @@ fn submit(state: &mut State) -> Cmds {
     };
     let files = match named(&form) {
         Ok(files) => files,
-        Err(why) => {
-            return say(state, why);
-        }
+        Err(why) => return say(state, why),
     };
     if let Route::Gists(gists::EditGist { .. }) = route {
         let Some((id, _)) = form.gist.clone() else {
@@ -464,9 +467,7 @@ pub fn create(state: &mut State, route: &Route, public: bool) -> Cmds {
     };
     let files = match named(form) {
         Ok(files) => files,
-        Err(why) => {
-            return say(state, why);
-        }
+        Err(why) => return say(state, why),
     };
     let new = NewGist {
         description: form.description.clone(),
@@ -573,15 +574,6 @@ impl Expectation for Expected {
     }
 }
 
-/// What a gist shows once GitHub has it as sent.
-fn expected(id: String, description: String, files: Vec<(String, String)>) -> Expected {
-    Expected::Gist {
-        id,
-        description,
-        files,
-    }
-}
-
 /// The gist's page follows GitHub until it shows it.
 impl Job for Create {
     type Out = MadeGist;
@@ -602,16 +594,16 @@ impl Job for Create {
         if state.route() != Some(&route) {
             return Cmds::new();
         }
-        let files = named(&form).unwrap_or_default();
         let page = Route::Gists(gists::Gist {
             owner,
             id: made.id.clone(),
         });
-        crate::follow::expect(
-            state,
-            page.clone(),
-            expected(made.id, form.description, files),
-        );
+        let shown = Expected::Gist {
+            id: made.id,
+            files: named(&form).unwrap_or_default(),
+            description: form.description,
+        };
+        crate::follow::expect(state, page.clone(), shown);
         state.replace(page, true, None)
     }
 }
@@ -641,12 +633,12 @@ impl Job for Update {
             owner: Some(owner.clone()),
             id: id.clone(),
         });
-        let files = named(&form).unwrap_or_default();
-        crate::follow::expect(
-            state,
-            page.clone(),
-            expected(change.id, change.description, files),
-        );
+        let shown = Expected::Gist {
+            id: change.id,
+            description: change.description,
+            files: named(&form).unwrap_or_default(),
+        };
+        crate::follow::expect(state, page.clone(), shown);
         back_to(state, page)
     }
 }
@@ -705,7 +697,7 @@ fn offers(state: &State, out: &mut Vec<Doable>) {
             _ => ("Save the gist", "save"),
         };
         let write = Some("Write the selected file");
-        crate::forms::offer(state, write, save, named(&form).err(), out);
+        crate::forms::offer(state, write, save, names(&form).err(), out);
     }
 }
 
@@ -827,7 +819,7 @@ pub fn build(state: &State, page: &mut Page, route: &Route) {
             "Create gist…".into()
         },
         save_key: &save_key,
-        why_not: named(&form).err(),
+        why_not: names(&form).err(),
         error: state.forms.sent(route).error.as_deref(),
     };
     crate::ui::pages::write_form(page, &view);

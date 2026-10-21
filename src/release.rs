@@ -463,6 +463,11 @@ fn tag_problem(tag: &str) -> Option<&'static str> {
     }
 }
 
+/// A release's page.
+pub(crate) fn page(repo: RepoId, tag: String) -> Route {
+    Route::Releases(releases::Release { repo, tag })
+}
+
 /// The repository a form's page is of.
 fn form_repo(route: &Route) -> Option<&RepoId> {
     match route {
@@ -727,7 +732,7 @@ pub fn ask_delete(state: &mut State) -> Cmds {
         false,
     ));
     let title = format!("Delete the release {}?", r.name);
-    let route = Route::Releases(releases::Release { repo, tag });
+    let route = page(repo, tag);
     let choices = vec![("Delete release".into(), Answer::DeleteRelease)];
     crate::forms::ask(state, route, title, facts, choices)
 }
@@ -817,10 +822,7 @@ impl Job for DeleteTag {
 
     fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
         let DeleteTag { repo, tag } = self;
-        let route = Route::Releases(releases::Release {
-            repo: repo.clone(),
-            tag: tag.clone(),
-        });
+        let route = page(repo.clone(), tag.clone());
         match result {
             Ok(()) => {
                 crate::forms::close_sender(state, &route);
@@ -881,7 +883,7 @@ impl Job for Save {
                     } else {
                         format!("Published {tag}")
                     };
-                    (Route::Releases(releases::Release { repo, tag }), what, said)
+                    (page(repo, tag), what, said)
                 };
                 state.info(said);
                 if state.route() != Some(route) {
@@ -912,10 +914,7 @@ impl Job for Delete {
     /// deleting its tag too is asked, apart.
     fn done(self, state: &mut State, result: Result<bool, Failure>) -> Cmds {
         let Delete { repo, tag, .. } = &self;
-        let route = Route::Releases(releases::Release {
-            repo: repo.clone(),
-            tag: tag.to_owned(),
-        });
+        let route = page(repo.clone(), tag.clone());
         let tagged = match result {
             Ok(tagged) => tagged,
             Err(why) => {

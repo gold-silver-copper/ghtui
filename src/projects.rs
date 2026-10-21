@@ -455,19 +455,17 @@ pub fn act(state: &mut State, action: Action) -> Cmds {
             };
             state.compose(compose::Target::ProjectDraft(drafting), &text)
         }
-        (Action::MoveItem, Some(item)) => {
-            let at = At {
-                on: On::View(project, view),
-                item,
-            };
-            state.open_picker(Kind::Project(Pick::Column(at)))
-        }
         (_, Some(item)) => {
             let at = At {
                 on: On::View(project, view),
                 item,
             };
-            state.open_picker(Kind::Project(Pick::Field(at)))
+            let pick = if action == Action::MoveItem {
+                Pick::Column(at)
+            } else {
+                Pick::Field(at)
+            };
+            state.open_picker(Kind::Project(pick))
         }
         (_, None) => Cmds::new(),
     }
@@ -661,12 +659,7 @@ fn adding(state: &State, project: &ProjectRef, view: Option<u64>, q: &str) -> Ro
         _ => None,
     });
     if let Some((repo, number)) = named {
-        let here = p.loaded().find(|it| match &it.content {
-            ItemContent::Issue(l, _) | ItemContent::Pr(l, _) => {
-                l.repo == repo && l.number == number
-            }
-            _ => false,
-        });
+        let here = p.loaded().find(|it| is_item(it, &repo, number));
         let label = format!("Add {repo}#{number}");
         match here {
             Some(it) if it.archived => {
@@ -702,6 +695,12 @@ fn adding(state: &State, project: &ProjectRef, view: Option<u64>, q: &str) -> Ro
     rows
 }
 
+/// Whether project item `it` is issue or pull request `number` of `repo`.
+fn is_item(it: &ProjectItem, repo: &crate::api::model::RepoId, number: u64) -> bool {
+    matches!(&it.content, ItemContent::Issue(l, _) | ItemContent::Pr(l, _)
+        if l.repo == *repo && l.number == number)
+}
+
 /// The row a typed value makes: setting it, or why it can't be.
 fn typed(
     field: &ProjectField,
@@ -710,11 +709,7 @@ fn typed(
 ) -> (PaletteItem, Option<Choice>) {
     let row = |label: String, chosen: Option<Choice>| {
         let hint = if chosen.is_some() { "↵" } else { "" };
-        let item = PaletteItem {
-            label,
-            hint: hint.to_owned(),
-        };
-        (item, chosen)
+        entry(label, hint, chosen)
     };
     let value = match &field.kind {
         _ if q.is_empty() => return row(format!("Type the {}", field.name), None),
@@ -773,13 +768,7 @@ pub fn shows(state: &State, change: &Change, project: &ProjectRef, view: Option<
             }
         }
         Change::Project(ProjectChange::Add { repo, number, .. }) => {
-            unseen
-                || p.loaded().any(|it| match &it.content {
-                    ItemContent::Issue(l, _) | ItemContent::Pr(l, _) => {
-                        l.repo == *repo && l.number == *number
-                    }
-                    _ => false,
-                })
+            unseen || p.loaded().any(|it| is_item(it, repo, *number))
         }
         Change::Project(ProjectChange::AddDraft { title, .. }) => {
             unseen

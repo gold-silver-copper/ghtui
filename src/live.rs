@@ -136,15 +136,16 @@ pub enum Probe {
 impl Probe {
     /// Where it's asked.
     pub fn path(&self, pr: &PrRef) -> String {
-        let repo = format!("/repos/{}/{}", pr.repo.owner, pr.repo.name);
-        let n = pr.number;
+        let (repo, n) = (&pr.repo, pr.number);
         match self {
-            Probe::Pull => format!("{repo}/pulls/{n}"),
+            Probe::Pull => format!("/repos/{repo}/pulls/{n}"),
             Probe::ReviewComments => {
-                format!("{repo}/pulls/{n}/comments?sort=updated&direction=desc&per_page=1")
+                format!("/repos/{repo}/pulls/{n}/comments?sort=updated&direction=desc&per_page=1")
             }
-            Probe::CheckRuns(head) => format!("{repo}/commits/{head}/check-runs?per_page=100"),
-            Probe::Statuses(head) => format!("{repo}/commits/{head}/status"),
+            Probe::CheckRuns(head) => {
+                format!("/repos/{repo}/commits/{head}/check-runs?per_page=100")
+            }
+            Probe::Statuses(head) => format!("/repos/{repo}/commits/{head}/status"),
         }
     }
 }
@@ -447,8 +448,7 @@ fn say_pushed(state: &mut State, pr: &PrRef, head: &str) {
 /// Whether GitHub has shown a head for the watched pull request other
 /// than the one its diff shows: a push since the diff was made.
 pub fn pushed_past(state: &State, pr: &PrRef, shown: Option<&str>) -> bool {
-    let known = state.watch.as_ref().filter(|w| w.pr == *pr);
-    let head = known.and_then(|w| w.head.as_deref());
+    let head = fresh(state, pr).and_then(|w| w.head.as_deref());
     matches!((head, shown), (Some(head), Some(shown)) if head != shown)
 }
 
