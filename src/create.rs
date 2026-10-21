@@ -166,10 +166,12 @@ fn form_repo(route: &Route) -> Option<&RepoId> {
     }
 }
 
-/// The form on screen (blank until it's started), and its page.
-fn here(state: &State) -> Option<(Route, Cow<'_, Form>)> {
-    let route = state.route().filter(|r| form_repo(r).is_some())?;
-    Some((route.clone(), state.forms.shown(route)))
+/// The form on screen (blank until it's started), its page and its
+/// repository.
+fn here(state: &State) -> Option<(Route, RepoId, Cow<'_, Form>)> {
+    let route = state.route()?;
+    let repo = form_repo(route)?.clone();
+    Some((route.clone(), repo, state.forms.shown(route)))
 }
 
 /// The form on screen, started if it wasn't (its page was opened by a
@@ -192,21 +194,17 @@ fn form_data<'a>(
 
 /// Why `repo` takes no new issue (or pull request), from what's known.
 fn refused(state: &State, repo: &RepoId, pr: bool) -> Option<String> {
-    if state.overview(repo).is_some_and(|o| o.summary.archived)
-        || form_data(&state.data, repo).is_some_and(|d| d.archived)
-    {
+    let (o, d) = (state.overview(repo), form_data(&state.data, repo));
+    if o.is_some_and(|o| o.summary.archived) || d.is_some_and(|d| d.archived) {
         return Some(format!("{repo} is archived: it takes nothing new"));
     }
     if pr {
         return None;
     }
-    let off = state.overview(repo).is_some_and(|o| !o.has_issues)
-        || form_data(&state.data, repo).is_some_and(|d| !d.has_issues);
-    if off {
+    if o.is_some_and(|o| !o.has_issues) || d.is_some_and(|d| !d.has_issues) {
         return Some(format!("{repo} has issues turned off"));
     }
-    form_data(&state.data, repo)
-        .filter(|d| !d.can_create_issues)
+    d.filter(|d| !d.can_create_issues)
         .map(|_| format!("GitHub doesn't let you open issues in {repo}"))
 }
 
@@ -270,19 +268,14 @@ pub const FORM: crate::forms::Kind = crate::forms::Kind {
 /// Brings the form on screen up to date with what's arrived: starts it,
 /// fills in what's known, asks for what's missing.
 fn follow(state: &mut State) -> Cmds {
-    let mut cmds = Cmds::new();
-    let Some(route) = state.route().filter(|r| form_repo(r).is_some()).cloned() else {
-        return cmds;
-    };
-    let Some(repo) = form_repo(&route).cloned() else {
-        return cmds;
+    let Some((route, repo, _)) = here(state) else {
+        return Cmds::new();
     };
     if let Route::Pulls(pulls::NewPr(_)) = route {
-        cmds.extend(follow_pr(state, &route, &repo));
-        return cmds;
+        return follow_pr(state, &route, &repo);
     }
     let Some(d) = form_data(&state.data, &repo) else {
-        return cmds;
+        return Cmds::new();
     };
     if (state.forms.get::<Form>(&route)).is_none_or(|f| f.chooser.is_none()) {
         let chooser = templates::chooser(&d.issue_templates);
@@ -300,14 +293,14 @@ fn follow(state: &mut State) -> Cmds {
         && state.overlay.is_none()
         && refused(state, &repo, false).is_none()
     {
-        cmds.extend(compose(state));
+        return compose(state);
     }
-    cmds
+    Cmds::new()
 }
 
 /// The composer, on the form on screen: `c`, or Enter on its text box.
 fn compose(state: &mut State) -> Cmds {
-    let Some((route, form)) = here(state) else {
+    let Some((route, _, form)) = here(state) else {
         return Cmds::new();
     };
     if matches!(route, Route::Issues(issues::NewIssue(_))) && form.template.is_none() {
@@ -321,10 +314,7 @@ fn compose(state: &mut State) -> Cmds {
 /// `,s`, ctrl-s in the composer, Enter on the form's button: makes the
 /// issue; for a pull request, asks first whether it's a draft.
 fn submit(state: &mut State) -> Cmds {
-    let Some((route, form)) = here(state) else {
-        return Cmds::new();
-    };
-    let Some(repo) = form_repo(&route).cloned() else {
+    let Some((route, repo, form)) = here(state) else {
         return Cmds::new();
     };
     let (title, body) = templates::split(&form.text);
@@ -472,9 +462,7 @@ fn ask_create(state: &mut State, route: &Route) -> Cmds {
     };
     let hs = match head_problem(state, repo, form) {
         Ok(hs) => hs,
-        Err(why) => {
-            return say(state, why);
-        }
+        Err(why) => return say(state, why),
     };
     let (base, head) = (
         form.base.clone().unwrap_or_default(),
@@ -508,16 +496,13 @@ fn ask_create(state: &mut State, route: &Route) -> Cmds {
 
 /// Asks before pushing the form's head branch from this clone.
 fn ask_push(state: &mut State) -> Cmds {
-    let Some((route, form)) =
-        here(state).filter(|(r, _)| matches!(r, Route::Pulls(pulls::NewPr(_))))
+    let Some((route, repo, form)) =
+        here(state).filter(|(r, ..)| matches!(r, Route::Pulls(pulls::NewPr(_))))
     else {
         let new_pr = state.first_key(Action::NewPr);
         return state.just_say(format!(
             "Pushing works on a new pull request's branch ({new_pr})"
         ));
-    };
-    let Some(repo) = form_repo(&route).cloned() else {
-        return Cmds::new();
     };
     let why = match (
         state.clone_of(&repo),
@@ -589,9 +574,7 @@ pub fn answer(state: &mut State, route: &Route, draft: Option<bool>) -> Cmds {
         Some(draft) => {
             let hs = match head_problem(state, &repo, form) {
                 Ok(hs) => hs,
-                Err(why) => {
-                    return say(state, why);
-                }
+                Err(why) => return say(state, why),
             };
             let Some(d) = form_data(&state.data, &repo) else {
                 return Cmds::new();
@@ -675,7 +658,7 @@ impl Job for Submit {
                     Route::Pulls(pulls::NewPr(_)) => {
                         (Route::pr(PrRef { repo, number }), "pull request")
                     }
-                    _ => (Route::Issues(issues::Issue { repo, number }), "issue"),
+                    _ => (Route::issue(repo, number), "issue"),
                 };
                 state.info(format!("Opened {what} #{number}"));
                 if state.route() == Some(route) {
@@ -721,10 +704,7 @@ fn on_row(state: &mut State, row: &Row) -> Cmds {
 /// Starts the issue from template `file` (empty: a blank one): its title,
 /// text, labels and assignees, unless you've written your own text.
 fn choose_template(state: &mut State, file: &str) -> Cmds {
-    let Some((route, _)) = here(state) else {
-        return Cmds::new();
-    };
-    let Some(repo) = form_repo(&route).cloned() else {
+    let Some((route, repo, _)) = here(state) else {
         return Cmds::new();
     };
     let Some(d) = form_data(&state.data, &repo) else {
@@ -792,10 +772,7 @@ pub enum Picked {
 }
 
 fn open_pick(state: &mut State, pick: Pick) -> Cmds {
-    let Some((route, _)) = here(state) else {
-        return Cmds::new();
-    };
-    let Some(repo) = form_repo(&route).cloned() else {
+    let Some((_, repo, _)) = here(state) else {
         return Cmds::new();
     };
     let what = match pick {
@@ -817,12 +794,10 @@ fn open_pick(state: &mut State, pick: Pick) -> Cmds {
 pub fn picker_rows(state: &State, pick: Pick, q: &str) -> crate::picker::Rows {
     let item = crate::picker::item;
     let note = |text: String| vec![(item(text, String::new()), None)];
-    let Some((route, form)) = here(state) else {
+    let Some((_, repo, form)) = here(state) else {
         return note("The form isn't on screen".into());
     };
-    let Some(repo) = form_repo(&route) else {
-        return Vec::new();
-    };
+    let repo = &repo;
     let fits = |s: &str| crate::picker::fuzzy_score(q, s).is_some();
     if matches!(pick, Pick::Base | Pick::Head) {
         let key = DataKey::Refs(repo.clone());
@@ -933,12 +908,10 @@ pub fn pick(state: &mut State, picked: Picked) -> Cmds {
 
 /// What the menu offers on a form: writing, pushing and making it.
 fn offers(state: &State, out: &mut Vec<Doable>) {
-    let Some((route, form)) = here(state) else {
+    let Some((route, repo, form)) = here(state) else {
         return;
     };
-    let Some(repo) = form_repo(&route) else {
-        return;
-    };
+    let repo = &repo;
     let pr = matches!(route, Route::Pulls(pulls::NewPr(_)));
     let why = (!pr && form.template.is_none()).then(|| "choose a template first".to_owned());
     let label = "Write the title and description";

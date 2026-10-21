@@ -205,6 +205,11 @@ impl Route {
         })
     }
 
+    /// An issue.
+    pub fn issue(repo: RepoId, number: u64) -> Route {
+        Route::Issues(issues::Issue { repo, number })
+    }
+
     /// A file, from the top.
     pub fn blob(repo: RepoId, rev: String, path: String) -> Route {
         Route::Code(code::Blob {
@@ -504,7 +509,7 @@ pub fn parse_input(input: &str, context: Option<&RepoId>) -> Option<Dest> {
     }
     let issue = |repo: RepoId, n: &str| {
         let number = n.trim_start_matches('#').parse().ok()?;
-        Some(Target::Page(Route::Issues(issues::Issue { repo, number })).into())
+        Some(Target::Page(Route::issue(repo, number)).into())
     };
     if let Some((repo, n)) = input.split_once('#')
         && !repo.is_empty()
@@ -872,10 +877,7 @@ pub(crate) mod tests {
             ),
             (
                 "https://github.com/o/r/issues/5".into(),
-                Route::Issues(issues::Issue {
-                    repo: repo.clone(),
-                    number: 5,
-                }),
+                Route::issue(repo.clone(), 5),
             ),
             (
                 "https://github.com/o/r/pull/7/commits".into(),
@@ -1467,18 +1469,12 @@ pub(crate) mod tests {
         );
         assert_eq!(
             target("#12", Some(&repo)),
-            Some(Target::Page(Route::Issues(issues::Issue {
-                repo: repo.clone(),
-                number: 12
-            })))
+            Some(Target::Page(Route::issue(repo.clone(), 12)))
         );
         assert_eq!(target("12", None), None);
         assert_eq!(
             target("a/b#3", None),
-            Some(Target::Page(Route::Issues(issues::Issue {
-                repo: RepoId::new("a", "b"),
-                number: 3
-            })))
+            Some(Target::Page(Route::issue(RepoId::new("a", "b"), 3)))
         );
         assert_eq!(
             target("a/b/pull/5/files", None),

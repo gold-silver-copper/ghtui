@@ -412,27 +412,18 @@ fn takes(state: &State, action: Action) -> bool {
     let Some(route) = state.route() else {
         return false;
     };
-    let lists = matches!(
+    let milestones = matches!(
         route,
-        Route::Issues(issues::Labels(_))
-            | Route::Issues(issues::Milestones { .. })
-            | Route::Issues(issues::Milestone { .. })
+        Route::Issues(issues::Milestones { .. } | issues::Milestone { .. })
     );
+    let lists = milestones || matches!(route, Route::Issues(issues::Labels(_)));
+    let blob = matches!(route, Route::Code(code::Blob { .. }));
     match action {
-        Action::EditComment => lists || matches!(route, Route::Code(code::Blob { .. })),
+        Action::EditComment => lists || blob,
         Action::DeleteComment => {
-            lists
-                || matches!(
-                    route,
-                    Route::Code(code::Blob { .. })
-                        | Route::Code(code::Branches(_))
-                        | Route::Code(code::Tags(_))
-                )
+            lists || blob || matches!(route, Route::Code(code::Branches(_) | code::Tags(_)))
         }
-        Action::Close => matches!(
-            route,
-            Route::Issues(issues::Milestones { .. }) | Route::Issues(issues::Milestone { .. })
-        ),
+        Action::Close => milestones,
         _ => false,
     }
 }
@@ -451,26 +442,13 @@ fn act(state: &mut State, action: Action) -> Cmds {
             labels::ask_delete(state, &repo)
         }
         (
-            Action::EditComment,
-            Some(
-                Route::Issues(issues::Milestones { repo, .. })
-                | Route::Issues(issues::Milestone { repo, .. }),
-            ),
-        ) => milestones::edit(state, &repo),
-        (
-            Action::DeleteComment,
-            Some(
-                Route::Issues(issues::Milestones { repo, .. })
-                | Route::Issues(issues::Milestone { repo, .. }),
-            ),
-        ) => milestones::ask_delete(state, &repo),
-        (
-            Action::Close,
-            Some(
-                Route::Issues(issues::Milestones { repo, .. })
-                | Route::Issues(issues::Milestone { repo, .. }),
-            ),
-        ) => milestones::toggle(state, &repo),
+            Action::EditComment | Action::DeleteComment | Action::Close,
+            Some(Route::Issues(issues::Milestones { repo, .. } | issues::Milestone { repo, .. })),
+        ) => match action {
+            Action::EditComment => milestones::edit(state, &repo),
+            Action::DeleteComment => milestones::ask_delete(state, &repo),
+            _ => milestones::toggle(state, &repo),
+        },
         (Action::DeleteComment, Some(Route::Code(code::Branches(repo)))) => {
             refs::ask_delete(state, &repo, RefKind::Branch)
         }
@@ -498,8 +476,9 @@ fn act(state: &mut State, action: Action) -> Cmds {
 fn new_here(state: &mut State, route: Route) -> Cmds {
     match route {
         Route::Issues(issues::Labels(repo)) => labels::open(state, &repo, None),
-        Route::Issues(issues::Milestones { repo, .. })
-        | Route::Issues(issues::Milestone { repo, .. }) => milestones::open(state, &repo, None),
+        Route::Issues(issues::Milestones { repo, .. } | issues::Milestone { repo, .. }) => {
+            milestones::open(state, &repo, None)
+        }
         Route::Code(code::Branches(repo)) => refs::start(state, &repo, RefKind::Branch),
         Route::Code(code::Tags(repo)) => refs::start(state, &repo, RefKind::Tag),
         Route::Code(code::Tree { repo, rev, path }) => {
@@ -622,15 +601,11 @@ fn page_doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
                 row_why,
             ));
         }
-        Route::Issues(issues::Milestones { .. }) | Route::Issues(issues::Milestone { .. }) => {
+        Route::Issues(issues::Milestones { .. } | issues::Milestone { .. }) => {
             milestones::doables(state, out);
         }
-        Route::Code(code::Branches(_)) | Route::Code(code::Tags(_)) => {
-            refs::doables(state, route, out);
-        }
-        Route::Code(code::Tree { .. })
-        | Route::Code(code::Blob { .. })
-        | Route::Code(code::Repo(_)) => {
+        Route::Code(code::Branches(_) | code::Tags(_)) => refs::doables(state, route, out),
+        Route::Code(code::Tree { .. } | code::Blob { .. } | code::Repo(_)) => {
             files::doables(state, route, out);
         }
         _ => {}
@@ -811,30 +786,21 @@ impl Expectation for Expected {
             }
             Expected::Ref(repo, kind, name, there) => {
                 // A list by name: one past its last row is on a later page.
-                let (names, more) = match kind {
-                    RefKind::Branch => {
-                        let Some(l) =
-                            state.picked::<Results<BranchInfo>>(&DataKey::Branches(repo.clone()))
-                        else {
-                            return Shown::No;
-                        };
-                        let names: Vec<&str> = l.items.iter().map(|b| b.name.as_str()).collect();
-                        (names, l.next.is_some())
-                    }
-                    RefKind::Tag => {
-                        let Some(l) =
-                            state.picked::<Results<TagInfo>>(&DataKey::Tags(repo.clone()))
-                        else {
-                            return Shown::No;
-                        };
-                        let names: Vec<&str> = l.items.iter().map(|t| t.name.as_str()).collect();
-                        (names, false)
-                    }
+                let found = match kind {
+                    RefKind::Branch => (state
+                        .picked::<Results<BranchInfo>>(&DataKey::Branches(repo.clone())))
+                    .map(|l| {
+                        let later = l.next.is_some()
+                            && l.items.last().is_some_and(|last| last.name < *name);
+                        (l.items.iter().any(|b| b.name == *name), later)
+                    }),
+                    RefKind::Tag => (state
+                        .picked::<Results<TagInfo>>(&DataKey::Tags(repo.clone())))
+                    .map(|l| (l.items.iter().any(|t| t.name == *name), false)),
                 };
-                let listed = names.contains(&name.as_str());
-                let later = more
-                    && *kind == RefKind::Branch
-                    && names.last().is_some_and(|last| *last < name.as_str());
+                let Some((listed, later)) = found else {
+                    return Shown::No;
+                };
                 if *there { listed || later } else { !listed }
             }
             Expected::Repo(repo) => state.overview(repo).is_some(),

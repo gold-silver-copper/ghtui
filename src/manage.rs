@@ -11,7 +11,7 @@
 //! [`Start`]), whose answer opens
 //! what it made.
 
-use crate::route::{Route, discussions, issues};
+use crate::route::{Route, discussions};
 
 use crate::api::browse::{DiscussionDetail, DiscussionsOf, IssueDetail, IssueState, PrState};
 use crate::api::change::Change;
@@ -60,6 +60,12 @@ fn here(state: &State) -> Option<Subject> {
 
 fn discussion<'a>(state: &'a State, of: &DiscussionsOf, n: u64) -> Option<&'a DiscussionDetail> {
     state.picked::<DiscussionDetail>(&DataKey::Discussion(of.clone(), n))
+}
+
+/// A discussion's comments and their replies, the answer's first.
+fn comments(d: &DiscussionDetail) -> impl Iterator<Item = &crate::api::browse::Comment> {
+    let threads = d.answer.as_deref().into_iter().chain(&d.comments);
+    threads.flat_map(|c| std::iter::once(&c.comment).chain(&c.replies))
 }
 
 const LOADING: &str = "It's still loading";
@@ -127,11 +133,7 @@ fn selected_comment(state: &State, about: &Subject) -> Result<Said, String> {
         }
         Subject::Discussion(of, n) => {
             let d = discussion(state, of, *n).ok_or(LOADING)?;
-            let comments = d.answer.as_deref().into_iter().chain(&d.comments);
-            comments
-                .flat_map(|c| std::iter::once(&c.comment).chain(c.replies.iter()))
-                .find(|c| is(c))
-                .cloned()
+            comments(d).find(|c| is(c)).cloned()
         }
         _ => None,
     };
@@ -373,8 +375,6 @@ fn issue_plan(d: &IssueDetail, action: Action, about: Subject) -> Result<Step, S
     }
 }
 
-/// Whether this module takes `action` here: its own anywhere, and
-/// checking out on an issue (a branch for it).
 /// What managing issues and pull requests adds: its own actions, and
 /// checking out a branch for the issue on screen.
 pub const FEATURE: crate::features::Feature = crate::features::Feature {
@@ -875,12 +875,7 @@ fn relation_rows(state: &State, at: &IssueAt, id: &NodeId, q: &str, sub: bool) -
             }
         })
     };
-    let there: Vec<IssueAt> = (now.iter())
-        .map(|l| IssueAt {
-            repo: l.repo.clone(),
-            number: l.number,
-        })
-        .collect();
+    let there: Vec<IssueAt> = now.iter().map(linked).collect();
     let typed = IssueAt::parse(q, &at.repo);
     let mut rows = Vec::new();
     for (l, other) in now.iter().zip(&there) {
@@ -1048,12 +1043,7 @@ fn move_sub_issue(
     let Some(d) = issue(state, &at.repo, at.number) else {
         return Cmds::new();
     };
-    let subs: Vec<IssueAt> = (d.sub_issues.iter())
-        .map(|l| IssueAt {
-            repo: l.repo.clone(),
-            number: l.number,
-        })
-        .collect();
+    let subs: Vec<IssueAt> = d.sub_issues.iter().map(linked).collect();
     let Some((selected, child)) = child.and_then(|c| Some((subs.iter().position(|s| *s == c)?, c)))
     else {
         return state.just_say("Choose one of its sub-issues (✓) to move");
@@ -1259,14 +1249,8 @@ impl Job for Transfer {
         };
         close_confirm(state);
         state.info(format!("Moved {from} to {to}"));
-        let here = Route::Issues(issues::Issue {
-            repo: from.repo,
-            number: from.number,
-        });
-        let there = Route::Issues(issues::Issue {
-            repo: to.repo,
-            number: to.number,
-        });
+        let here = Route::issue(from.repo, from.number);
+        let there = Route::issue(to.repo, to.number);
         if state.route() == Some(&here) {
             state.replace(there, true, None)
         } else {
@@ -1342,7 +1326,8 @@ pub fn polls_activity(change: &Change) -> bool {
     )
 }
 
-fn at(l: &crate::api::timeline::Linked) -> IssueAt {
+/// The issue a link names.
+fn linked(l: &crate::api::timeline::Linked) -> IssueAt {
     IssueAt {
         repo: l.repo.clone(),
         number: l.number,
@@ -1363,11 +1348,8 @@ pub fn shows(state: &State, m: &Manage, about: &Subject) -> bool {
                 Manage::ChangeBase { base, .. } => d.base_ref == *base,
                 Manage::Lock { .. } => d.locked.is_some(),
                 Manage::Unlock { .. } => d.locked.is_none(),
-                Manage::Hide { comment, .. } | Manage::Unhide { comment } => {
-                    let hide = matches!(m, Manage::Hide { .. });
-                    state
-                        .activity(r)
-                        .is_none_or(|a| hidden(a.comments(), comment).is_none_or(|h| h == hide))
+                Manage::Hide { .. } | Manage::Unhide { .. } => {
+                    state.activity(r).is_none_or(|a| hides(a.comments(), m))
                 }
                 _ => true,
             }
@@ -1377,17 +1359,14 @@ pub fn shows(state: &State, m: &Manage, about: &Subject) -> bool {
                 return false;
             };
             let has = |list: &Capped<crate::api::timeline::Linked>, other: &IssueAt| {
-                list.iter().any(|l| at(l) == *other)
+                list.iter().any(|l| linked(l) == *other)
             };
-            let place = |other: &IssueAt| d.sub_issues.iter().position(|l| at(l) == *other);
+            let place = |other: &IssueAt| d.sub_issues.iter().position(|l| linked(l) == *other);
             match m {
                 Manage::Lock { .. } => d.locked.is_some(),
                 Manage::Unlock { .. } => d.locked.is_none(),
                 Manage::Pin { on, .. } => d.pinned == *on,
-                Manage::Hide { comment, .. } | Manage::Unhide { comment } => {
-                    let hide = matches!(m, Manage::Hide { .. });
-                    hidden(d.comments(), comment).is_none_or(|h| h == hide)
-                }
+                Manage::Hide { .. } | Manage::Unhide { .. } => hides(d.comments(), m),
                 Manage::CloseAsDuplicate { .. } => d.state != IssueState::Open,
                 // Past those loaded, it can't be seen: don't wait.
                 Manage::SubIssue { child, add, .. } => {
@@ -1420,13 +1399,7 @@ pub fn shows(state: &State, m: &Manage, about: &Subject) -> bool {
                 Manage::Unlock { .. } => d.locked.is_none(),
                 Manage::CloseDiscussion { .. } => d.closed.is_some(),
                 Manage::ReopenDiscussion { .. } => d.closed.is_none(),
-                Manage::Hide { comment, .. } | Manage::Unhide { comment } => {
-                    let hide = matches!(m, Manage::Hide { .. });
-                    let comments = d.answer.as_deref().into_iter().chain(&d.comments);
-                    let all =
-                        comments.flat_map(|c| std::iter::once(&c.comment).chain(c.replies.iter()));
-                    hidden(all, comment).is_none_or(|h| h == hide)
-                }
+                Manage::Hide { .. } | Manage::Unhide { .. } => hides(comments(d), m),
                 _ => true,
             }
         }
@@ -1434,33 +1407,34 @@ pub fn shows(state: &State, m: &Manage, about: &Subject) -> bool {
     }
 }
 
-/// Whether the comment `id` among `comments` is hidden; `None` if it
-/// isn't among them.
-fn hidden<'a>(
+/// Whether `comments` show the comment `m` hides or unhides as it says
+/// (or don't have it).
+fn hides<'a>(
     mut comments: impl Iterator<Item = &'a crate::api::browse::Comment>,
-    id: &NodeId,
-) -> Option<bool> {
+    m: &Manage,
+) -> bool {
+    let (Manage::Hide { comment: id, .. } | Manage::Unhide { comment: id }) = m else {
+        return true;
+    };
+    let hide = matches!(m, Manage::Hide { .. });
     comments
         .find(|c| c.editable.as_ref().is_some_and(|e| e.id == *id))
-        .map(|c| c.hiding.reason.is_some())
+        .is_none_or(|c| c.hiding.reason.is_some() == hide)
 }
 
 /// `,x` on a discussion: close it with one of GitHub's reasons, or reopen
-/// it; `Ok(None)` until it's loaded.
-#[allow(clippy::type_complexity, reason = "act's own plan, in its parts")]
-pub fn discussion_close(
+/// it, once it's loaded.
+pub(crate) fn discussion_close(
     state: &State,
     of: &DiscussionsOf,
     number: u64,
-) -> Result<Option<(String, Vec<(String, bool)>, Vec<(String, Change)>)>, String> {
+) -> Result<crate::act::Plan, String> {
     let Some(d) = discussion(state, of, number) else {
-        return Ok(None);
+        return Ok(crate::act::Plan::Load);
     };
     let id = d.id.clone();
     match d.closed {
-        None if !d.can_close => {
-            Err("GitHub doesn't let you close it: that takes its author or triage access".into())
-        }
+        None if !d.can_close => Err(crate::act::CANT_CLOSE.into()),
         None => {
             let choices = (DiscussionReason::ALL.into_iter())
                 .map(|reason| {
@@ -1471,16 +1445,18 @@ pub fn discussion_close(
                     (format!("Close as {}", reason.said()), change)
                 })
                 .collect();
-            Ok(Some((format!("Close “{}”?", d.title), Vec::new(), choices)))
+            let title = format!("Close “{}”?", d.title);
+            Ok(crate::act::Plan::Ask(title, Vec::new(), choices))
         }
-        Some(_) if !d.can_reopen => Err("GitHub doesn't let you reopen it".into()),
+        Some(_) if !d.can_reopen => Err(crate::act::CANT_REOPEN.into()),
         Some(_) => {
             let reopen = Change::Manage(Manage::ReopenDiscussion { discussion: id });
-            Ok(Some((
-                format!("Reopen “{}”?", d.title),
+            let title = format!("Reopen “{}”?", d.title);
+            Ok(crate::act::Plan::Ask(
+                title,
                 Vec::new(),
                 vec![("Reopen".into(), reopen)],
-            )))
+            ))
         }
     }
 }

@@ -1049,10 +1049,7 @@ pub fn submit(state: &mut State, form: &Form, text: &str) -> Cmds {
 /// After GitHub took a change: a webhook deleted from its own page goes
 /// back to the list.
 pub fn after(state: &mut State, change: &Change) -> Cmds {
-    let Change::Settings(c) = change else {
-        return Cmds::new();
-    };
-    let SettingsChange::DeleteHook { repo, id, .. } = c else {
+    let Change::Settings(SettingsChange::DeleteHook { repo, id, .. }) = change else {
         return Cmds::new();
     };
     let on_it = Route::Settings(settings::Page {

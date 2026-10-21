@@ -78,15 +78,14 @@ pub(super) fn follow(state: &mut State, route: &Route, repo: &RepoId, number: Op
     if form(state, route).started {
         return Cmds::new();
     }
-    let info = match number {
-        Some(n) => {
-            let key = DataKey::Milestone(repo.clone(), n);
-            let Some(d) = state.picked::<MilestoneDetail>(&key) else {
-                return Cmds::new();
-            };
-            Some(d.info.clone())
-        }
-        None => None,
+    let find = |n| {
+        let key = DataKey::Milestone(repo.clone(), n);
+        Some(state.picked::<MilestoneDetail>(&key)?.info.clone())
+    };
+    // An edited milestone's form waits for it.
+    let info = match number.map(find) {
+        Some(None) => return Cmds::new(),
+        info => info.flatten(),
     };
     let f = form_mut(state, route);
     f.started = true;
@@ -151,9 +150,7 @@ pub(super) fn submit(state: &mut State, route: &Route, repo: &RepoId, number: Op
     }
     let change = match change(&form(state, route)) {
         Ok(c) => c,
-        Err(why) => {
-            return crate::forms::say(state, why);
-        }
+        Err(why) => return crate::forms::say(state, why),
     };
     crate::forms::form_sending(state, route);
     state.info(format!("Saving the milestone {}…", change.title));
@@ -241,12 +238,11 @@ impl Job for Save {
     /// GitHub's answer: back on the list or the milestone's page, which
     /// follows GitHub until it shows the change.
     fn done(self, state: &mut State, result: Result<Option<u64>, Failure>) -> Cmds {
-        let work = self;
         let Save {
             repo,
             number,
             write,
-        } = work;
+        } = self;
         let form = Route::Housekeeping(FormOf::Milestone {
             repo: repo.clone(),
             number,

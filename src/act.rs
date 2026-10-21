@@ -42,6 +42,12 @@ pub const ACTIONS: [Action; 10] = [
     Action::Close,
 ];
 
+/// Why an issue, a pull request or a discussion can't be closed, or
+/// reopened, when GitHub says so.
+pub(crate) const CANT_CLOSE: &str =
+    "GitHub doesn't let you close it: that takes its author or triage access";
+pub(crate) const CANT_REOPEN: &str = "GitHub doesn't let you reopen it";
+
 /// A question before an action's change ([`Ask`]): what it is, what's
 /// worth knowing first, and the ways to make it.
 pub fn confirm(
@@ -294,10 +300,7 @@ impl Subject {
     fn route(&self) -> Route {
         match self {
             Subject::Pr(pr) => Route::pr(pr.clone()),
-            Subject::Issue(repo, number) => Route::Issues(issues::Issue {
-                repo: repo.clone(),
-                number: *number,
-            }),
+            Subject::Issue(repo, number) => Route::issue(repo.clone(), *number),
             Subject::Run(repo, run, attempt) => Route::Runs(runs::WorkflowRun {
                 repo: repo.clone(),
                 run: *run,
@@ -391,16 +394,30 @@ impl Subject {
 /// request, its files, an issue, a run, a job), or on a list, the
 /// selected row's (in the inbox, its thread is what's marked read).
 pub(crate) fn subject(state: &State, action: Action) -> Option<Subject> {
-    if matches!(action, Action::MarkRead | Action::MarkDone) {
-        return thread(state);
-    }
-    if matches!(action, Action::MarkAllRead | Action::MarkAllDone) {
-        let query = state.route().and_then(|r| match r {
-            Route::Search(search::Notifications { query }) => Some(query.clone()),
+    subject_or(state, action, || here(state))
+}
+
+/// [`subject`], with what's on screen or its row (`here`) asked only for
+/// the actions it's for.
+fn subject_or(
+    state: &State,
+    action: Action,
+    here: impl FnOnce() -> Option<Subject>,
+) -> Option<Subject> {
+    match action {
+        Action::MarkRead | Action::MarkDone => thread(state),
+        Action::MarkAllRead | Action::MarkAllDone => match state.route()? {
+            Route::Search(search::Notifications { query }) => Some(Subject::Inbox {
+                query: query.clone(),
+            }),
             _ => None,
-        });
-        return query.map(|query| Subject::Inbox { query });
+        },
+        _ => here(),
     }
+}
+
+/// The page's own subject, or the selected row's.
+fn here(state: &State) -> Option<Subject> {
     Subject::on_screen(state).or_else(|| {
         let Screen::Page(p) = state.screen() else {
             return None;
@@ -501,49 +518,37 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
             let crate::data::Data::Issue(Some(issue)) = data else {
                 return Err(elsewhere(action).to_owned());
             };
-            let issue_id = issue.id.clone();
+            let id = || issue.id.clone();
+            let close = |reason| Change::CloseIssue {
+                issue: id(),
+                reason,
+            };
             Ok(match issue.state {
-                IssueState::Open if !issue.can_close => {
-                    return Err(
-                        "GitHub doesn't let you close it: that takes its author or triage access"
-                            .into(),
-                    );
-                }
+                IssueState::Open if !issue.can_close => return Err(CANT_CLOSE.into()),
                 IssueState::Open => Plan::Ask(
                     format!("Close {name}?"),
                     Vec::new(),
                     vec![
-                        (
-                            "Close as completed".into(),
-                            Change::CloseIssue {
-                                issue: issue_id.clone(),
-                                reason: CloseReason::Completed,
-                            },
-                        ),
+                        ("Close as completed".into(), close(CloseReason::Completed)),
                         (
                             "Close as not planned".into(),
-                            Change::CloseIssue {
-                                issue: issue_id.clone(),
-                                reason: CloseReason::NotPlanned,
-                            },
+                            close(CloseReason::NotPlanned),
                         ),
                         // Which one it duplicates is chosen next.
                         (
                             "Duplicate…".into(),
                             Change::Manage(crate::api::manage::Manage::CloseAsDuplicate {
-                                issue: issue_id,
+                                issue: id(),
                                 of: None,
                             }),
                         ),
                     ],
                 ),
-                _ if !issue.can_reopen => {
-                    return Err("GitHub doesn't let you reopen it".into());
-                }
+                _ if !issue.can_reopen => return Err(CANT_REOPEN.into()),
                 IssueState::Closed | IssueState::NotPlanned => Plan::Ask(
                     format!("Reopen {name}?"),
                     Vec::new(),
-                    vec![("Reopen".into(), Change::ReopenIssue { issue: issue_id })],
+                    vec![("Reopen".into(), Change::ReopenIssue { issue: id() })],
                 ),
             })
         }
@@ -610,10 +615,7 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         Subject::Alert(a) => crate::security::plan(state, a),
         Subject::Discussion(of, number) => {
             loaded(state.remote(&subject.need()), &name)?;
-            match crate::manage::discussion_close(state, of, *number)? {
-                Some((title, facts, choices)) => Ok(Plan::Ask(title, facts, choices)),
-                None => Ok(Plan::Load),
-            }
+            crate::manage::discussion_close(state, of, *number)
         }
         Subject::Project(..) | Subject::Settings(..) => Err(elsewhere(action).to_owned()),
     }
@@ -643,18 +645,11 @@ fn pr_plan(state: &State, pr: &PrRef, d: &PrDetail, action: Action) -> Result<Pl
                 PrState::Merged => {
                     return Err("It's merged: a merged pull request can't be reopened".into());
                 }
-                PrState::Open | PrState::Draft if !d.may.close => {
-                    return Err(
-                        "GitHub doesn't let you close it: that takes its author or triage access"
-                            .into(),
-                    );
-                }
+                PrState::Open | PrState::Draft if !d.may.close => return Err(CANT_CLOSE.into()),
                 PrState::Open | PrState::Draft => {
                     (format!("Close {pr}?"), "Close pull request", false)
                 }
-                PrState::Closed if !d.may.reopen => {
-                    return Err("GitHub doesn't let you reopen it".into());
-                }
+                PrState::Closed if !d.may.reopen => return Err(CANT_REOPEN.into()),
                 PrState::Closed => (format!("Reopen {pr}?"), "Reopen", true),
             };
             let facts = if reopen {
@@ -742,20 +737,17 @@ fn behind(d: &PrDetail) -> String {
 /// What's worth knowing before merging (what stops it is refused before).
 fn merge_facts(state: &State, d: &PrDetail) -> Vec<(String, bool)> {
     let mut facts = vec![(format!("Into {} from {}", d.base_ref, d.head_ref), false)];
-    match d.checks {
-        Some(ChecksState::Passing) => facts.push(("Checks passed".into(), false)),
-        Some(ChecksState::Failing) => facts.push(("Some checks failed".into(), true)),
-        Some(ChecksState::Pending) => facts.push(("Checks are still running".into(), true)),
-        None => facts.push(("No checks".into(), false)),
-    }
-    match d.review {
-        Some(ReviewDecision::Approved) => facts.push(("Approved".into(), false)),
-        Some(ReviewDecision::ChangesRequested) => {
-            facts.push(("Changes were requested".into(), true));
-        }
-        Some(ReviewDecision::ReviewRequired) => facts.push(("A review is required".into(), true)),
-        None => {}
-    }
+    facts.push(match d.checks {
+        Some(ChecksState::Passing) => ("Checks passed".into(), false),
+        Some(ChecksState::Failing) => ("Some checks failed".into(), true),
+        Some(ChecksState::Pending) => ("Checks are still running".into(), true),
+        None => ("No checks".into(), false),
+    });
+    facts.extend(d.review.map(|review| match review {
+        ReviewDecision::Approved => ("Approved".into(), false),
+        ReviewDecision::ChangesRequested => ("Changes were requested".into(), true),
+        ReviewDecision::ReviewRequired => ("A review is required".into(), true),
+    }));
     facts.push(match d.readiness() {
         Readiness::Checking => (
             "GitHub is still working out whether it can merge".into(),
@@ -1366,8 +1358,10 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
 /// The changes the menu offers for what's on screen, and why one can't be
 /// made now, if it can't.
 fn offers(state: &State, out: &mut Vec<crate::nav::Doable>) {
+    // What's on screen, or its row, found once for all of them.
+    let here = here(state);
     let rows = (ACTIONS.into_iter()).filter_map(|action| {
-        let subject = subject(state, action).filter(|s| s.fits(action))?;
+        let subject = subject_or(state, action, || here.clone()).filter(|s| s.fits(action))?;
         let label = match (action, &subject) {
             (Action::Close, Subject::Run(..) | Subject::Job(..)) => "Cancel the run",
             (Action::Close, Subject::Alert(_)) => "Dismiss or reopen the alert",
