@@ -22,17 +22,17 @@ use crate::create::templates;
 use crate::route::{Route, releases};
 use crate::ui::form::Row;
 use crate::ui::page::{Link, Page};
-use crate::ui::pages::{FormRow, Mark, TextBox, WriteFormView};
+use crate::ui::pages::{Mark, TextBox, WriteFormView};
 
 use crate::data::DataKey;
 use crate::follow::{Expectation, Shown};
 use crate::forms::Answer;
-use crate::forms::{Fields, filling, say};
+use crate::forms::{Fields, filling, form_row, say};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
-use crate::picker::entry;
-use crate::picker::fuzzy_score;
+use crate::picker::{Choice, Rows, entry, fuzzy_score};
 use crate::state::{Cmd, State};
+use crate::ui::overlays::PaletteItem;
 use crate::work::{self, Cx, Failure, Job};
 
 /// A release, as written so far: a new one, or one being edited.
@@ -479,89 +479,82 @@ fn form_repo(route: &Route) -> Option<&RepoId> {
 }
 
 /// The tag picker's rows: a new tag typed, then the tags GitHub has.
-pub fn tag_rows(state: &State, route: &Route, q: &str) -> crate::picker::Rows {
+pub fn tag_rows(state: &State, route: &Route, q: &str) -> Rows {
     let Some(repo) = form_repo(route) else {
         return Vec::new();
     };
     let tags = state.picked::<Results<TagInfo>>(&DataKey::Tags(repo.clone()));
-    let mut rows = Vec::new();
-    let known = tags.is_some_and(|t| t.items.iter().any(|t| t.name == q));
-    if !q.is_empty() && !known {
-        rows.push(match tag_problem(q) {
-            Some(why) => entry(why, "", None),
-            None => entry(
-                format!("Create new tag: {q}"),
-                "on publish",
-                Some(filling(route, Row::Tag, q)),
-            ),
-        });
-    }
-    let Some(tags) = tags else {
-        rows.push(entry("Loading the tags…", "", None));
-        return rows;
+    let typed = match tag_problem(q) {
+        Some(why) => entry(why, "", None),
+        None => entry(
+            format!("Create new tag: {q}"),
+            "on publish",
+            Some(filling(route, Row::Tag, q)),
+        ),
     };
-    let mut hits: Vec<(usize, &TagInfo)> = (tags.items.iter())
-        .filter_map(|t| Some((fuzzy_score(q, &t.name)?, t)))
-        .collect();
-    hits.sort_by_key(|(score, _)| *score);
-    for (_, t) in hits {
+    let mut rows = listed(route, q, tags, typed, "tags", &Row::Tag, |t| {
         let hint = t
             .date
             .as_deref()
             .map_or("tag", |d| d.get(..10).unwrap_or(d));
-        rows.push(entry(
-            t.name.clone(),
-            hint,
-            Some(filling(route, Row::Tag, &t.name)),
-        ));
-    }
-    let more = tags.total.saturating_sub(tags.items.len() as u64);
+        (&t.name, hint, false)
+    });
+    let more = tags.map_or(0, |t| t.total.saturating_sub(t.items.len() as u64));
     if more > 0 {
         let what = crate::ui::text::noun(more, "tag");
-        rows.push(entry(
-            format!("{more} older {what} on GitHub: type one's name"),
-            "",
-            None,
-        ));
+        let older = format!("{more} older {what} on GitHub: type one's name");
+        rows.push(entry(older, "", None));
     }
     rows
 }
 
 /// The target picker's rows: a commit typed, then the branches.
-pub fn target_rows(state: &State, route: &Route, q: &str) -> crate::picker::Rows {
+pub fn target_rows(state: &State, route: &Route, q: &str) -> Rows {
     let Some(repo) = form_repo(route) else {
         return Vec::new();
     };
     let branches = state.picked::<Results<BranchInfo>>(&DataKey::Branches(repo.clone()));
-    let mut rows = Vec::new();
-    let known = branches.is_some_and(|b| b.items.iter().any(|b| b.name == q));
-    if !q.is_empty() && !known {
-        rows.push(entry(
-            format!("Use {q}"),
-            "a branch or a commit's SHA",
-            Some(filling(route, Row::Target, q)),
-        ));
-    }
-    let Some(branches) = branches else {
-        rows.push(entry("Loading the branches…", "", None));
-        return rows;
-    };
-    let mut hits: Vec<(usize, &BranchInfo)> = (branches.items.iter())
-        .filter_map(|b| Some((fuzzy_score(q, &b.name)?, b)))
-        .collect();
-    hits.sort_by_key(|(score, b)| (!b.default, *score));
-    for (_, b) in hits {
+    let typed = Some(filling(route, Row::Target, q));
+    let typed = entry(format!("Use {q}"), "a branch or a commit's SHA", typed);
+    listed(route, q, branches, typed, "branches", &Row::Target, |b| {
         let hint = if b.default {
             "default branch"
         } else {
             "branch"
         };
-        rows.push(entry(
-            b.name.clone(),
-            hint,
-            Some(filling(route, Row::Target, &b.name)),
-        ));
+        (&b.name, hint, b.default)
+    })
+}
+
+/// A picker's rows choosing `row`: `typed` for what's typed (unless it's
+/// listed), then what GitHub lists that matches, those `item` puts first
+/// first, then by how well.
+fn listed<T>(
+    route: &Route,
+    q: &str,
+    list: Option<&Results<T>>,
+    typed: (PaletteItem, Option<Choice>),
+    what: &str,
+    row: &Row,
+    item: impl Fn(&T) -> (&str, &str, bool),
+) -> Rows {
+    let mut rows = Vec::new();
+    if !q.is_empty() && !list.is_some_and(|l| l.items.iter().any(|t| item(t).0 == q)) {
+        rows.push(typed);
     }
+    let Some(list) = list else {
+        rows.push(entry(format!("Loading the {what}…"), "", None));
+        return rows;
+    };
+    let mut hits: Vec<_> = (list.items.iter().map(item))
+        .filter_map(|it| Some((fuzzy_score(q, it.0)?, it)))
+        .collect();
+    hits.sort_by_key(|(score, (.., first))| (!first, *score));
+    let chosen = |name| Some(filling(route, row.clone(), name));
+    rows.extend(
+        hits.into_iter()
+            .map(|(_, (name, hint, _))| entry(name, hint, chosen(name))),
+    );
     rows
 }
 
@@ -667,32 +660,24 @@ fn submit(state: &mut State) -> Vec<Cmd> {
         },
         false,
     ));
-    let (question, choices) = match &form.editing {
+    let (question, [publish, draft]) = match &form.editing {
         None => (
             format!("Publish {tag} in {repo}?"),
-            vec![
-                ("Publish release".into(), Answer::Release { draft: false }),
-                ("Save draft".into(), Answer::Release { draft: true }),
-            ],
+            ["Publish release", "Save draft"],
         ),
         Some(e) if e.draft => (
             format!("Save the draft of {tag}?"),
-            vec![
-                ("Publish release".into(), Answer::Release { draft: false }),
-                ("Save draft".into(), Answer::Release { draft: true }),
-            ],
+            ["Publish release", "Save draft"],
         ),
         Some(_) => (
             format!("Update {tag}?"),
-            vec![
-                ("Update release".into(), Answer::Release { draft: false }),
-                (
-                    "Make it a draft again".into(),
-                    Answer::Release { draft: true },
-                ),
-            ],
+            ["Update release", "Make it a draft again"],
         ),
     };
+    let choices = vec![
+        (publish.into(), Answer::Release { draft: false }),
+        (draft.into(), Answer::Release { draft: true }),
+    ];
     crate::forms::ask(state, route, question, facts, choices);
     Vec::new()
 }
@@ -1054,16 +1039,8 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
     let form = state.forms.shown::<Form>(route);
     let form = form.as_ref();
     let composing = crate::forms::composing(state, route, 0);
-    let mut rows = vec![FormRow {
-        name: "Tag",
-        value: form
-            .tag
-            .as_ref()
-            .map_or_else(|| "Choose a tag ▾".into(), |t| format!("{t} ▾")),
-        unset: form.tag.is_none(),
-        chips: Vec::new(),
-        link: Some(Row::Tag),
-    }];
+    let tag = (form.tag.as_ref()).map_or_else(|| "Choose a tag ▾".into(), |t| format!("{t} ▾"));
+    let mut rows = vec![form_row("Tag", tag, form.tag.is_none(), Some(Row::Tag))];
     let mut status = Vec::new();
     if let Some(tag) = &form.tag {
         let (text, mark) = match form.tag_look(state, repo) {
@@ -1089,13 +1066,12 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
     if form.new_tag(state, repo) {
         let target = (form.target.clone())
             .unwrap_or_else(|| format!("{} (default branch)", default_branch(state, repo)));
-        rows.push(FormRow {
-            name: "Target",
-            value: format!("{target} ▾"),
-            unset: false,
-            chips: Vec::new(),
-            link: Some(Row::Target),
-        });
+        rows.push(form_row(
+            "Target",
+            format!("{target} ▾"),
+            false,
+            Some(Row::Target),
+        ));
     }
     let check = |on: bool| if on { "☑" } else { "☐" };
     let notes = if form.generating {
@@ -1103,32 +1079,17 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
     } else {
         "From the pull requests since the last release"
     };
+    let notes = format!("Generate release notes · {notes}");
+    let pre = format!("{} Set as a pre-release", check(form.prerelease));
+    let latest = if form.prerelease {
+        "☐ A pre-release isn't the latest".to_owned()
+    } else {
+        format!("{} Set as the latest release", check(form.latest))
+    };
     let after = vec![
-        FormRow {
-            name: "Notes",
-            value: format!("Generate release notes · {notes}"),
-            unset: false,
-            chips: Vec::new(),
-            link: Some(Row::Notes),
-        },
-        FormRow {
-            name: "Pre-release",
-            value: format!("{} Set as a pre-release", check(form.prerelease)),
-            unset: false,
-            chips: Vec::new(),
-            link: Some(Row::Prerelease),
-        },
-        FormRow {
-            name: "Latest",
-            value: if form.prerelease {
-                "☐ A pre-release isn't the latest".to_owned()
-            } else {
-                format!("{} Set as the latest release", check(form.latest))
-            },
-            unset: form.prerelease,
-            chips: Vec::new(),
-            link: Some(Row::Latest),
-        },
+        form_row("Notes", notes, false, Some(Row::Notes)),
+        form_row("Pre-release", pre, false, Some(Row::Prerelease)),
+        form_row("Latest", latest, form.prerelease, Some(Row::Latest)),
     ];
     let (title, notes) = templates::split(&form.text);
     let write = state.first_key(Action::Comment);

@@ -6,14 +6,13 @@
 
 use crate::api::lists::{ListPage, MyLists, StarList};
 use crate::api::model::{Capped, NodeId, RepoId};
-use crate::data::Picked;
 use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
 use crate::picker::fuzzy_score;
 use crate::picker::{Choice, entry};
 use crate::route::{Route, people};
-use crate::state::{Cmd, Remote, State};
+use crate::state::{Cmd, State};
 use crate::work::{self, Cx, Failure, Job};
 
 use super::Page;
@@ -134,13 +133,9 @@ pub fn open(state: &mut State) -> Vec<Cmd> {
 /// if the repository's in it; and, for a name no list has, making it.
 pub fn rows(state: &State, repo: &RepoId, q: &str) -> crate::picker::Rows {
     let key = DataKey::MyLists(repo.clone());
-    #[expect(clippy::disallowed_methods, reason = "said as the picker's row")]
-    let fetched = Remote::fetched(state.remote(&key), "")
-        .pick(<MyLists as Picked>::pick)
-        .text("your lists");
-    let mine = match fetched {
+    let mine = match crate::picker::listed::<MyLists, _>(state, &key, "your lists") {
         Ok(m) => m,
-        Err(why) => return vec![entry(why, "", None)],
+        Err(rows) => return rows,
     };
     let ids = |except: Option<&NodeId>| -> Vec<NodeId> {
         (mine.lists.iter())
