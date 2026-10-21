@@ -40,10 +40,10 @@ pub(super) fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> V
     match &state.overlay {
         Some(Overlay::Search(sb)) => {
             let (field, _) = state.search_field(sb);
-            let rows = state.suggestions(sb);
+            let (rows, picks): (Vec<_>, Vec<_>) = state.suggestions(sb).into_iter().unzip();
             let panel = chrome::SearchPanel {
                 ctx: state.ctx(0),
-                rows: &rows.iter().map(|(r, _)| r.clone()).collect::<Vec<_>>(),
+                rows: &rows,
                 selected: sb.selected,
                 field,
             };
@@ -52,8 +52,8 @@ pub(super) fn click(state: &mut State, x: u16, y: u16, button: MouseButton) -> V
                 return Vec::new();
             }
             if inside(panel.area(screen)) {
-                let row = panel.row_at(screen, y).and_then(|r| rows.get(r));
-                let Some((_, Some(pick))) = row.cloned() else {
+                let pick = panel.row_at(screen, y).and_then(|r| picks.get(r));
+                let Some(Some(pick)) = pick.cloned() else {
                     return Vec::new();
                 };
                 state.overlay = None;
