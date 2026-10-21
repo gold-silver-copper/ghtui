@@ -203,15 +203,10 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
 
 /// A row naming what's chosen (a template, a branch), which Enter changes.
 fn row(name: &'static str, chosen: &str, link: Row) -> FormRow {
-    FormRow {
-        name,
-        value: if chosen.is_empty() {
-            "choose a branch ▾".to_owned()
-        } else {
-            format!("{chosen} ▾")
-        },
-        unset: chosen.is_empty(),
-        chips: Vec::new(),
-        link: Some(link),
-    }
+    let value = if chosen.is_empty() {
+        "choose a branch ▾".to_owned()
+    } else {
+        format!("{chosen} ▾")
+    };
+    crate::forms::form_row(name, value, chosen.is_empty(), Some(link))
 }

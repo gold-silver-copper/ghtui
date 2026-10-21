@@ -11,7 +11,7 @@ use crate::picker::fuzzy_score;
 use crate::ui::page::Page;
 use crate::ui::pages::{Mark, WriteFormView};
 
-use super::{Expected, Field, Form, FormOf, ask, expect, form, form_mut, form_row, item, setting};
+use super::{Expected, Field, Form, FormOf, ask, form, form_mut, form_row, item, setting};
 use crate::data::DataKey;
 use crate::state::{Cmds, State};
 use crate::work::{self, Cx, Failure, Job};
@@ -249,9 +249,7 @@ fn opened(state: &mut State, route: &Route, made: &MadeRepo) -> Option<Cmds> {
         return Some(Cmds::new());
     }
     let page = Route::code(repo.clone());
-    let cmds = state.replace(page.clone(), true, None);
-    expect(state, page, Expected::Repo(repo));
-    Some(cmds)
+    Some(crate::follow::replace(state, page, Expected::Repo(repo)))
 }
 
 impl Job for Fork {
