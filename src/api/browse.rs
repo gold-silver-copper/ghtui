@@ -1121,12 +1121,12 @@ pub struct IssueFull {
     pub linked_branches: timeline::Branches,
     pub parent: Option<timeline::LinkedIssue>,
     #[arguments(first: 50)]
-    pub sub_issues: timeline::SubIssues,
+    pub sub_issues: timeline::Issues,
     pub sub_issues_summary: timeline::WireProgress,
     #[arguments(first: 20)]
-    pub blocked_by: timeline::SubIssues,
+    pub blocked_by: timeline::Issues,
     #[arguments(first: 20)]
-    pub blocking: timeline::SubIssues,
+    pub blocking: timeline::Issues,
     pub issue_type: Option<timeline::TypeName>,
     pub repository: RepoAccess,
     pub locked: bool,
@@ -1185,7 +1185,7 @@ pub struct WirePrActivity {
     #[arguments(first: 100)]
     pub latest_reviews: Option<timeline::LatestReviews>,
     #[arguments(first: 10)]
-    pub closing_issues_references: Option<timeline::Closing>,
+    pub closing_issues_references: Option<timeline::Issues>,
     pub merge_commit: Option<crate::api::queries::CommitOid>,
     /// Your pending review: GitHub shows it only to you.
     #[arguments(first: 1, states: [PENDING])]
@@ -4659,10 +4659,10 @@ impl IssueFull {
                 .map_or_else(Capped::default, timeline::linked_prs),
             branches: timeline::branches(self.linked_branches),
             parent: self.parent.and_then(timeline::LinkedIssue::into_linked),
-            sub_issues: timeline::sub_issues(self.sub_issues),
+            sub_issues: timeline::linked_issues(self.sub_issues),
             progress: timeline::progress(&self.sub_issues_summary),
-            blocked_by: timeline::sub_issues(self.blocked_by),
-            blocking: timeline::sub_issues(self.blocking),
+            blocked_by: timeline::linked_issues(self.blocked_by),
+            blocking: timeline::linked_issues(self.blocking),
             locked: (self.locked).then_some(crate::api::manage::Locked {
                 reason: self.active_lock_reason,
             }),

@@ -183,89 +183,84 @@ pub enum UpdateMethod {
 impl GitHub {
     /// Makes `change` on GitHub.
     pub async fn change(&self, change: &Change) -> Result<(), ApiError> {
-        use cynic::MutationBuilder;
         match change {
             Change::Comment { subject, body } => {
-                let op = AddComment::build(AddCommentVariables {
+                self.run::<AddComment, _>(AddCommentVariables {
                     subject: subject.gql(),
                     body: body.clone(),
-                });
-                self.mutate(op).await.map(drop)
+                })
+                .await
             }
             Change::CommitComment { repo, oid, body } => {
                 self.comment_on_commit(repo, oid, body).await
             }
             Change::Reply { thread, body } => {
-                let op = crate::api::queries::Reply::build(crate::api::queries::ReplyVariables {
+                self.run::<crate::api::queries::Reply, _>(crate::api::queries::ReplyVariables {
                     thread_id: thread.gql(),
                     body: body.clone(),
-                });
-                self.mutate(op).await.map(drop)
+                })
+                .await
             }
             Change::Star { id, starred, .. } => {
                 let vars = IdVariables { id: id.gql() };
                 if *starred {
-                    self.mutate(AddStar::build(vars)).await.map(drop)
+                    self.run::<AddStar, _>(vars).await
                 } else {
-                    self.mutate(RemoveStar::build(vars)).await.map(drop)
+                    self.run::<RemoveStar, _>(vars).await
                 }
             }
             Change::Merge { pr, method, head } => {
-                let op = MergePr::build(MergeVariables {
+                self.run::<MergePr, _>(MergeVariables {
                     pr: pr.gql(),
                     method: *method,
                     head: GitObjectId(head.clone()),
-                });
-                self.mutate(op).await.map(drop)
+                })
+                .await
             }
             Change::EnableAutoMerge { pr, method, head } => {
-                let op = EnableAutoMerge::build(MergeVariables {
+                self.run::<EnableAutoMerge, _>(MergeVariables {
                     pr: pr.gql(),
                     method: *method,
                     head: GitObjectId(head.clone()),
-                });
-                self.mutate(op).await.map(drop)
+                })
+                .await
             }
             Change::DisableAutoMerge { pr } => {
-                let op = DisableAutoMerge::build(IdVariables { id: pr.gql() });
-                self.mutate(op).await.map(drop)
+                self.run::<DisableAutoMerge, _>(IdVariables { id: pr.gql() })
+                    .await
             }
             Change::Enqueue { pr, head } => {
-                let op = Enqueue::build(EnqueueVariables {
+                self.run::<Enqueue, _>(EnqueueVariables {
                     pr: pr.gql(),
                     head: GitObjectId(head.clone()),
-                });
-                self.mutate(op).await.map(drop)
+                })
+                .await
             }
-            Change::Dequeue { pr } => {
-                let op = Dequeue::build(IdVariables { id: pr.gql() });
-                self.mutate(op).await.map(drop)
-            }
+            Change::Dequeue { pr } => self.run::<Dequeue, _>(IdVariables { id: pr.gql() }).await,
             Change::SetPrOpen { pr, open } => {
                 let vars = IdVariables { id: pr.gql() };
                 if *open {
-                    self.mutate(ReopenPr::build(vars)).await.map(drop)
+                    self.run::<ReopenPr, _>(vars).await
                 } else {
-                    self.mutate(ClosePr::build(vars)).await.map(drop)
+                    self.run::<ClosePr, _>(vars).await
                 }
             }
             Change::CloseIssue { issue, reason } => {
-                let op = CloseIssue::build(CloseIssueVariables {
+                self.run::<CloseIssue, _>(CloseIssueVariables {
                     issue: issue.gql(),
                     reason: *reason,
-                });
-                self.mutate(op).await.map(drop)
+                })
+                .await
             }
             Change::ReopenIssue { issue } => {
-                let op = ReopenIssue::build(IdVariables { id: issue.gql() });
-                self.mutate(op).await.map(drop)
+                self.run::<ReopenIssue, _>(IdVariables { id: issue.gql() })
+                    .await
             }
             Change::ReadyForReview { pr } => {
-                let op = MarkReady::build(IdVariables { id: pr.gql() });
-                self.mutate(op).await.map(drop)
+                self.run::<MarkReady, _>(IdVariables { id: pr.gql() }).await
             }
             Change::UpdateBranch { pr, rebase, head } => {
-                let op = UpdateBranch::build(UpdateBranchVariables {
+                self.run::<UpdateBranch, _>(UpdateBranchVariables {
                     pr: pr.gql(),
                     method: if *rebase {
                         UpdateMethod::Rebase
@@ -273,8 +268,8 @@ impl GitHub {
                         UpdateMethod::Merge
                     },
                     head: GitObjectId(head.clone()),
-                });
-                self.mutate(op).await.map(drop)
+                })
+                .await
             }
             Change::Rerun {
                 repo,
@@ -378,6 +373,15 @@ impl GitHub {
         };
         self.rest_write(method, &path, None).await
     }
+
+    /// Sends mutation `M`, which only has to succeed.
+    pub(crate) async fn run<M, V>(&self, vars: V) -> Result<(), ApiError>
+    where
+        M: cynic::MutationBuilder<V> + serde::de::DeserializeOwned,
+        V: serde::Serialize,
+    {
+        self.mutate(M::build(vars)).await.map(drop)
+    }
 }
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -391,25 +395,43 @@ pub struct AddCommentVariables {
     pub body: String,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "AddCommentVariables")]
-pub struct AddComment {
-    #[arguments(input: { subjectId: $subject, body: $body })]
-    pub add_comment: Option<AddCommentPayload>,
+/// Mutations that only have to succeed, one row each: the struct, its
+/// variables, and the field it asks for with that field's payload and
+/// input. [`GitHub::run`] sends one. `MUTATIONS` counts the rows, for the
+/// test that every mutation is checked.
+macro_rules! mutations {
+    ($($(#[$doc:meta])* $name:ident($vars:literal) $field:ident: $payload:ident { $($input:tt)* })*) => {
+        $(
+            $(#[$doc])*
+            #[derive(cynic::QueryFragment, Debug)]
+            #[cynic(graphql_type = "Mutation", variables = $vars)]
+            pub struct $name {
+                #[arguments(input: { $($input)* })]
+                pub $field: Option<$payload>,
+            }
+        )*
+        #[cfg(test)]
+        pub(crate) const MUTATIONS: usize = [$(stringify!($name)),*].len();
+    };
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "IdVariables")]
-pub struct AddStar {
-    #[arguments(input: { starrableId: $id })]
-    pub add_star: Option<StarPayload>,
-}
+pub(crate) use mutations;
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "IdVariables")]
-pub struct RemoveStar {
-    #[arguments(input: { starrableId: $id })]
-    pub remove_star: Option<UnstarPayload>,
+mutations! {
+    AddComment("AddCommentVariables") add_comment: AddCommentPayload { subjectId: $subject, body: $body }
+    AddStar("IdVariables") add_star: StarPayload { starrableId: $id }
+    RemoveStar("IdVariables") remove_star: UnstarPayload { starrableId: $id }
+    MergePr("MergeVariables") merge_pull_request: MergePayload { pullRequestId: $pr, mergeMethod: $method, expectedHeadOid: $head }
+    EnableAutoMerge("MergeVariables") enable_pull_request_auto_merge: AutoMergePayload { pullRequestId: $pr, mergeMethod: $method, expectedHeadOid: $head }
+    DisableAutoMerge("IdVariables") disable_pull_request_auto_merge: NoAutoMergePayload { pullRequestId: $id }
+    Enqueue("EnqueueVariables") enqueue_pull_request: EnqueuePayload { pullRequestId: $pr, expectedHeadOid: $head }
+    Dequeue("IdVariables") dequeue_pull_request: DequeuePayload { id: $id }
+    ClosePr("IdVariables") close_pull_request: ClosePrPayload { pullRequestId: $id }
+    ReopenPr("IdVariables") reopen_pull_request: ReopenPrPayload { pullRequestId: $id }
+    CloseIssue("CloseIssueVariables") close_issue: CloseIssuePayload { issueId: $issue, stateReason: $reason }
+    ReopenIssue("IdVariables") reopen_issue: ReopenIssuePayload { issueId: $id }
+    MarkReady("IdVariables") mark_pull_request_ready_for_review: ReadyPayload { pullRequestId: $id }
+    UpdateBranch("UpdateBranchVariables") update_pull_request_branch: UpdateBranchPayload { pullRequestId: $pr, updateMethod: $method, expectedHeadOid: $head }
 }
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -419,59 +441,10 @@ pub struct MergeVariables {
     pub head: GitObjectId,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "MergeVariables")]
-pub struct MergePr {
-    #[arguments(input: { pullRequestId: $pr, mergeMethod: $method, expectedHeadOid: $head })]
-    pub merge_pull_request: Option<MergePayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "MergeVariables")]
-pub struct EnableAutoMerge {
-    #[arguments(input: { pullRequestId: $pr, mergeMethod: $method, expectedHeadOid: $head })]
-    pub enable_pull_request_auto_merge: Option<AutoMergePayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "IdVariables")]
-pub struct DisableAutoMerge {
-    #[arguments(input: { pullRequestId: $id })]
-    pub disable_pull_request_auto_merge: Option<NoAutoMergePayload>,
-}
-
 #[derive(cynic::QueryVariables, Debug)]
 pub struct EnqueueVariables {
     pub pr: cynic::Id,
     pub head: GitObjectId,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "EnqueueVariables")]
-pub struct Enqueue {
-    #[arguments(input: { pullRequestId: $pr, expectedHeadOid: $head })]
-    pub enqueue_pull_request: Option<EnqueuePayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "IdVariables")]
-pub struct Dequeue {
-    #[arguments(input: { id: $id })]
-    pub dequeue_pull_request: Option<DequeuePayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "IdVariables")]
-pub struct ClosePr {
-    #[arguments(input: { pullRequestId: $id })]
-    pub close_pull_request: Option<ClosePrPayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "IdVariables")]
-pub struct ReopenPr {
-    #[arguments(input: { pullRequestId: $id })]
-    pub reopen_pull_request: Option<ReopenPrPayload>,
 }
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -480,37 +453,9 @@ pub struct CloseIssueVariables {
     pub reason: CloseReason,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "CloseIssueVariables")]
-pub struct CloseIssue {
-    #[arguments(input: { issueId: $issue, stateReason: $reason })]
-    pub close_issue: Option<CloseIssuePayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "IdVariables")]
-pub struct ReopenIssue {
-    #[arguments(input: { issueId: $id })]
-    pub reopen_issue: Option<ReopenIssuePayload>,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "IdVariables")]
-pub struct MarkReady {
-    #[arguments(input: { pullRequestId: $id })]
-    pub mark_pull_request_ready_for_review: Option<ReadyPayload>,
-}
-
 #[derive(cynic::QueryVariables, Debug)]
 pub struct UpdateBranchVariables {
     pub pr: cynic::Id,
     pub method: UpdateMethod,
     pub head: GitObjectId,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Mutation", variables = "UpdateBranchVariables")]
-pub struct UpdateBranch {
-    #[arguments(input: { pullRequestId: $pr, updateMethod: $method, expectedHeadOid: $head })]
-    pub update_pull_request_branch: Option<UpdateBranchPayload>,
 }

@@ -258,15 +258,17 @@ impl GitHub {
     ) -> Result<PackageDetail, ApiError> {
         let what = format!("the package {}", p.name);
         let base = p.path(self.is_org(&p.owner).await?);
-        let answer = self.packages_answer(&base, &what).await?;
-        let package: wire::Package = serde_json::from_str(answer.body())?;
-        let package = package.into_package(&p.owner, p.kind);
         let mut path = format!("{base}/versions?per_page={VERSIONS}");
         if let Some(after) = &after {
             path.push('&');
             path.push_str(after);
         }
-        let answer = self.packages_answer(&path, &what).await?;
+        let (package, answer) = tokio::try_join!(
+            self.packages_answer(&base, &what),
+            self.packages_answer(&path, &what),
+        )?;
+        let package: wire::Package = serde_json::from_str(package.body())?;
+        let package = package.into_package(&p.owner, p.kind);
         let found: Vec<wire::Version> = serde_json::from_str(answer.body())?;
         let items: Vec<Version> = found.into_iter().map(wire::Version::into_version).collect();
         let next = answer.next_page().filter(|_| items.len() >= VERSIONS);

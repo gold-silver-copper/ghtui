@@ -134,6 +134,17 @@ fn alias(name: &str) -> Fill {
     Fill::Alias(name.to_owned())
 }
 
+fn argument(field: &str, name: &str, since: Option<Version>, about: &str) -> Lack {
+    Lack {
+        missing: Missing::Argument {
+            field: field.to_owned(),
+            name: name.to_owned(),
+        },
+        since,
+        about: about.to_owned(),
+    }
+}
+
 /// Event types (their fragments' and their enum values' names) that came
 /// in `since`.
 fn events(names: &[(&str, &str)], since: Option<Version>, about: &str) -> Vec<Lack> {
@@ -154,188 +165,53 @@ fn events(names: &[(&str, &str)], since: Option<Version>, about: &str) -> Vec<La
 }
 
 /// What Enterprise Servers lack of what ghtui asks, and since when they
-/// have it (from GitHub's published schemas for 3.10 to 3.22).
+/// have it (from GitHub's published schemas for 3.10 to 3.22). One row
+/// each, so rustfmt is kept off.
+#[rustfmt::skip]
 pub fn table() -> Vec<Lack> {
     let mut lacks = vec![
-        field(
-            "viewerCanAssign",
-            &["pullRequest", "PullRequest"],
-            alias("viewerCanUpdate"),
-            None,
-            "who may assign a pull request (it's offered to whoever may edit it)",
-        ),
-        field(
-            "viewerCanAssign",
-            &["issue", "Issue"],
-            alias("viewerCanUpdate"),
-            v(17),
-            "who may assign an issue (it's offered to whoever may edit it)",
-        ),
-        field(
-            "viewerCanSetMilestone",
-            &[],
-            alias("viewerCanUpdate"),
-            None,
-            "who may set a milestone (it's offered to whoever may edit)",
-        ),
-        field(
-            "viewerCanLabel",
-            &[],
-            alias("viewerCanUpdate"),
-            v(15),
-            "who may label (it's offered to whoever may edit)",
-        ),
-        field(
-            "viewerCanCreateIssues",
-            &[],
-            alias("hasIssuesEnabled"),
-            v(22),
-            "who may open an issue (it's offered wherever issues are on)",
-        ),
+        field("viewerCanAssign", &["pullRequest", "PullRequest"], alias("viewerCanUpdate"), None, "who may assign a pull request (it's offered to whoever may edit it)"),
+        field("viewerCanAssign", &["issue", "Issue"], alias("viewerCanUpdate"), v(17), "who may assign an issue (it's offered to whoever may edit it)"),
+        field("viewerCanSetMilestone", &[], alias("viewerCanUpdate"), None, "who may set a milestone (it's offered to whoever may edit)"),
+        field("viewerCanLabel", &[], alias("viewerCanUpdate"), v(15), "who may label (it's offered to whoever may edit)"),
+        field("viewerCanCreateIssues", &[], alias("hasIssuesEnabled"), v(22), "who may open an issue (it's offered wherever issues are on)"),
         field("mergeQueueEntry", &[], Fill::Null, v(12), "merge queues"),
-        field(
-            "isMergeQueueEnabled",
-            &[],
-            json("false"),
-            v(12),
-            "merge queues",
-        ),
-        field(
-            "closedByPullRequestsReferences",
-            &[],
-            Fill::Null,
-            v(15),
-            "which pull requests will close an issue",
-        ),
+        field("isMergeQueueEnabled", &[], json("false"), v(12), "merge queues"),
+        field("closedByPullRequestsReferences", &[], Fill::Null, v(15), "which pull requests will close an issue"),
         field("parent", &["Issue"], Fill::Null, v(16), "sub-issues"),
-        field(
-            "subIssues",
-            &[],
-            json(r#"{"totalCount":0,"nodes":[]}"#),
-            v(16),
-            "sub-issues",
-        ),
-        field(
-            "subIssuesSummary",
-            &[],
-            json(r#"{"completed":0,"total":0}"#),
-            v(16),
-            "sub-issues",
-        ),
+        field("subIssues", &[], json(r#"{"totalCount":0,"nodes":[]}"#), v(16), "sub-issues"),
+        field("subIssuesSummary", &[], json(r#"{"completed":0,"total":0}"#), v(16), "sub-issues"),
         field("issueType", &[], Fill::Null, v(17), "issue types"),
-        field(
-            "projectItems",
-            &[],
-            Fill::Null,
-            v(15),
-            "the projects an issue or pull request is in",
-        ),
-        field(
-            "projectsV2",
-            &["repository"],
-            Fill::Null,
-            v(15),
-            "a repository's projects",
-        ),
-        field(
-            "fullDatabaseId",
-            &["items.nodes", "ProjectV2Item"],
-            alias("databaseId"),
-            v(13),
-            "a project item's full ID",
-        ),
-        field(
-            "fullDatabaseId",
-            &[
-                "PullRequestReview",
-                "pullRequestReview",
-                "reviews.nodes",
-                "latestReviews.nodes",
-            ],
-            Fill::Null,
-            v(13),
-            "a review's ID, which links to it",
-        ),
-        field(
-            "isAnswered",
-            &[],
-            Fill::Null,
-            v(12),
-            "whether a discussion is answered",
-        ),
-        field(
-            "color",
-            &["options"],
-            json(r#""GRAY""#),
-            v(11),
-            "a project field's colors",
-        ),
-        field(
-            "description",
-            &["options"],
-            json(r#""""#),
-            v(11),
-            "a project field's descriptions",
-        ),
-        Lack {
-            missing: Missing::Argument {
-                field: "items".into(),
-                name: "archivedStates".into(),
-            },
-            since: v(22),
-            about: "a project's archived items apart (they're told by each item)".into(),
-        },
-        Lack {
-            missing: Missing::Argument {
-                field: "items".into(),
-                name: "query".into(),
-            },
-            since: v(20),
-            about: "a project view's filter (all its items are shown)".into(),
-        },
+        field("projectItems", &[], Fill::Null, v(15), "the projects an issue or pull request is in"),
+        field("projectsV2", &["repository"], Fill::Null, v(15), "a repository's projects"),
+        field("fullDatabaseId", &["items.nodes", "ProjectV2Item"], alias("databaseId"), v(13), "a project item's full ID"),
+        field("fullDatabaseId", &["PullRequestReview", "pullRequestReview", "reviews.nodes", "latestReviews.nodes"], Fill::Null, v(13), "a review's ID, which links to it"),
+        field("isAnswered", &[], Fill::Null, v(12), "whether a discussion is answered"),
+        field("color", &["options"], json(r#""GRAY""#), v(11), "a project field's colors"),
+        field("description", &["options"], json(r#""""#), v(11), "a project field's descriptions"),
+        argument("items", "archivedStates", v(22), "a project's archived items apart (they're told by each item)"),
+        argument("items", "query", v(20), "a project view's filter (all its items are shown)"),
     ];
-    lacks.extend(events(
-        &[
-            ("AddedToMergeQueueEvent", "ADDED_TO_MERGE_QUEUE_EVENT"),
-            (
-                "RemovedFromMergeQueueEvent",
-                "REMOVED_FROM_MERGE_QUEUE_EVENT",
-            ),
-        ],
-        v(12),
-        "merge queues",
-    ));
-    lacks.extend(events(
-        &[
-            ("SubIssueAddedEvent", "SUB_ISSUE_ADDED_EVENT"),
-            ("SubIssueRemovedEvent", "SUB_ISSUE_REMOVED_EVENT"),
-            ("ParentIssueAddedEvent", "PARENT_ISSUE_ADDED_EVENT"),
-            ("ParentIssueRemovedEvent", "PARENT_ISSUE_REMOVED_EVENT"),
-        ],
-        v(17),
-        "sub-issue events in the timeline",
-    ));
-    lacks.extend(events(
-        &[
-            ("IssueTypeAddedEvent", "ISSUE_TYPE_ADDED_EVENT"),
-            ("IssueTypeChangedEvent", "ISSUE_TYPE_CHANGED_EVENT"),
-            ("IssueTypeRemovedEvent", "ISSUE_TYPE_REMOVED_EVENT"),
-        ],
-        v(18),
-        "issue type events in the timeline",
-    ));
-    lacks.extend(events(
-        &[
-            ("AddedToProjectV2Event", "ADDED_TO_PROJECT_V2_EVENT"),
-            ("RemovedFromProjectV2Event", "REMOVED_FROM_PROJECT_V2_EVENT"),
-            (
-                "ProjectV2ItemStatusChangedEvent",
-                "PROJECT_V2_ITEM_STATUS_CHANGED_EVENT",
-            ),
-        ],
-        v(20),
-        "project events in the timeline",
-    ));
+    lacks.extend(events(&[
+        ("AddedToMergeQueueEvent", "ADDED_TO_MERGE_QUEUE_EVENT"),
+        ("RemovedFromMergeQueueEvent", "REMOVED_FROM_MERGE_QUEUE_EVENT"),
+    ], v(12), "merge queues"));
+    lacks.extend(events(&[
+        ("SubIssueAddedEvent", "SUB_ISSUE_ADDED_EVENT"),
+        ("SubIssueRemovedEvent", "SUB_ISSUE_REMOVED_EVENT"),
+        ("ParentIssueAddedEvent", "PARENT_ISSUE_ADDED_EVENT"),
+        ("ParentIssueRemovedEvent", "PARENT_ISSUE_REMOVED_EVENT"),
+    ], v(17), "sub-issue events in the timeline"));
+    lacks.extend(events(&[
+        ("IssueTypeAddedEvent", "ISSUE_TYPE_ADDED_EVENT"),
+        ("IssueTypeChangedEvent", "ISSUE_TYPE_CHANGED_EVENT"),
+        ("IssueTypeRemovedEvent", "ISSUE_TYPE_REMOVED_EVENT"),
+    ], v(18), "issue type events in the timeline"));
+    lacks.extend(events(&[
+        ("AddedToProjectV2Event", "ADDED_TO_PROJECT_V2_EVENT"),
+        ("RemovedFromProjectV2Event", "REMOVED_FROM_PROJECT_V2_EVENT"),
+        ("ProjectV2ItemStatusChangedEvent", "PROJECT_V2_ITEM_STATUS_CHANGED_EVENT"),
+    ], v(20), "project events in the timeline"));
     lacks
 }
 
@@ -583,25 +459,20 @@ impl Edit<'_> {
                         let Missing::Field { fill, .. } = &lack.missing else {
                             continue;
                         };
-                        match fill {
-                            Fill::Alias(other) => kept.push(Sel::Field(Field {
-                                alias: Some(key),
-                                name: other.clone(),
-                                args: Vec::new(),
-                                directives: String::new(),
-                                set: None,
-                            })),
-                            Fill::Null => {
-                                if let Some(here) = here {
-                                    self.fills.push((here, Value::Null));
-                                }
+                        let value = match fill {
+                            Fill::Alias(other) => {
+                                let alias = Some(key);
+                                kept.push(Sel::Field(Field {
+                                    alias,
+                                    ..Field::named(other)
+                                }));
+                                continue;
                             }
-                            Fill::Json(text) => {
-                                let value = serde_json::from_str(text).unwrap_or(Value::Null);
-                                if let Some(here) = here {
-                                    self.fills.push((here, value));
-                                }
-                            }
+                            Fill::Null => Value::Null,
+                            Fill::Json(text) => serde_json::from_str(text).unwrap_or(Value::Null),
+                        };
+                        if let Some(here) = here {
+                            self.fills.push((here, value));
                         }
                         continue;
                     }
@@ -858,46 +729,36 @@ enum Val {
 fn print_val(v: &Val, out: &mut String) {
     match v {
         Val::Enum(s) | Val::Raw(s) => out.push_str(s),
-        Val::List(items) => {
-            out.push('[');
-            for (i, item) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
-                }
-                print_val(item, out);
-            }
-            out.push(']');
-        }
-        Val::Object(fields) => {
-            out.push('{');
-            for (i, (name, value)) in fields.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
-                }
-                out.push_str(name);
-                out.push_str(": ");
-                print_val(value, out);
-            }
-            out.push('}');
-        }
+        Val::List(items) => join(out, '[', items, ']', print_val),
+        Val::Object(fields) => join(out, '{', fields, '}', print_arg),
     }
 }
 
+fn print_arg((name, value): &(String, Val), out: &mut String) {
+    out.push_str(name);
+    out.push_str(": ");
+    print_val(value, out);
+}
+
 fn print_args(args: &[(String, Val)]) -> String {
-    if args.is_empty() {
-        return String::new();
+    let mut out = String::new();
+    if !args.is_empty() {
+        join(&mut out, '(', args, ')', print_arg);
     }
-    let mut out = String::from("(");
-    for (i, (name, value)) in args.iter().enumerate() {
+    out
+}
+
+/// `items` between `open` and `close`, each written by `item`, with
+/// commas between.
+fn join<T>(out: &mut String, open: char, items: &[T], close: char, item: fn(&T, &mut String)) {
+    out.push(open);
+    for (i, it) in items.iter().enumerate() {
         if i > 0 {
             out.push_str(", ");
         }
-        out.push_str(name);
-        out.push_str(": ");
-        print_val(value, &mut out);
+        item(it, out);
     }
-    out.push(')');
-    out
+    out.push(close);
 }
 
 fn print_set(set: &[Sel], out: &mut String) {

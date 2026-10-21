@@ -3732,6 +3732,8 @@ async fn insights_read_traffic_statistics_and_the_dependency_graph() {
         Reply::new(200, r#"[{"path":"/o/r","title":"o/r","count":4,"uniques":2}]"#)
             .on("/popular/paths"),
         Reply::new(202, "{}").on("/stats/contributors"),
+        // Asked alongside the contributors.
+        Reply::new(202, "{}").on("/stats/commit_activity"),
         Reply::new(
             200,
             r#"{"data":{"repository":{"dependencyGraphManifests":{"totalCount":1,"nodes":[{"filename":"Cargo.lock","blobPath":"/o/r/blob/main/Cargo.lock","parseable":true,"exceedsMaxSize":false,"dependenciesCount":470,"dependencies":{"totalCount":1,"nodes":[{"packageName":"rand","packageManager":"RUST","requirements":"= 0.9.2","repository":{"nameWithOwner":"rust-random/rand"}}]}}]}}}}"#,

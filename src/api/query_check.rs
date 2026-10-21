@@ -407,10 +407,7 @@ fn every_query_is_valid_and_says_what_it_leaves_out() {
     let schema = Schema::new(&doc, text);
     let mut errors = Vec::new();
     let mut allowed = HashSet::new();
-    let raw = crate::api::raw::all()
-        .into_iter()
-        .chain(crate::api::housekeeping::queries());
-    for (name, query) in typed().into_iter().chain(raw) {
+    for (name, query) in typed().into_iter().chain(crate::api::raw::all()) {
         let report = check(&schema, name, &query);
         errors.extend(report.errors);
         allowed.extend(report.allowed);
@@ -571,17 +568,22 @@ fn every_query_is_checked() {
                 .count()
         })
         .sum();
+    // `mutations!` writes `graphql_type = "Mutation"` once for all its
+    // rows, which it counts itself.
     let operations = source.matches("graphql_type = \"Query\"").count()
         + source.matches("graphql_type = \"Mutation\"").count()
+        - 1
+        + crate::api::change::MUTATIONS
+        + crate::api::edit::MUTATIONS
         + roots;
     assert_eq!(typed().len(), operations);
-    let raw = include_str!("raw.rs");
-    let defined =
-        raw.matches("\npub(crate) const ").count() + raw.matches("\npub(crate) fn ").count();
+    // The text queries are listed by `raw!`, but those built at run time
+    // by hand: each `pub(crate) fn` but `all` itself.
+    let built = include_str!("raw.rs").matches("\npub(crate) fn ").count() - 1;
     let names: HashSet<&str> = crate::api::raw::all()
         .into_iter()
         .map(|(n, _)| n.split('(').next().unwrap_or(n))
         .collect();
-    // `all` itself is a `pub(crate) fn`.
-    assert_eq!(names.len(), defined - 1);
+    let consts = crate::api::raw::RAW.len() + crate::api::housekeeping::RAW.len();
+    assert_eq!(names.len(), consts + built);
 }
