@@ -208,14 +208,18 @@ impl Family for Page {
         };
         let activity = b.get(&DataKey::PrActivity(pr.clone()));
         let reviews = || b.get(&DataKey::Reviews(pr.clone()));
-        let lines = crate::talk::lines_at(state, pr);
-        let marks = crate::talk::marks(state, Some(pr), &lines);
         let Some(d) = b
             .get::<PrDetail>(&DataKey::Pr(pr.clone()))
             .show(page, &pr.to_string())
         else {
             return;
         };
+        // Only the tabs with threads show their lines.
+        let lines = match tab {
+            PrTab::Commits | PrTab::Checks => pages::LinesAt::new(),
+            _ => crate::talk::lines_at(state, pr),
+        };
+        let marks = crate::talk::marks(state, Some(pr), &lines);
         match tab {
             PrTab::Conversation => {
                 let projects = b.get(&DataKey::InProjects(pr.repo.clone(), pr.number));

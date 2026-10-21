@@ -1299,26 +1299,25 @@ fn failure(change: &Change, err: &Failure) -> String {
             .iter()
             .any(|s| reason.contains(s))
     };
-    let mut text = format!("GitHub refused {what}: {reason}");
-    match change {
-        // Fine-grained tokens can't read notifications at all.
-        _ if denied && matches!(change, Change::SetProjectField { .. } | Change::Project(_)) => text.push_str(
-            ". Your token may lack the permission: a classic token needs the project scope; a fine-grained one, Projects: write",
-        ),
-        _ if denied && matches!(change, Change::Alert(_)) => text.push_str(&format!(
-            ". Your token may lack the permission: a fine-grained token needs {}; a classic one, the security_events or repo scope",
-            needs(change)
-        )),
-        _ if denied && notifies(change) => text.push_str(
-            ". Your token may lack the permission: notifications take a classic token with the notifications or repo scope",
-        ),
-        _ if denied => text.push_str(&format!(
-            ". Your token may lack the permission: a fine-grained token needs {}; a classic one, the repo scope",
-            needs(change)
-        )),
-        _ => {}
+    let refused = format!("GitHub refused {what}: {reason}");
+    if !denied {
+        return refused;
     }
-    text
+    let needs = needs(change);
+    let scope: String = match change {
+        Change::SetProjectField { .. } | Change::Project(_) => {
+            "a classic token needs the project scope; a fine-grained one, Projects: write".into()
+        }
+        Change::Alert(_) => format!(
+            "a fine-grained token needs {needs}; a classic one, the security_events or repo scope"
+        ),
+        // Fine-grained tokens can't read notifications at all.
+        _ if notifies(change) => {
+            "notifications take a classic token with the notifications or repo scope".into()
+        }
+        _ => format!("a fine-grained token needs {needs}; a classic one, the repo scope"),
+    };
+    format!("{refused}. Your token may lack the permission: {scope}")
 }
 
 /// What issue and pull request actions add: their own actions, wherever

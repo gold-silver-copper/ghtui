@@ -13,7 +13,7 @@ use crate::ui::page::{Link, Page};
 use crate::ui::pages::{Mark, TextBox, WriteFormView};
 
 use super::{
-    Expected, Field, FileChange, FileWrite, Form, FormOf, ask, clone_here, expect, form, form_mut,
+    Expected, Field, FileChange, FileWrite, Form, FormOf, ask, clone_here, form, form_mut,
     form_row, item, refused, setting,
 };
 use crate::data::DataKey;
@@ -471,17 +471,13 @@ impl Job for Commit {
                 (page, Some(text.clone()), path.clone())
             }
         };
-        let mut cmds = state.replace(page.clone(), true, None);
-        expect(
-            state,
-            page,
-            Expected::File {
-                repo: repo.clone(),
-                rev: c.branch.clone(),
-                path,
-                text,
-            },
-        );
+        let shown = Expected::File {
+            repo: repo.clone(),
+            rev: c.branch.clone(),
+            path,
+            text,
+        };
+        let mut cmds = crate::follow::replace(state, page, shown);
         if c.from.is_some() {
             let propose = super::Answer::Propose(repo, c.branch.clone(), base);
             cmds.extend(ask(

@@ -1135,23 +1135,17 @@ pub struct FileWrite {
 
 /// The form's rows for the page, each set in a picker.
 fn form_row(f: &Form, field: Field, unset: &str) -> crate::ui::pages::FormRow {
-    let colour = (field == Field::Colour && !f.get(field).is_empty())
-        .then(|| format!("#{}", f.get(field).trim_start_matches('#')));
-    let value = colour.as_deref().unwrap_or(f.get(field));
+    let value = f.get(field);
     let (value, unset) = if field.toggles() {
         (toggle_text(field, f.on(field)).to_owned(), false)
     } else if value.is_empty() {
         (unset.to_owned(), true)
+    } else if field == Field::Colour {
+        (format!("#{}", value.trim_start_matches('#')), false)
     } else {
         (value.to_owned(), false)
     };
-    crate::ui::pages::FormRow {
-        name: field.name(),
-        value,
-        unset,
-        chips: Vec::new(),
-        link: Some(Row::Field(field)),
-    }
+    crate::forms::form_row(field.name(), value, unset, Some(Row::Field(field)))
 }
 
 /// What a yes-or-no row says.

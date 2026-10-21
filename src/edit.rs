@@ -10,8 +10,8 @@
 use std::collections::BTreeSet;
 
 use crate::api::change::Change;
-use crate::api::edit::{Edit, Editable, Named, ReactionContent, Sidebar, Written};
-use crate::api::model::{Capped, NodeId, RepoId};
+use crate::api::edit::{Edit, Editable, Named, ReactionContent, Sidebar, SidebarPermits, Written};
+use crate::api::model::{Capped, Label, MilestoneRef, NodeId, RepoId};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::act::{By, Step, Subject, issue};
@@ -176,33 +176,70 @@ fn subject_here(state: &State) -> Option<Subject> {
     Subject::on_screen(state).filter(|s| matches!(s, Subject::Pr(_) | Subject::Issue(..)))
 }
 
-/// The description of the issue or pull request on screen, as a spot.
-fn description<'a>(state: &'a State, about: &Subject) -> Result<Spot<'a>, String> {
-    let (of, editable, body, author, at) = match about {
-        Subject::Issue(repo, number) => issue(state, repo, *number).map(|d| {
-            let at = &d.created_at;
-            (Written::Issue, &d.editable, &d.body, &d.author, at)
-        }),
-        Subject::Pr(pr) => (state.pr(pr)).map(|d| {
-            let at = &d.created_at;
-            (Written::Pr, &d.editable, &d.body, &d.author, at)
-        }),
+/// What an issue and a pull request both have, as loaded: the
+/// description, as a spot, and the sidebar.
+struct Detail<'a> {
+    description: Spot<'a>,
+    title: &'a str,
+    labels: &'a Capped<Label>,
+    assignees: &'a Capped<String>,
+    milestone: Option<&'a MilestoneRef>,
+    sidebar: SidebarPermits,
+    open: bool,
+}
+
+/// The issue or pull request `about`, once it's loaded.
+fn detail<'a>(state: &'a State, about: &Subject) -> Option<Detail<'a>> {
+    macro_rules! detail {
+        ($d:ident, $of:expr, $open:expr) => {
+            Detail {
+                description: Spot {
+                    of: $of,
+                    editable: &$d.editable,
+                    body: &$d.body,
+                    author: &$d.author,
+                    at: &$d.created_at,
+                },
+                title: &$d.title,
+                labels: &$d.labels,
+                assignees: &$d.assignees,
+                milestone: $d.milestone.as_ref(),
+                sidebar: $d.sidebar,
+                open: $open,
+            }
+        };
+    }
+    match about {
+        Subject::Issue(repo, number) => {
+            issue(state, repo, *number).map(|d| detail!(d, Written::Issue, true))
+        }
+        Subject::Pr(pr) => state
+            .pr(pr)
+            .map(|d| detail!(d, Written::Pr, d.state.is_open())),
         _ => None,
     }
-    .ok_or("It's still loading")?;
-    Ok(Spot {
-        of,
-        editable,
-        body,
-        author,
-        at,
-    })
+}
+
+/// The issue's or pull request's comments and reviews, once loaded: a
+/// pull request's are its conversation's.
+fn timeline<'a>(state: &'a State, about: &Subject) -> Option<&'a [crate::api::timeline::Item]> {
+    match about {
+        Subject::Issue(repo, number) => Some(&issue(state, repo, *number)?.timeline.items),
+        Subject::Pr(pr) => Some(&state.activity(pr)?.timeline.items),
+        _ => None,
+    }
+}
+
+/// The description of the issue or pull request on screen, as a spot.
+fn description<'a>(state: &'a State, about: &Subject) -> Result<Spot<'a>, String> {
+    let d = detail(state, about).ok_or("It's still loading")?;
+    Ok(d.description)
 }
 
 /// The comment selected on a page (its description is one), or, with
 /// `fallback`, the description when no comment is.
 fn page_spot<'a>(state: &'a State, about: &Subject, fallback: bool) -> Result<Spot<'a>, String> {
-    let Screen::Page(p) = state.screen() else { return Err(String::new()) };
+    let p = state.screen().page().ok_or_else(String::new)?;
     let Some(crate::ui::page::Link::Quote { author, at, .. }) = p.selected_link() else {
         if fallback {
             return description(state, about);
@@ -216,12 +253,7 @@ fn page_spot<'a>(state: &'a State, about: &Subject, fallback: bool) -> Result<Sp
     if said.at == at && said.author == author {
         return Ok(said);
     }
-    let timeline = match about {
-        Subject::Issue(repo, number) => issue(state, repo, *number).map(|d| &d.timeline),
-        Subject::Pr(pr) => state.activity(pr).map(|a| &a.timeline),
-        _ => None,
-    };
-    let timeline = timeline.map_or(&[][..], |t| &t.items[..]);
+    let timeline = timeline(state, about).unwrap_or_default();
     // A review's summary is written like a comment.
     let review = timeline.iter().find_map(|i| match i {
         crate::api::timeline::Item::Review(r) if r.at == *at && r.author == *author => Some(r),
@@ -324,7 +356,7 @@ fn elsewhere(action: Action) -> String {
 
 fn plan(state: &State, action: Action) -> Result<Step, String> {
     let about = subject_here(state).ok_or_else(|| elsewhere(action))?;
-    let diff = matches!(state.screen(), Screen::Diff(_));
+    let diff = state.screen().diff().is_some();
     match action {
         Action::EditComment => {
             let spot = spot(state, &about, true)?;
@@ -386,21 +418,17 @@ fn plan(state: &State, action: Action) -> Result<Step, String> {
         }
         _ if diff => Err(format!("{}: on the conversation", action.description())),
         Action::EditTitle => {
-            let spot = description(state, &about)?;
-            if !spot.editable.can_update {
+            let d = detail(state, &about).ok_or("It's still loading")?;
+            let editable = d.description.editable;
+            if !editable.can_update {
                 return Err(
                     "GitHub doesn't let you edit its title: it takes its author or triage access"
                         .into(),
                 );
             }
-            let was = match &about {
-                Subject::Issue(repo, number) => issue(state, repo, *number).map(|d| &d.title),
-                Subject::Pr(pr) => state.pr(pr).map(|d| &d.title),
-                _ => None,
-            };
             choose(Choosing::Title {
-                id: spot.editable.id.clone(),
-                was: was.cloned().unwrap_or_default(),
+                id: editable.id.clone(),
+                was: d.title.to_owned(),
                 about,
             })
         }
@@ -408,17 +436,8 @@ fn plan(state: &State, action: Action) -> Result<Step, String> {
         | Action::EditAssignees
         | Action::RequestReviews
         | Action::EditMilestone => {
-            let (may, open) = match &about {
-                Subject::Issue(repo, number) => {
-                    let d = issue(state, repo, *number).ok_or("It's still loading")?;
-                    (d.sidebar, true)
-                }
-                Subject::Pr(pr) => {
-                    let d = state.pr(pr).ok_or("It's still loading")?;
-                    (d.sidebar, d.state.is_open())
-                }
-                _ => return Err(elsewhere(action)),
-            };
+            let d = detail(state, &about).ok_or("It's still loading")?;
+            let (may, open) = (d.sidebar, d.open);
             let triage = "it takes triage access";
             match action {
                 Action::EditLabels if !may.labels => {
@@ -482,7 +501,7 @@ fn choose(choosing: Choosing) -> Result<Step, String> {
 /// can't be made now, if it can't.
 pub fn doables(state: &State) -> Vec<Doable> {
     let Some(about) = subject_here(state) else { return Vec::new() };
-    let diff = matches!(state.screen(), Screen::Diff(_));
+    let diff = state.screen().diff().is_some();
     let what = spot(state, &about, true).map_or_else(|_| "the comment".to_owned(), |s| s.name());
     ACTIONS
         .into_iter()
@@ -754,11 +773,7 @@ fn names(list: &[&Named]) -> BTreeSet<String> {
 
 /// The node ID of the issue or pull request `about`, once it's loaded.
 fn node(state: &State, about: &Subject) -> Option<NodeId> {
-    match about {
-        Subject::Issue(repo, number) => issue(state, repo, *number).map(|d| d.id.clone()),
-        Subject::Pr(pr) => state.pr(pr).map(|d| d.id.clone()),
-        _ => None,
-    }
+    detail(state, about).map(|d| d.description.editable.id.clone())
 }
 
 /// Sends what a picker's row picks, closing the picker.
@@ -885,33 +900,20 @@ fn apply(state: &mut State) -> Cmds {
 /// The description, comments and reviews' summaries on the issue or pull
 /// request, each with its text; `None` until they're loaded.
 fn written<'a>(state: &'a State, about: &Subject) -> Option<Vec<(&'a Editable, &'a str)>> {
-    let (description, body, timeline) = match about {
-        Subject::Issue(repo, number) => {
-            let d = issue(state, repo, *number)?;
-            (&d.editable, &d.body, &d.timeline)
-        }
-        Subject::Pr(pr) => {
-            let d = state.pr(pr)?;
-            (&d.editable, &d.body, &state.activity(pr)?.timeline)
-        }
-        _ => return None,
-    };
-    let written = timeline.iter().filter_map(|i| match i {
+    let d = detail(state, about)?;
+    let written = timeline(state, about)?.iter().filter_map(|i| match i {
         crate::api::timeline::Item::Comment(c) => Some((c.editable.as_ref()?, c.body.as_str())),
         crate::api::timeline::Item::Review(r) => Some((&r.editable, r.body.as_str())),
         crate::api::timeline::Item::Event(_) => None,
     });
-    Some(
-        std::iter::once((description, body.as_str()))
-            .chain(written)
-            .collect(),
-    )
+    let description = (d.description.editable, d.description.body);
+    Some(std::iter::once(description).chain(written).collect())
 }
 
-/// Whether the names in `list` have every one of `want` and none of
+/// Whether the names `list` has are every one of `want` and none of
 /// `gone`.
-fn has(list: &[String], want: &[Named], gone: &[Named]) -> bool {
-    want.iter().all(|n| list.contains(&n.name)) && !gone.iter().any(|n| list.contains(&n.name))
+fn has(list: impl Fn(&str) -> bool, want: &[Named], gone: &[Named]) -> bool {
+    want.iter().all(|n| list(&n.name)) && !gone.iter().any(|n| list(&n.name))
 }
 
 /// Whether the issue or pull request `about` shows `edit`. A review
@@ -920,17 +922,8 @@ pub fn shown(state: &State, edit: &Edit, about: &Subject) -> bool {
     // `Some(None)`: everything's loaded, and it isn't there.
     let find =
         |id: &NodeId| written(state, about).map(|all| all.into_iter().find(|(e, _)| e.id == *id));
-    let (title, labels, assignees, milestone) = match about {
-        Subject::Issue(repo, number) => match issue(state, repo, *number) {
-            Some(d) => (&d.title, &d.labels, &d.assignees, d.milestone.as_ref()),
-            None => return false,
-        },
-        Subject::Pr(pr) => match state.pr(pr) {
-            Some(d) => (&d.title, &d.labels, &d.assignees, d.milestone.as_ref()),
-            None => return false,
-        },
-        _ => return true,
-    };
+    // Only an issue or a pull request is waited for, once it's loaded.
+    let Some(d) = detail(state, about) else { return numbered(about).is_none() };
     match edit {
         Edit::Body {
             of: Written::ReviewComment,
@@ -955,15 +948,16 @@ pub fn shown(state: &State, edit: &Edit, about: &Subject) -> bool {
             Some(None) => true,
             None => false,
         },
-        Edit::Title { title: new, .. } => same_text(title, new),
+        Edit::Title { title: new, .. } => same_text(d.title, new),
         Edit::Labels { add, remove, .. } => {
-            let names: Vec<String> = labels.iter().map(|l| l.name.clone()).collect();
-            has(&names, add, remove)
+            has(|name| d.labels.iter().any(|l| l.name == name), add, remove)
         }
-        Edit::Assignees { add, remove, .. } => has(assignees, add, remove),
+        Edit::Assignees { add, remove, .. } => {
+            has(|name| d.assignees.iter().any(|a| a == name), add, remove)
+        }
         Edit::Milestone {
             milestone: want, ..
-        } => milestone.map(|m| m.title.as_str()) == want.as_ref().map(|m| m.name.as_str()),
+        } => d.milestone.map(|m| m.title.as_str()) == want.as_ref().map(|m| m.name.as_str()),
         Edit::Reviewers {
             users, teams, bots, ..
         } => {
