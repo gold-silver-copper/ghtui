@@ -3,10 +3,9 @@
 use super::*;
 use crate::route::{issues, people, runs, security};
 
-/// A branch's commits page: the code toolbar's link opens it, and it
-/// loads more like any list.
-#[test]
-fn commit_history_loads_more() {
+/// The repository's `src` history on main, the code toolbar's link
+/// followed, and its key.
+fn with_history() -> (State, DataKey) {
     let mut state = with_repo();
     let url = format!("https://github.com/{}/commits/main/src", ghtui());
     let Target::Page(route) = Dest::from_url(&url).target else {
@@ -15,6 +14,20 @@ fn commit_history_loads_more() {
     let key = DataKey::History(ghtui(), "main".into(), "src".into());
     let cmds = state.push(route);
     assert!(cmds.contains(&fetch(key.clone())), "{cmds:?}");
+    (state, key)
+}
+
+/// Asking for `key`'s next page, after `after`.
+fn more(key: &DataKey, after: &str) -> Cmd {
+    let (key, after) = (key.clone(), after.to_owned());
+    Cmd::Api(Api::FetchMore { key, after })
+}
+
+/// A branch's commits page: the code toolbar's link opens it, and it
+/// loads more like any list.
+#[test]
+fn commit_history_loads_more() {
+    let (mut state, key) = with_history();
     fetched(
         &mut state,
         key.clone(),
@@ -24,13 +37,7 @@ fn commit_history_loads_more() {
     assert!(selected_text(&state).starts_with("Load more"));
     let more_at = page(&state).selected;
     let cmds = press(&mut state, "<Enter>");
-    assert_eq!(
-        cmds,
-        vec![Cmd::Api(Api::FetchMore {
-            key: key.clone(),
-            after: "h1".into()
-        })]
-    );
+    assert_eq!(cmds, [more(&key, "h1")]);
     // The next page: other commits.
     let mut more = fixtures::history(None);
     for c in &mut more.items {
@@ -107,13 +114,7 @@ fn an_extended_list_is_kept_until_asked() {
 /// appended to the new list nor make that newer page be dropped.
 #[test]
 fn a_next_page_from_before_a_refresh_is_not_appended() {
-    let mut state = with_repo();
-    let url = format!("https://github.com/{}/commits/main/src", ghtui());
-    let Target::Page(route) = Dest::from_url(&url).target else {
-        panic!("{url}");
-    };
-    let key = DataKey::History(ghtui(), "main".into(), "src".into());
-    let _ = state.push(route);
+    let (mut state, key) = with_history();
     // Commits named `c0`, `c1`, ...
     let page = |c: char, next: Option<&str>| {
         let mut page = fixtures::history(next);
@@ -125,25 +126,13 @@ fn a_next_page_from_before_a_refresh_is_not_appended() {
     fetched(&mut state, key.clone(), page('a', Some("h1")));
     press(&mut state, "<End>");
     let old = press(&mut state, "<Enter>");
-    assert_eq!(
-        old,
-        vec![Cmd::Api(Api::FetchMore {
-            key: key.clone(),
-            after: "h1".into()
-        })]
-    );
+    assert_eq!(old, [more(&key, "h1")]);
     // r, and the refreshed list arrives before the old next page.
     let _ = press(&mut state, "r");
     fetched(&mut state, key.clone(), page('c', Some("h2")));
     press(&mut state, "<End>");
     let new = press(&mut state, "<Enter>");
-    assert_eq!(
-        new,
-        vec![Cmd::Api(Api::FetchMore {
-            key: key.clone(),
-            after: "h2".into()
-        })]
-    );
+    assert_eq!(new, [more(&key, "h2")]);
     // The page after the old list's h1, then the one after h2.
     update(
         &mut state,
@@ -168,37 +157,21 @@ fn a_next_page_from_before_a_refresh_is_not_appended() {
 /// asked of the refreshed list once that's in.
 #[test]
 fn load_more_during_a_refresh_waits_for_it() {
-    let mut state = with_repo();
-    let url = format!("https://github.com/{}/commits/main/src", ghtui());
-    let Target::Page(route) = Dest::from_url(&url).target else {
-        panic!("{url}");
-    };
-    let key = DataKey::History(ghtui(), "main".into(), "src".into());
-    let _ = state.push(route);
+    let (mut state, key) = with_history();
     let page = |next| Data::from(fixtures::history(next));
     fetched(&mut state, key.clone(), page(Some("h1")));
     let _ = press(&mut state, "r");
     press(&mut state, "<End>");
     assert_eq!(press(&mut state, "<Enter>"), Vec::new());
     let cmds = fetched(&mut state, key.clone(), page(Some("h2")));
-    let more = Cmd::Api(Api::FetchMore {
-        key,
-        after: "h2".into(),
-    });
-    assert_eq!(cmds, vec![more]);
+    assert_eq!(cmds, [more(&key, "h2")]);
 }
 
 /// A refresh that fails leaves the list as it was, so the next page
 /// asked for before it still belongs there.
 #[test]
 fn a_next_page_survives_a_failed_refresh() {
-    let mut state = with_repo();
-    let url = format!("https://github.com/{}/commits/main/src", ghtui());
-    let Target::Page(route) = Dest::from_url(&url).target else {
-        panic!("{url}");
-    };
-    let key = DataKey::History(ghtui(), "main".into(), "src".into());
-    let _ = state.push(route);
+    let (mut state, key) = with_history();
     let page = |next: Option<&str>| Data::from(fixtures::history(next));
     fetched(&mut state, key.clone(), page(Some("h1")));
     press(&mut state, "<End>");
@@ -236,13 +209,7 @@ fn advisories_load_more() {
         selected_text(&state)
     );
     let cmds = press(&mut state, "<Enter>");
-    assert_eq!(
-        cmds,
-        vec![Cmd::Api(Api::FetchMore {
-            key,
-            after: "c1".into()
-        })]
-    );
+    assert_eq!(cmds, [more(&key, "c1")]);
 }
 
 /// An organization's People box shows a few members; it says how many

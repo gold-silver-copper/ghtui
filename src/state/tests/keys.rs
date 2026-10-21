@@ -461,15 +461,6 @@ fn file_lines_copy_and_blame() {
     ));
 }
 
-/// The selected line, and the word under the cursor.
-fn word_here(s: &State) -> (Option<u32>, Option<String>) {
-    let p = page(s);
-    let word = p
-        .word_cursor()
-        .map(|(_, code, w)| code.get(w.bytes).unwrap().to_owned());
-    (p.selected.and_then(|i| p.line_of(i)), word)
-}
-
 /// In a file, `w` and `b` move a word cursor along the line; `*` goes
 /// to the word's next line below, the cursor on it, and `#` back up.
 #[test]

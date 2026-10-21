@@ -16,13 +16,6 @@ fn with_code() -> State {
     s
 }
 
-/// The selected line of the file, and the word under the cursor.
-fn at(s: &State) -> (Option<u32>, Option<String>) {
-    let p = page(s);
-    let word = (p.word_cursor()).map(|(_, code, w)| code.get(w.bytes).unwrap().to_owned());
-    (p.selected.and_then(|i| p.line_of(i)), word)
-}
-
 fn said(s: &State) -> String {
     format!("{:?}", s.notices.shown())
 }
@@ -34,7 +27,7 @@ fn symbols_go_to_their_line() {
     act(&mut s, Action::Symbols);
     assert_eq!(picked_labels(&s), ["fn main", "fn helper", "fn ioctl"]);
     press(&mut s, "help<Enter>");
-    assert_eq!(at(&s).0, Some(8));
+    assert_eq!(word_here(&s).0, Some(8));
 }
 
 /// `gd` goes to the definition of the word under the cursor in the file.
@@ -42,13 +35,18 @@ fn symbols_go_to_their_line() {
 fn gd_finds_a_definition_in_the_file() {
     let mut s = with_code();
     press(&mut s, ":4<Enter>");
-    assert_eq!(at(&s), (Some(4), Some("helper".into())));
+    assert_eq!(word_here(&s), (Some(4), Some("helper".into())));
     press(&mut s, "g");
-    assert_eq!(at(&s), (Some(8), Some("helper".into())), "{}", said(&s));
+    assert_eq!(
+        word_here(&s),
+        (Some(8), Some("helper".into())),
+        "{}",
+        said(&s)
+    );
     // Not a name: says so.
     let mut s = with_code();
     press(&mut s, "<Home><C-Right><C-Right><C-Right>");
-    assert_eq!(at(&s).1.as_deref(), Some("::"));
+    assert_eq!(word_here(&s).1.as_deref(), Some("::"));
     press(&mut s, "g");
     assert!(
         said(&s).contains("No name under the cursor"),
@@ -123,7 +121,7 @@ fn repository_symbols_and_references_are_listed() {
     };
     update(&mut s, Msg::Code(symbols, Ok(answer)));
     press(&mut s, "ioctl<Enter>");
-    assert_eq!(at(&s).0, Some(10));
+    assert_eq!(word_here(&s).0, Some(10));
 
     press(&mut s, ":4<Enter>");
     let refs = ask(Want::References("helper".into()));
@@ -175,10 +173,14 @@ fn star_matches_whole_words() {
     let mut s = with_code();
     press(&mut s, "<Home><C-Right><C-Right><C-Right><C-Right>");
     act(&mut s, Action::SearchWord);
-    assert_eq!(at(&s), (Some(4), Some("io".into())));
+    assert_eq!(word_here(&s), (Some(4), Some("io".into())));
     act(&mut s, Action::SearchWord);
     act(&mut s, Action::SearchWord);
-    assert_eq!(at(&s), (Some(1), Some("io".into())), "around, past ioctl");
+    assert_eq!(
+        word_here(&s),
+        (Some(1), Some("io".into())),
+        "around, past ioctl"
+    );
     assert!(said(&s).contains("Match 1 of 3"), "{}", said(&s));
 }
 
@@ -206,9 +208,19 @@ fn symbols_and_definitions_in_the_diff() {
 fn a_search_match_is_the_word_gd_reads() {
     let mut s = with_code();
     press(&mut s, "/other<Enter>");
-    assert_eq!(at(&s), (Some(5), Some("other".into())), "{}", said(&s));
+    assert_eq!(
+        word_here(&s),
+        (Some(5), Some("other".into())),
+        "{}",
+        said(&s)
+    );
     press(&mut s, "<Home>/helper<Enter>");
-    assert_eq!(at(&s), (Some(4), Some("helper".into())), "{}", said(&s));
+    assert_eq!(
+        word_here(&s),
+        (Some(4), Some("helper".into())),
+        "{}",
+        said(&s)
+    );
     let mut long = "fn pad() {}\n".repeat(1500);
     long.push_str("fn last() {\n    valid_login(login).then(|| x);\n}\n");
     let mut s = with_repo();
@@ -217,7 +229,7 @@ fn a_search_match_is_the_word_gd_reads() {
     open(&mut s, route, Data::from(blob));
     press(&mut s, "gOlast<Enter>ww/valid_login<Enter>");
     assert_eq!(
-        at(&s),
+        word_here(&s),
         (Some(1502), Some("valid_login".into())),
         "{}",
         said(&s)

@@ -69,6 +69,13 @@ fn page(state: &State) -> &PageScreen {
     }
 }
 
+/// The selected line of a file, and the word under the cursor.
+fn word_here(s: &State) -> (Option<u32>, Option<String>) {
+    let p = page(s);
+    let word = (p.word_cursor()).map(|(_, code, w)| code.get(w.bytes).unwrap().to_owned());
+    (p.selected.and_then(|i| p.line_of(i)), word)
+}
+
 fn on_diff(state: &State) -> &DiffScreen {
     match state.screen() {
         Screen::Diff(d) => d,
