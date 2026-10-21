@@ -362,6 +362,13 @@ impl<T> Results<T> {
     }
 }
 
+/// Every page fetched, of the total.
+impl<T> From<Results<T>> for Capped<T> {
+    fn from(list: Results<T>) -> Self {
+        Capped::new(list.items, list.total)
+    }
+}
+
 /// No results (without asking `T` for a default).
 impl<T> Default for Results<T> {
     fn default() -> Self {
@@ -1692,7 +1699,7 @@ mod tests {
         }))
         .unwrap();
         let fetched = contexts.filter_results(Some);
-        let checks = checks("abc".into(), Capped::new(fetched.items, fetched.total));
+        let checks = checks("abc".into(), fetched.into());
         assert_eq!((checks.items.len(), checks.items.total()), (2, 5));
         assert_eq!(checks.items[0].summary, None);
         assert_eq!(checks.items[1].summary.as_deref(), Some("Built"));

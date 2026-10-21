@@ -7,6 +7,7 @@ use crate::api::browse::{Page, Results, UserLogin as Login, wire};
 use crate::api::client::{ApiError, GitHub};
 use crate::api::model::{Capped, IssueState, Label, NodeId, PrState, RepoId, Status};
 use crate::api::raw;
+use crate::ui::time::day_of;
 
 /// Who owns a project, as its URL says: `/orgs/o/projects/1` or
 /// `/users/u/projects/1`.
@@ -534,11 +535,6 @@ pub enum Dates<'a> {
     Iteration(&'a ProjectField),
 }
 
-/// `2026-10-31` as days since 1970-01-01.
-pub fn day(date: &str) -> Option<i64> {
-    crate::ui::time::day_of(date)
-}
-
 impl Project {
     /// A board's swimlanes: its items grouped by the view's grouping
     /// field (not its columns'), each lane drawn with the columns.
@@ -595,7 +591,7 @@ impl Project {
     pub fn span(dates: Dates<'_>, it: &ProjectItem) -> Option<(i64, i64)> {
         match dates {
             Dates::Fields { start, end } => {
-                let at = |f: &ProjectField| it.value(&f.id).and_then(|v| day(v.text()));
+                let at = |f: &ProjectField| it.value(&f.id).and_then(|v| day_of(v.text()));
                 let from = at(start);
                 let to = end.and_then(at);
                 let (a, b) = match (from, to) {
@@ -611,7 +607,7 @@ impl Project {
                     return None;
                 };
                 let i = iterations.iter().find(|i| i.id == *id)?;
-                let start = day(&i.start)?;
+                let start = day_of(&i.start)?;
                 let days = i64::try_from(i.days).ok()?;
                 Some((start, start + days.max(1) - 1))
             }

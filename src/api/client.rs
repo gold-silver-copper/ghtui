@@ -157,6 +157,12 @@ struct Response {
     body: String,
 }
 
+impl Response {
+    fn header(&self, name: impl header::AsHeaderName) -> Option<&str> {
+        self.headers.get(name).and_then(|v| v.to_str().ok())
+    }
+}
+
 /// A REST answer, whatever its status ([`GitHub::rest_answer`]).
 pub(crate) struct Answer(Response);
 
@@ -170,7 +176,7 @@ impl Answer {
     }
 
     pub(crate) fn header(&self, name: &str) -> Option<&str> {
-        self.0.headers.get(name).and_then(|v| v.to_str().ok())
+        self.0.header(name)
     }
 
     /// The error its status means, as any other request's would be.
@@ -181,7 +187,7 @@ impl Answer {
     /// The cursor for the next page in its `Link` header: `after=…` or
     /// `page=…`, as a query parameter to send.
     pub(crate) fn next_page(&self) -> Option<String> {
-        next_query(self.header(header::LINK.as_str())?)?
+        next_query(self.0.header(header::LINK)?)?
             .split('&')
             .find(|kv| kv.starts_with("after=") || kv.starts_with("page="))
             .map(str::to_owned)
@@ -473,7 +479,7 @@ impl GitHub {
             self.leave_out(vec![format!("{what}: only the first {fetched}")]);
             list.total = fetched + 1;
         }
-        Ok(Capped::new(list.items, list.total))
+        Ok(list.into())
     }
 
     /// Checks a GraphQL list's page adds up: a short page is the last
@@ -870,11 +876,10 @@ impl GitHub {
                 cached: cached.as_ref(),
             })
             .await?;
-        let named = |name: &str| {
-            let value = response.headers.get(name)?.to_str().ok();
-            value.map(str::to_owned)
-        };
-        let poll_interval = named("x-poll-interval").and_then(|s| s.trim().parse().ok());
+        let named = |name| response.header(name).map(str::to_owned);
+        let poll_interval = response
+            .header("x-poll-interval")
+            .and_then(|s| s.trim().parse().ok());
         if response.status == StatusCode::NOT_MODIFIED
             && let Some(cached) = cached
         {
@@ -885,9 +890,9 @@ impl GitHub {
         }
         check_status(&response, what)?;
         let entry = HttpEntry {
-            etag: named(header::ETAG.as_str()).unwrap_or_default(),
-            last_modified: named(header::LAST_MODIFIED.as_str()),
-            link: named(header::LINK.as_str()),
+            etag: named(header::ETAG).unwrap_or_default(),
+            last_modified: named(header::LAST_MODIFIED),
+            link: named(header::LINK),
             body: response.body,
             poll_interval,
         };
@@ -915,10 +920,7 @@ impl GitHub {
             return Ok(Polled::Same);
         }
         check_status(&response, short_path(path))?;
-        let etag = (response.headers.get(header::ETAG))
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or_default()
-            .to_owned();
+        let etag = response.header(header::ETAG).unwrap_or_default().to_owned();
         Ok(Polled::Changed {
             etag,
             body: response.body,
@@ -1124,11 +1126,7 @@ impl GitHub {
     ) -> Result<(T, Option<String>), ApiError> {
         let response = self.send(&Request::Get { path, cached: None }).await?;
         check_status(&response, what)?;
-        let next = response
-            .headers
-            .get(header::LINK)
-            .and_then(|v| v.to_str().ok())
-            .and_then(next_after);
+        let next = response.header(header::LINK).and_then(next_after);
         Ok((serde_json::from_str(&response.body)?, next))
     }
 
@@ -1916,7 +1914,6 @@ impl GitHub {
         repo: &RepoId,
         commit: browse::ChecksCommit,
     ) -> Result<browse::Checks, ApiError> {
-        use cynic::QueryBuilder as _;
         let oid = commit.oid.0;
         let first = browse::rollup_contexts(commit.status_check_rollup);
         let what = format!("{}'s checks", text_short(&oid));
@@ -2835,8 +2832,7 @@ impl GitHub {
             .graphql_json(raw::REFS, vars(&None), repo, "/repository")
             .await?;
         self.check_connection(&first.tags, 100, format!("{repo}'s tags"));
-        let tags = first.tags.into_results(|n| n.name);
-        let tags = Capped::new(tags.items, tags.total);
+        let tags = first.tags.into_results(|n| n.name).into();
         let more = |after| async move {
             let page = self.graphql_json(raw::REFS, vars(&after), repo, "/repository/heads");
             Ok(heads(page.await?))
