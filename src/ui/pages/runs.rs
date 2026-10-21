@@ -210,13 +210,9 @@ pub fn workflow_run(page: &mut Page, repo: &RepoId, run: &WorkflowRun, now: u64)
     if let Some(at) = &run.started_at {
         subline.push(meta(format!(" · started {}", time::ago_iso(at, now))));
     }
-    if let Some(d) = took(
-        run.started_at.as_ref(),
-        run.updated_at.as_ref(),
-        run.outcome,
-        now,
-    )
-    .filter(|_| run.outcome != CheckOutcome::Pending)
+    let ended = run.updated_at.as_ref();
+    if let Some(d) = took(run.started_at.as_ref(), ended, run.outcome, now)
+        .filter(|_| run.outcome != CheckOutcome::Pending)
     {
         subline.push(meta(format!(" · took {d}")));
     }
@@ -271,9 +267,8 @@ fn artifacts(page: &mut Page, list: &Capped<Artifact>, now: u64) {
         return;
     }
     page.blank();
-    let title = counted("Artifacts", list);
     let right = vec![meta("↵ saves one")];
-    list_box(page, title, right, list, "", |page, a| {
+    counted_box(page, "Artifacts", right, list, "", |page, a| {
         let when = match (&a.expires_at, a.expired) {
             (_, true) => "expired".to_owned(),
             (Some(at), false) => format!("expires {}", time::until_iso(at, now)),
@@ -591,7 +586,8 @@ pub fn job(
             error.or(shown.len().checked_sub(1))
         };
         let focus = match at.step {
-            _ if searched => shown.iter().position(|(_, l)| hit(l)),
+            // The first match, found as the lines are drawn.
+            _ if searched => None,
             Some((_, l)) if pointed => at_line(l),
             _ if failed => first_error(),
             // Followed to its end, as `tail -f` leaves it.
@@ -619,12 +615,13 @@ pub fn job(
         }
         let width = shown.last().map_or(1, |(i, _)| (i + 1).to_string().len());
         for (n, (i, text)) in shown.iter().enumerate() {
+            let matched = hit(text);
             // The page opens there, with that line selected.
-            if focus == Some(n) && page.jump.is_none() {
+            if (focus == Some(n) || (searched && matched)) && page.jump.is_none() {
                 page.jump = Some(page.lines.len());
                 page.selects = Some(page.items.len());
             }
-            if hit(text) {
+            if matched {
                 page.marks.push(page.lines.len());
             }
             let mut segs = vec![line_number(i + 1, width)];
@@ -765,38 +762,26 @@ pub fn dispatch_form(page: &mut Page, v: &DispatchView<'_>) {
             if n > 0 {
                 page.box_rule();
             }
-            let value = v
-                .values
-                .get(&input.name)
-                .cloned()
-                .unwrap_or_else(|| input.start());
-            item(
-                page,
-                Link::Form(Row::Input(input.name.clone())),
-                |page, link| {
-                    let mut segs = vec![Seg::linked(input.name.clone(), Role::Strong, link)];
-                    if input.required {
-                        segs.push(Seg::new(" *", Role::Error));
-                    }
-                    let shown = match input.kind {
-                        InputKind::Choice(_) => format!("{value} ▾"),
-                        InputKind::Boolean => {
-                            if value == "true" {
-                                "☑ true".to_owned()
-                            } else {
-                                "☐ false".to_owned()
-                            }
-                        }
-                        InputKind::Text if value.is_empty() => "(empty)".to_owned(),
-                        InputKind::Text => format!("“{value}”"),
-                    };
-                    page.box_line(segs, vec![Seg::new(shown, Role::Code)], 0);
-                    if !input.description.is_empty() {
-                        let text = meta(input.description.clone());
-                        page.box_line(vec![text], Vec::new(), 2);
-                    }
-                },
-            );
+            let value = (v.values.get(&input.name).cloned()).unwrap_or_else(|| input.start());
+            let shown = match input.kind {
+                InputKind::Choice(_) => format!("{value} ▾"),
+                InputKind::Boolean if value == "true" => "☑ true".to_owned(),
+                InputKind::Boolean => "☐ false".to_owned(),
+                InputKind::Text if value.is_empty() => "(empty)".to_owned(),
+                InputKind::Text => format!("“{value}”"),
+            };
+            let to = Link::Form(Row::Input(input.name.clone()));
+            item(page, to, |page, link| {
+                let mut segs = vec![Seg::linked(input.name.clone(), Role::Strong, link)];
+                if input.required {
+                    segs.push(Seg::new(" *", Role::Error));
+                }
+                page.box_line(segs, vec![Seg::new(shown, Role::Code)], 0);
+                if !input.description.is_empty() {
+                    let text = meta(input.description.clone());
+                    page.box_line(vec![text], Vec::new(), 2);
+                }
+            });
         }
         page.box_bottom();
         page.blank();

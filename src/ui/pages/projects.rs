@@ -37,6 +37,22 @@ pub fn projects(
     });
 }
 
+/// The issue or pull request an item is, if it's one.
+fn linked(it: &ProjectItem) -> Option<&crate::api::project::Linked> {
+    match &it.content {
+        ItemContent::Issue(l, _) | ItemContent::Pr(l, _) => Some(l),
+        ItemContent::Draft(_) | ItemContent::Redacted => None,
+    }
+}
+
+/// Where an item is: an issue's or pull request's `o/r#12`, or a draft's.
+fn place(it: &ProjectItem) -> Option<String> {
+    match &it.content {
+        ItemContent::Draft(_) => Some("Draft".to_owned()),
+        _ => linked(it).map(|l| format!("{}#{}", l.repo, l.number)),
+    }
+}
+
 /// Where an item opens: an issue's or pull request's page, or (for a
 /// draft) the view's side pane. One you can't see opens nothing.
 pub fn item_link(project: &ProjectRef, view: Option<u64>, it: &ProjectItem) -> Option<String> {
@@ -254,11 +270,7 @@ fn archived(page: &mut Page, at: &Spot<'_>, cx: PageCtx<'_>) {
     page.box_top(title, vec![meta(hint)]);
     for it in &a.items {
         let (icon, role) = item_icon(it, cx.icons);
-        let place = match &it.content {
-            ItemContent::Issue(l, _) | ItemContent::Pr(l, _) => format!("{}#{}", l.repo, l.number),
-            ItemContent::Draft(_) => "Draft".to_owned(),
-            ItemContent::Redacted => String::new(),
-        };
+        let place = place(it).unwrap_or_default();
         maybe_item(page, item_link(at.project, at.view, it), |page, link| {
             let title = Seg::linked(it.title().to_owned(), title_role(link), link);
             let segs = vec![Seg::new(format!("{icon} "), role), title];
@@ -386,14 +398,7 @@ fn card(
     cx: PageCtx<'_>,
 ) {
     let (icon, role) = item_icon(it, cx.icons);
-    let mut subline = Vec::new();
-    match &it.content {
-        ItemContent::Issue(l, _) | ItemContent::Pr(l, _) => {
-            subline.push(meta(format!("{}#{}", l.repo, l.number)));
-        }
-        ItemContent::Draft(_) => subline.push(meta("Draft")),
-        ItemContent::Redacted => {}
-    }
+    let mut subline = Vec::from_iter(place(it).map(meta));
     for field in fields {
         let value = value_segs(it, field);
         if !value.is_empty() {
@@ -418,10 +423,7 @@ fn card(
 /// An item's value of `field`, as GitHub shows it: options as chips in
 /// their color, labels as labels.
 fn value_segs(it: &ProjectItem, field: &ProjectField) -> Vec<Seg> {
-    let linked = match &it.content {
-        ItemContent::Issue(l, _) | ItemContent::Pr(l, _) => Some(l),
-        _ => None,
-    };
+    let linked = linked(it);
     let text = |s: String| vec![meta(s)];
     match &field.kind {
         FieldKind::Title | FieldKind::Other => Vec::new(),
@@ -471,15 +473,10 @@ fn value_segs(it: &ProjectItem, field: &ProjectField) -> Vec<Seg> {
 /// An item's value of `field` in a table's cell: the text alone.
 fn cell_text(it: &ProjectItem, field: &ProjectField) -> String {
     match &field.kind {
-        FieldKind::Labels => match &it.content {
-            ItemContent::Issue(l, _) | ItemContent::Pr(l, _) => l
-                .labels
-                .iter()
-                .map(|l| l.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", "),
-            _ => String::new(),
-        },
+        FieldKind::Labels => (linked(it).iter().flat_map(|l| &l.labels))
+            .map(|l| l.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
         FieldKind::Text
         | FieldKind::Number
         | FieldKind::Date
@@ -562,20 +559,8 @@ fn roadmap(page: &mut Page, at: &Spot<'_>, view: &ProjectView, dates: Dates<'_>,
     }
     let today = crate::ui::time::today(cx.now);
     let spans: Vec<(i64, i64)> = items.iter().filter_map(|it| span(it)).collect();
-    let first = spans
-        .iter()
-        .map(|s| s.0)
-        .chain([today])
-        .min()
-        .unwrap_or(today)
-        - 3;
-    let last = spans
-        .iter()
-        .map(|s| s.1)
-        .chain([today])
-        .max()
-        .unwrap_or(today)
-        + 3;
+    let first = spans.iter().map(|s| s.0).fold(today, i64::min) - 3;
+    let last = spans.iter().map(|s| s.1).fold(today, i64::max) + 3;
     let room = usize::from(page.room(Frame::Body, 0));
     let title_width = (room / 3).clamp(ROADMAP_TITLE.1, ROADMAP_TITLE.0).min(room);
     let bar_width = room.saturating_sub(title_width + 2).max(1);
@@ -846,11 +831,8 @@ pub fn project_item(
         let link = link_seg(page, p.title.clone(), back, Role::Link);
         let why = "This item isn't among those loaded from ";
         page.wrapped(vec![meta(why), link], 0, Frame::None);
-        say(
-            page,
-            "It may be further down the view, past Load more, or no longer in it.",
-            Role::Meta,
-        );
+        let where_ = "It may be further down the view, past Load more, or no longer in it.";
+        say(page, where_, Role::Meta);
         return;
     };
     let (icon, role) = item_icon(it, cx.icons);
@@ -869,7 +851,7 @@ pub fn project_item(
     hanging(page, Seg::new(format!("{icon} "), role), title, Frame::None);
     let mut place = vec![meta("In ")];
     place.push(link_seg(page, p.title.clone(), back, Role::Link));
-    if let ItemContent::Issue(l, _) | ItemContent::Pr(l, _) = &it.content {
+    if let Some(l) = linked(it) {
         place.push(meta(" · "));
         let name = format!("{}#{}", l.repo, l.number);
         place.push(link_seg(page, name, l.url.clone(), Role::Link));

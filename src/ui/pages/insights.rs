@@ -87,11 +87,8 @@ fn bar_row(page: &mut Page, label: String, n: u64, max: u64, room: usize) {
 
 /// Contributors: commits over time, then each author's, most first.
 pub fn contributors(page: &mut Page, repo: &RepoId, a: &Activity) {
-    let since = month(a.start);
-    let title = format!(
-        "Commits over time  {} since {since}",
-        plural(a.total, "commit")
-    );
+    let (commits, since) = (plural(a.total, "commit"), month(a.start));
+    let title = format!("Commits over time  {commits} since {since}");
     page.box_top(vec![strong(title)], Vec::new());
     if a.total == 0 {
         empty_row(page, "No commits on the default branch.");
@@ -146,16 +143,13 @@ pub fn contributors(page: &mut Page, repo: &RepoId, a: &Activity) {
             Role::Body,
         );
         let line = Seg::new(sparkline(&weeks), Role::Accent);
-        maybe_item(
-            page,
-            author.login.as_deref().map(url::user),
-            |page, link| {
-                let role = link.map_or(Role::Strong, |_| Role::Link);
-                segs.extend([Seg::linked(name, role, link), Seg::new(pad, Role::Body)]);
-                segs.extend([commits, line]);
-                body(page, segs);
-            },
-        );
+        let profile = author.login.as_deref().map(url::user);
+        maybe_item(page, profile, |page, link| {
+            let role = link.map_or(Role::Strong, |_| Role::Link);
+            segs.extend([Seg::linked(name, role, link), Seg::new(pad, Role::Body)]);
+            segs.extend([commits, line]);
+            body(page, segs);
+        });
     }
     if a.authors_left_out > 0 {
         page.box_rule();
@@ -207,13 +201,8 @@ pub fn commit_activity(page: &mut Page, a: &Activity) {
         any = true;
         let at = start + i as u64 * WEEK;
         let n = u64::from(n);
-        bar_row(
-            page,
-            format!("{:<13} {:>6}  ", date(at), compact(n)),
-            n,
-            max,
-            room,
-        );
+        let label = format!("{:<13} {:>6}  ", date(at), compact(n));
+        bar_row(page, label, n, max, room);
     }
     if !any {
         empty_row(page, "No commits in the last year.");
@@ -223,12 +212,9 @@ pub fn commit_activity(page: &mut Page, a: &Activity) {
 
 /// Views or clones, day by day.
 fn traffic_box(page: &mut Page, what: &str, people: &str, c: &Counted) {
-    let title = vec![strong(format!(
-        "{what}  {} · {} unique {people}",
-        compact(c.count),
-        compact(c.uniques)
-    ))];
-    page.box_top(title, vec![meta("the last 14 days")]);
+    let (count, uniques) = (compact(c.count), compact(c.uniques));
+    let title = format!("{what}  {count} · {uniques} unique {people}");
+    page.box_top(vec![strong(title)], vec![meta("the last 14 days")]);
     if c.days.is_empty() {
         empty_row(page, "None.");
     }
@@ -304,12 +290,8 @@ pub fn dependents_note(page: &mut Page, repo: &RepoId) {
 /// The dependency graph: each manifest and what it depends on.
 pub fn dependencies(page: &mut Page, d: &Dependencies) {
     if d.manifests.is_empty() {
-        let title = strong("Dependencies");
-        empty_box(
-            page,
-            title,
-            "GitHub found no manifests: the dependency graph may be off, or not yet built.",
-        );
+        let why = "GitHub found no manifests: the dependency graph may be off, or not yet built.";
+        empty_box(page, strong("Dependencies"), why);
         return;
     }
     for m in &d.manifests {

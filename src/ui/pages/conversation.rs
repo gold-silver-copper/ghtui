@@ -16,7 +16,24 @@ pub(super) struct Conversation<'a> {
     pub(super) unfolded: &'a HashSet<String>,
 }
 
-impl Conversation<'_> {
+impl<'a> Conversation<'a> {
+    /// A conversation in `repo` opened by `op`, its links relative to `rev`.
+    pub(super) fn new(
+        repo: &RepoId,
+        rev: &str,
+        op: &'a str,
+        now: u64,
+        unfolded: &'a HashSet<String>,
+    ) -> Self {
+        let base = LinkBase::new(repo, rev, "");
+        Conversation {
+            base,
+            op,
+            now,
+            unfolded,
+        }
+    }
+
     /// The post that opened it: `╭─ author opened 3d ago ─── Author ─╮`,
     /// the Markdown body, its reactions, `╰──╯`.
     pub(super) fn opened(
@@ -342,19 +359,9 @@ pub fn issue(
         timeline::relations_inline(page, icons, d);
         timeline::projects_inline(page, projects);
     }
-    let talk = Conversation {
-        base: LinkBase::new(&d.repo, "HEAD", ""),
-        op: &d.author,
-        now,
-        unfolded: marks.unfolded,
-    };
-    talk.opened(
-        page,
-        "opened",
-        &d.created_at,
-        &d.body,
-        &d.editable.reactions,
-    );
+    let talk = Conversation::new(&d.repo, "HEAD", &d.author, now, marks.unfolded);
+    let reactions = &d.editable.reactions;
+    talk.opened(page, "opened", &d.created_at, &d.body, reactions);
     earlier_here(page, &d.timeline, "comment or event", "comments and events");
     let place = timeline::Place {
         repo: &d.repo,
@@ -388,16 +395,10 @@ pub fn discussions(
         page.wrapped(segs, 0, Frame::None);
         page.blank();
     }
-    let r = &l.results;
-    let title = counted("Discussions", r);
-    list_box(
-        page,
-        title,
-        Vec::new(),
-        r,
-        "No discussions yet.",
-        |page, d| discussion_row(page, format!("{base}/{}", d.number), ("", true), d, now),
-    );
+    let (list, empty) = (&l.results, "No discussions yet.");
+    counted_box(page, "Discussions", Vec::new(), list, empty, |page, d| {
+        discussion_row(page, format!("{base}/{}", d.number), ("", true), d, now);
+    });
 }
 
 /// A discussion: its post, the answer at the top as GitHub shows it, then
@@ -437,19 +438,9 @@ pub fn discussion(
     )));
     page.wrapped(segs, 0, Frame::None);
     page.rule(0, Frame::None);
-    let talk = Conversation {
-        base: LinkBase::new(&d.repo, "HEAD", ""),
-        op: &d.author,
-        now: cx.now,
-        unfolded,
-    };
-    talk.opened(
-        page,
-        "started",
-        &d.created_at,
-        &d.body,
-        &d.editable.reactions,
-    );
+    let talk = Conversation::new(&d.repo, "HEAD", &d.author, cx.now, unfolded);
+    let reactions = &d.editable.reactions;
+    talk.opened(page, "started", &d.created_at, &d.body, reactions);
     let anchor = |c: &Comment| c.id.map(|id| format!("discussioncomment-{id}"));
     let new = |c: &Comment| c.id.is_some_and(|id| fresh.contains(&id));
     let comment = |page: &mut Page, c: &DiscussionComment, anchored: bool| {

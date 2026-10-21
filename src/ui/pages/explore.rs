@@ -34,15 +34,10 @@ pub fn explore(
     page.blank();
     let repos = repos.pick(repos_of);
     let title = format!("New and most starred, {}", since.label().to_lowercase());
-    paged_list(
-        page,
-        &title,
-        repos,
-        "No repositories made in that time.",
-        |page, r| {
-            repo_row(page, r, cx.now, true);
-        },
-    );
+    let empty = "No repositories made in that time.";
+    paged_list(page, &title, repos, empty, |page, r| {
+        repo_row(page, r, cx.now, true);
+    });
     page.blank();
     let Some(t) = topics.show(page, "featured topics") else { return };
     let count = match t.total.saturating_sub(t.topics.len() as u64) {
@@ -50,16 +45,8 @@ pub fn explore(
         n => format!("{} of {}", t.topics.len(), t.topics.len() as u64 + n),
     };
     let title = vec![strong(format!("Featured topics  {count}"))];
-    list_box(
-        page,
-        title,
-        Vec::new(),
-        &Whole(&t.topics),
-        "None.",
-        |page, topic| {
-            topic_row(page, topic);
-        },
-    );
+    let topics = Whole(&t.topics);
+    list_box(page, title, Vec::new(), &topics, "None.", topic_row);
 }
 
 /// A repository search's repositories.
@@ -154,11 +141,8 @@ pub fn topic(page: &mut Page, t: &Topic, repos: Fetched<'_, SearchResults>, now:
         page.wrapped(segs, 0, Frame::None);
     }
     page.blank();
-    paged_list(
-        page,
-        "Repositories",
-        repos.pick(repos_of),
-        "No repositories have this topic.",
-        |page, r| repo_row(page, r, now, true),
-    );
+    let (repos, empty) = (repos.pick(repos_of), "No repositories have this topic.");
+    paged_list(page, "Repositories", repos, empty, |page, r| {
+        repo_row(page, r, now, true);
+    });
 }

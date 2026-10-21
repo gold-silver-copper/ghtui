@@ -30,44 +30,24 @@ pub fn labels_page(
     keys: &LabelKeys,
 ) {
     let new = button(page, "New label", Link::Form(Row::New));
-    page.wrapped(
-        vec![
-            new,
-            meta(format!(
-                "  {} · {} edits the selected label · {} deletes it",
-                keys.new, keys.edit, keys.delete
-            )),
-        ],
-        0,
-        Frame::None,
-    );
+    let (n, edit, delete) = (&keys.new, &keys.edit, &keys.delete);
+    let how = format!("  {n} · {edit} edits the selected label · {delete} deletes it");
+    page.wrapped(vec![new, meta(how)], 0, Frame::None);
     page.blank();
     let Some(l) = list.show(page, "labels") else { return };
-    let title = counted("Labels", l);
-    list_box(
-        page,
-        title,
-        Vec::new(),
-        l,
-        "No labels yet.",
-        |page, label| {
-            let target = url::label(repo, &label.name);
-            item(page, target, |page, link| {
-                let chip = Seg::linked(
-                    format!(" {} ", label.name),
-                    Role::Label(label.color.clone()),
-                    link,
-                );
-                let open = match label.open {
-                    0 => String::new(),
-                    n => format!("{} open", compact(n)),
-                };
-                let right = vec![meta(open)];
-                page.box_line(vec![chip], right, 0);
-                if !label.description.is_empty() {
-                    body(page, vec![meta(label.description.clone())]);
-                }
-            });
-        },
-    );
+    let none = "No labels yet.";
+    counted_box(page, "Labels", Vec::new(), l, none, |page, label| {
+        item(page, url::label(repo, &label.name), |page, link| {
+            let (name, color) = (format!(" {} ", label.name), label.color.clone());
+            let chip = Seg::linked(name, Role::Label(color), link);
+            let open = match label.open {
+                0 => String::new(),
+                n => format!("{} open", compact(n)),
+            };
+            page.box_line(vec![chip], vec![meta(open)], 0);
+            if !label.description.is_empty() {
+                body(page, vec![meta(label.description.clone())]);
+            }
+        });
+    });
 }
