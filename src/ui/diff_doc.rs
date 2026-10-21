@@ -28,7 +28,7 @@ pub use crate::api::model::ViewedState as Viewed;
 use crate::ui::annotations::{Annotation, AnnotationKey, Place, ThreadRow, ThreadRowKind};
 use crate::ui::comment::{self, CommentLine};
 use crate::ui::page::{Role, Seg};
-use crate::ui::{idx, page};
+use crate::ui::{diff_view, idx, page};
 
 /// Thread text wraps at this width unless the view says otherwise.
 const DEFAULT_WRAP: u16 = 72;
@@ -99,6 +99,10 @@ pub enum Row {
         from: bool,
     },
     Spacer,
+    /// More of the code of the line row `part` rows above, wrapped.
+    Wrapped {
+        part: u32,
+    },
 }
 
 /// A hunk's header: its `@@` range and the scopes its first change is in,
@@ -166,6 +170,8 @@ pub struct ViewOptions {
     pub structural: bool,
     /// Columns for comment text; 0 for the default.
     pub wrap: u16,
+    /// Code wraps to a diff pane this wide; `None` cuts it at the edge.
+    pub wrap_code: Option<u16>,
 }
 
 /// Inputs for rebuilding one file's rows besides the file itself.
@@ -520,7 +526,47 @@ impl DocFile {
                 end: idx(lines.len()),
             });
         }
+        if let Some(width) = opts.wrap_code {
+            self.wrap_rows(width, opts.split);
+        }
         self.rows.push(Row::Spacer);
+    }
+
+    /// After each line row whose code runs past the room `width` leaves
+    /// it, a [`Row::Wrapped`] row for each more screen line it takes.
+    fn wrap_rows(&mut self, width: u16, split: bool) {
+        let parts: Vec<usize> = (self.rows.iter())
+            .map(|row| self.screen_lines(*row, width, split))
+            .collect();
+        let rows = std::mem::take(&mut self.rows);
+        for (row, parts) in rows.into_iter().zip(parts) {
+            self.rows.push(row);
+            self.rows
+                .extend((1..parts).map(|part| Row::Wrapped { part: idx(part) }));
+        }
+    }
+
+    /// Screen lines `row` takes with code wrapped in a pane `width` wide:
+    /// a split row, its longer half's.
+    fn screen_lines(&self, row: Row, width: u16, split: bool) -> usize {
+        let (Some(text), Some(a)) = (self.text(), self.alignment()) else {
+            return 1;
+        };
+        let lines = |e: Option<u32>, side: Option<Side>, width| {
+            let line = e.and_then(|e| a.lines.get(e as usize));
+            line.and_then(|l| side.map_or(Some(l.shown()), |s| l.on(s)))
+                .map_or(1, |at| {
+                    diff_view::code_rows(text.line(at), diff_view::code_room(self, width, split))
+                })
+        };
+        match row {
+            Row::Line(e) => lines(Some(e), None, width),
+            Row::Split { left, right } => {
+                let (l, r) = diff_view::split_widths(width);
+                lines(left, Some(Side::Left), l).max(lines(right, Some(Side::Right), r))
+            }
+            _ => 1,
+        }
     }
 
     /// After the rows from `from`: inserts "moved from/to" rows after the
@@ -610,6 +656,7 @@ impl DocFile {
             Row::NoNewline | Row::Spacer => i
                 .checked_sub(1)
                 .map_or(top, |prev| self.held(prev, anns, half)),
+            Row::Wrapped { part } => self.held(i.saturating_sub(part as usize), anns, half),
             Row::Thread(t) => {
                 let Some(ann) = self.thread_row(t).and_then(|r| anns.get(r.ann as usize)) else {
                     return top;
@@ -642,7 +689,8 @@ impl DocFile {
             | Row::NoNewline
             | Row::Thread(_)
             | Row::Moved { .. }
-            | Row::Spacer => (0..0, 0..0),
+            | Row::Spacer
+            | Row::Wrapped { .. } => (0..0, 0..0),
         };
         let lines = self.alignment().map_or(&[][..], |a| a.lines.as_slice());
         a.chain(b)
@@ -1418,6 +1466,41 @@ impl Doc {
         self.to_pos(self.total.saturating_sub(1))
     }
 
+    /// Moves the cursor by `delta` rows, over the rows a wrapped line
+    /// goes on in: it's always on a line's first.
+    pub fn step(&self, pos: Pos, delta: isize) -> Pos {
+        let to = self.offset(pos, delta);
+        if delta > 0 {
+            let wrapped = |p| matches!(self.row(p), Some(Row::Wrapped { .. }));
+            (self.to_global(to)..self.total)
+                .map(|g| self.to_pos(g))
+                .find(|p| !wrapped(*p))
+                .unwrap_or_else(|| self.line_start(to))
+        } else {
+            self.line_start(to)
+        }
+    }
+
+    /// The row a wrapped row's line starts on; any other row itself.
+    pub fn line_start(&self, pos: Pos) -> Pos {
+        match self.row(pos) {
+            Some(Row::Wrapped { part }) => Pos {
+                row: pos.row.saturating_sub(part as usize),
+                ..pos
+            },
+            _ => pos,
+        }
+    }
+
+    /// The last row the line starting at `pos` goes on in.
+    pub fn line_end(&self, pos: Pos) -> Pos {
+        (pos.row + 1..)
+            .map(|row| Pos { row, ..pos })
+            .take_while(|p| matches!(self.row(*p), Some(Row::Wrapped { .. })))
+            .last()
+            .unwrap_or(pos)
+    }
+
     fn find_after(&self, pos: Pos, pred: impl Fn(Pos) -> bool) -> Option<Pos> {
         let start = self.to_global(pos) + 1;
         (start..self.total)
@@ -1684,6 +1767,7 @@ pub(crate) mod tests {
                 Row::Fold { .. } => 'F',
                 Row::Moved { .. } => 'M',
                 Row::Spacer => '_',
+                Row::Wrapped { .. } => 'W',
             })
             .collect()
     }
@@ -1699,6 +1783,33 @@ pub(crate) mod tests {
         assert!(doc.files[1].generated, "lockfiles are collapsed");
         assert_eq!(doc.files[1].rows()[1], Row::Note(Note::Collapsed));
         assert_eq!(doc.files[2].rows()[1], Row::Note(Note::Loading));
+    }
+
+    /// Wrapped, a long line goes on in rows under it, which the cursor
+    /// steps over.
+    #[test]
+    fn wrapped_lines_go_on_in_rows_the_cursor_skips() {
+        let long = "x".repeat(100);
+        let mut doc = one("a.txt", "a\nb\nc\n", &format!("a\n{long}\nc\n"));
+        doc.set_options(ViewOptions {
+            wrap_code: Some(40),
+            ..ViewOptions::default()
+        });
+        // 25 columns of code a row, in a pane 40 wide.
+        assert_eq!(kinds(&doc.files[0]), "H@LLLWWWL_");
+        let line = Pos { file: 0, row: 4 };
+        let next = Pos { file: 0, row: 8 };
+        assert_eq!(doc.step(line, 1), next);
+        assert_eq!(doc.step(next, -1), line);
+        assert_eq!(doc.line_end(line), Pos { file: 0, row: 7 });
+        // The document's last line: nowhere further down.
+        let mut last = one("a.txt", "a\n", &format!("{long}\n"));
+        last.set_options(ViewOptions {
+            wrap_code: Some(40),
+            ..ViewOptions::default()
+        });
+        let end = Pos { file: 0, row: 3 };
+        assert_eq!(last.step(end, 1), end, "{}", kinds(&last.files[0]));
     }
 
     #[test]

@@ -1372,8 +1372,9 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   those are offered to whoever may edit (GitHub refuses the rest); before
   3.22, a project's archived items are told apart by each item, and
   before 3.20 a view's filter doesn't apply (all its items are shown).
-- Long code lines are cut at the edge: `←` and `→` scroll them sideways,
-  but they don't wrap.
+- Long code lines are cut at the edge, and `←` and `→` scroll them
+  sideways, unless Wrap long lines (in the menu) is on; a wrapped line
+  takes at most 100 rows.
 - Markdown in the terminal: images show their alt text, and HTML is reduced
   to its text and links.
 - The first time a token is used, until GitHub says whose it is (a moment
