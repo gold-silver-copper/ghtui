@@ -13,7 +13,6 @@ use super::{
     selected, setting,
 };
 use crate::data::DataKey;
-use crate::keymap::Action;
 use crate::state::{Cmds, State};
 use crate::work::{self, Cx, Failure, Job};
 
@@ -53,9 +52,7 @@ pub(super) fn list<'a>(state: &'a State, repo: &RepoId) -> Option<&'a Results<La
 
 /// The label selected on the labels page.
 pub(super) fn picked(state: &State) -> Option<&LabelInfo> {
-    let Some(Route::Issues(issues::Labels(repo))) = state.route() else {
-        return None;
-    };
+    let Some(Route::Issues(issues::Labels(repo))) = state.route() else { return None };
     let list = list(state, repo)?;
     selected(state, &list.items, |l| {
         crate::ui::pages::url::label(repo, &l.name)
@@ -300,9 +297,7 @@ impl Job for Save {
 
 /// The form's page.
 pub(super) fn build(state: &State, page: &mut Page, route: &Route) {
-    let Route::Housekeeping(of @ FormOf::Label { repo, name }) = route else {
-        return;
-    };
+    let Route::Housekeeping(of @ FormOf::Label { repo, name }) = route else { return };
     let f = form(state, route);
     let heading = match name {
         Some(name) => format!("Edit the label {name} in {repo}"),
@@ -316,25 +311,19 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route) {
             None,
         ));
     }
-    let save_key = state.first_key(Action::Create);
     let view = WriteFormView {
         heading,
-        base: None,
         rows: vec![
             form_row(&f, Field::Name, "Label name"),
             form_row(&f, Field::Description, "Description (optional)"),
             form_row(&f, Field::Colour, "#rrggbb"),
         ],
         status,
-        boxes: Vec::new(),
-        after: Vec::new(),
-        write: "",
         button: super::button(of, &f),
-        save_key: &save_key,
         why_not: super::problem(state, route, of),
-        error: state.forms.sent(route).error.as_deref(),
+        ..WriteFormView::default()
     };
-    crate::ui::pages::write_form(page, &view);
+    crate::forms::write_form(state, route, page, view);
 }
 
 #[cfg(test)]

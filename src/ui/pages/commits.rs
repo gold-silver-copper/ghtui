@@ -10,9 +10,7 @@ pub fn pr_commits(
     now: u64,
 ) {
     pr_summary(page, pr, d, now);
-    let Some(a) = activity.show(page, "commits") else {
-        return;
-    };
+    let Some(a) = activity.show(page, "commits") else { return };
     commit_rows(page, &pr.repo, Some(pr), &a.commits, now);
 }
 
@@ -87,9 +85,7 @@ pub fn commit_history(
     title.push(meta(at));
     page.wrapped(title, 0, Frame::None);
     page.blank();
-    let Some(h) = history.show(page, "commits") else {
-        return;
-    };
+    let Some(h) = history.show(page, "commits") else { return };
     if h.items.is_empty() {
         empty_box(page, meta("◷ Commits"), "No commits here.");
         return;
@@ -139,12 +135,9 @@ pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now
         meta(format!(" authored {}", time::ago_iso(&d.authored_at, now))),
     ];
     if let Some(committer) = &d.committer {
-        who.push(meta(" · "));
-        who.push(person_seg(page, committer, Role::Strong));
-        who.push(meta(format!(
-            " committed {}",
-            time::ago_iso(&d.committed_at, now)
-        )));
+        let committer = person_seg(page, committer, Role::Strong);
+        let when = time::ago_iso(&d.committed_at, now);
+        who.extend([meta(" · "), committer, meta(format!(" committed {when}"))]);
     }
     match d.verified {
         Some(true) => who.extend([space(), chip("Verified", Bg::SuccessContainer)]),
@@ -154,12 +147,7 @@ pub fn commit(page: &mut Page, repo: &RepoId, d: &CommitDetail, files: &str, now
     page.wrapped(who, 0, Frame::None);
     let mut ids = vec![meta(format!("commit {}", short_sha(&d.oid)))];
     if !d.parents.is_empty() {
-        let noun = if d.parents.total() == 1 {
-            "parent"
-        } else {
-            "parents"
-        };
-        ids.push(meta(format!(" · {noun} ")));
+        ids.push(meta(format!(" · {} ", noun(d.parents.total(), "parent"))));
         for (i, parent) in d.parents.iter().enumerate() {
             if i > 0 {
                 ids.push(meta(" + "));

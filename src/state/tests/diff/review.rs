@@ -95,9 +95,7 @@ fn comment_draft_edit_and_delete() {
     press(&mut s, "Use a constant");
     let cmds = press(&mut s, "<C-s>");
     assert!(s.overlay.is_none());
-    let Some(Cmd::SaveReview(_, review)) = cmds.first() else {
-        panic!("{cmds:?}")
-    };
+    let Some(Cmd::SaveReview(_, review)) = cmds.first() else { panic!("{cmds:?}") };
     assert_eq!(review.pending.len(), 1);
     let draft = &review.pending[0];
     assert_eq!(
@@ -333,9 +331,7 @@ fn suggestions_go_through_the_editor_with_a_preview() {
     let (mut s, _) = diff_state(120);
     to_line(&mut s, "origin");
     let cmds = act(&mut s, Action::Suggest);
-    let Some(Cmd::Edit { purpose, text }) = cmds.into_iter().next() else {
-        panic!()
-    };
+    let Some(Cmd::Edit { purpose, text }) = cmds.into_iter().next() else { panic!() };
     assert!(text.contains("pub fn origin()"));
     update(
         &mut s,
@@ -353,9 +349,7 @@ fn suggestions_go_through_the_editor_with_a_preview() {
     // Unchanged text isn't a suggestion.
     s.overlay = None;
     let cmds = act(&mut s, Action::Suggest);
-    let Some(Cmd::Edit { purpose, text }) = cmds.into_iter().next() else {
-        panic!()
-    };
+    let Some(Cmd::Edit { purpose, text }) = cmds.into_iter().next() else { panic!() };
     update(&mut s, Msg::Edited(purpose, Ok(text)));
     assert!(s.overlay.is_none());
     let _ = EditPurpose::Compose;

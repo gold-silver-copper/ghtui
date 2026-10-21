@@ -129,9 +129,7 @@ pub struct PageWatch {
 /// The page on screen, if it's one that's watched. A job is watched only
 /// while it runs, or its run does.
 fn watched(state: &State) -> Option<Watched> {
-    let Screen::Page(p) = state.screen() else {
-        return None;
-    };
+    let p = state.screen().page()?;
     Some(match &p.route {
         Route::Runs(runs::Job { repo, job, .. }) => {
             let j = state.picked::<Job>(&DataKey::Job(repo.clone(), *job))?;
@@ -257,6 +255,8 @@ impl PageWatch {
 /// Leaving a page forgets what was new on it.
 pub fn schedule(state: &mut State) -> Cmds {
     let here = watched(state);
+    // Still asking only while it's on screen: a job that ended isn't.
+    let live = here.is_some();
     if state.page_watch.as_ref().map(|w| &w.what) != here.as_ref() {
         // A job that ended stays followed until you leave it.
         let ended = matches!(
@@ -274,16 +274,10 @@ pub fn schedule(state: &mut State) -> Cmds {
         }
     }
     let focused = state.focused;
-    let live = matches!(state.page_watch.as_ref(), Some(w) if watched_now(state, &w.what));
     match state.page_watch.as_mut() {
         Some(w) if live => w.pace.due(focused).into_iter().collect(),
         _ => Cmds::new(),
     }
-}
-
-/// Whether the watch is still asking: a job that ended isn't.
-fn watched_now(state: &State, what: &Watched) -> bool {
-    watched(state).as_ref() == Some(what)
 }
 
 /// Back in focus: the next ask is soon.
@@ -315,9 +309,7 @@ pub fn on_timer(state: &mut State, id: u64) -> Cmds {
             .map(|j| j.run_id),
         _ => None,
     };
-    let Some(w) = state.page_watch.as_mut() else {
-        return Cmds::new();
-    };
+    let Some(w) = state.page_watch.as_mut() else { return Cmds::new() };
     let probes = match &what {
         // A job that ended in a run still going: the run's end shows on it.
         Watched::Job { repo, job } => std::iter::once(Probe::Job(repo.clone(), *job))
@@ -505,9 +497,7 @@ fn discussion_here(state: &State) -> Option<&DiscussionDetail> {
 /// Fresh data came in for `key`: on a watched page, what wasn't there
 /// before is new, and said; a followed job that ended says how.
 pub fn loaded(state: &mut State, key: &DataKey) {
-    let Some(what) = state.page_watch.as_ref().map(|w| w.what.clone()) else {
-        return;
-    };
+    let Some(what) = state.page_watch.as_ref().map(|w| w.what.clone()) else { return };
     if self::key(&what) != *key {
         return;
     }
@@ -522,9 +512,7 @@ pub fn loaded(state: &mut State, key: &DataKey) {
             (came, "comment", format!("{repo}#{number}"))
         }
         Watched::Discussion { number, .. } => {
-            let Some(d) = state.picked::<DiscussionDetail>(key) else {
-                return;
-            };
+            let Some(d) = state.picked::<DiscussionDetail>(key) else { return };
             let came = discussion_comments(d)
                 .map(|(id, a)| (id, mine(a)))
                 .collect();
@@ -535,9 +523,7 @@ pub fn loaded(state: &mut State, key: &DataKey) {
             )
         }
         Watched::Runs { .. } => {
-            let Some(runs) = state.picked::<Results<RunSummary>>(key) else {
-                return;
-            };
+            let Some(runs) = state.picked::<Results<RunSummary>>(key) else { return };
             let came = (runs.items.iter())
                 .map(|r| (r.id, r.actor.as_deref().is_some_and(mine)))
                 .collect();
@@ -549,9 +535,7 @@ pub fn loaded(state: &mut State, key: &DataKey) {
         }
         Watched::Run { .. } => return,
     };
-    let Some(w) = state.page_watch.as_mut() else {
-        return;
-    };
+    let Some(w) = state.page_watch.as_mut() else { return };
     let came = super::note(&mut w.seen, came, |mine| *mine);
     // Runs are said, not marked: the list's order shows them.
     if word != "run" {
@@ -566,9 +550,7 @@ pub fn loaded(state: &mut State, key: &DataKey) {
 
 /// A followed job's steps came in: once it ends, say how.
 fn job_loaded(state: &mut State, key: &DataKey) {
-    let Some(job) = state.picked::<Job>(key) else {
-        return;
-    };
+    let Some(job) = state.picked::<Job>(key) else { return };
     if job.outcome == CheckOutcome::Pending {
         return;
     }

@@ -14,7 +14,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::diff::file::TextDiff;
 use crate::diff::highlight::Span;
 use crate::diff::hunks::DiffLine;
-use crate::diff::sat_u32;
+use crate::diff::{runs, sat_u32};
 
 /// Above this share of changed characters, a pair isn't highlighted.
 const MAX_CHANGED_SHARE: f64 = 0.75;
@@ -327,9 +327,7 @@ fn per_line(old: &Side<'_>, new: &Side<'_>) -> BlockEmphasis {
     }
     let mut out = BlockEmphasis::default();
     for (r, a) in pair_lines(&texts(old), &texts(new)) {
-        let (Some(&(o, os)), Some(&(n, ns))) = (old.get(r), new.get(a)) else {
-            continue;
-        };
+        let (Some(&(o, os)), Some(&(n, ns))) = (old.get(r), new.get(a)) else { continue };
         if let Some((old_changed, new_changed)) = diff_pair(o, n, os, ns) {
             let [o_map, n_map] = &mut out;
             o_map.insert(r, old_changed);
@@ -461,14 +459,10 @@ fn cost(emphasis: &BlockEmphasis, old: &Side<'_>, new: &Side<'_>) -> usize {
 /// and reflowed code shows just what changed.
 pub fn intraline(text: &TextDiff, lines: &[DiffLine]) -> IntraLine {
     // Runs of one kind, with the alignment entry each starts at.
-    let mut runs = lines
-        .chunk_by(|a, b| std::mem::discriminant(a) == std::mem::discriminant(b))
-        .scan(0, |end, run| {
-            let start = *end;
-            *end += run.len();
-            Some((start, run))
-        })
-        .peekable();
+    let mut runs = runs(lines, |a, b| {
+        std::mem::discriminant(a) == std::mem::discriminant(b)
+    })
+    .peekable();
     let mut out = IntraLine::new();
     while let Some((removed_start, removed)) = runs.next() {
         if !matches!(removed.first(), Some(DiffLine::Removed(_))) {

@@ -128,9 +128,7 @@ impl Family for Page {
             |p| p.title.clone(),
         );
         c.crumb(&title, None);
-        let Some(p) = data else {
-            return;
-        };
+        let Some(p) = data else { return };
         for v in &p.views {
             let icon = match v.layout {
                 project::Layout::Board => "▥",

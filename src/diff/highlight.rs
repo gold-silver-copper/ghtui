@@ -181,9 +181,7 @@ fn build(
 /// Token spans for each line of `text`. Returns an empty vector (plain text)
 /// when the language isn't available or the file is too large.
 pub fn highlight(lang: Option<Language>, text: &Text) -> Vec<Vec<Span>> {
-    let Some(config) = lang.and_then(config) else {
-        return Vec::new();
-    };
+    let Some(config) = lang.and_then(config) else { return Vec::new() };
     if text.source.len() > MAX_HIGHLIGHT_BYTES {
         return Vec::new();
     }
@@ -244,9 +242,7 @@ fn cancel_at(deadline: Instant, cancel: &Arc<AtomicUsize>) {
             }
             let now = Instant::now();
             waiting.retain(|(at, cancel)| {
-                let Some(cancel) = cancel.upgrade() else {
-                    return false;
-                };
+                let Some(cancel) = cancel.upgrade() else { return false };
                 if *at > now {
                     return true;
                 }
@@ -279,14 +275,10 @@ fn spans(config: &HighlightConfiguration, text: &Text, cancel: &AtomicUsize) -> 
     let mut stack: Vec<TokenKind> = Vec::new();
     let mut line = 0usize;
     for event in events {
-        let Ok(event) = event else {
-            return Vec::new();
-        };
+        let Ok(event) = event else { return Vec::new() };
         match event {
             HighlightEvent::HighlightStart(h) => {
-                let Some(&(_, kind)) = NAMES.get(h.0) else {
-                    return Vec::new();
-                };
+                let Some(&(_, kind)) = NAMES.get(h.0) else { return Vec::new() };
                 stack.push(kind);
             }
             HighlightEvent::HighlightEnd => {

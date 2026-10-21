@@ -42,6 +42,7 @@ pub struct TextBox<'a> {
     pub actions: Vec<(&'static str, Row)>,
 }
 
+#[derive(Default)]
 pub struct WriteFormView<'a> {
     pub heading: String,
     /// Where its Markdown's relative links point.
@@ -93,10 +94,8 @@ pub fn write_form(page: &mut Page, v: &WriteFormView<'_>) {
             Some(_) => Role::Chip(Bg::ContainerHigh),
             None => Role::Chip(Bg::SuccessContainer),
         };
-        page.line(vec![
-            Seg::linked(format!(" {} ", v.button), role, link),
-            meta(format!("  {}", v.save_key)),
-        ]);
+        let button = Seg::linked(format!(" {} ", v.button), role, link);
+        page.line(vec![button, meta(format!("  {}", v.save_key))]);
         if let Some(why) = &v.why_not {
             say(page, why.clone(), Role::Meta);
         }
@@ -176,12 +175,9 @@ fn text_box(page: &mut Page, b: &TextBox<'_>, v: &WriteFormView<'_>) {
         link,
     );
     for (name, target) in b.actions.iter().filter(|(name, _)| *name != "rename") {
+        let text = format!("  {name} this file");
         item(page, Link::Form(target.clone()), |page, link| {
-            page.line(vec![Seg::linked(
-                format!("  {name} this file"),
-                Role::Link,
-                link,
-            )]);
+            page.line(vec![Seg::linked(text, Role::Link, link)]);
         });
     }
 }

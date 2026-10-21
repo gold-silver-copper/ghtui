@@ -100,9 +100,7 @@ fn a_comment_link_follows_its_comment_when_the_issue_refreshes() {
     assert_eq!(after, before, "yanked back after scrolling");
     // Selecting an item on screen, as j can, is moving too.
     let select = |s: &mut State| {
-        let Screen::Page(p) = s.screen_mut() else {
-            panic!("not on a page")
-        };
+        let Screen::Page(p) = s.screen_mut() else { panic!("not on a page") };
         let shown = p.page().items.iter().position(|i| i.end > p.scroll);
         assert!(shown.is_some_and(|i| p.page().items[i].start < p.scroll + 10));
         p.selected = shown;
@@ -235,9 +233,7 @@ fn the_header_counts_the_unread_and_opens_the_inbox() {
 /// the owner and repository, numbers and commit IDs as wildcards; on
 /// GitHub's other hosts (raw files, gists, avatars) the host.
 fn shape(url: &str) -> Vec<String> {
-    let Ok(parsed) = url::Url::parse(url) else {
-        return vec![url.to_owned()];
-    };
+    let Ok(parsed) = url::Url::parse(url) else { return vec![url.to_owned()] };
     let mut shape = vec![parsed.host_str().unwrap_or_default().to_owned()];
     if parsed.host_str() != Some("github.com") {
         return shape;
@@ -266,9 +262,7 @@ fn external_in_corpus(url: &str) -> bool {
 fn pages_link_to_milestones_branches_and_tags() {
     use crate::route::Route;
     let routes = |s: &State| -> Vec<Route> {
-        let Screen::Page(p) = s.screen() else {
-            return Vec::new();
-        };
+        let Screen::Page(p) = s.screen() else { return Vec::new() };
         p.page()
             .links
             .iter()
@@ -290,7 +284,7 @@ fn pages_link_to_milestones_branches_and_tags() {
     let pr = super::sized(with_pr(), 160, 40);
     let p = page(&pr);
     let Route::Pulls(pulls::Pr { pr: pr_ref, .. }) = &p.route else {
-        panic!("not a pull request");
+        panic!("not a pull request")
     };
     assert!(routes(&pr).contains(&milestone(&pr_ref.repo.to_string())));
     let repo = with_repo();

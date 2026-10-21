@@ -60,9 +60,7 @@ const SEEDS: &[&str] = &[
 /// A link's shape for the report: host and path, with owner and
 /// repository, numbers and commit IDs as `*`.
 fn shape(url: &str) -> String {
-    let Ok(parsed) = url::Url::parse(url) else {
-        return url.to_owned();
-    };
+    let Ok(parsed) = url::Url::parse(url) else { return url.to_owned() };
     let host = parsed.host_str().unwrap_or_default();
     // Other hosts (raw files, gists) are one shape each.
     if host != "github.com" {

@@ -10,13 +10,12 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::diff::FileDiff;
 use crate::git::blobs::BlobReader;
 use crate::git::credentials::Credentials;
-use crate::git::files::{ChangedFile, ZERO_OID, blobs, is_lockfile};
+use crate::git::files::{ChangedFile, blobs, is_lockfile};
 use crate::git::repo::{PrRefs, Repo};
 use crate::git::{GitError, Oid};
 use crate::lock;
@@ -78,11 +77,6 @@ pub enum JobMsg {
 /// Identifies one run of a diff job: a refresh or a new commit range gets
 /// a new one.
 pub type JobId = u64;
-
-pub fn next_job() -> JobId {
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    NEXT.fetch_add(1, Ordering::Relaxed)
-}
 
 /// Sends a job's messages to the UI.
 #[derive(Clone)]
@@ -278,9 +272,7 @@ async fn run_inner(
         let mut stage = stage_rx.clone();
         tasks.spawn(async move {
             while let Some(index) = control.pop() {
-                let Some(file) = files.get(index) else {
-                    continue;
-                };
+                let Some(file) = files.get(index) else { continue };
                 let needed = if first == Some(index) { 1 } else { 2 };
                 if stage.wait_for(|s| *s >= needed).await.is_err() {
                     return;
@@ -328,7 +320,7 @@ async fn sides(
 
 async fn diff_file(reader: &BlobReader, file: &ChangedFile) -> FileDiff {
     if file.is_submodule() {
-        let side = |oid: &str| (oid != ZERO_OID).then(|| oid.to_owned());
+        let side = |oid: &Oid| (!oid.is_zero()).then(|| oid.to_string());
         return FileDiff::submodule(side(&file.old_oid), side(&file.new_oid));
     }
     let (old, new) = match sides(reader, file).await {
@@ -367,7 +359,7 @@ pub async fn since_review_hashes(
         tracing::warn!(%err, "prefetch for the earlier diff failed");
     }
     // Diffed a few at once, as the job does.
-    let files: Vec<ChangedFile> = files.into_iter().filter(|f| !f.is_submodule()).collect();
+    let files = files.into_iter().filter(|f| !f.is_submodule());
     let diffs = futures::stream::iter(files)
         .map(|file| async move {
             let (old, new) = sides(reader, &file).await?;
@@ -603,9 +595,7 @@ mod tests {
         let old = reader.read(&files[0].old_oid).await.unwrap().unwrap();
         let new = reader.read(&files[0].new_oid).await.unwrap().unwrap();
         let diff = FileDiff::compute_plain("a.txt", Some(&old), Some(&new));
-        let crate::diff::Content::Text(text) = &diff.content else {
-            panic!()
-        };
+        let crate::diff::Content::Text(text) = &diff.content else { panic!() };
         let exact = text.alignment(crate::diff::Whitespace::Exact);
         let blocks = &exact.blocks;
         let new_blocks: Vec<String> = blocks

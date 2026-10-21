@@ -7,6 +7,7 @@ use crate::api::browse::{Page, Results, UserLogin as Login, wire};
 use crate::api::client::{ApiError, GitHub};
 use crate::api::model::{Capped, IssueState, Label, NodeId, PrState, RepoId, Status};
 use crate::api::raw;
+use crate::ui::time::day_of;
 
 /// Who owns a project, as its URL says: `/orgs/o/projects/1` or
 /// `/users/u/projects/1`.
@@ -344,13 +345,9 @@ impl Project {
     /// orders them.
     pub fn sorted(&self) -> Vec<&ProjectItem> {
         let mut items: Vec<&ProjectItem> = self.items.items.iter().collect();
-        let Some(view) = self.shown() else {
-            return items;
-        };
+        let Some(view) = self.shown() else { return items };
         for (field, descending) in view.sort.iter().rev() {
-            let Some(field) = self.field(field) else {
-                continue;
-            };
+            let Some(field) = self.field(field) else { continue };
             // Each item's key once, not once a comparison.
             let mut keyed: Vec<_> = (items.into_iter())
                 .map(|i| (sort_key(field, i), i))
@@ -538,11 +535,6 @@ pub enum Dates<'a> {
     Iteration(&'a ProjectField),
 }
 
-/// `2026-10-31` as days since 1970-01-01.
-pub fn day(date: &str) -> Option<i64> {
-    crate::ui::time::day_of(date)
-}
-
 impl Project {
     /// A board's swimlanes: its items grouped by the view's grouping
     /// field (not its columns'), each lane drawn with the columns.
@@ -599,7 +591,7 @@ impl Project {
     pub fn span(dates: Dates<'_>, it: &ProjectItem) -> Option<(i64, i64)> {
         match dates {
             Dates::Fields { start, end } => {
-                let at = |f: &ProjectField| it.value(&f.id).and_then(|v| day(v.text()));
+                let at = |f: &ProjectField| it.value(&f.id).and_then(|v| day_of(v.text()));
                 let from = at(start);
                 let to = end.and_then(at);
                 let (a, b) = match (from, to) {
@@ -610,14 +602,12 @@ impl Project {
                 Some((a, b))
             }
             Dates::Iteration(field) => {
-                let FieldKind::Iteration(iterations) = &field.kind else {
-                    return None;
-                };
+                let FieldKind::Iteration(iterations) = &field.kind else { return None };
                 let Some(FieldValue::Iteration { id, .. }) = it.value(&field.id) else {
                     return None;
                 };
                 let i = iterations.iter().find(|i| i.id == *id)?;
-                let start = day(&i.start)?;
+                let start = day_of(&i.start)?;
                 let days = i64::try_from(i.days).ok()?;
                 Some((start, start + days.max(1) - 1))
             }
@@ -715,9 +705,7 @@ pub enum ProjectChange {
 /// GitHub's word that the token lacks a scope projects need, said as what
 /// to do about it.
 fn scoped(err: ApiError) -> ApiError {
-    let ApiError::GraphQl(messages) = &err else {
-        return err;
-    };
+    let ApiError::GraphQl(messages) = &err else { return err };
     let read = messages.iter().any(|m| m.contains("'read:project'"));
     let write = messages.iter().any(|m| m.contains("'project'"));
     if write {
@@ -797,9 +785,7 @@ impl GitHub {
         };
         let mut items = self.project_items(project, &filter, after, false).await?;
         for _ in 1..pages {
-            let Some(next) = items.next.take() else {
-                break;
-            };
+            let Some(next) = items.next.take() else { break };
             let more = self
                 .project_items(project, &filter, Some(next), false)
                 .await?;

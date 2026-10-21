@@ -13,7 +13,7 @@ use std::ops::Range;
 
 use crate::diff::file::{Alignment, TextDiff};
 use crate::diff::hunks::DiffLine;
-use crate::diff::sat_u32;
+use crate::diff::{runs, sat_u32};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -29,10 +29,7 @@ pub struct ChangeBlock {
 pub(crate) fn change_blocks(path: &str, text: &TextDiff, lines: &[DiffLine]) -> Vec<ChangeBlock> {
     let is_context = |l: &DiffLine| !l.is_change();
     let mut out = Vec::new();
-    let mut end = 0;
-    for run in lines.chunk_by(|a, b| is_context(a) == is_context(b)) {
-        let start = end;
-        end += run.len();
+    for (start, run) in runs(lines, |a, b| is_context(a) == is_context(b)) {
         if run.first().is_none_or(is_context) {
             continue;
         }
@@ -53,14 +50,10 @@ pub(crate) fn change_blocks(path: &str, text: &TextDiff, lines: &[DiffLine]) -> 
             hasher.write(line.trim_end().as_bytes());
             squeezed.extend(line.chars().filter(|c| !c.is_whitespace()));
         }
-        // Gaining or losing the final newline is a real change (and has
-        // its own marker), not formatting.
-        let touches_end = text.final_newline_changed()
-            && run.iter().flat_map(|l| l.lines()).any(|p| text.is_last(p));
         out.push(ChangeBlock {
-            entries: sat_u32(start)..sat_u32(end),
+            entries: sat_u32(start)..sat_u32(start + run.len()),
             hash: format!("{:016x}", hasher.0),
-            formatting_only: has_removed && has_added && removed == added && !touches_end,
+            formatting_only: has_removed && has_added && removed == added && !text.touches_end(run),
         });
     }
     out

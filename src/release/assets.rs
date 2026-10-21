@@ -15,7 +15,7 @@ use crate::data::DataKey;
 use crate::forms::Answer;
 use crate::keymap::Action;
 use crate::picker::{Choice, entry};
-use crate::state::{Cmds, Screen, State};
+use crate::state::{Cmds, State};
 use crate::ui::page::Link;
 use crate::work::{self, Cx, Failure, Job};
 
@@ -132,9 +132,7 @@ fn of(state: &State, name: &str) -> Option<Of> {
 
 /// The asset selected on the release's page, by its name.
 pub fn selected(state: &State) -> Option<String> {
-    let Screen::Page(p) = state.screen() else {
-        return None;
-    };
+    let p = state.screen().page()?;
     match p.selected_link()? {
         Link::Asset(name) => Some(name.clone()),
         _ => None,
@@ -160,9 +158,7 @@ pub fn open_upload(state: &mut State) -> Cmds {
     if let Some(why) = super::unchangeable(state) {
         return state.just_say(why);
     }
-    let Some(of) = of(state, "") else {
-        return Cmds::new();
-    };
+    let Some(of) = of(state, "") else { return Cmds::new() };
     state.open_picker(crate::picker::Kind::Upload(of))
 }
 
@@ -262,12 +258,8 @@ pub fn upload_rows(state: &State, of: &Of, q: &str) -> crate::picker::Rows {
 
 /// `,D` on an asset: asks first, as GitHub does.
 pub fn ask_delete(state: &mut State, name: &str) -> Cmds {
-    let Some((repo, tag, r)) = super::shown(state) else {
-        return Cmds::new();
-    };
-    let Some(a) = asset(r, name) else {
-        return Cmds::new();
-    };
+    let Some((repo, tag, r)) = super::shown(state) else { return Cmds::new() };
+    let Some(a) = asset(r, name) else { return Cmds::new() };
     let facts = vec![(
         format!(
             "{}, downloaded {}: it can't be brought back",
@@ -291,9 +283,7 @@ pub fn ask_delete(state: &mut State, name: &str) -> Cmds {
 
 /// Deletes the asset asked about.
 pub fn delete(state: &mut State, name: &str) -> Cmds {
-    let Some(of) = of(state, name) else {
-        return Cmds::new();
-    };
+    let Some(of) = of(state, name) else { return Cmds::new() };
     crate::forms::sending(state);
     work::start(Delete(of))
 }

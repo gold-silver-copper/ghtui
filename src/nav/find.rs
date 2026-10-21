@@ -22,15 +22,11 @@ pub fn searches_itself(state: &State) -> bool {
 /// Searches the page on screen for `query` (empty clears it), going to
 /// the first match from the top of the view.
 pub fn find(state: &mut State, query: &str, forward: bool) {
-    let Screen::Page(p) = state.screen_mut() else {
-        return;
-    };
+    let Screen::Page(p) = state.screen_mut() else { return };
     p.find = Some(query.to_owned()).filter(|q| !q.is_empty());
     (p.built, p.mark) = (None, None);
     state.sync_page();
-    let Screen::Page(p) = state.screen_mut() else {
-        return;
-    };
+    let Screen::Page(p) = state.screen_mut() else { return };
     // The first match from the top of the view down, or (`?`) up.
     let first = if forward {
         p.page.marks.iter().position(|&line| line >= p.scroll)
@@ -64,9 +60,7 @@ pub fn search_word(state: &mut State) -> Cmds {
         }
         return Cmds::new();
     }
-    let Screen::Page(p) = state.screen_mut() else {
-        return Cmds::new();
-    };
+    let Screen::Page(p) = state.screen_mut() else { return Cmds::new() };
     let Some(word) = p.word_text().map(|w| text::whole_word(&w)) else {
         let down = state.first_key(Action::Down);
         return state.just_say(format!(
@@ -84,9 +78,7 @@ pub fn search_word(state: &mut State) -> Cmds {
         (p.built, p.mark) = (None, None);
         state.sync_page();
     }
-    let Screen::Page(p) = state.screen_mut() else {
-        return Cmds::new();
-    };
+    let Screen::Page(p) = state.screen_mut() else { return Cmds::new() };
     // From the cursor's line, around to the other end.
     let line = (p.selected.and_then(|i| p.page.items.get(i))).map_or(0, |it| it.start);
     let marks = &p.page.marks;

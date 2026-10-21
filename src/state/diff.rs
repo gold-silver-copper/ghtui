@@ -112,17 +112,12 @@ impl State {
 
     /// The diff on screen, if it's one.
     pub fn diff(&self) -> Option<&DiffState> {
-        match self.screen() {
-            Screen::Diff(screen) => self.diffs.get(&screen.of),
-            Screen::Page(_) => None,
-        }
+        self.diffs.get(&self.screen().diff()?.of)
     }
 
     pub(crate) fn diff_parts(&mut self) -> Option<(&mut DiffScreen, &mut DiffState)> {
         let State { screens, diffs, .. } = self;
-        let Screen::Diff(screen) = screens.last_mut() else {
-            return None;
-        };
+        let screen = screens.last_mut().diff_mut()?;
         let diff = diffs.get_mut(&screen.of)?;
         Some((screen, diff))
     }

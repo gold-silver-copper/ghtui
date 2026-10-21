@@ -286,16 +286,17 @@ impl Store {
     ) -> Option<T> {
         let db = self.db.as_ref()?;
         let result = (|| -> Result<Option<T>, StoreError> {
-            if let Some(bytes) = lock(&db.later).rows.get(&(table.name(), key.to_owned())) {
-                return Ok(Some(serde_json::from_slice(bytes)?));
+            // Decoded after the lock is let go: writes behind don't wait on it.
+            let behind = lock(&db.later)
+                .rows
+                .get(&(table.name(), key.to_owned()))
+                .cloned();
+            if let Some(bytes) = behind {
+                return Ok(Some(serde_json::from_slice(&bytes)?));
             }
             let txn = db.database.begin_read()?;
-            let Some(table) = open(&txn, table)? else {
-                return Ok(None);
-            };
-            let Some(bytes) = table.get(key)? else {
-                return Ok(None);
-            };
+            let Some(table) = open(&txn, table)? else { return Ok(None) };
+            let Some(bytes) = table.get(key)? else { return Ok(None) };
             Ok(Some(serde_json::from_slice(bytes.value())?))
         })();
         result.unwrap_or_else(|err| {
@@ -316,9 +317,7 @@ impl Store {
         key: &str,
         f: impl FnOnce(&redb::WriteTransaction) -> Result<(), StoreError>,
     ) -> bool {
-        let Some(db) = self.db.as_ref() else {
-            return false;
-        };
+        let Some(db) = self.db.as_ref() else { return false };
         let result = (|| -> Result<(), StoreError> {
             let txn = db.database.begin_write()?;
             f(&txn)?;
@@ -492,9 +491,7 @@ fn open_versioned(path: &Path) -> Result<Database, StoreError> {
 
 fn stored_version(db: &Database) -> Result<Option<u64>, StoreError> {
     let txn = db.begin_read()?;
-    let Some(meta) = open(&txn, META)? else {
-        return Ok(None);
-    };
+    let Some(meta) = open(&txn, META)? else { return Ok(None) };
     Ok(meta.get(VERSION_KEY)?.map(|v| v.value()))
 }
 

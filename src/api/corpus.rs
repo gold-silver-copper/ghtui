@@ -47,23 +47,26 @@ pub struct Recorder(pub PathBuf);
 impl Recorder {
     /// Writes a response, logging (not failing) if it can't.
     pub(crate) fn record(&self, recorded: &Recorded, body: Option<&serde_json::Value>) {
-        let mut recorded = recorded.clone();
-        if recorded.request.contains("/compare/")
+        let stripped;
+        let recorded = if recorded.request.contains("/compare/")
             && let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&recorded.response)
         {
-            for file in json
+            let files = json
                 .get_mut("files")
-                .and_then(serde_json::Value::as_array_mut)
-                .into_iter()
-                .flatten()
-            {
+                .and_then(serde_json::Value::as_array_mut);
+            for file in files.into_iter().flatten() {
                 if let Some(file) = file.as_object_mut() {
                     file.remove("patch");
                 }
             }
-            recorded.response = json.to_string();
-        }
-        let recorded = &recorded;
+            stripped = Recorded {
+                response: json.to_string(),
+                ..recorded.clone()
+            };
+            &stripped
+        } else {
+            recorded
+        };
         let (method, path) = recorded
             .request
             .split_once(' ')

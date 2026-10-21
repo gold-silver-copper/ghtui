@@ -35,9 +35,7 @@ pub fn set_starred(state: &mut State, repo: &RepoId, starred: bool) {
 
 /// `>`: a reply quoting the selected comment, under it.
 pub(super) fn quote_reply(state: &mut State) -> Cmds {
-    let Screen::Page(p) = state.screen() else {
-        return Cmds::new();
-    };
+    let Screen::Page(p) = state.screen() else { return Cmds::new() };
     match p.selected_link().cloned() {
         Some(Link::Quote { author, body, at }) => {
             let quoted: String = body.trim().lines().map(|l| format!("> {l}\n")).collect();

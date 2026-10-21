@@ -3,6 +3,7 @@
 
 use serde::Deserialize;
 
+use crate::api::browse::UserLogin;
 use crate::api::model::RepoId;
 use crate::api::{ApiError, GitHub};
 
@@ -29,14 +30,12 @@ impl GitHub {
         let users = format!("{base}/assignees?per_page=100");
         let issues = format!("{base}/issues?state=all&sort=updated&per_page=100");
         let (users, issues) = futures::join!(
-            self.rest_get(&users, format!("{repo}'s assignable users")),
-            self.rest_get(&issues, format!("{repo}'s issues")),
+            self.rest_json::<Vec<UserLogin>>(&users, format!("{repo}'s assignable users")),
+            self.rest_json::<Vec<Issue>>(&issues, format!("{repo}'s issues")),
         );
-        let users: Vec<crate::api::browse::UserLogin> = serde_json::from_str(&users?)?;
-        let issues: Vec<Issue> = serde_json::from_str(&issues?)?;
         Ok(Mentionable {
-            users: users.into_iter().map(|u| u.login).collect(),
-            issues: issues.into_iter().map(|i| (i.number, i.title)).collect(),
+            users: users?.into_iter().map(|u| u.login).collect(),
+            issues: issues?.into_iter().map(|i| (i.number, i.title)).collect(),
         })
     }
 }

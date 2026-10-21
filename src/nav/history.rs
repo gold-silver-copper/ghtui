@@ -158,9 +158,7 @@ impl State {
 
 /// Goes to the page above this one.
 pub fn up_level(state: &mut State) -> Cmds {
-    let Some(route) = state.route().cloned() else {
-        return Cmds::new();
-    };
+    let Some(route) = state.route().cloned() else { return Cmds::new() };
     match route.family().up(state) {
         Some(parent) => state.push(parent),
         None => state.just_say("Already at the top"),
@@ -190,7 +188,7 @@ pub fn switch_tab(state: &mut State, n: usize) -> Cmds {
         },
     };
     if let Screen::Page(p) = &screen {
-        cmds.extend(state.record_visit(&p.route.clone()));
+        cmds.extend(state.record_visit(&p.route));
     }
     let left = mem::replace(state.screen_mut(), screen);
     state.park(left);

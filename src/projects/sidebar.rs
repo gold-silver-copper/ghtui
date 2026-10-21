@@ -97,9 +97,7 @@ pub fn doable(state: &State) -> Option<Doable> {
 pub fn act(state: &mut State) -> Cmds {
     let (subject, projects) = match changeable(state) {
         Ok(found) => found,
-        Err(why) => {
-            return state.just_say(why);
-        }
+        Err(why) => return state.just_say(why),
     };
     let pick = match projects.as_slice() {
         [one] => Pick::Field(At {

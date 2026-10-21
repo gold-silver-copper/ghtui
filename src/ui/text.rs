@@ -184,9 +184,7 @@ pub fn word_at(words: &[Word], col: usize) -> Option<&Word> {
 /// (or the one before). With no word picked yet, the first.
 pub fn step_word(line: &str, col: Option<usize>, forward: bool) -> Option<Word> {
     let words = words(line);
-    let Some(col) = col else {
-        return words.into_iter().next();
-    };
+    let Some(col) = col else { return words.into_iter().next() };
     let at = word_at(&words, col)?.cols.start;
     if forward {
         words.into_iter().find(|w| w.cols.start > at)

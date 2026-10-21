@@ -93,10 +93,7 @@ impl Family for Page {
                 Route::code(repo.clone())
             }
             Page::Explore { .. } | Page::Topic(_) => Route::App(app::Home),
-            Page::StarList { login, .. } => Route::People(people::User {
-                login: login.clone(),
-                tab: ProfileTab::Stars,
-            }),
+            Page::StarList { login, .. } => stars(login),
             Page::Packages(PackagesOf::Owner(login)) => Route::user(login),
             Page::Package { at, version: None } => {
                 Route::Site(Page::Packages(PackagesOf::Owner(at.owner.clone())))
@@ -200,11 +197,7 @@ impl Family for Page {
             }
             Page::StarList { login, .. } => {
                 c.crumb(login, user(login));
-                let stars = Route::People(people::User {
-                    login: login.clone(),
-                    tab: ProfileTab::Stars,
-                });
-                c.crumb("Stars", Some(Target::Page(stars)));
+                c.crumb("Stars", Some(Target::Page(stars(login))));
                 let list = (self.paged())
                     .and_then(|k| state.picked::<ListPage>(&k))
                     .map_or_else(|| "List".to_owned(), |l| l.list.name.clone());
@@ -237,8 +230,7 @@ impl Family for Page {
                 match tab {
                     InsightsTab::Contributors | InsightsTab::Commits => {
                         let key = DataKey::Activity(repo.clone());
-                        let f = b.get(&key);
-                        if let Some(a) = f.show(page, "the commits") {
+                        if let Some(a) = b.get(&key).show(page, "the commits") {
                             if *tab == InsightsTab::Contributors {
                                 pages::contributors(page, repo, a);
                             } else {
@@ -248,16 +240,14 @@ impl Family for Page {
                     }
                     InsightsTab::Traffic => {
                         let key = DataKey::Traffic(repo.clone());
-                        let f = b.get(&key);
-                        if let Some(t) = f.show(page, "the traffic") {
+                        if let Some(t) = b.get(&key).show(page, "the traffic") {
                             pages::traffic(page, t);
                         }
                     }
                     InsightsTab::Dependencies => {
                         pages::dependents_note(page, repo);
                         let key = DataKey::Dependencies(repo.clone());
-                        let f = b.get(&key);
-                        if let Some(d) = f.show(page, "the dependency graph") {
+                        if let Some(d) = b.get(&key).show(page, "the dependency graph") {
                             pages::dependencies(page, d);
                         }
                     }
@@ -278,9 +268,7 @@ impl Family for Page {
                 }
             }
             Page::StarList { login, .. } => {
-                let Some(key) = self.paged() else {
-                    return;
-                };
+                let Some(key) = self.paged() else { return };
                 if let Some(l) = b.get(&key).show(page, "the list") {
                     pages::star_list(page, login, l, now);
                 }
@@ -300,6 +288,14 @@ impl Family for Page {
             }
         }
     }
+}
+
+/// Someone's Stars, where their lists are.
+pub(crate) fn stars(login: &str) -> Route {
+    Route::People(people::User {
+        login: login.to_owned(),
+        tab: ProfileTab::Stars,
+    })
 }
 
 /// A language from a Trending URL.

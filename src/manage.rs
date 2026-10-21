@@ -27,7 +27,7 @@ use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::picker::fuzzy_score;
-use crate::state::{Cmds, Overlay, Screen, State};
+use crate::state::{Cmds, Overlay, State};
 use crate::ui::page::Link;
 use crate::work::{self, Cx, Failure, Job};
 
@@ -98,9 +98,7 @@ struct Said {
 
 /// The comment selected in the conversation on screen.
 fn selected_comment(state: &State, about: &Subject) -> Result<Said, String> {
-    let Screen::Page(p) = state.screen() else {
-        return Err("Hiding works on a comment in a conversation".into());
-    };
+    let p = (state.screen().page()).ok_or("Hiding works on a comment in a conversation")?;
     let next = state.first_key(Action::Down);
     // A comment's box, or a hidden one's fold, which its anchor names.
     let (by, number) = match p.selected_link() {
@@ -398,21 +396,15 @@ fn pick(pick: Pick) -> Result<Step, String> {
     Ok(Step::Pick(crate::picker::Kind::Manage(pick)))
 }
 
-fn send(state: &mut State, change: Change, about: Subject) -> Cmds {
-    crate::act::take(state, Ok(Step::Send(change, about)))
-}
-
 /// The menu's rows where they apply.
 pub fn doables(state: &State, out: &mut Vec<Doable>) {
-    let row = |action, label: &str| {
+    let row = |action, label: &'static str| {
         crate::nav::row("Change", action, label, "", plan(state, action).err())
     };
     if discussions_repo(state).is_some() {
         out.push(row(Action::NewDiscussion, "Start a new discussion"));
     }
-    let Some(about) = here(state) else {
-        return;
-    };
+    let Some(about) = here(state) else { return };
     let locked = match &about {
         Subject::Pr(r) => state.pr(r).map(|d| d.locked.is_some()),
         Subject::Issue(repo, n) => issue(state, repo, *n).map(|d| d.locked.is_some()),
@@ -425,7 +417,7 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
         "Lock the conversation"
     };
     out.push(row(Action::Lock, lock));
-    if let Screen::Page(_) = state.screen() {
+    if state.screen().page().is_some() {
         out.push(row(
             Action::HideComment,
             "Hide the selected comment, or unhide it",
@@ -975,9 +967,7 @@ fn category_rows(state: &State, repo: &RepoId, q: &str) -> Rows {
 /// What a new discussion in `c` starts with: its form's title and a
 /// heading per field, as an issue form's.
 fn form_text(c: &Category) -> String {
-    let Some(form) = &c.form else {
-        return String::new();
-    };
+    let Some(form) = &c.form else { return String::new() };
     let file = format!("{}.yml", c.slug);
     let chooser = crate::create::templates::chooser(&[(file, form.clone())]);
     match chooser.templates.first() {
@@ -995,12 +985,8 @@ pub fn picker_key(
     key: KeyEvent,
     rows: &mut [(PaletteItem, Option<crate::picker::Choice>)],
 ) -> Option<Cmds> {
-    let Some(Overlay::Picker(p)) = &mut state.overlay else {
-        return None;
-    };
-    let crate::picker::Kind::Manage(pick) = &p.kind else {
-        return None;
-    };
+    let Some(Overlay::Picker(p)) = &mut state.overlay else { return None };
+    let crate::picker::Kind::Manage(pick) = &p.kind else { return None };
     let alt = key.modifiers.contains(KeyModifiers::ALT);
     match (key.code, pick) {
         (KeyCode::Up | KeyCode::Down, Pick::SubIssues { issue, id }) if alt => {
@@ -1040,9 +1026,7 @@ fn move_sub_issue(
     child: Option<IssueAt>,
     up: bool,
 ) -> Cmds {
-    let Some(d) = issue(state, &at.repo, at.number) else {
-        return Cmds::new();
-    };
+    let Some(d) = issue(state, &at.repo, at.number) else { return Cmds::new() };
     let subs: Vec<IssueAt> = d.sub_issues.iter().map(linked).collect();
     let Some((selected, child)) = child.and_then(|c| Some((subs.iter().position(|s| *s == c)?, c)))
     else {
@@ -1073,7 +1057,8 @@ fn move_sub_issue(
         sibling,
         before: up,
     });
-    send(state, change, Subject::Issue(at.repo.clone(), at.number))
+    let about = Subject::Issue(at.repo.clone(), at.number);
+    crate::act::take(state, Ok(Step::Send(change, about)))
 }
 
 /// A change chosen in a confirmation that isn't simply sent: a revert or
@@ -1081,9 +1066,7 @@ fn move_sub_issue(
 /// is chosen first. `None` sends it.
 #[must_use]
 pub fn confirmed(state: &mut State, change: &Change, about: &Subject) -> Option<Cmds> {
-    let Change::Manage(m) = change else {
-        return None;
-    };
+    let Change::Manage(m) = change else { return None };
     let work: work::Work = match (m, about) {
         (Manage::CloseAsDuplicate { issue, of: None }, Subject::Issue(repo, number)) => {
             let pick = Pick::Duplicate {
@@ -1111,10 +1094,7 @@ pub fn confirmed(state: &mut State, change: &Change, about: &Subject) -> Option<
         .into(),
         _ => return None,
     };
-    if let Some(Overlay::Ask(c)) = &mut state.overlay {
-        c.sent.sending = true;
-        c.sent.error = None;
-    }
+    crate::forms::sending(state);
     Some(work::start(work))
 }
 
@@ -1161,19 +1141,16 @@ impl Starting {
 /// ctrl-s in the composer: starts the discussion.
 pub fn start(state: &mut State, s: &Starting, text: &str) -> Cmds {
     let (title, body) = crate::create::templates::split(text);
-    let Some(Overlay::Compose(c)) = &mut state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Compose(c)) = &mut state.overlay else { return Cmds::new() };
     if title.is_empty() {
-        c.sent.error = Some("Write its title on the first line".into());
+        c.sent.fail("Write its title on the first line".into());
         return Cmds::new();
     }
     if body.trim().is_empty() {
-        c.sent.error = Some("Write its text below the title".into());
+        c.sent.fail("Write its text below the title".into());
         return Cmds::new();
     }
-    c.sent.sending = true;
-    c.sent.error = None;
+    c.sent.start();
     work::start(Start {
         repo: s.repo.clone(),
         repo_id: s.repo_id.clone(),
@@ -1274,10 +1251,7 @@ impl Job for Start {
             Err(why) => {
                 let text = format!("GitHub didn't start the discussion: {why}");
                 match &mut state.overlay {
-                    Some(Overlay::Compose(c)) => {
-                        c.sent.sending = false;
-                        c.sent.error = Some(text);
-                    }
+                    Some(Overlay::Compose(c)) => c.sent.fail(text),
                     _ => state.error(text),
                 }
                 return Cmds::new();
@@ -1306,10 +1280,7 @@ fn close_confirm(state: &mut State) {
 /// still open.
 fn refused(state: &mut State, text: String) -> Cmds {
     match &mut state.overlay {
-        Some(Overlay::Ask(c)) if c.sent.sending => {
-            c.sent.sending = false;
-            c.sent.error = Some(text);
-        }
+        Some(Overlay::Ask(c)) if c.sent.sending => c.sent.fail(text),
         _ => state.error(text),
     }
     Cmds::new()
@@ -1338,9 +1309,7 @@ fn linked(l: &crate::api::timeline::Linked) -> IssueAt {
 pub fn shows(state: &State, m: &Manage, about: &Subject) -> bool {
     match about {
         Subject::Pr(r) => {
-            let Some(d) = state.pr(r) else {
-                return false;
-            };
+            let Some(d) = state.pr(r) else { return false };
             match m {
                 Manage::DeleteBranch { .. } => d.head_gone,
                 Manage::RestoreBranch { .. } => !d.head_gone,
@@ -1355,9 +1324,7 @@ pub fn shows(state: &State, m: &Manage, about: &Subject) -> bool {
             }
         }
         Subject::Issue(repo, n) => {
-            let Some(d) = issue(state, repo, *n) else {
-                return false;
-            };
+            let Some(d) = issue(state, repo, *n) else { return false };
             let has = |list: &Capped<crate::api::timeline::Linked>, other: &IssueAt| {
                 list.iter().any(|l| linked(l) == *other)
             };
@@ -1391,9 +1358,7 @@ pub fn shows(state: &State, m: &Manage, about: &Subject) -> bool {
             }
         }
         Subject::Discussion(of, n) => {
-            let Some(d) = discussion(state, of, *n) else {
-                return false;
-            };
+            let Some(d) = discussion(state, of, *n) else { return false };
             match m {
                 Manage::Lock { .. } => d.locked.is_some(),
                 Manage::Unlock { .. } => d.locked.is_none(),

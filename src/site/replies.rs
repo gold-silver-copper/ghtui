@@ -77,9 +77,7 @@ fn rows<'a>(state: &'a State, query: &str) -> Vec<Row<'a>> {
 /// The list as the composer shows it, and the row selected; `None`
 /// while it's closed.
 pub fn shown(state: &State) -> Option<(Vec<String>, usize)> {
-    let Some(Overlay::Compose(c)) = &state.overlay else {
-        return None;
-    };
+    let Some(Overlay::Compose(c)) = &state.overlay else { return None };
     let choosing = c.saved.as_ref()?;
     let mut labels = vec![format!("Saved replies ⌕ {}", choosing.query)];
     labels.extend(rows(state, &choosing.query).into_iter().map(|r| r.label));
@@ -116,9 +114,7 @@ pub fn on_key(state: &mut State, key: KeyEvent) -> Option<Cmds> {
     let rows = rows(state, &query);
     let count = rows.len();
     let chosen = rows.get(selected).and_then(|r| r.insert).map(str::to_owned);
-    let Some(Overlay::Compose(c)) = &mut state.overlay else {
-        return None;
-    };
+    let Some(Overlay::Compose(c)) = &mut state.overlay else { return None };
     let choosing = c.saved.as_mut()?;
     if crate::picker::move_in_list(key, &mut choosing.selected, count) {
         return Some(Cmds::new());

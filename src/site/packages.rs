@@ -9,7 +9,7 @@ use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
 use crate::route::{Dest, Route, Target};
-use crate::state::{Cmds, Screen, State};
+use crate::state::{Cmds, State};
 use crate::work::{self, Cx, Failure, Job};
 
 use super::Page;
@@ -26,12 +26,8 @@ pub struct DeleteVersion {
 /// The version `,D` is about: the row selected, else the version whose
 /// page this is.
 fn chosen(state: &State) -> Option<(PackageRef, u64)> {
-    let Screen::Page(p) = state.screen() else {
-        return None;
-    };
-    let Route::Site(Page::Package { at, version }) = &p.route else {
-        return None;
-    };
+    let p = state.screen().page()?;
+    let Route::Site(Page::Package { at, version }) = &p.route else { return None };
     let row = p.selected_link().and_then(crate::ui::page::Link::url);
     let row = row.and_then(|url| match Dest::from_url(url).target {
         Target::Page(Route::Site(Page::Package {
@@ -71,9 +67,7 @@ pub fn ask_delete(state: &mut State) -> Cmds {
             true,
         ));
     }
-    let Some(route) = state.route().cloned() else {
-        return Cmds::new();
-    };
+    let Some(route) = state.route().cloned() else { return Cmds::new() };
     // A digest by its first twelve characters, as GitHub shows it.
     let name = match v.name.strip_prefix("sha256:") {
         Some(hex) => format!("sha256:{}", hex.get(..12).unwrap_or(hex)),
@@ -93,9 +87,7 @@ pub fn ask_delete(state: &mut State) -> Cmds {
 
 /// Deletes version `id` of the package on `route`'s page, as asked.
 pub fn delete(state: &mut State, route: &Route, id: u64) -> Cmds {
-    let Route::Site(Page::Package { at, .. }) = route else {
-        return Cmds::new();
-    };
+    let Route::Site(Page::Package { at, .. }) = route else { return Cmds::new() };
     let name = (detail(state, at).and_then(|d| d.versions.items.iter().find(|v| v.id == id)))
         .map_or_else(|| id.to_string(), |v| v.name.clone());
     crate::forms::sending(state);
@@ -118,9 +110,7 @@ impl Job for DeleteVersion {
     /// gone (from a version's own page, the package's).
     fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
         let d = self;
-        let Some(route) = state.route().cloned() else {
-            return Cmds::new();
-        };
+        let Some(route) = state.route().cloned() else { return Cmds::new() };
         match result {
             Ok(()) => {
                 crate::forms::close_sender(state, &route);

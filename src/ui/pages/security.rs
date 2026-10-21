@@ -116,21 +116,13 @@ pub fn alerts(
     let tabs = [("open", "Open"), ("closed", "Closed")]
         .map(|(name, label)| (label, Link::State(name.to_owned()), state == name));
     let title = nav_strip(page, &Seg::new("   ", Role::Body), &Role::Meta, tabs);
-    let Some(l) = list.show_or(page, &kind.alerts().to_lowercase(), |page| {
-        page.box_top(title.clone(), Vec::new());
-        skeleton(page);
-        page.box_bottom();
-    }) else {
-        return;
-    };
+    let alerts = kind.alerts().to_lowercase();
+    let loading = |page: &mut Page| loading_box(page, title.clone());
+    let Some(l) = list.show_or(page, &alerts, loading) else { return };
     let ignored = crate::api::security::filter(kind, query).ignored;
     if !ignored.is_empty() {
-        let (alerts, ignored) = (kind.alerts().to_lowercase(), ignored.join(" "));
-        say(
-            page,
-            format!("Not a filter of {alerts}: {ignored}"),
-            Role::Meta,
-        );
+        let note = format!("Not a filter of {alerts}: {}", ignored.join(" "));
+        say(page, note, Role::Meta);
         page.blank();
     }
     if let Some(off) = &l.off {
@@ -220,13 +212,10 @@ fn dependency(page: &mut Page, repo: &RepoId, d: &crate::api::security::Dependen
         let target = url::blob(repo, "HEAD", &d.manifest);
         where_.push(link_seg(page, d.manifest.clone(), target, Role::Link));
     }
-    let mut about: Vec<&str> = Vec::new();
-    if let Some(scope) = &d.scope {
-        about.push(scope);
-    }
-    if let Some(r) = &d.relationship {
-        about.push(r);
-    }
+    let about: Vec<&str> = [d.scope.as_deref(), d.relationship.as_deref()]
+        .into_iter()
+        .flatten()
+        .collect();
     if !about.is_empty() {
         where_.push(meta(format!(" · {}", about.join(", "))));
     }
@@ -354,9 +343,6 @@ fn secret(page: &mut Page, repo: &RepoId, s: &crate::api::security::SecretAlert)
     }
     page.box_bottom();
     page.blank();
-    say(
-        page,
-        "The secret itself isn't shown: revoke it where it was issued, then close the alert as revoked.",
-        Role::Meta,
-    );
+    let note = "The secret itself isn't shown: revoke it where it was issued, then close the alert as revoked.";
+    say(page, note, Role::Meta);
 }

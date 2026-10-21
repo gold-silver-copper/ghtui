@@ -2,7 +2,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::api::model::{NodeId, PatchFile, PrRef, RepoId, ReviewThread, ViewedFiles};
 use crate::diff::anchor::{Commentable, LinePos, Side};
@@ -19,7 +18,7 @@ use crate::ui::pages::url as links;
 use crate::ui::text::{self, short_sha};
 use ratatui::layout::Rect;
 
-use crate::diff_job::{DiffFiles, JobId, JobMsg, next_job};
+use crate::diff_job::{DiffFiles, JobId, JobMsg};
 use crate::join;
 use crate::keymap::Action;
 use crate::notice::Notices;
@@ -371,12 +370,6 @@ pub struct DiffState {
     version: u64,
 }
 
-/// A version no diff's inputs have had.
-fn next_version() -> u64 {
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    NEXT.fetch_add(1, Ordering::Relaxed)
-}
-
 impl DiffState {
     /// A new diff of the whole PR that knows nothing yet: all is fetched again.
     pub fn fresh() -> Self {
@@ -393,8 +386,8 @@ impl DiffState {
             since_commit: None,
             range: None,
             requested: HashSet::new(),
-            job: next_job(),
-            version: next_version(),
+            job: crate::fresh(),
+            version: crate::fresh(),
         }
     }
 
@@ -431,7 +424,7 @@ impl DiffState {
             } else {
                 Arc::default()
             },
-            viewed: i.viewed.iter().flat_map(|v| v.states.clone()).collect(),
+            viewed: (i.viewed.as_ref()).map_or_else(HashMap::new, |v| v.states.clone()),
             reviewed: i.review.reviewed_hunks.iter().cloned().collect(),
             annotations: (annotations(i.thread_list(), &self.mapped, &i.review.pending, &i.fresh))
                 .into_iter()
@@ -443,7 +436,7 @@ impl DiffState {
     /// Changes the inputs with `f` and shows the change.
     pub fn edit<R>(&mut self, f: impl FnOnce(&mut DiffInputs) -> R) -> R {
         let r = f(&mut self.inputs);
-        self.version = next_version();
+        self.version = crate::fresh();
         self.doc.set_inputs(self.doc_inputs());
         r
     }
@@ -496,7 +489,7 @@ impl DiffState {
             Some(format!(
                 "Diffing {}/{files} {}",
                 self.doc.ready_count(),
-                crate::ui::text::noun(files as u64, "file")
+                text::noun(files as u64, "file")
             ))
         } else {
             Some(progress.clone())
@@ -958,9 +951,7 @@ pub fn select_tree_row(screen: &mut DiffScreen, state: &DiffState, row: usize) {
 /// A click at `x`, `y`: in the file tree, selects its row; a second click
 /// on a folder folds or unfolds it.
 pub fn click(screen: &mut DiffScreen, state: &DiffState, content: Rect, x: u16, y: u16) {
-    let Some(tree) = layout(content, &screen.prefs, &state.tree).tree else {
-        return;
-    };
+    let Some(tree) = layout(content, &screen.prefs, &state.tree).tree else { return };
     let rows = unfolded(&state.tree, &screen.folded);
     let Some(row) = (file_tree::row_at(tree, screen.tree_scroll, y))
         .filter(|&row| x < tree.right() && row < rows.len())
@@ -1019,8 +1010,8 @@ pub fn search(screen: &mut DiffScreen, state: &DiffState, query: String, forward
         (Some(pos), n) => {
             go_to_match(screen, &state.doc, pos, &query);
             Notice::Info(format!(
-                "{n} line{} match “{query}”",
-                if n == 1 { "" } else { "s" }
+                "{n} {} match “{query}”",
+                text::noun(n as u64, "line")
             ))
         }
         (None, _) => Notice::Error(format!("No match for “{query}”")),
@@ -1059,9 +1050,7 @@ fn toggle_viewed(screen: &mut DiffScreen, state: &mut DiffState, notice: &mut No
         return Cmds::new();
     };
     let index = screen.cursor.file;
-    let Some(file) = state.doc.files().get(index) else {
-        return Cmds::new();
-    };
+    let Some(file) = state.doc.files().get(index) else { return Cmds::new() };
     let (previous, path) = (file.viewed, file.meta.path().to_owned());
     let now = if previous == Viewed::Viewed {
         Viewed::Unviewed
@@ -1109,9 +1098,7 @@ fn toggle_reviewed(screen: &DiffScreen, state: &mut DiffState, notice: &mut Noti
 /// under it, or else its file.
 pub fn here_url(screen: &DiffScreen, state: &DiffState) -> String {
     let (doc, cursor) = (&state.doc, screen.cursor);
-    let Some(file) = doc.files().get(cursor.file) else {
-        return screen.of.url();
-    };
+    let Some(file) = doc.files().get(cursor.file) else { return screen.of.url() };
     let from = (screen.selection)
         .filter(|s| s.file == cursor.file)
         .unwrap_or(cursor);
@@ -1165,9 +1152,7 @@ fn anchor_pos(anchor: &str, state: &DiffState, pr: bool) -> Option<Option<Landin
             return Some(None);
         };
         let top = Pos { file, row: 0 };
-        let Some((start, end)) = parse_lines(lines) else {
-            return Some(Some(top.into()));
-        };
+        let Some((start, end)) = parse_lines(lines) else { return Some(Some(top.into())) };
         // Lines wait for the file's diff; a folded file shows none.
         if f.diff.is_none() && !f.collapsed() {
             return None;
@@ -1298,14 +1283,11 @@ pub fn settle(screen: &mut DiffScreen, state: &mut DiffState, content: Rect) -> 
         }
     }
 
-    let mut wanted = vec![screen.cursor.file];
-    wanted.extend(doc.loading_in_view(screen.top, height));
-    let wanted: Vec<usize> = wanted
-        .into_iter()
+    let in_view = doc.loading_in_view(screen.top, height);
+    let wanted: Vec<usize> = (std::iter::once(screen.cursor.file).chain(in_view))
         .filter(|f| {
-            doc.files()
-                .get(*f)
-                .is_some_and(|file| file.diff.is_none() && !file.collapsed())
+            let file = doc.files().get(*f);
+            file.is_some_and(|file| file.diff.is_none() && !file.collapsed())
                 && !state.requested.contains(f)
         })
         .collect();
@@ -1394,9 +1376,7 @@ pub(crate) fn update(state: &mut State, of: &DiffOf, msg: DiffMsg) -> Cmds {
         return Cmds::new();
     }
     // The rest is about reviewing a pull request.
-    let DiffOf::Pr(pr) = of.clone() else {
-        return Cmds::new();
-    };
+    let DiffOf::Pr(pr) = of.clone() else { return Cmds::new() };
     match msg {
         DiffMsg::LastReview(result) => {
             if let Some(diff) = state.diffs.get_mut(of) {

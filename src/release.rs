@@ -312,9 +312,7 @@ pub fn open(state: &mut State) -> Cmds {
     if state.route() == Some(&route) {
         return compose(state);
     }
-    let mut cmds = state.push(route);
-    cmds.extend(follow(state));
-    cmds
+    crate::forms::open(state, route)
 }
 
 /// The release on screen (its page's), as loaded.
@@ -343,21 +341,15 @@ pub fn open_edit(state: &mut State) -> Cmds {
     if let Some(why) = unchangeable(state) {
         return state.just_say(why);
     }
-    let Some((repo, tag, _)) = shown(state) else {
-        return Cmds::new();
-    };
-    let mut cmds = state.push(Route::Releases(releases::EditRelease { repo, tag }));
-    cmds.extend(follow(state));
-    cmds
+    let Some((repo, tag, _)) = shown(state) else { return Cmds::new() };
+    crate::forms::open(state, Route::Releases(releases::EditRelease { repo, tag }))
 }
 
 /// Brings the form on screen up to date: fills an edit's from its
 /// release, starts a new one by choosing its tag, and asks GitHub about
 /// a tag it hasn't yet.
 fn follow(state: &mut State) -> Cmds {
-    let Some((route, repo, form)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, repo, form)) = here(state) else { return Cmds::new() };
     if let Route::Releases(releases::EditRelease { tag, .. }) = &route
         && !form.started
         && let Some(r) = state.picked::<Release>(&DataKey::Release(repo.clone(), tag.clone()))
@@ -382,9 +374,7 @@ fn follow(state: &mut State) -> Cmds {
 
 /// The composer, on the title and notes.
 fn compose(state: &mut State) -> Cmds {
-    let Some((route, ..)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, ..)) = here(state) else { return Cmds::new() };
     crate::forms::compose::<Form>(state, &route, 0, crate::forms::TITLE)
 }
 
@@ -400,9 +390,7 @@ pub const FORM: crate::forms::Kind = crate::forms::Kind {
 
 /// Enter on one of the form's rows.
 fn on_row(state: &mut State, link: &Row) -> Cmds {
-    let Some((route, repo, form)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, repo, form)) = here(state) else { return Cmds::new() };
     match link {
         Row::Tag => state.open_picker(crate::picker::Kind::Tag(route)),
         Row::Target if form.new_tag(state, &repo) => {
@@ -429,9 +417,7 @@ fn on_row(state: &mut State, link: &Row) -> Cmds {
 
 /// Asks GitHub to write the notes.
 fn generate(state: &mut State) -> Cmds {
-    let Some((route, repo, form)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, repo, form)) = here(state) else { return Cmds::new() };
     let Some(tag) = form.tag.clone() else {
         return state
             .just_say("Choose a tag first: GitHub writes the notes since the release before it");
@@ -479,9 +465,7 @@ fn form_repo(route: &Route) -> Option<&RepoId> {
 
 /// The tag picker's rows: a new tag typed, then the tags GitHub has.
 pub fn tag_rows(state: &State, route: &Route, q: &str) -> Rows {
-    let Some(repo) = form_repo(route) else {
-        return Vec::new();
-    };
+    let Some(repo) = form_repo(route) else { return Vec::new() };
     let tags = state.picked::<Results<TagInfo>>(&DataKey::Tags(repo.clone()));
     let typed = match tag_problem(q) {
         Some(why) => entry(why, "", None),
@@ -509,9 +493,7 @@ pub fn tag_rows(state: &State, route: &Route, q: &str) -> Rows {
 
 /// The target picker's rows: a commit typed, then the branches.
 pub fn target_rows(state: &State, route: &Route, q: &str) -> Rows {
-    let Some(repo) = form_repo(route) else {
-        return Vec::new();
-    };
+    let Some(repo) = form_repo(route) else { return Vec::new() };
     let branches = state.picked::<Results<BranchInfo>>(&DataKey::Branches(repo.clone()));
     let typed = Some(filling(route, Row::Target, q));
     let typed = entry(format!("Use {q}"), "a branch or a commit's SHA", typed);
@@ -613,9 +595,7 @@ fn problem(state: &State, repo: &RepoId, form: &Form) -> Option<String> {
 /// `,s`, ctrl-s, or its button: asks whether to publish it or keep a
 /// draft.
 fn submit(state: &mut State) -> Cmds {
-    let Some((route, repo, form)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((route, repo, form)) = here(state) else { return Cmds::new() };
     let Some(tag) = form.tag.clone() else {
         return say(state, "Choose a tag first (Enter on Tag)".into());
     };
@@ -680,15 +660,9 @@ fn submit(state: &mut State) -> Cmds {
 
 /// Saves the release: published, or a draft.
 pub fn create(state: &mut State, route: &Route, draft: bool) -> Cmds {
-    let Some(repo) = form_repo(route).cloned() else {
-        return Cmds::new();
-    };
-    let Some(form) = state.forms.get::<Form>(route) else {
-        return Cmds::new();
-    };
-    let Some(tag) = form.tag.clone() else {
-        return Cmds::new();
-    };
+    let Some(repo) = form_repo(route).cloned() else { return Cmds::new() };
+    let Some(form) = state.forms.get::<Form>(route) else { return Cmds::new() };
+    let Some(tag) = form.tag.clone() else { return Cmds::new() };
     let (name, notes) = templates::split(&form.text);
     let new = NewRelease {
         target: form.target.clone().filter(|_| form.new_tag(state, &repo)),
@@ -718,9 +692,7 @@ pub fn ask_delete(state: &mut State) -> Cmds {
     if let Some(name) = assets::selected(state) {
         return assets::ask_delete(state, &name);
     }
-    let Some((repo, tag, r)) = shown(state) else {
-        return Cmds::new();
-    };
+    let Some((repo, tag, r)) = shown(state) else { return Cmds::new() };
     let mut facts = Vec::new();
     let n = r.assets.total();
     if n > 0 {
@@ -786,9 +758,7 @@ impl Job for Generate {
         else {
             return Cmds::new();
         };
-        let Some(form) = state.forms.get_mut::<Form>(&route) else {
-            return Cmds::new();
-        };
+        let Some(form) = state.forms.get_mut::<Form>(&route) else { return Cmds::new() };
         form.generating = false;
         match result {
             Ok(notes) => {
@@ -850,9 +820,7 @@ impl Job for Save {
     /// and follows GitHub until it shows it.
     fn done(self, state: &mut State, result: Result<Made, Failure>) -> Cmds {
         let route = &self.route;
-        let Some(repo) = form_repo(route).cloned() else {
-            return Cmds::new();
-        };
+        let Some(repo) = form_repo(route).cloned() else { return Cmds::new() };
         match result {
             Ok(made) => {
                 let form: Form = crate::forms::done(state, route);
@@ -889,8 +857,7 @@ impl Job for Save {
                 if state.route() != Some(route) {
                     return Cmds::new();
                 }
-                crate::follow::expect(state, page.clone(), what);
-                state.replace(page, true, None)
+                crate::follow::replace(state, page, what)
             }
             Err(why) => {
                 let why = format!("GitHub didn't save the release: {why}");
@@ -927,8 +894,7 @@ impl Job for Delete {
         if state.route() == Some(&route) {
             let list = Route::Releases(releases::Releases(repo.clone()));
             let gone = Expected::ReleaseGone(repo.clone(), tag.to_owned());
-            crate::follow::expect(state, list.clone(), gone);
-            cmds = state.replace(list, true, None);
+            cmds = crate::follow::replace(state, list, gone);
         }
         if !tagged {
             return cmds;
@@ -975,40 +941,22 @@ fn offers(state: &State, out: &mut Vec<Doable>) {
 /// The menu's rows: making a release from a repository's pages, and
 /// changing the release on screen.
 fn doables(state: &State, out: &mut Vec<Doable>) {
-    let Some(route) = state.route().filter(|_| here(state).is_none()) else {
-        return;
-    };
-    let Some(repo) = route.repo() else {
-        return;
-    };
+    let Some(route) = state.route().filter(|_| here(state).is_none()) else { return };
+    let Some(repo) = route.repo() else { return };
     if matches!(route, Route::Releases(releases::Release { .. })) {
         let why = unchangeable(state);
-        out.push(row(
-            "Edit",
-            Action::EditComment,
-            "Edit the release",
-            "edit",
-            why.clone(),
-        ));
         let delete = if assets::selected(state).is_some() {
             "Delete the asset"
         } else {
             "Delete the release"
         };
-        out.push(row(
-            "Edit",
-            Action::DeleteComment,
-            delete,
-            "delete",
-            why.clone(),
-        ));
-        out.push(row(
-            "Change",
-            Action::UploadAsset,
-            "Upload an asset",
-            "upload",
-            why,
-        ));
+        for (section, action, label, short) in [
+            ("Edit", Action::EditComment, "Edit the release", "edit"),
+            ("Edit", Action::DeleteComment, delete, "delete"),
+            ("Change", Action::UploadAsset, "Upload an asset", "upload"),
+        ] {
+            out.push(row(section, action, label, short, why.clone()));
+        }
     }
     out.push(row(
         "New",
@@ -1076,17 +1024,14 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
         form_row("Pre-release", pre, false, Some(Row::Prerelease)),
         form_row("Latest", latest, form.prerelease, Some(Row::Latest)),
     ];
-    let (title, notes) = templates::split(&form.text);
-    let write = state.first_key(Action::Comment);
-    let save_key = state.first_key(Action::Create);
     let why_not = match &form.tag {
         None => Some("Choose a tag first".to_owned()),
         Some(_) => problem(state, repo, form),
     };
     let (title, notes) = if composing {
-        (String::new(), String::new())
+        Default::default()
     } else {
-        (title, notes)
+        templates::split(&form.text)
     };
     let (heading, button) = match &form.editing {
         Some(e) => (
@@ -1115,13 +1060,11 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
             actions: Vec::new(),
         }],
         after,
-        write: &write,
         button: button.into(),
-        save_key: &save_key,
         why_not,
-        error: state.forms.sent(route).error.as_deref(),
+        ..WriteFormView::default()
     };
-    crate::ui::pages::write_form(page, &view);
+    crate::forms::write_form(state, route, page, view);
 }
 
 #[cfg(test)]

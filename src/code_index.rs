@@ -11,7 +11,6 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -241,7 +240,11 @@ impl Indexer {
     pub fn scratch(&self) -> PathBuf {
         let dir = self.git.cache_root.join("code-index");
         let _ = std::fs::create_dir_all(&dir);
-        dir.join(format!(".scratch-{}-{}", std::process::id(), unique()))
+        dir.join(format!(
+            ".scratch-{}-{}",
+            std::process::id(),
+            crate::fresh()
+        ))
     }
 
     /// The index of `repo` at `rev`, starting (or refreshing) its build;
@@ -515,11 +518,9 @@ fn choose(
     let mut files: Vec<TreeFile> = files.into_iter().filter(readable).collect();
     let eligible = files.len();
     // Nearest: the most leading folders in common with `near`.
-    let folders = |p: &str| p.rsplit_once('/').map_or("", |(dir, _)| dir).to_owned();
     let here = folders(near);
     let shared = |p: &str| {
-        let there = folders(p);
-        let pairs = here.split('/').zip(there.split('/'));
+        let pairs = here.split('/').zip(folders(p).split('/'));
         pairs.take_while(|(a, b)| a == b && !a.is_empty()).count()
     };
     files.sort_by_cached_key(|f| std::cmp::Reverse(shared(&f.path)));
@@ -541,14 +542,17 @@ fn choose(
     (chosen, eligible, cut)
 }
 
+/// The folders `path` is in: `a/b` of `a/b/c.rs`.
+fn folders(path: &str) -> &str {
+    path.rsplit_once('/').map_or("", |(dir, _)| dir)
+}
+
 const MAGIC: &str = "ghtui code index 1";
 
 /// Saves `index` as `file`, keeping only the newest [`KEEP`] beside it.
 fn save(file: &Path, index: &Index) -> std::io::Result<()> {
     use std::fmt::Write;
-    let Some(dir) = file.parent() else {
-        return Ok(());
-    };
+    let Some(dir) = file.parent() else { return Ok(()) };
     std::fs::create_dir_all(dir)?;
     let cut = index.cut.map_or("-", Cut::word);
     let mut out = format!("{MAGIC}\n{}\t{cut}\n", index.eligible);
@@ -559,7 +563,7 @@ fn save(file: &Path, index: &Index) -> std::io::Result<()> {
             let _ = writeln!(out, "\t{}\t{defines}\t{}", d.line, d.name);
         }
     }
-    let tmp = dir.join(format!(".tmp-{}-{}", std::process::id(), unique()));
+    let tmp = dir.join(format!(".tmp-{}-{}", std::process::id(), crate::fresh()));
     std::fs::write(&tmp, out)?;
     std::fs::rename(&tmp, file)?;
     let mut kept: Vec<_> = saved(dir)?.collect();
@@ -568,11 +572,6 @@ fn save(file: &Path, index: &Index) -> std::io::Result<()> {
         let _ = std::fs::remove_file(old);
     }
     Ok(())
-}
-
-fn unique() -> u64 {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 /// The indexes saved in `dir` (not one being written), with when.
@@ -701,9 +700,7 @@ mod tests {
                 let word = var("GHTUI_INDEX_WORD");
                 let found = snap.index.definitions(&word, |_| true).count();
                 println!("{found} definitions of {word}");
-                let (Some(git), true) = (&snap.repo, git_partial(&snap)) else {
-                    break;
-                };
+                let (Some(git), true) = (&snap.repo, git_partial(&snap)) else { break };
                 let at = Instant::now();
                 let files: Vec<(&str, &str)> = (snap.index.files.iter())
                     .map(|f| (f.path.as_str(), f.blob.as_str()))

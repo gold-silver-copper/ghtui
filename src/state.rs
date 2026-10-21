@@ -363,6 +363,38 @@ pub enum Screen {
     Diff(Box<DiffScreen>),
 }
 
+impl Screen {
+    /// The page, if it's one.
+    pub fn page(&self) -> Option<&PageScreen> {
+        match self {
+            Screen::Page(p) => Some(p),
+            Screen::Diff(_) => None,
+        }
+    }
+
+    pub fn page_mut(&mut self) -> Option<&mut PageScreen> {
+        match self {
+            Screen::Page(p) => Some(p),
+            Screen::Diff(_) => None,
+        }
+    }
+
+    /// The diff, if it's one.
+    pub fn diff(&self) -> Option<&DiffScreen> {
+        match self {
+            Screen::Diff(d) => Some(d),
+            Screen::Page(_) => None,
+        }
+    }
+
+    pub fn diff_mut(&mut self) -> Option<&mut DiffScreen> {
+        match self {
+            Screen::Diff(d) => Some(d),
+            Screen::Page(_) => None,
+        }
+    }
+}
+
 /// Navigation history, like a browser's. The first screen can't be
 /// removed, so there's always one to show.
 pub struct Screens {
@@ -611,10 +643,7 @@ impl State {
 
     /// The page on screen, if it is one.
     pub fn route(&self) -> Option<&Route> {
-        match self.screen() {
-            Screen::Page(p) => Some(&p.route),
-            Screen::Diff(_) => None,
-        }
+        Some(&self.screen().page()?.route)
     }
 }
 
@@ -631,12 +660,8 @@ impl State {
     /// Opens the page an unsplit one ([`code::Unsplit`]) is, once where its ref
     /// ends is known.
     fn settle_ref(&mut self) -> Cmds {
-        let Screen::Page(p) = self.screen() else {
-            return Cmds::new();
-        };
-        let Some(route) = self.split(&p.route, None) else {
-            return Cmds::new();
-        };
+        let Screen::Page(p) = self.screen() else { return Cmds::new() };
+        let Some(route) = self.split(&p.route, None) else { return Cmds::new() };
         let anchor = p.anchor.clone();
         self.replace(route, false, anchor)
     }
@@ -658,9 +683,7 @@ impl State {
     /// another, so a branch already known is the one (short of a tag that
     /// extends it).
     pub(crate) fn split(&self, route: &Route, rev: Option<&str>) -> Option<Route> {
-        let Route::Code(code::Unsplit { repo, spot, .. }) = route else {
-            return None;
-        };
+        let Route::Code(code::Unsplit { repo, spot, .. }) = route else { return None };
         let key = DataKey::RefIn(repo.clone(), spot.clone());
         if let Some(found) = self.picked::<Option<String>>(&key) {
             return route.split(found.as_deref());

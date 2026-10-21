@@ -65,6 +65,13 @@ pub fn expect(state: &mut State, route: Route, what: impl Expectation) {
     });
 }
 
+/// Opens `route` in place of the page on screen, fetched again, to wait
+/// there for GitHub to show `what`.
+pub fn replace(state: &mut State, route: Route, what: impl Expectation) -> Cmds {
+    expect(state, route.clone(), what);
+    state.replace(route, true, None)
+}
+
 /// What the page on screen waits for GitHub to show, if anything.
 fn following(state: &State) -> Option<&Following> {
     (state.following.as_ref()).filter(|f| state.route() == Some(&f.route))
@@ -103,16 +110,12 @@ pub fn poll(state: &mut State) -> Vec<DataKey> {
 /// After GitHub's data arrives: stops waiting for a change the page now
 /// shows, or follows it to the page it's on.
 pub fn follow(state: &mut State) -> Cmds {
-    let Some(f) = following(state) else {
-        return Cmds::new();
-    };
+    let Some(f) = following(state) else { return Cmds::new() };
     let polls = f.polls;
     match f.what.shown(state, &f.route) {
         Shown::No => Cmds::new(),
         Shown::Yes => {
-            let Some(f) = state.following.take() else {
-                return Cmds::new();
-            };
+            let Some(f) = state.following.take() else { return Cmds::new() };
             f.what.then(state, &f.route)
         }
         Shown::There(route, what) => {

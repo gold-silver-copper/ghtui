@@ -80,19 +80,13 @@ pub fn advisory(page: &mut Page, a: &Advisory, now: u64) {
     }
     page.blank();
     let title = vec![strong(format!("Affected packages  {}", a.packages.len()))];
-    list_box(
-        page,
-        title,
-        Vec::new(),
-        &Whole(&a.packages),
-        "None listed.",
-        |page, p| {
-            let right = vec![meta(p.ecosystem.clone())];
-            page.box_line(vec![strong(p.name.clone())], right, 0);
-            let facts = affected(p.vulnerable.as_ref(), p.patched.as_deref());
-            body(page, vec![meta(facts)]);
-        },
-    );
+    let (packages, none) = (Whole(&a.packages), "None listed.");
+    list_box(page, title, Vec::new(), &packages, none, |page, p| {
+        let right = vec![meta(p.ecosystem.clone())];
+        page.box_line(vec![strong(p.name.clone())], right, 0);
+        let facts = affected(p.vulnerable.as_ref(), p.patched.as_deref());
+        body(page, vec![meta(facts)]);
+    });
     if !a.description.trim().is_empty() {
         page.blank();
         markdown::render(page, &a.description, None, Frame::None);
@@ -125,6 +119,7 @@ pub(super) fn wiki_links(text: &str) -> String {
     out.push_str(rest);
     out
 }
+
 /// A wiki page, then the wiki's pages and its sidebar. Without a page,
 /// just the pages.
 pub fn wiki(page: &mut Page, repo: &RepoId, w: &WikiPage) {
@@ -142,23 +137,14 @@ pub fn wiki(page: &mut Page, repo: &RepoId, w: &WikiPage) {
         page.blank();
     }
     let title = vec![strong(format!("Pages  {}", w.pages.len()))];
-    list_box(
-        page,
-        title,
-        Vec::new(),
-        &Whole(&w.pages),
-        "No pages yet.",
-        |page, title| {
-            let target = format!(
-                "{}/wiki/{}",
-                url::repo(repo),
-                url::encode_path(&title.replace(' ', "-"))
-            );
-            item(page, target, |page, link| {
-                link_line(page, title.clone(), Role::Link, link, Vec::new());
-            });
-        },
-    );
+    let (pages, none) = (Whole(&w.pages), "No pages yet.");
+    list_box(page, title, Vec::new(), &pages, none, |page, title| {
+        let name = url::encode_path(&title.replace(' ', "-"));
+        let target = format!("{}/wiki/{name}", url::repo(repo));
+        item(page, target, |page, link| {
+            link_line(page, title.clone(), Role::Link, link, Vec::new());
+        });
+    });
     if let Some(sidebar) = &w.sidebar {
         page.blank();
         markdown::render(page, &wiki_links(sidebar), Some(&base), Frame::None);
@@ -174,9 +160,7 @@ pub fn deployments(
     environment: Option<&str>,
     now: u64,
 ) {
-    let Some(l) = list.show(page, "deployments") else {
-        return;
-    };
+    let Some(l) = list.show(page, "deployments") else { return };
     let base = format!("{}/deployments", url::repo(repo));
     let filter = |env: &str| {
         format!(
@@ -196,13 +180,9 @@ pub fn deployments(
         page.wrapped(segs, 0, Frame::None);
         page.blank();
     }
-    let r = &l.results;
-    let title = counted("Deployments", r);
-    list_box(page, title, Vec::new(), r, "No deployments.", |page, d| {
-        let target = d
-            .log_url
-            .clone()
-            .unwrap_or_else(|| url::commit(repo, &d.oid));
+    let (list, none) = (&l.results, "No deployments.");
+    counted_box(page, "Deployments", Vec::new(), list, none, |page, d| {
+        let target = (d.log_url.clone()).unwrap_or_else(|| url::commit(repo, &d.oid));
         item(page, target, |page, link| {
             let (mark, role) = outcome_mark(d.outcome);
             let segs = vec![
@@ -262,9 +242,7 @@ pub fn milestones(
     closed: bool,
     now: u64,
 ) {
-    let Some(l) = list.show(page, "milestones") else {
-        return;
-    };
+    let Some(l) = list.show(page, "milestones") else { return };
     let base = format!("{}/milestones", url::repo(repo));
     let tabs = [
         (format!("Open {}", l.open), base.clone(), !closed),
@@ -277,23 +255,15 @@ pub fn milestones(
     let segs = nav_strip(page, &meta(" · "), &Role::Link, tabs);
     page.wrapped(segs, 0, Frame::None);
     page.blank();
-    let r = &l.results;
-    let title = counted("Milestones", r);
-    list_box(page, title, Vec::new(), r, "No milestones.", |page, m| {
+    let (list, none) = (&l.results, "No milestones.");
+    counted_box(page, "Milestones", Vec::new(), list, none, |page, m| {
         let target = format!("{}/milestone/{}", url::repo(repo), m.number);
         item(page, target, |page, link| {
-            link_line(
-                page,
-                m.title.clone(),
-                Role::Strong,
-                link,
-                vec![meta(due(m))],
-            );
+            let right = vec![meta(due(m))];
+            link_line(page, m.title.clone(), Role::Strong, link, right);
             let mut segs = progress(m);
-            segs.push(meta(format!(
-                " · updated {}",
-                time::ago_iso(&m.updated_at, now)
-            )));
+            let updated = time::ago_iso(&m.updated_at, now);
+            segs.push(meta(format!(" · updated {updated}")));
             body(page, segs);
             if let Some(first) = m.description.lines().find(|l| !l.trim().is_empty()) {
                 body(page, vec![Seg::new(first.trim().to_owned(), Role::Body)]);
@@ -325,15 +295,14 @@ pub fn milestone(page: &mut Page, repo: &RepoId, d: &MilestoneDetail, icons: Ico
         markdown::render(page, &m.description, Some(&base), Frame::None);
     }
     page.blank();
-    let r = &d.items;
-    let title = counted("Issues and pull requests", r);
     let empty = if d.unsearchable {
         "GitHub's search can't look up a title with quotes: open them on GitHub."
     } else {
         "Nothing in this milestone."
     };
     // Most recently updated first.
-    list_box(page, title, Vec::new(), r, empty, |page, i| {
+    let name = "Issues and pull requests";
+    counted_box(page, name, Vec::new(), &d.items, empty, |page, i| {
         issue_row(page, i, (false, true), icons, now, false);
     });
 }

@@ -1207,7 +1207,7 @@ async fn a_searched_pr_is_shown_then_gets_its_checks() {
         .await
         .unwrap();
     let ghtui::api::browse::SearchResults::Issues(r) = results else {
-        panic!("{results:?}");
+        panic!("{results:?}")
     };
     let checks = |i: &ghtui::api::browse::IssueSummary| match i.kind {
         ghtui::api::browse::IssueKind::Pr { state, checks, .. } => (i.number, state, checks),
@@ -1218,7 +1218,7 @@ async fn a_searched_pr_is_shown_then_gets_its_checks() {
         [(5, PrState::Draft, Some(ChecksState::Failing))]
     );
     let Some(ghtui::api::browse::SearchResults::Issues(first)) = shown.into_inner().unwrap() else {
-        panic!("the page wasn't shown before its checks");
+        panic!("the page wasn't shown before its checks")
     };
     assert_eq!(checks(&first.items[0]), (5, PrState::Draft, None));
     let seen = seen.lock().unwrap();
@@ -1318,7 +1318,7 @@ async fn discussion_search_reads_its_count_and_hits() {
         .await
         .unwrap();
     let ghtui::api::browse::SearchResults::Discussions(r) = results else {
-        panic!("not discussions");
+        panic!("not discussions")
     };
     assert_eq!(
         (r.total, r.items.len(), r.next.as_deref()),
@@ -2160,59 +2160,41 @@ fn root_not_found(data: &str, path: &str, message: &str) -> Reply {
     )
 }
 
+/// A root GitHub can't resolve is not found, and its NOT_FOUND isn't also
+/// left out: a pull request, a repository (typed and raw) and a profile.
 #[tokio::test]
-async fn a_missing_pull_request_isnt_also_left_out() {
-    let (gh, _) = github(vec![root_not_found(
-        r#"{"repository":{"pullRequest":null,"mergeCommitAllowed":true,"squashMergeAllowed":true,"rebaseMergeAllowed":true,"viewerDefaultMergeMethod":"MERGE","viewerPermission":"READ","autoMergeAllowed":false},"rateLimit":null}"#,
-        r#"["repository","pullRequest"]"#,
-        "Could not resolve to a PullRequest with the number of 999999.",
-    )])
+async fn a_missing_root_isnt_also_left_out() {
+    let no_repo = |data| {
+        let why = "Could not resolve to a Repository with the name 'nosuch/repo'.";
+        root_not_found(data, r#"["repository"]"#, why)
+    };
+    // Each repository is checked for being blocked, and isn't.
+    let unblocked = || Reply::new(404, "{}");
+    let (gh, _) = github(vec![
+        root_not_found(
+            r#"{"repository":{"pullRequest":null,"mergeCommitAllowed":true,"squashMergeAllowed":true,"rebaseMergeAllowed":true,"viewerDefaultMergeMethod":"MERGE","viewerPermission":"READ","autoMergeAllowed":false},"rateLimit":null}"#,
+            r#"["repository","pullRequest"]"#,
+            "Could not resolve to a PullRequest with the number of 999999.",
+        ),
+        no_repo(r#"{"repository":null,"rateLimit":null}"#),
+        unblocked(),
+        no_repo(r#"{"repository":null}"#),
+        unblocked(),
+        root_not_found(
+            r#"{"user":null,"organization":null,"user_readme":null,"org_readme":null}"#,
+            r#"["user"]"#,
+            "Could not resolve to a User with the login of 'nosuch'.",
+        ),
+    ])
     .await;
     let pr = PrRef::parse("o/r#999999").unwrap();
-    assert!(matches!(
-        gh.pull_request(&pr).await,
-        Err(ApiError::NotFound(_))
-    ));
-    assert_eq!(gh.take_left_out(), Vec::<String>::new());
-}
-
-#[tokio::test]
-async fn a_missing_repository_isnt_also_left_out() {
-    let (gh, _) = github(vec![root_not_found(
-        r#"{"repository":null,"rateLimit":null}"#,
-        r#"["repository"]"#,
-        "Could not resolve to a Repository with the name 'nosuch/repo'.",
-    )])
-    .await;
+    let got = gh.pull_request(&pr).await;
+    assert!(matches!(got, Err(ApiError::NotFound(_))), "{got:?}");
     let repo = RepoId::new("nosuch", "repo");
-    assert!(matches!(gh.repo(&repo).await, Err(ApiError::NotFound(_))));
-    assert_eq!(gh.take_left_out(), Vec::<String>::new());
-}
-
-#[tokio::test]
-async fn a_missing_repositorys_milestones_arent_also_left_out() {
-    let (gh, _) = github(vec![root_not_found(
-        r#"{"repository":null}"#,
-        r#"["repository"]"#,
-        "Could not resolve to a Repository with the name 'nosuch/repo'.",
-    )])
-    .await;
-    let repo = RepoId::new("nosuch", "repo");
-    assert!(matches!(
-        gh.milestones(&repo, false, None).await,
-        Err(ApiError::NotFound(_))
-    ));
-    assert_eq!(gh.take_left_out(), Vec::<String>::new());
-}
-
-#[tokio::test]
-async fn a_missing_profile_isnt_also_left_out() {
-    let (gh, _) = github(vec![root_not_found(
-        r#"{"user":null,"organization":null,"user_readme":null,"org_readme":null}"#,
-        r#"["user"]"#,
-        "Could not resolve to a User with the login of 'nosuch'.",
-    )])
-    .await;
+    let got = gh.repo(&repo).await;
+    assert!(matches!(got, Err(ApiError::NotFound(_))), "{got:?}");
+    let got = gh.milestones(&repo, false, None).await;
+    assert!(matches!(got, Err(ApiError::NotFound(_))), "{got:?}");
     let got = gh.profile("nosuch").await;
     assert!(matches!(got, Err(ApiError::NotFound(_))), "{:?}", got.err());
     assert_eq!(gh.take_left_out(), Vec::<String>::new());
@@ -2264,21 +2246,6 @@ async fn an_error_without_a_message_is_still_left_out() {
     .await;
     gh.refs(&RepoId::new("o", "r")).await.unwrap();
     assert_eq!(gh.take_left_out(), ["an unexplained error", "FORBIDDEN"]);
-}
-
-/// A mutation answered with an error without a message still fails: the
-/// change wasn't made.
-#[tokio::test]
-async fn a_mutation_answered_with_a_bare_error_still_fails() {
-    let (gh, _) = github(vec![Reply::new(
-        200,
-        r#"{"data":{"markFileAsViewed":null},"errors":[{"type":"FORBIDDEN","path":["markFileAsViewed"]}]}"#,
-    )])
-    .await;
-    match gh.set_viewed(&NodeId::new("n"), "x", true).await {
-        Err(ApiError::GraphQl(errors)) => assert_eq!(errors, ["FORBIDDEN"]),
-        other => panic!("{other:?}"),
-    }
 }
 
 /// A repository gone while a commit's checks are paged is not found, not
@@ -2350,21 +2317,28 @@ async fn a_not_found_on_a_present_field_is_still_left_out() {
     assert_eq!(gh.take_left_out(), [odd]);
 }
 
-/// A mutation fails on any error, a NOT_FOUND that explains its null too.
+/// A mutation fails on any error: one without a message, and a NOT_FOUND
+/// that explains its null too. The change wasn't made.
 #[tokio::test]
-async fn a_mutation_answered_with_not_found_still_fails() {
-    let (gh, _) = github(vec![root_not_found(
-        r#"{"markFileAsViewed":null}"#,
-        r#"["markFileAsViewed"]"#,
-        "Could not resolve to a node with the global id of 'bad'.",
-    )])
-    .await;
-    match gh.set_viewed(&NodeId::new("bad"), "x", true).await {
-        Err(ApiError::GraphQl(errors)) => assert_eq!(
-            errors,
-            ["Could not resolve to a node with the global id of 'bad'."]
+async fn a_mutation_answered_with_any_error_fails() {
+    let not_found = "Could not resolve to a node with the global id of 'bad'.";
+    let (gh, _) = github(vec![
+        Reply::new(
+            200,
+            r#"{"data":{"markFileAsViewed":null},"errors":[{"type":"FORBIDDEN","path":["markFileAsViewed"]}]}"#,
         ),
-        other => panic!("{other:?}"),
+        root_not_found(
+            r#"{"markFileAsViewed":null}"#,
+            r#"["markFileAsViewed"]"#,
+            not_found,
+        ),
+    ])
+    .await;
+    for said in ["FORBIDDEN", not_found] {
+        match gh.set_viewed(&NodeId::new("bad"), "x", true).await {
+            Err(ApiError::GraphQl(errors)) => assert_eq!(errors, [said]),
+            other => panic!("{other:?}"),
+        }
     }
     assert_eq!(gh.take_left_out(), Vec::<String>::new());
 }
@@ -2898,14 +2872,14 @@ async fn a_project_reads_its_view_and_the_items_its_filter_finds() {
     let board = p.views.first().unwrap();
     assert_eq!(board.column, Some(NodeId::new("F_status")));
     let Some(FieldKind::Iteration(sprints)) = p.fields.get(2).map(|f| &f.kind) else {
-        panic!("{:?}", p.fields);
+        panic!("{:?}", p.fields)
     };
     assert_eq!(
         sprints.iter().map(|s| s.completed).collect::<Vec<_>>(),
         [false, true]
     );
     let [issue, draft, hidden] = p.items.items.as_slice() else {
-        panic!("{:?}", p.items);
+        panic!("{:?}", p.items)
     };
     assert_eq!(issue.number, 1001);
     assert!(matches!(
@@ -3122,7 +3096,7 @@ async fn alert_lists_filter_and_page() {
         .unwrap();
     assert_eq!(first.results.next.as_deref(), Some("page=2"));
     let Some(Detail::Code(code)) = first.results.items.first().map(|a| &a.detail) else {
-        panic!("{first:?}");
+        panic!("{first:?}")
     };
     assert_eq!(
         (code.path.as_deref(), code.lines),
@@ -4273,7 +4247,7 @@ async fn settings_send_their_requests_and_read_their_pages() {
         gh.change(&Change::Settings(change)).await.unwrap();
     }
     let Settings::Hooks(hooks) = gh.settings(&repo, SettingsPage::Hooks).await.unwrap() else {
-        panic!("not the webhooks");
+        panic!("not the webhooks")
     };
     assert!(hooks.more, "GitHub has another page");
     assert_eq!(hooks.items[0].form.url, "https://example.com/h");

@@ -395,8 +395,6 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route) {
     if f.get(Field::Due).is_empty() {
         status.push(("No due date: it's sorted last".to_owned(), Mark::Fine, None));
     }
-    let write = state.first_key(Action::Comment);
-    let save_key = state.first_key(Action::Create);
     let composing = crate::forms::composing(state, route, 0);
     let body = if composing { "" } else { f.text.as_str() };
     let view = WriteFormView {
@@ -417,14 +415,11 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route) {
             link: Link::Form(crate::ui::form::Row::Text(0)),
             actions: Vec::new(),
         }],
-        after: Vec::new(),
-        write: &write,
         button: super::button(of, &f),
-        save_key: &save_key,
         why_not: super::problem(state, route, of),
-        error: state.forms.sent(route).error.as_deref(),
+        ..WriteFormView::default()
     };
-    crate::ui::pages::write_form(page, &view);
+    crate::forms::write_form(state, route, page, view);
 }
 
 #[cfg(test)]

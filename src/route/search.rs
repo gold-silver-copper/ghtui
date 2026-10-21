@@ -83,9 +83,7 @@ impl Family for Page {
     }
 
     fn chrome(&self, state: &State, c: &mut Chrome) {
-        let Search { kind, query } = self else {
-            return c.crumb("Notifications", None);
-        };
+        let Search { kind, query } = self else { return c.crumb("Notifications", None) };
         c.crumb("Search", None);
         let results = (self.paged()).and_then(|key| state.picked::<SearchResults>(&key));
         let total = results.map(|r| r.counts().0);

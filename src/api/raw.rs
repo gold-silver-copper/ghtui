@@ -113,7 +113,6 @@ pub(crate) fn team() -> String {
 /// A field's ID, of the fields a view or a value names.
 const FIELD_ID: &str = "... on ProjectV2FieldCommon { id }";
 
-/// A project, its fields and its views.
 /// A project's fields, with a single select's options and an
 /// iteration field's iterations.
 const FIELDS: &str = "fields(first: 50) { totalCount nodes { ... on ProjectV2FieldCommon { id name dataType } ... on ProjectV2SingleSelectField { options { id name color description } } ... on ProjectV2IterationField { configuration { iterations { id title startDate duration } completedIterations { id title startDate duration } } } } }";

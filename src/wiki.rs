@@ -116,16 +116,16 @@ async fn read(wiki: &Repo, page: Option<&str>) -> Result<WikiPage, Read> {
         .iter()
         .filter_map(|f| page_file(f).map(|(title, ext)| (title, ext, f)))
         .collect();
-    let mut titles: Vec<String> = pages
-        .iter()
+    let mut titles: Vec<String> = (pages.iter())
         .map(|(t, _, _)| title_of(t))
         .filter(|t| !t.starts_with('_'))
+        .map(str::to_owned)
         .collect();
-    titles.sort_by_key(|t| t.to_lowercase());
+    titles.sort_by_cached_key(|t| t.to_lowercase());
     let find = |wanted: &str| {
         pages
             .iter()
-            .find(|(t, _, _)| slug(&title_of(t)).eq_ignore_ascii_case(&slug(wanted)))
+            .find(|(t, _, _)| same_page(title_of(t), wanted))
     };
     let sidebar = match find("_Sidebar") {
         Some((_, _, path)) => Some(wiki.file_text(&commit, path).await?),
@@ -142,7 +142,7 @@ async fn read(wiki: &Repo, page: Option<&str>) -> Result<WikiPage, Read> {
             let text = wiki.file_text(&commit, path).await?;
             let markdown = matches!(ext.to_ascii_lowercase().as_str(), "md" | "markdown");
             (
-                Some(title_of(t)),
+                Some(title_of(t).to_owned()),
                 Some(text),
                 markdown,
                 Some((*path).clone()),
@@ -165,8 +165,21 @@ async fn read(wiki: &Repo, page: Option<&str>) -> Result<WikiPage, Read> {
 
 /// A page's title from its file's path without the extension: pages are
 /// files at any depth, named by their file names.
-fn title_of(path: &str) -> String {
-    path.rsplit('/').next().unwrap_or(path).to_owned()
+fn title_of(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+/// Whether two titles name one page, as its URL does: spaces as dashes,
+/// in any case.
+fn same_page(a: &str, b: &str) -> bool {
+    let url = |c: u8| {
+        if c == b' ' {
+            b'-'
+        } else {
+            c.to_ascii_lowercase()
+        }
+    };
+    a.len() == b.len() && a.bytes().zip(b.bytes()).all(|(x, y)| url(x) == url(y))
 }
 
 // ---- saving a page ------------------------------------------------------------
@@ -241,7 +254,7 @@ async fn save_in(wiki: &Repo, save: &Save) -> Result<String, String> {
                 let files = wiki.file_names(&head).await.map_err(failed)?;
                 let taken = (files.iter())
                     .filter_map(|f| page_file(f))
-                    .any(|(t, _)| slug(&title_of(t)).eq_ignore_ascii_case(&slug(&save.title)));
+                    .any(|(t, _)| same_page(title_of(t), &save.title));
                 if taken {
                     return Err(format!(
                         "The wiki has a page named {} already: choose another title",
@@ -331,6 +344,7 @@ mod tests {
             slug("Doc continuous integration"),
             "Doc-continuous-integration"
         );
+        assert!(same_page("Doc FAQ", "doc-faq") && !same_page("Doc FAQ", "Doc FAQs"));
     }
 
     /// A wiki git can't read is a failure, not a wiki that isn't there.

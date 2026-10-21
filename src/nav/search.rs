@@ -94,9 +94,7 @@ impl State {
 
     /// The page's filter field (`⌕ is:open`), while it's in view.
     pub(super) fn filter_field(&self) -> Option<Rect> {
-        let Screen::Page(p) = self.screen() else {
-            return None;
-        };
+        let p = self.screen().page()?;
         let area = self.page_area();
         let row = p.page.line_of(&Link::Filter)?.checked_sub(p.scroll)?;
         let y = area.y.checked_add(u16::try_from(row).ok()?)?;
@@ -350,17 +348,13 @@ pub(super) fn heading(text: &str) -> (SuggestRow, Option<Pick>) {
 }
 
 pub fn on_search_box_key(state: &mut State, key: KeyEvent) -> Cmds {
-    let Some(Overlay::Search(sb)) = &state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Search(sb)) = &state.overlay else { return Cmds::new() };
     let picks: Vec<Pick> = state
         .suggestions(sb)
         .into_iter()
         .filter_map(|(_, p)| p)
         .collect();
-    let Some(Overlay::Search(sb)) = &mut state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Search(sb)) = &mut state.overlay else { return Cmds::new() };
     if move_in_list(key, &mut sb.selected, picks.len()) {
         return Cmds::new();
     }
@@ -418,9 +412,7 @@ pub(super) fn choose(state: &mut State, pick: Pick) -> Cmds {
 /// says how it went. The page stays as it is: the same place in history,
 /// the step a link pointed at, nothing fetched again.
 pub fn search_log(state: &mut State, query: &str) {
-    let Screen::Page(p) = state.screen_mut() else {
-        return;
-    };
+    let Screen::Page(p) = state.screen_mut() else { return };
     let Route::Runs(runs::Job {
         repo,
         job,
@@ -435,9 +427,7 @@ pub fn search_log(state: &mut State, query: &str) {
     // Rebuilt, it opens at the first match, or where it opened before.
     (p.built, p.mark, p.jumped) = (None, None, None);
     state.sync_page();
-    let Screen::Page(p) = state.screen() else {
-        return;
-    };
+    let Screen::Page(p) = state.screen() else { return };
     let loaded = state
         .picked::<crate::api::browse::JobLog>(&log)
         .is_some_and(|l| !l.running);

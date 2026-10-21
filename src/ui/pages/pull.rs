@@ -50,11 +50,8 @@ pub(super) fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
         time::ago_iso(&d.updated_at, now)
     )));
     if let Some(locked) = d.locked {
-        subline.push(meta("  "));
-        subline.push(chip(
-            super::conversation::locked_said(locked),
-            Bg::TertiaryContainer,
-        ));
+        let locked = super::conversation::locked_said(locked);
+        subline.extend([meta("  "), chip(locked, Bg::TertiaryContainer)]);
     }
     labels(&mut subline, &d.labels);
     page.wrapped(subline, 0, Frame::None);
@@ -171,10 +168,8 @@ pub fn auto_merging(auto: &AutoMerge, queue: bool) -> String {
             MergeMethod::Rebase => "rebased and merged",
         }
     };
-    format!(
-        "Auto-merge enabled by {}: {how} when every requirement is met",
-        auto.by
-    )
+    let by = &auto.by;
+    format!("Auto-merge enabled by {by}: {how} when every requirement is met")
 }
 
 /// "#2 in the merge queue for main: waiting for its checks", as the
@@ -218,14 +213,8 @@ pub fn pr_conversation(
     let aside = page.build_aside(|side| {
         match a {
             Some(a) => {
-                timeline::reviewers_aside(
-                    side,
-                    pr,
-                    &d.head_oid,
-                    &a.latest,
-                    &a.requested,
-                    &d.author,
-                );
+                let (head, author) = (&d.head_oid, &d.author);
+                timeline::reviewers_aside(side, pr, head, &a.latest, &a.requested, author);
             }
             None => people(side, "Reviewers", &[], None, ""),
         }
@@ -253,19 +242,9 @@ pub fn pr_conversation(
         timeline::pr_inline(page, icons, pr, d, a);
         timeline::projects_inline(page, projects);
     }
-    let talk = Conversation {
-        base: LinkBase::new(&pr.repo, &d.head_oid, ""),
-        op: &d.author,
-        now,
-        unfolded: marks.unfolded,
-    };
-    talk.opened(
-        page,
-        "opened",
-        &d.created_at,
-        &d.body,
-        &d.editable.reactions,
-    );
+    let talk = Conversation::new(&pr.repo, &d.head_oid, &d.author, now, marks.unfolded);
+    let reactions = &d.editable.reactions;
+    talk.opened(page, "opened", &d.created_at, &d.body, reactions);
     let Some(a) = activity.show_or(page, "the conversation", |page| {
         connector(page);
         page.line(vec![meta("   Loading the conversation…")]);

@@ -24,7 +24,7 @@ use crate::act::{Step, Subject};
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::state::{Cmds, Screen, State};
+use crate::state::{Cmds, State};
 use crate::ui::page::{Link, Page};
 
 /// The actions this module takes as its own.
@@ -52,9 +52,7 @@ fn data<'a>(state: &'a State, repo: &RepoId, page: SettingsPage) -> Option<&'a S
 
 /// The row selected on the page.
 fn selected(state: &State) -> Option<SettingLink> {
-    let Screen::Page(p) = state.screen() else {
-        return None;
-    };
+    let p = state.screen().page()?;
     match p.selected_link()? {
         Link::Setting(s) => Some(s.clone()),
         _ => None,
@@ -448,10 +446,8 @@ fn write(form: Form, text: String) -> Result<Step, String> {
 
 /// The menu's rows on a settings page.
 pub fn doables(state: &State, out: &mut Vec<Doable>) {
-    let Some((repo, page)) = here(state) else {
-        return;
-    };
-    let row = |action, label: &str| {
+    let Some((repo, page)) = here(state) else { return };
+    let row = |action, label: &'static str| {
         // The status bar names the page's main ones.
         let short = match action {
             Action::AddSetting => "add",
@@ -1266,9 +1262,7 @@ pub fn rows(pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Step>)> {
 /// Whether the page `at`, as loaded, shows `c`.
 pub fn shows(state: &State, c: &SettingsChange, repo: &RepoId, at: SettingsPage) -> bool {
     use SettingsChange as C;
-    let Some(s) = data(state, repo, at) else {
-        return false;
-    };
+    let Some(s) = data(state, repo, at) else { return false };
     match (c, s) {
         (C::CreateRule { form, .. }, Settings::Branches(b)) => {
             b.rules.iter().any(|r| r.form.pattern == form.pattern)

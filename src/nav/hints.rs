@@ -17,20 +17,15 @@ pub(super) const LETTERS: &str = "asdfghjklqwertyuiopzxcvbnm";
 
 /// Labels for `n` targets: single letters while they last, then pairs.
 pub(super) fn hint_labels(n: usize) -> Vec<String> {
-    let letters: Vec<char> = LETTERS.chars().collect();
-    if n <= letters.len() {
-        return letters
-            .iter()
-            .take(n)
-            .map(std::string::ToString::to_string)
-            .collect();
+    let count = LETTERS.len();
+    if n <= count {
+        return LETTERS.chars().take(n).map(String::from).collect();
     }
     // Spread over as many first letters as possible, so one key narrows the
     // choice to a few.
-    let per = n.div_ceil(letters.len()).min(letters.len());
-    letters
-        .iter()
-        .flat_map(|a| letters.iter().take(per).map(move |b| format!("{a}{b}")))
+    let per = n.div_ceil(count).min(count);
+    (LETTERS.chars())
+        .flat_map(|a| LETTERS.chars().take(per).map(move |b| format!("{a}{b}")))
         .take(n)
         .collect()
 }
@@ -102,9 +97,7 @@ pub(crate) fn start_hints(state: &mut State, browser: bool) {
 }
 
 pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Cmds {
-    let Some(Overlay::Hints(hints)) = &mut state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Hints(hints)) = &mut state.overlay else { return Cmds::new() };
     match key.code {
         KeyCode::Backspace => {
             hints.typed.pop();

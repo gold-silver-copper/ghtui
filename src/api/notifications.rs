@@ -109,11 +109,10 @@ impl Done {
         }
         let excess = self.threads.len().saturating_sub(Self::KEEP);
         if excess > 0 {
-            let mut times: Vec<String> = self.threads.values().cloned().collect();
-            times.sort_unstable();
-            if let Some(oldest) = times.get(excess) {
-                self.threads.retain(|_, at| *at >= *oldest);
-            }
+            let mut times: Vec<&String> = self.threads.values().collect();
+            let (_, oldest, _) = times.select_nth_unstable(excess);
+            let oldest = String::clone(oldest);
+            self.threads.retain(|_, at| *at >= oldest);
         }
     }
 

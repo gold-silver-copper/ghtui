@@ -1,0 +1,4 @@
+# A let-else whose else only returns, continues or breaks stays on one line
+# when it fits. Wider than this, rustfmt warns on macro_rules! bodies,
+# which it formats narrower.
+single_line_let_else_max_width = 84

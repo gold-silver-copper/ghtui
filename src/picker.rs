@@ -431,14 +431,13 @@ impl State {
     /// What's on screen is numbered lines: a file, a blame, a job's log
     /// or a diff.
     fn shows_lines(&self) -> bool {
-        match self.screen() {
-            Screen::Diff(_) => true,
-            Screen::Page(p) => matches!(
+        self.screen().page().is_none_or(|p| {
+            matches!(
                 p.route,
                 Route::Code(code::Blob { .. } | code::Blame { .. })
                     | Route::Runs(crate::route::runs::Job { .. })
-            ),
-        }
+            )
+        })
     }
 
     /// Palette entries: somewhere to go, what you can do here (the menu's
@@ -501,11 +500,14 @@ impl State {
         }));
         let mut actions: Vec<(usize, Action)> = Vec::new();
         let mut seen = std::collections::HashSet::new();
+        // Names are snake_case: "go to" finds go_to_file, matched as typed
+        // once rather than each name spelled with spaces.
+        let underscored = input.replace(' ', "_");
         for a in order {
             if a == Action::CommandPalette || (quit_first && a == Action::Quit) || !seen.insert(a) {
                 continue;
             }
-            let by_name = fuzzy_score(input, &a.name().replace('_', " "));
+            let by_name = fuzzy_score(&underscored, a.name());
             let by_description = fuzzy_score(input, a.description());
             if let Some(score) = by_name.into_iter().chain(by_description).min() {
                 actions.push((score, a));
@@ -577,9 +579,7 @@ impl State {
         let mut rows = Vec::new();
         for (names, what) in [(&refs.branches, "branch"), (&refs.tags, "tag")] {
             for name in names {
-                let Some(score) = fuzzy_score(q, name) else {
-                    continue;
-                };
+                let Some(score) = fuzzy_score(q, name) else { continue };
                 let is_default = default == Some(name.as_str());
                 let hint = if is_default {
                     "default"
@@ -614,9 +614,7 @@ impl State {
     }
 
     fn diff_file_rows(&self, q: &str) -> Rows {
-        let Some(diff) = self.diff() else {
-            return Vec::new();
-        };
+        let Some(diff) = self.diff() else { return Vec::new() };
         let mut hits: Vec<(usize, usize, _)> = diff
             .doc
             .files()
@@ -638,9 +636,7 @@ impl State {
     }
 
     fn commit_rows(&self, mark: Option<usize>) -> Rows {
-        let Some(diff) = self.diff() else {
-            return Vec::new();
-        };
+        let Some(diff) = self.diff() else { return Vec::new() };
         let current = |on: bool| if on { "current" } else { "" };
         let since = diff.doc.since_active();
         let mut rows = vec![
@@ -720,17 +716,13 @@ pub fn move_in_list(key: KeyEvent, selected: &mut usize, count: usize) -> bool {
 }
 
 pub fn on_key(state: &mut State, key: KeyEvent) -> Cmds {
-    let Some(Overlay::Picker(p)) = &state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Picker(p)) = &state.overlay else { return Cmds::new() };
     let mut rows = state.picker_rows(p);
     // Moving a sub-issue (alt-↑↓) before moving in the list.
     if let Some(cmds) = crate::manage::picker_key(state, key, &mut rows) {
         return cmds;
     }
-    let Some(Overlay::Picker(p)) = &mut state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Picker(p)) = &mut state.overlay else { return Cmds::new() };
     if move_in_list(key, &mut p.selected, rows.len()) {
         return Cmds::new();
     }

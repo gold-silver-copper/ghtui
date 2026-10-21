@@ -162,9 +162,7 @@ pub fn queue_change(
     err: &crate::work::Failure,
     sender: bool,
 ) -> Option<Cmds> {
-    let Some(ApiError::Offline(_)) = err.api() else {
-        return None;
-    };
+    let Some(ApiError::Offline(_)) = err.api() else { return None };
     let write = queue::Write::of(change)?;
     let route = match by {
         By::Reply(pr) => Some(Route::pr(pr.clone())),
@@ -248,12 +246,8 @@ pub fn banner(state: &State, when: &str) -> Option<String> {
 
 /// The queued write a row is, if it's one.
 fn selected(state: &State) -> Option<&queue::Entry> {
-    let Screen::Page(p) = state.screen() else {
-        return None;
-    };
-    let Some(Link::Queued(id)) = p.selected_link() else {
-        return None;
-    };
+    let p = state.screen().page()?;
+    let Some(Link::Queued(id)) = p.selected_link() else { return None };
     state.offline.queue.iter().find(|e| e.id == *id)
 }
 
@@ -304,9 +298,7 @@ pub fn act(state: &mut State, action: Action) -> Cmds {
             None => Cmds::new(),
         },
         _ => {
-            let Some(entry) = selected(state).cloned() else {
-                return Cmds::new();
-            };
+            let Some(entry) = selected(state).cloned() else { return Cmds::new() };
             on_entry(state, action, entry)
         }
     }

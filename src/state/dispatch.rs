@@ -149,10 +149,7 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Cmds {
                         number,
                     }))
             {
-                let anchor = match state.screen() {
-                    Screen::Page(p) => p.anchor.clone(),
-                    Screen::Diff(_) => None,
-                };
+                let anchor = state.screen().page().and_then(|p| p.anchor.clone());
                 return state.replace(Route::pr(PrRef { repo, number }), true, anchor);
             }
         }
@@ -270,9 +267,7 @@ pub(super) fn on_key(state: &mut State, key: KeyEvent) -> Cmds {
 }
 
 pub(super) fn on_search_key(state: &mut State, key: KeyEvent) -> Cmds {
-    let Some(Overlay::Find(input)) = &mut state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Find(input)) = &mut state.overlay else { return Cmds::new() };
     match key.code {
         KeyCode::Esc => state.overlay = None,
         KeyCode::Enter => {
@@ -298,17 +293,14 @@ pub(super) fn on_search_key(state: &mut State, key: KeyEvent) -> Cmds {
 /// doesn't work there.
 pub fn apply(state: &mut State, action: Action) -> Cmds {
     // On the diff: whether a search or a selection is active.
-    let diff = match state.screen() {
-        Screen::Diff(screen) => Some(screen.search.is_some() || screen.selection.is_some()),
-        Screen::Page(_) => None,
-    };
+    let diff = (state.screen().diff()).map(|d| d.search.is_some() || d.selection.is_some());
     match action {
         Action::Quit => {
             state.quit = crate::compose::may_discard(state, "q", "quit and discard");
         }
         // Esc ends a search or selection; with neither, it goes back.
         Action::Cancel if diff == Some(true) => {
-            if let Screen::Diff(screen) = state.screen_mut() {
+            if let Some(screen) = state.screen_mut().diff_mut() {
                 (screen.search, screen.selection) = (None, None);
             }
             state.info("Cleared");
@@ -398,16 +390,11 @@ pub fn apply(state: &mut State, action: Action) -> Cmds {
 /// Actions on the diff screen: reviewing, and the rest on the diff itself.
 pub(super) fn diff_action(state: &mut State, action: Action) -> Cmds {
     let content = state.layout().content;
-    let on_annotation = match (state.screen(), state.diff()) {
-        (Screen::Diff(screen), Some(diff)) => {
-            screen.focus == Pane::Diff
-                && diff
-                    .doc
-                    .annotation_under(screen.cursor, screen.half)
-                    .is_some()
-        }
-        _ => false,
-    };
+    let here = state.screen().diff().zip(state.diff());
+    let on_annotation = here.is_some_and(|(screen, diff)| {
+        let under = diff.doc.annotation_under(screen.cursor, screen.half);
+        screen.focus == Pane::Diff && under.is_some()
+    });
     match action {
         Action::Comment
         | Action::FileComment
@@ -427,9 +414,7 @@ pub(super) fn diff_action(state: &mut State, action: Action) -> Cmds {
         notices,
         ..
     } = &mut *state;
-    let Screen::Diff(screen) = screens.last_mut() else {
-        return Cmds::new();
-    };
+    let Screen::Diff(screen) = screens.last_mut() else { return Cmds::new() };
     match diffs.get_mut(&screen.of) {
         Some(diff) => diff_screen::apply(screen, diff, action, content, notices),
         None => {

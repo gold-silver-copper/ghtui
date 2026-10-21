@@ -171,7 +171,7 @@ fn capped<T, U>(c: Option<wire::Counted<T>>, mut f: impl FnMut(T) -> U) -> Cappe
 impl GitHub {
     /// What a new issue or pull request in `repo` can have.
     pub async fn new_form(&self, repo: &RepoId) -> Result<NewForm, ApiError> {
-        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name });
+        let vars = serde_json::json!(repo);
         let r: wire::Repo =
             (self.graphql_json(crate::api::raw::NEW_FORM, vars, repo, "/repository")).await?;
         let can_triage = matches!(
@@ -232,7 +232,7 @@ impl GitHub {
         };
         let path = format!("/repos/{repo}/compare/{}...{head}", encode_path(base));
         let what = format!("{repo}'s comparison {base}...{head}");
-        let wire: wire::Compare = serde_json::from_str(&self.rest_get(&path, what).await?)?;
+        let wire: wire::Compare = self.rest_json(&path, what).await?;
         let commits = (wire.commits.into_iter())
             .map(|c| CommitMessage {
                 oid: c.sha,

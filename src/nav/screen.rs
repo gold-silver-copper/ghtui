@@ -204,9 +204,7 @@ impl State {
         let width = self.page_width();
         let height = self.page_height();
         let (now, minute) = ((self.clock)(), self.minute);
-        let Screen::Page(p) = self.screen() else {
-            return;
-        };
+        let Screen::Page(p) = self.screen() else { return };
         let built = (
             self.data_version(&p.route),
             self.shown_gen,
@@ -215,9 +213,8 @@ impl State {
             width,
             self.compact(),
         );
-        let rebuild = (p.built != Some(built) || minute >= p.expires).then(|| p.route.clone());
-        let page = rebuild
-            .map(|route| crate::ui::time::until_changed(|| self.build_page(&route, width, now)));
+        let page = (p.built != Some(built) || minute >= p.expires)
+            .then(|| crate::ui::time::until_changed(|| self.build_page(&p.route, width, now)));
         if let Screen::Page(p) = self.screen_mut() {
             if let Some((page, expires)) = page {
                 p.show(page, built);

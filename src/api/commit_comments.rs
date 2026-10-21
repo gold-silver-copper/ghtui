@@ -106,10 +106,9 @@ impl GitHub {
         oid: &str,
     ) -> Result<Capped<CommitComment>, ApiError> {
         let path = format!("/repos/{repo}/commits/{oid}/comments?per_page={PAGE}");
-        let body = self
-            .rest_get(&path, format!("{repo}@{oid}'s comments"))
+        let wire: Vec<Wire> = self
+            .rest_json(&path, format!("{repo}@{oid}'s comments"))
             .await?;
-        let wire: Vec<Wire> = serde_json::from_str(&body)?;
         let full = wire.len() == PAGE;
         let comments: Vec<CommitComment> = wire.into_iter().map(Wire::into_comment).collect();
         // A full page may not be all of them.

@@ -121,9 +121,7 @@ pub fn ago(then: u64, now: u64) -> String {
 
 /// How long until an ISO timestamp: "in 5m", "in 3d"; "now" once past.
 pub fn until_iso(iso: &str, now: u64) -> String {
-    let Some(then) = parse_iso8601(iso) else {
-        return iso.to_owned();
-    };
+    let Some(then) = parse_iso8601(iso) else { return iso.to_owned() };
     let secs = then.saturating_sub(now);
     let (unit, name) = match secs {
         0..60 => return "now".to_owned(),

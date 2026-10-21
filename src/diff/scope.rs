@@ -30,9 +30,7 @@ pub fn scopes(lang: Option<Language>, text: &Text) -> Vec<Scope> {
 
 /// [`scopes`] of `text` already parsed as `tree`.
 pub fn scopes_in(lang: Option<Language>, tree: Option<&Tree>, text: &Text) -> Vec<Scope> {
-    let (Some(lang), Some(tree)) = (lang, tree) else {
-        return Vec::new();
-    };
+    let (Some(lang), Some(tree)) = (lang, tree) else { return Vec::new() };
     let source = text.source.as_bytes();
     // Pre-order walk: parents before children.
     let mut out = Vec::new();

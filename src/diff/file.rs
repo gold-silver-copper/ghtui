@@ -123,7 +123,7 @@ impl TextDiff {
 
     /// The text of a line, without its terminator.
     pub fn line(&self, pos: LinePos) -> &str {
-        self.side(pos.side).0.line_no(pos.line)
+        self.side_text(pos.side).line_no(pos.line)
     }
 
     /// A line's highlighting; empty when unhighlighted.
@@ -146,9 +146,13 @@ impl TextDiff {
         self.is_last(pos) && self.side(pos.side).0.missing_final_newline
     }
 
-    /// One side gained or lost its final newline.
-    pub fn final_newline_changed(&self) -> bool {
+    /// `lines` gain or lose the final newline: a real change (with its
+    /// own marker), never formatting.
+    pub(crate) fn touches_end<'a>(&self, lines: impl IntoIterator<Item = &'a DiffLine>) -> bool {
         self.old.missing_final_newline != self.new.missing_final_newline
+            && (lines.into_iter())
+                .flat_map(|l| l.lines())
+                .any(|p| self.is_last(p))
     }
 
     /// Lines in the longer side.
@@ -269,9 +273,10 @@ impl FileDiff {
         text.structural = matching.map(|m| {
             m.map(|m| {
                 let exact_match = m.apply(&text, &exact);
-                let ignoring_match = match ignoring.lines == exact.lines {
-                    true => exact_match.clone(),
-                    false => m.apply(&text, &ignoring),
+                let ignoring_match = if ignoring.lines == exact.lines {
+                    exact_match.clone()
+                } else {
+                    m.apply(&text, &ignoring)
                 };
                 Box::new([exact_match, ignoring_match])
             })
@@ -305,9 +310,7 @@ pub(crate) mod tests {
             Some(b"fn b() {}\nfn c() {}\n"),
         );
         assert_eq!((diff.additions, diff.deletions), (2, 1));
-        let Content::Text(text) = &diff.content else {
-            panic!("{diff:?}")
-        };
+        let Content::Text(text) = &diff.content else { panic!("{diff:?}") };
         assert!(!text.alignment(Whitespace::Exact).blocks.is_empty());
         let new = |line| LinePos {
             side: Side::Right,

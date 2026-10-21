@@ -7,9 +7,7 @@ use crate::ui::pages::{self, FormRow, Mark, Starter, TextBox, WriteFormView};
 
 /// The page for `route`, a form's, once what it can have has loaded.
 pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
-    let Some(repo) = form_repo(route) else {
-        return;
-    };
+    let Some(repo) = form_repo(route) else { return };
     let form = state.forms.shown::<Form>(route);
     let form = form.as_ref();
     let pr = matches!(route, Route::Pulls(pulls::NewPr(_)));
@@ -162,10 +160,6 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
             .is_empty()
             .then(|| "It needs a title first".to_owned())
     });
-    let (write, save_key) = (
-        state.first_key(Action::Comment),
-        state.first_key(Action::Create),
-    );
     // While the composer has it, its box is only the place it opens in.
     let text = if composing { "" } else { form.text.as_str() };
     let (title, description) = match text.split_once('\n') {
@@ -193,17 +187,15 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
             actions: Vec::new(),
         }],
         after,
-        write: &write,
-        save_key: &save_key,
         button: if pr {
             "Create pull request…".into()
         } else {
             "Create issue".into()
         },
         why_not,
-        error: state.forms.sent(route).error.as_deref(),
+        ..WriteFormView::default()
     };
-    pages::write_form(page, &view);
+    crate::forms::write_form(state, route, page, view);
     if let Some((commits, more)) = commits {
         pages::commits_box(page, &commits, more);
     }
@@ -211,15 +203,10 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
 
 /// A row naming what's chosen (a template, a branch), which Enter changes.
 fn row(name: &'static str, chosen: &str, link: Row) -> FormRow {
-    FormRow {
-        name,
-        value: if chosen.is_empty() {
-            "choose a branch ▾".to_owned()
-        } else {
-            format!("{chosen} ▾")
-        },
-        unset: chosen.is_empty(),
-        chips: Vec::new(),
-        link: Some(link),
-    }
+    let value = if chosen.is_empty() {
+        "choose a branch ▾".to_owned()
+    } else {
+        format!("{chosen} ▾")
+    };
+    crate::forms::form_row(name, value, chosen.is_empty(), Some(link))
 }

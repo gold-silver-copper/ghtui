@@ -69,7 +69,7 @@ mod work;
 mod workflows;
 mod yaml;
 
-use crate::route::{Dest, Route, Target, issues, pulls};
+use crate::route::{Dest, Route, Target, pulls};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -94,6 +94,13 @@ pub(crate) fn lock<T: ?Sized>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGu
     mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// A number this run hasn't given out before, never 0: for IDs and
+/// versions that mustn't repeat.
+pub(crate) fn fresh() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// How long to wait for the terminal to report its background color.
@@ -353,11 +360,7 @@ async fn resolve_open(target: &str) -> Result<Dest> {
     let number = target.trim_start_matches('#');
     if !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()) {
         let pr = resolve_target(number).await?;
-        return Ok(Target::Page(Route::Issues(issues::Issue {
-            repo: pr.repo,
-            number: pr.number,
-        }))
-        .into());
+        return Ok(Target::Page(Route::issue(pr.repo, pr.number)).into());
     }
     let shown = route::parse_input(target, None)
         .filter(|dest| !matches!(dest.target, route::Target::External(_)));

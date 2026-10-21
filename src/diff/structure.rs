@@ -27,9 +27,7 @@ use tree_sitter::{Node as TsNode, Tree};
 use crate::diff::blocks::Fnv;
 use crate::diff::file::{Alignment, TextDiff};
 use crate::diff::hunks::DiffLine;
-use crate::diff::intraline::{
-    IntraLine, best_pairing, changed_tokens, dice, greedy_pairing, similarity,
-};
+use crate::diff::intraline::{best_pairing, changed_tokens, dice, greedy_pairing, similarity};
 use crate::diff::sat_u32;
 use crate::diff::text::Text;
 
@@ -637,12 +635,8 @@ impl<'a> Matcher<'a> {
     /// are too many candidates.
     fn pair_up(&mut self, ls: &[u32], rs: &[u32]) -> Result<Vec<(usize, usize)>, Fallback> {
         let weight = |me: &mut Self, i: usize, j: usize| -> Result<Option<f64>, Fallback> {
-            let (Some(&a), Some(&b)) = (ls.get(i), rs.get(j)) else {
-                return Ok(None);
-            };
-            let Some(s) = me.score(a, b)? else {
-                return Ok(None);
-            };
+            let (Some(&a), Some(&b)) = (ls.get(i), rs.get(j)) else { return Ok(None) };
+            let Some(s) = me.score(a, b)? else { return Ok(None) };
             let size = me.bag(0, a).len() + me.bag(1, b).len();
             Ok(Some(s * size as f64))
         };
@@ -697,9 +691,7 @@ impl<'a> Matcher<'a> {
             }
             return Ok(());
         };
-        let Some(Node::List { children, .. }) = self.node(s, n) else {
-            return Ok(());
-        };
+        let Some(Node::List { children, .. }) = self.node(s, n) else { return Ok(()) };
         if s == 1 {
             self.seq(ls, children)
         } else {
@@ -810,41 +802,32 @@ impl Matching {
         }
         let mut out = Alignment {
             lines: line.lines.clone(),
-            intraline: IntraLine::new(),
             blocks: line.blocks.clone(),
-            pairs: Vec::new(),
-            kept: HashSet::new(),
+            ..Alignment::default()
         };
         for block in &mut out.blocks {
             let entries = block.entries.clone();
+            let block_lines = (line.lines)
+                .get(entries.start as usize..entries.end as usize)
+                .unwrap_or_default();
             // Each changed line's novel ranges and whether that's all of it.
-            let mut lines = Vec::new();
-            for e in entries.clone() {
-                let Some(l) = line.lines.get(e as usize) else {
-                    continue;
-                };
-                let pos = l.shown();
-                let s = usize::from(pos.side == crate::diff::anchor::Side::Right);
-                let code = text.line(pos);
-                let ranges = novel
-                    .get(s)
-                    .and_then(|m| m.get(&pos.line))
-                    .map(|r| merged(code, r))
-                    .unwrap_or_default();
-                // Wholly new or gone: every token on it is.
-                let whole = !keeps.get(s).is_some_and(|k| k.contains(&pos.line));
-                lines.push((e, ranges, whole));
-            }
+            let lines: Vec<_> = (entries.clone().zip(block_lines))
+                .map(|(e, l)| {
+                    let pos = l.shown();
+                    let s = usize::from(pos.side == crate::diff::anchor::Side::Right);
+                    let ranges = (novel.get(s))
+                        .and_then(|m| m.get(&pos.line))
+                        .map(|r| merged(text.line(pos), r))
+                        .unwrap_or_default();
+                    // Wholly new or gone: every token on it is.
+                    let whole = !keeps.get(s).is_some_and(|k| k.contains(&pos.line));
+                    (e, ranges, whole)
+                })
+                .collect();
             let any_novel = lines.iter().any(|(_, r, _)| !r.is_empty());
-            let touches_end = text.final_newline_changed()
-                && entries
-                    .clone()
-                    .filter_map(|e| line.lines.get(e as usize))
-                    .flat_map(|l| l.lines())
-                    .any(|p| text.is_last(p));
             // What lines call formatting stays so: a tokenizer can split
             // the same code differently (`x.0 .1` and `x.0.1`).
-            block.formatting_only |= !any_novel && !touches_end;
+            block.formatting_only |= !any_novel && !text.touches_end(block_lines);
             // A wholly new or gone line is plain, as by lines; a line with
             // nothing new or gone is kept.
             for (e, ranges, whole) in lines {
@@ -866,9 +849,7 @@ fn merged(code: &str, ranges: &[(u32, u32)]) -> Vec<(u32, u32)> {
     sorted.sort_unstable();
     let mut out: Vec<(u32, u32)> = Vec::new();
     for (a, b) in sorted {
-        let Some(piece) = code.get(a as usize..b as usize) else {
-            continue;
-        };
+        let Some(piece) = code.get(a as usize..b as usize) else { continue };
         let lead = sat_u32(piece.len() - piece.trim_start().len());
         let trail = sat_u32(piece.len() - piece.trim_end().len());
         let (a, b) = (a + lead, b.saturating_sub(trail));

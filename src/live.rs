@@ -14,7 +14,6 @@
 use crate::route::{Route, pulls};
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::api::browse::PrActivity;
 use crate::api::model::{NodeId, PrRef, ReviewThread};
@@ -52,7 +51,7 @@ pub struct Pace<P> {
 impl<P: Clone + Eq + Hash> Pace<P> {
     fn new() -> Self {
         Self {
-            id: next_id(),
+            id: crate::fresh(),
             etags: HashMap::new(),
             wait: FIRST_MS,
             busy: false,
@@ -81,7 +80,7 @@ impl<P: Clone + Eq + Hash> Pace<P> {
     /// Back in focus: the next ask is soon. A timer already running is
     /// the old wait's, and ignored.
     fn refocus(&mut self) {
-        (self.id, self.busy, self.wait) = (next_id(), false, FIRST_MS);
+        (self.id, self.busy, self.wait) = (crate::fresh(), false, FIRST_MS);
     }
 
     /// `probe`, asked with the ETag of its last answer.
@@ -179,12 +178,6 @@ pub struct Watch {
     pub new_comments: HashSet<u64>,
     /// The reviews that did.
     pub new_reviews: HashSet<u64>,
-}
-
-/// An id no watch has had.
-fn next_id() -> u64 {
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 impl Watch {
@@ -335,18 +328,14 @@ pub fn on_polled(
 ) -> Cmds {
     // The conversation is fetched again where it's shown: on a page; and
     // every review, where they're listed.
-    let page = match state.screen() {
-        Screen::Page(p) => Some(&p.route),
-        Screen::Diff(_) => None,
-    };
     let lists_reviews = matches!(
-        page,
+        state.route(),
         Some(Route::Pulls(pulls::Pr {
             tab: PrTab::Review | PrTab::Reviewed(_),
             ..
         }))
     );
-    let talk: Vec<DataKey> = (page.is_some())
+    let talk: Vec<DataKey> = (state.route().is_some())
         .then(|| DataKey::PrActivity(pr.clone()))
         .into_iter()
         .chain(lists_reviews.then(|| DataKey::Reviews(pr.clone())))
@@ -506,15 +495,9 @@ pub fn threads_loaded(state: &mut State, pr: &PrRef) {
         notices,
         ..
     } = state;
-    let Some(w) = watch.as_mut().filter(|w| w.pr == *pr) else {
-        return;
-    };
-    let Some(diff) = diffs.get_mut(&DiffOf::Pr(pr.clone())) else {
-        return;
-    };
-    let Some(threads) = diff.inputs().threads.data.as_ref() else {
-        return;
-    };
+    let Some(w) = watch.as_mut().filter(|w| w.pr == *pr) else { return };
+    let Some(diff) = diffs.get_mut(&DiffOf::Pr(pr.clone())) else { return };
+    let Some(threads) = diff.inputs().threads.data.as_ref() else { return };
     let (new_threads, replies) = note_threads(w, threads, viewer.as_deref());
     if diff.inputs().fresh != w.new_threads {
         let fresh = w.new_threads.clone();
@@ -541,13 +524,9 @@ pub fn activity_loaded(state: &mut State, pr: &PrRef) {
     let activity = (data.get(&DataKey::PrActivity(pr.clone())))
         .and_then(|r| r.data.as_ref())
         .and_then(<PrActivity as crate::data::Picked>::pick);
-    let Some(activity) = activity else {
-        return;
-    };
+    let Some(activity) = activity else { return };
     let viewer = viewer.as_deref();
-    let Some(w) = watch.as_mut().filter(|w| w.pr == *pr) else {
-        return;
-    };
+    let Some(w) = watch.as_mut().filter(|w| w.pr == *pr) else { return };
     let mut what = Vec::new();
     let mine = |author: &&str| viewer == Some(*author);
     // Comments.

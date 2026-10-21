@@ -64,9 +64,7 @@ impl Family for Page {
 /// The Settings tab's pages ghtui has; the rest are on GitHub.
 pub(super) fn parse_repo(repo: &RepoId, rest: &[&str], _: &Url<'_>) -> Option<Target> {
     use SettingsPage as P;
-    let ["settings", rest @ ..] = rest else {
-        return None;
-    };
+    let ["settings", rest @ ..] = rest else { return None };
     let page = match rest {
         [] => P::General,
         ["branches" | "branch_protection_rules" | "rules", ..] => P::Branches,

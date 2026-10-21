@@ -8,7 +8,7 @@ use crate::diff_job::JobId;
 use crate::diff_screen::{DiffOf, LastReview};
 use crate::keymap::Action;
 use crate::review;
-use crate::state::{Cmd, Cmds, Git, Screen, State};
+use crate::state::{Cmd, Cmds, Git, State};
 use crate::ui::text::short_sha;
 
 /// What each piece of a diff's joined work last ran for: it runs again
@@ -16,6 +16,8 @@ use crate::ui::text::short_sha;
 #[derive(Debug, Default)]
 pub struct Joins {
     moves: Option<JobId>,
+    /// The version of a commit's comments its threads were last made from.
+    comments: Option<u64>,
     /// The job, and the version of the inputs whose outdated threads were
     /// last found: only a change to them can change those.
     looked: Option<(JobId, u64)>,
@@ -50,16 +52,15 @@ impl<T> Joined<T> {
 /// The joined work now due, for every diff and then for the one on screen.
 pub(crate) fn join(state: &mut State) -> Cmds {
     let mut cmds = Cmds::new();
-    let shown = match state.screen() {
-        Screen::Diff(screen) => Some(screen.of.clone()),
-        Screen::Page(_) => None,
-    };
+    let shown = state.screen().diff().map(|d| d.of.clone());
     for (of, diff) in &mut state.diffs {
         // A commit's comments on its lines show as threads of its diff.
         if let DiffOf::Commit(repo, oid) = of {
             let key = DataKey::CommitComments(repo.clone(), oid.to_string());
-            let comments = state.data.get(&key).and_then(|r| r.data.as_ref());
-            if let Some(crate::data::Data::CommitComments(c)) = comments {
+            if let Some(remote) = state.data.get(&key)
+                && let Some(crate::data::Data::CommitComments(c)) = &remote.data
+                && claim(&mut diff.joins.comments, remote.version)
+            {
                 let threads: Vec<_> = c
                     .iter()
                     .filter_map(crate::api::commit_comments::CommitComment::as_thread)
@@ -96,9 +97,7 @@ pub(crate) fn join(state: &mut State) -> Cmds {
     }
     // What tells you something is for the diff on screen: a hidden one's
     // keys stay unclaimed until it's back.
-    let Some(of @ DiffOf::Pr(pr)) = &shown else {
-        return cmds;
-    };
+    let Some(of @ DiffOf::Pr(pr)) = &shown else { return cmds };
     let refresh = state.first_key(Action::Refresh);
     let Some(diff) = state.diffs.get_mut(of).filter(|d| d.range().is_none()) else {
         return cmds;

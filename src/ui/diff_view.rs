@@ -106,13 +106,9 @@ impl DiffView<'_> {
         // A wrapped row draws more of its line's row.
         let line_pos = self.doc.line_start(pos);
         let part = pos.row - line_pos.row;
-        let Some(row) = self.doc.row(line_pos) else {
-            return;
-        };
+        let Some(row) = self.doc.row(line_pos) else { return };
         let pos = line_pos;
-        let Some(file) = self.doc.files.get(pos.file) else {
-            return;
-        };
+        let Some(file) = self.doc.files.get(pos.file) else { return };
         let cursor = pos == self.doc.clamp(self.cursor) || self.selected(pos);
         let theme = self.ctx.theme;
         let quiet_bg = if cursor { Bg::SelectedInactive } else { PANE };
@@ -141,9 +137,7 @@ impl DiffView<'_> {
             }
             Row::Hunk { seg } => {
                 fill(buf, area, theme, quiet_bg);
-                let Some(header) = file.headers().get(seg as usize) else {
-                    return;
-                };
+                let Some(header) = file.headers().get(seg as usize) else { return };
                 let room =
                     usize::from(area.width).saturating_sub(indent + text::width(&header.range) + 1);
                 Line::from(vec![
@@ -225,16 +219,14 @@ impl DiffView<'_> {
         area: Rect,
         buf: &mut Buffer,
     ) {
-        let Some(file) = self.doc.files.get(file_index) else {
-            return;
-        };
+        let Some(file) = self.doc.files.get(file_index) else { return };
         let ctx = self.ctx;
         let theme = ctx.theme;
         let bg = if cursor { Bg::SelectedHigh } else { HEADER };
         fill(buf, area, theme, bg);
         let meta = &file.meta;
 
-        let mut left: Vec<Span<'static>> = Vec::new();
+        let mut left = Vec::new();
         let mut chip = |text: String, chip_bg| chips::push(&mut left, ctx, text, chip_bg, bg);
         let passed = ctx.icons.checks(crate::api::model::ChecksState::Passing);
         match file.viewed {
@@ -277,7 +269,7 @@ impl DiffView<'_> {
         {
             left.push(Span::styled(format!("{old} → "), theme.meta(bg)));
         }
-        left.push(Span::styled(meta.path().to_owned(), theme.title(bg)));
+        left.push(Span::styled(meta.path(), theme.title(bg)));
         if meta.mode_changed() && meta.old_mode != MODE_SYMLINK && meta.new_mode != MODE_SYMLINK {
             left.push(Span::styled(
                 format!("  mode {:o} → {:o}", meta.old_mode, meta.new_mode),
@@ -392,13 +384,9 @@ impl DiffView<'_> {
 
     /// "moved from path:line" / "moved to path:line".
     fn move_label(&self, mv: u32, from: bool) -> String {
-        let Some(m) = self.doc.moves.get(mv as usize) else {
-            return String::new();
-        };
+        let Some(m) = self.doc.moves.get(mv as usize) else { return String::new() };
         let (file, entries) = if from { &m.to } else { &m.from };
-        let Some(f) = self.doc.files.get(*file) else {
-            return String::new();
-        };
+        let Some(f) = self.doc.files.get(*file) else { return String::new() };
         let line = f.text().and_then(|t| {
             let l = (t.alignment(Whitespace::Exact).lines).get(entries.start as usize)?;
             Some(if from { l.right() } else { l.left() }?.line)
@@ -411,9 +399,7 @@ impl DiffView<'_> {
     }
 
     fn selected(&self, pos: Pos) -> bool {
-        let Some((a, b)) = self.selection else {
-            return false;
-        };
+        let Some((a, b)) = self.selection else { return false };
         let (a, b) = (self.doc.to_global(a), self.doc.to_global(b));
         let g = self.doc.to_global(pos);
         (a.min(b)..=a.max(b)).contains(&g)
@@ -489,9 +475,7 @@ impl DiffView<'_> {
         let (Some(file), Some(row)) = (self.doc.files.get(pos.file), self.doc.row(pos)) else {
             return;
         };
-        let (Some(text), Some(a)) = (file.text(), file.alignment()) else {
-            return;
-        };
+        let (Some(text), Some(a)) = (file.text(), file.alignment()) else { return };
         let line = entry.and_then(|e| Some((e, a.lines.get(e as usize)?)));
         let moved = line.is_some_and(|(e, _)| self.doc.move_at_entry(pos.file, e).is_some());
         let diff_bg = match line {
@@ -579,12 +563,8 @@ impl DiffView<'_> {
     fn thread_row(&self, file: &DocFile, t: u32, cursor: bool, area: Rect, buf: &mut Buffer) {
         let ctx = self.ctx;
         let theme = ctx.theme;
-        let Some(row) = file.thread_row(t) else {
-            return;
-        };
-        let Some(ann) = self.doc.annotations().get(row.ann as usize) else {
-            return;
-        };
+        let Some(row) = file.thread_row(t) else { return };
+        let Some(ann) = self.doc.annotations().get(row.ann as usize) else { return };
         fill(buf, area, theme, PANE);
         let card = thread_card(file, area);
         let bg = if cursor {
@@ -620,10 +600,8 @@ impl DiffView<'_> {
                 spans.push(Span::styled(tail, theme.meta(bg)));
             }
             ThreadRowKind::Head { comment, first } => {
-                let Some(c) = ann.comments.get(*comment) else {
-                    return;
-                };
-                spans.push(Span::styled(c.author.clone(), theme.title(bg)));
+                let Some(c) = ann.comments.get(*comment) else { return };
+                spans.push(Span::styled(c.author.as_str(), theme.title(bg)));
                 if c.new {
                     spans.push(Span::styled(" ", theme.body(bg)));
                     spans.extend(chips::chip(
@@ -673,9 +651,7 @@ impl DiffView<'_> {
                 };
                 fill(buf, inner, theme, bg);
                 let segs = row.line.segs.iter();
-                spans.extend(
-                    segs.map(|s| Span::styled(s.text().to_owned(), role_style(theme, &s.role, bg))),
-                );
+                spans.extend(segs.map(|s| Span::styled(s.text(), role_style(theme, &s.role, bg))));
             }
             ThreadRowKind::Reactions { comment } => {
                 let given = ann.comments.get(*comment).and_then(|c| c.editable.as_ref());
@@ -788,16 +764,15 @@ pub fn link_spots(doc: &Doc, top: Pos, area: Rect) -> Vec<((u16, u16), String)> 
     // The sticky header covers the first row once scrolled into a file.
     let covered = (doc.clamp(top).row > 0).then_some(area.top());
     let rows = doc.to_global(top)..doc.total_rows();
+    let mut seen = Vec::new();
     for (g, y) in rows.zip(area.top()..area.bottom()) {
         let pos = doc.to_pos(g);
         let (Some(Row::Thread(t)), Some(file)) = (doc.row(pos), doc.files().get(pos.file)) else {
             continue;
         };
-        let Some(row) = file.thread_row(t).filter(|_| covered != Some(y)) else {
-            continue;
-        };
+        let Some(row) = file.thread_row(t).filter(|_| covered != Some(y)) else { continue };
         let mut x = thread_card(file, area).x.saturating_add(PAD_X);
-        let mut seen = Vec::new();
+        seen.clear();
         for seg in &row.line.segs {
             if let Some(link) = seg.link.filter(|l| !seen.contains(l)) {
                 seen.push(link);
@@ -993,9 +968,7 @@ fn code_spans(
     let (mut col, mut used, mut at_line) = (0usize, 0usize, 0usize);
     let mut done = false;
     for (s, e, kind, emphasized) in pieces {
-        let Some(slice) = content.get(s..e) else {
-            continue;
-        };
+        let Some(slice) = content.get(s..e) else { continue };
         let style = style_for(kind, emphasized);
         let styled = |piece: &mut String, lit: bool| {
             let style = if lit {
@@ -1133,41 +1106,15 @@ mod tests {
     /// on the left, the new on the right.
     #[test]
     fn split_halves_show_their_own_side() {
-        use crate::diff::{FileDiff, Whitespace};
         use crate::ui::diff_doc::ViewOptions;
-        use std::collections::HashSet;
-        use std::sync::Arc;
 
         let theme = theme();
-        let mut doc = Doc::new(
-            vec![crate::ui::diff_doc::tests::changed("a.rs")],
-            &HashSet::new(),
-            Default::default(),
-        );
-        let (old, new) = ("a\n  b\nc\n", "a\n      b\nc\nd\n");
-        doc.set_diff(
-            0,
-            Arc::new(FileDiff::compute(
-                "a.rs",
-                Some(old.as_bytes()),
-                Some(new.as_bytes()),
-            )),
-        );
+        let mut doc = crate::ui::diff_doc::tests::one("a.rs", "a\n  b\nc\n", "a\n      b\nc\nd\n");
         doc.set_options(ViewOptions {
             split: true,
             whitespace: Whitespace::Ignore,
             ..ViewOptions::default()
         });
-        let keys = Keys {
-            show: "s",
-            jump: "M",
-            expand: "e",
-            viewed: "v",
-            reply: "c",
-            resolve: "R",
-            delete: "d",
-            file_comment: "C",
-        };
         let area = Rect::new(0, 0, 80, 12);
         let mut buf = Buffer::empty(area);
         DiffView {
@@ -1176,7 +1123,7 @@ mod tests {
             cursor: Pos::default(),
             half: Side::Right,
             top: Pos::default(),
-            keys,
+            keys: Keys::default(),
             selection: None,
             shift: 0,
             word: None,

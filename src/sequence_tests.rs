@@ -324,9 +324,7 @@ proptest! {
 #[test]
 fn joined_diff_work_is_the_same_in_every_arrival_order() {
     use crate::api::model::PrRef;
-    use crate::diff_job::{DiffFiles, JobMsg};
     use crate::diff_screen::DiffOf;
-    use crate::git::{Oid, repo::PrRefs};
     use crate::state::{Cmd, DiffMsg, Git};
 
     let pr = PrRef::parse("o/r#1").unwrap();
@@ -344,31 +342,10 @@ fn joined_diff_work_is_the_same_in_every_arrival_order() {
         let mut state = crate::state::tests::state();
         crate::fixtures::pr_cached(&mut state, &pr, detail.clone());
         let mut cmds = state.open_diff(of.clone(), None);
-        let job = cmds
-            .iter()
-            .find_map(|c| match c {
-                Cmd::Git(Git::LoadDiff { job, .. }) => Some(*job),
-                _ => None,
-            })
-            .unwrap();
+        let job = fixtures::diff_job(&cmds);
         for step in order {
             let msg = match step {
-                0 => {
-                    let refs = PrRefs {
-                        head: Oid::parse(&detail.head_oid.clone()).unwrap(),
-                        base: Oid::parse(&"b".repeat(40)).unwrap(),
-                        merge_base: Oid::parse(&"b".repeat(40)).unwrap(),
-                    };
-                    let files = DiffFiles {
-                        refs,
-                        files: Vec::new(),
-                        generated: HashSet::new(),
-                    };
-                    Msg::Diff(
-                        of.clone(),
-                        DiffMsg::Job(job, JobMsg::Files(Box::new(files))),
-                    )
-                }
+                0 => Msg::Diff(of.clone(), fixtures::no_files(job, &detail.head_oid)),
                 1 => {
                     let threads = vec![fixtures::thread("old", None, false, true)];
                     Msg::Diff(of.clone(), DiffMsg::ThreadsLoaded(Ok(threads)))

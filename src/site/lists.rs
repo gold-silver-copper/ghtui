@@ -11,7 +11,7 @@ use crate::keymap::Action;
 use crate::nav::{Doable, row};
 use crate::picker::fuzzy_score;
 use crate::picker::{Choice, entry};
-use crate::route::{Route, people};
+use crate::route::Route;
 use crate::state::{Cmds, State};
 use crate::work::{self, Cx, Failure, Job};
 
@@ -260,9 +260,7 @@ fn yours<'a>(state: &'a State, login: &str) -> Result<&'a ListPage, String> {
     let list = (state.route())
         .and_then(|r| r.family().paged())
         .and_then(|k| state.picked::<ListPage>(&k));
-    let Some(list) = list else {
-        return Err("it hasn't loaded yet".into());
-    };
+    let Some(list) = list else { return Err("it hasn't loaded yet".into()) };
     match &state.viewer {
         Some(me) if me.eq_ignore_ascii_case(login) => Ok(list),
         _ => Err(format!("it's @{login}'s list, not yours")),
@@ -302,9 +300,7 @@ pub fn ask_delete(state: &mut State) -> Cmds {
 
 /// Deletes the list on `route`'s page, as asked.
 pub fn delete(state: &mut State, route: &Route) -> Cmds {
-    let Route::Site(Page::StarList { login, slug }) = route else {
-        return Cmds::new();
-    };
+    let Route::Site(Page::StarList { login, slug }) = route else { return Cmds::new() };
     let Ok(list) = yours(state, login).map(|l| l.list.clone()) else {
         return Cmds::new();
     };
@@ -339,16 +335,12 @@ impl Job for DeleteList {
                 if state.route() != Some(&route) {
                     return Cmds::new();
                 }
-                let stars = Route::People(people::User {
-                    login: d.login.clone(),
-                    tab: crate::ui::pages::ProfileTab::Stars,
-                });
+                let stars = super::stars(&d.login);
                 let gone = Expected::Gone {
                     login: d.login,
                     slug: d.slug,
                 };
-                crate::follow::expect(state, stars.clone(), gone);
-                state.replace(stars, true, None)
+                crate::follow::replace(state, stars, gone)
             }
             Err(why) => crate::forms::say(state, refused("delete the list", &why)),
         }

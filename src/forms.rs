@@ -77,14 +77,8 @@ pub fn submit(state: &mut State) -> Cmds {
 /// `c` on a form's page: the composer on the text selected (the first,
 /// when it's a row of another).
 pub fn compose_here(state: &mut State) -> Cmds {
-    let Some(kind) = here(state) else {
-        return Cmds::new();
-    };
-    let selected = match state.screen() {
-        crate::state::Screen::Page(p) => p.selected_link(),
-        crate::state::Screen::Diff(_) => None,
-    };
-    let part = match selected {
+    let Some(kind) = here(state) else { return Cmds::new() };
+    let part = match state.screen().page().and_then(|p| p.selected_link()) {
         Some(Link::Form(Row::Text(i) | Row::Rename(i) | Row::Remove(i))) => *i,
         _ => 0,
     };
@@ -100,6 +94,27 @@ pub fn row(state: &mut State, row: &Row) -> Cmds {
         (_, Some(kind)) => (kind.row)(state, row),
         (_, None) => Cmds::new(),
     }
+}
+
+/// Builds the page of the form at `route` from `view`, with the keys that
+/// write and save it, and why GitHub refused it last, if it did.
+pub(crate) fn write_form(
+    state: &State,
+    route: &Route,
+    page: &mut crate::ui::page::Page,
+    view: crate::ui::pages::WriteFormView<'_>,
+) {
+    let (write, save_key) = (
+        state.first_key(Action::Comment),
+        state.first_key(Action::Create),
+    );
+    let view = crate::ui::pages::WriteFormView {
+        write: &write,
+        save_key: &save_key,
+        error: state.forms.sent(route).error.as_deref(),
+        ..view
+    };
+    crate::ui::pages::write_form(page, &view);
 }
 
 /// A form's row with no chips: `unset` when `value` is a placeholder or
@@ -126,11 +141,17 @@ pub(crate) fn filling(route: &Route, row: Row, value: impl Into<String>) -> crat
 
 /// Sets the form at `route`'s `row` to what was chosen in its picker.
 pub fn fill(state: &mut State, route: &Route, row: &Row, value: String) -> Cmds {
-    let Some(kind) = route.family().form() else {
-        return Cmds::new();
-    };
+    let Some(kind) = route.family().form() else { return Cmds::new() };
     state.forms.sent_mut(route).error = None;
     (kind.fill)(state, route, row, value)
+}
+
+/// Opens the form at `route`, brought up to date at once: it may be the
+/// page on screen already, begun anew.
+pub fn open(state: &mut State, route: Route) -> Cmds {
+    let mut cmds = state.push(route);
+    cmds.extend(follow(state));
+    cmds
 }
 
 /// After GitHub's data arrives, or a form's page opens: brings the form
@@ -151,8 +172,8 @@ fn offers(state: &State, out: &mut Vec<Doable>) {
 /// short name), unless it's being sent or `why` it can't be.
 pub(crate) fn offer(
     state: &State,
-    write: Option<&str>,
-    save: (&str, &'static str),
+    write: Option<&'static str>,
+    save: (impl Into<std::borrow::Cow<'static, str>>, &'static str),
     why: Option<String>,
     out: &mut Vec<Doable>,
 ) {
@@ -229,9 +250,6 @@ struct Entry {
 #[derive(Default)]
 pub struct Forms {
     map: HashMap<Route, Entry>,
-    /// The last version given out: never given again, so a form taken
-    /// and begun anew is a new version.
-    stamp: u64,
 }
 
 impl Forms {
@@ -248,13 +266,13 @@ impl Forms {
     }
 
     fn entry(&mut self, route: &Route) -> &mut Entry {
-        self.stamp += 1;
         let entry = (self.map.entry(route.clone())).or_insert_with(|| Entry {
             version: 0,
             sent: Sent::default(),
             fields: Box::new(()),
         });
-        entry.version = self.stamp;
+        // Never given again: a form taken and begun anew is a new version.
+        entry.version = crate::fresh();
         entry
     }
 
@@ -586,9 +604,7 @@ pub(crate) fn ask(
 
 /// Keys in the question: choose, go ahead, or cancel.
 pub fn on_ask_key(state: &mut State, key: KeyEvent) -> Cmds {
-    let Some(Overlay::Ask(ask)) = &mut state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Ask(ask)) = &mut state.overlay else { return Cmds::new() };
     let n = ask.choices.len().max(1);
     match key.code {
         KeyCode::Esc => state.overlay = None,

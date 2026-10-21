@@ -155,8 +155,8 @@ fn no_symbols(path: &str) -> String {
     }
 }
 
-/// The file on screen, or why there's none to read. A page's file is
-/// parsed for its `scopes` only when they're asked for.
+/// The file on screen, or why there's none to read, with its `scopes`
+/// only when they're asked for.
 fn here(state: &State, scopes: bool) -> Result<Here, String> {
     match state.screen() {
         Screen::Page(p) => {
@@ -214,7 +214,9 @@ fn here(state: &State, scopes: bool) -> Result<Here, String> {
                 repo: screen.of.repo().clone(),
                 rev: diff.head().map(|oid| oid.to_string()),
                 path: file.meta.path().to_owned(),
-                scopes: file.text().map(|t| t.scopes.clone()).unwrap_or_default(),
+                scopes: (file.text().filter(|_| scopes))
+                    .map(|t| t.scopes.clone())
+                    .unwrap_or_default(),
                 word,
             })
         }
@@ -292,9 +294,7 @@ pub fn references(state: &mut State) -> Cmds {
         Ok(here) => here,
         Err(why) => return state.just_say(why),
     };
-    let Some(word) = name_here(state, here.word.clone()) else {
-        return Cmds::new();
-    };
+    let Some(word) = name_here(state, here.word.clone()) else { return Cmds::new() };
     state.info(format!("Looking for “{word}” in {}", here.repo));
     ask(state, &here, Want::References(word))
 }
@@ -335,9 +335,7 @@ pub fn definition(state: &mut State) -> Cmds {
         Ok(here) => here,
         Err(why) => return state.just_say(why),
     };
-    let Some(word) = name_here(state, here.word.clone()) else {
-        return Cmds::new();
-    };
+    let Some(word) = name_here(state, here.word.clone()) else { return Cmds::new() };
     let defines = |s: &&Scope| s.defines.as_deref() == Some(word.as_str());
     let local: Vec<Scope> = here.scopes.iter().filter(defines).cloned().collect();
     match local.as_slice() {

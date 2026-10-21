@@ -135,7 +135,7 @@ fn every_route_says_why_when_its_needs_fail() {
     ];
     for url in urls {
         let crate::route::Target::Page(route) = crate::route::Dest::from_url(url).target else {
-            panic!("{url} isn't a page");
+            panic!("{url} isn't a page")
         };
         // The page a plain URL turns out to be.
         let route = route.split(None).unwrap_or(route);

@@ -163,6 +163,7 @@ fragments! {
     ReviewId = "PullRequestReview",
     ThreadId = "PullRequestReviewThread",
     CommentId = "PullRequestReviewComment",
+    RefId = "Ref",
 }
 fragments! {
     pull_request_review: Option<ReviewId>;
@@ -275,11 +276,7 @@ pub struct PrSummary {
     pub commits: CommitRollupConnection,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-pub struct Actor {
-    pub login: String,
-}
-
+fragments! { login: String; Actor = "Actor" }
 fragments! { name_with_owner: String; RepositoryName = "Repository" }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -295,11 +292,7 @@ pub struct CommitRollupNode {
     pub commit: CommitRollup,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Commit")]
-pub struct CommitRollup {
-    pub status_check_rollup: Option<StatusCheckRollup>,
-}
+fragments! { status_check_rollup: Option<StatusCheckRollup>; CommitRollup = "Commit" }
 
 #[derive(cynic::QueryFragment, Debug)]
 pub struct StatusCheckRollup {
@@ -396,13 +389,6 @@ pub struct PrDetail {
     pub viewer_can_delete_head_ref: bool,
     pub locked: bool,
     pub active_lock_reason: Option<crate::api::timeline::LockReason>,
-}
-
-/// A branch or tag, by its node ID.
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Ref")]
-pub struct RefId {
-    pub id: cynic::Id,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -578,12 +564,8 @@ pub struct FirstComment {
     pub diff_hunk: String,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestReview")]
-pub struct ReviewDatabaseId {
-    /// `databaseId` overflows GraphQL's `Int` on newer reviews.
-    pub full_database_id: Option<BigInt>,
-}
+// `databaseId` overflows GraphQL's `Int` on newer reviews.
+fragments! { full_database_id: Option<BigInt>; ReviewDatabaseId = "PullRequestReview" }
 
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Commit")]

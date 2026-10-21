@@ -7,9 +7,7 @@ use crate::route::{code, runs};
 /// they do.
 pub fn page_action(state: &mut State, action: Action) -> Cmds {
     let height = state.page_height();
-    let Screen::Page(p) = state.screen_mut() else {
-        return Cmds::new();
-    };
+    let Screen::Page(p) = state.screen_mut() else { return Cmds::new() };
     let page = height.saturating_sub(2).max(1).cast_signed();
     match action {
         Action::Down => step(p, height, true),
@@ -285,9 +283,7 @@ pub fn go_to_line(state: &mut State, n: usize) -> Cmds {
         }
         return Cmds::new();
     }
-    let Screen::Page(p) = state.screen_mut() else {
-        return Cmds::new();
-    };
+    let Screen::Page(p) = state.screen_mut() else { return Cmds::new() };
     let item = match p.page.numbered.get(n.saturating_sub(1)) {
         Some(&item) => Some(item),
         None if p.page.numbered.is_empty() => n.checked_sub(1).filter(|&i| i < p.page.items.len()),

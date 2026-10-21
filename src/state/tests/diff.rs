@@ -325,9 +325,7 @@ fn nothing_is_saved_before_the_saved_review_is_read() {
         ..ReviewState::default()
     };
     let cmds = diff_msg(&mut s, &pr, DiffMsg::ReviewLoaded(Ok(saved)));
-    let [Cmd::SaveReview(_, review)] = &cmds[..] else {
-        panic!("{cmds:?}")
-    };
+    let [Cmd::SaveReview(_, review)] = &cmds[..] else { panic!("{cmds:?}") };
     assert_eq!(review.reviewed_hunks.len(), 2);
     assert!(review.reviewed_hunks.contains(&"older".to_owned()));
 }
@@ -381,9 +379,7 @@ fn review_marks_toggle_and_persist() {
         1
     );
     let cmds = press(&mut s, "m");
-    let Some(Cmd::SaveReview(_, review)) = cmds.first() else {
-        panic!()
-    };
+    let Some(Cmd::SaveReview(_, review)) = cmds.first() else { panic!() };
     assert!(review.reviewed_hunks.is_empty());
 }
 

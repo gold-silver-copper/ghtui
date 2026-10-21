@@ -11,9 +11,8 @@ use crate::picker::fuzzy_score;
 use crate::ui::page::Page;
 use crate::ui::pages::{Mark, WriteFormView};
 
-use super::{Expected, Field, Form, FormOf, ask, expect, form, form_mut, form_row, item, setting};
+use super::{Expected, Field, Form, FormOf, ask, form, form_mut, form_row, item, setting};
 use crate::data::DataKey;
-use crate::keymap::Action;
 use crate::state::{Cmds, State};
 use crate::work::{self, Cx, Failure, Job};
 
@@ -250,9 +249,7 @@ fn opened(state: &mut State, route: &Route, made: &MadeRepo) -> Option<Cmds> {
         return Some(Cmds::new());
     }
     let page = Route::code(repo.clone());
-    let cmds = state.replace(page.clone(), true, None);
-    expect(state, page, Expected::Repo(repo));
-    Some(cmds)
+    Some(crate::follow::replace(state, page, Expected::Repo(repo)))
 }
 
 impl Job for Fork {
@@ -294,9 +291,7 @@ impl Job for Make {
         let on_form = state.route() == Some(route);
         let mut cmds = opened(state, route, &made).unwrap_or_default();
         // Offered as GitHub's page offers it: its clone command, run here.
-        let Some(repo) = made.repo().filter(|_| on_form) else {
-            return cmds;
-        };
+        let Some(repo) = made.repo().filter(|_| on_form) else { return cmds };
         let dir = PathBuf::from(&repo.name);
         let fact = format!(
             "Into ./{} here, with your own git: git clone {}",
@@ -373,21 +368,15 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
     if !owner.is_empty() && !name.is_empty() {
         status.push((format!("It will be {owner}/{name}"), Mark::Fine, None));
     }
-    let save_key = state.first_key(Action::Create);
     let view = WriteFormView {
         heading,
-        base: None,
         rows,
         status,
-        boxes: Vec::new(),
-        after: Vec::new(),
-        write: "",
         button: super::button(of, &f),
-        save_key: &save_key,
         why_not: super::problem(state, route, of),
-        error: state.forms.sent(route).error.as_deref(),
+        ..WriteFormView::default()
     };
-    crate::ui::pages::write_form(page, &view);
+    crate::forms::write_form(state, route, page, view);
 }
 
 #[cfg(test)]

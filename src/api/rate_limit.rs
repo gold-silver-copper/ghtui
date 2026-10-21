@@ -20,9 +20,7 @@ pub struct RateLimits {
 
 impl RateLimits {
     pub fn update(&mut self, headers: &HeaderMap) {
-        let Some(bucket) = parse_bucket(headers) else {
-            return;
-        };
+        let Some(bucket) = parse_bucket(headers) else { return };
         match header(headers, "x-ratelimit-resource") {
             Some("graphql") => self.graphql = Some(bucket),
             Some("core") | None => self.rest = Some(bucket),

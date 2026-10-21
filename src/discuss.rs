@@ -19,7 +19,7 @@ use crate::data::DataKey;
 use crate::edit::Choosing;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::state::{Cmds, Screen, State};
+use crate::state::{Cmds, State};
 use crate::ui::page::Link;
 
 /// The actions a discussion's page takes as its own.
@@ -105,9 +105,7 @@ struct Here<'a> {
 }
 
 fn here(state: &State) -> Option<Here<'_>> {
-    let Screen::Page(p) = state.screen() else {
-        return None;
-    };
+    let p = state.screen().page()?;
     let Route::Discussions(discussions::Discussion { of, number }) = &p.route else {
         return None;
     };
@@ -228,29 +226,24 @@ fn plan(state: &State, h: &Here<'_>, action: Action) -> Result<Step, String> {
                 }
                 _ => String::new(),
             };
-            let what = if d.answerable { "Answer" } else { "Comment" };
-            Ok(
-                match selected.as_ref().and_then(|s| Some((s, s.thread()?))) {
-                    Some((s, thread)) => {
-                        let id = editable(&thread.comment)?.id.clone();
-                        let replied = s.comment().map(|c| c.author.clone()).unwrap_or_default();
-                        let at = s.comment().map(|c| c.created_at.clone());
-                        let writes = Writes::Comment {
-                            discussion: d.id.clone(),
-                            reply_to: Some(id),
-                        };
-                        write(writes, format!("Reply to {replied}"), at, quoted)
-                    }
-                    None => {
-                        let writes = Writes::Comment {
-                            discussion: d.id.clone(),
-                            reply_to: None,
-                        };
-                        let title = format!("{what} on “{}”", d.title);
-                        write(writes, title, None, quoted)
-                    }
-                },
-            )
+            let thread = selected.as_ref().and_then(|s| Some((s, s.thread()?)));
+            let (reply_to, title, at) = match thread {
+                Some((s, thread)) => {
+                    let id = editable(&thread.comment)?.id.clone();
+                    let replied = s.comment().map_or("", |c| c.author.as_str());
+                    let at = s.comment().map(|c| c.created_at.clone());
+                    (Some(id), format!("Reply to {replied}"), at)
+                }
+                None => {
+                    let what = if d.answerable { "Answer" } else { "Comment" };
+                    (None, format!("{what} on “{}”", d.title), None)
+                }
+            };
+            let writes = Writes::Comment {
+                discussion: d.id.clone(),
+                reply_to,
+            };
+            Ok(write(writes, title, at, quoted))
         }
         Action::React => {
             let target = match selected.as_ref().and_then(Spot::comment) {
@@ -284,18 +277,20 @@ fn plan(state: &State, h: &Here<'_>, action: Action) -> Result<Step, String> {
                 ));
             }
             let comment = editable(&c.comment)?.id.clone();
-            match (c.answer, c.can_unmark, c.can_mark) {
-                (true, true, _) => send(Discuss::Answer { comment, on: false }),
-                (true, false, _) => Err(
-                    "GitHub doesn't let you unmark the answer: that takes the discussion's author or triage access"
-                        .into(),
-                ),
-                (false, _, true) => send(Discuss::Answer { comment, on: true }),
-                (false, _, false) => Err(
-                    "GitHub doesn't let you mark the answer: that takes the discussion's author or triage access"
-                        .into(),
-                ),
+            let (can, verb) = if c.answer {
+                (c.can_unmark, "unmark")
+            } else {
+                (c.can_mark, "mark")
+            };
+            if !can {
+                return Err(format!(
+                    "GitHub doesn't let you {verb} the answer: that takes the discussion's author or triage access"
+                ));
             }
+            send(Discuss::Answer {
+                comment,
+                on: !c.answer,
+            })
         }
         Action::EditComment => {
             let s = selected.unwrap_or(Spot::Post);
@@ -366,9 +361,7 @@ fn plan(state: &State, h: &Here<'_>, action: Action) -> Result<Step, String> {
 
 /// Runs one of [`ACTIONS`] on the discussion on screen.
 pub fn act(state: &mut State, action: Action) -> Cmds {
-    let Some(h) = here(state) else {
-        return state.just_say(action.not_here());
-    };
+    let Some(h) = here(state) else { return state.just_say(action.not_here()) };
     let planned =
         plan(state, &h, action).and_then(|step| crate::act::settled(state).map(|()| step));
     crate::act::take(state, planned)
@@ -376,9 +369,7 @@ pub fn act(state: &mut State, action: Action) -> Cmds {
 
 /// The menu's rows on a discussion's page.
 pub fn doables(state: &State, out: &mut Vec<Doable>) {
-    let Some(h) = here(state) else {
-        return;
-    };
+    let Some(h) = here(state) else { return };
     let answerable = h.d.is_some_and(|d| d.answerable);
     let replying = h.selected.is_some_and(|s| {
         h.d.and_then(|d| spot(d, s))
@@ -435,9 +426,7 @@ pub fn same_text(a: &str, b: &str) -> bool {
 /// Whether the discussion, as loaded, shows `change`.
 pub fn shows(state: &State, change: &Change, of: &DiscussionsOf, number: u64) -> bool {
     let key = DataKey::Discussion(of.clone(), number);
-    let Some(d) = state.picked::<DiscussionDetail>(&key) else {
-        return false;
-    };
+    let Some(d) = state.picked::<DiscussionDetail>(&key) else { return false };
     let find = |id: &NodeId| all(d).find(|(e, _)| e.id == *id);
     match change {
         Change::Discussion(Discuss::Comment { body, reply_to, .. }) => {

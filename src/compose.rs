@@ -221,9 +221,7 @@ pub(crate) fn may_discard(state: &mut State, key: &'static str, verb: &str) -> b
 
 /// `ctrl-s` in the composer: the text goes where its target says.
 pub(crate) fn save(state: &mut State) -> Cmds {
-    let Some(Overlay::Compose(compose)) = &state.overlay else {
-        return Cmds::new();
-    };
+    let Some(Overlay::Compose(compose)) = &state.overlay else { return Cmds::new() };
     let (target, body) = (compose.target.clone(), compose.text());
     match target {
         // A form says itself what it lacks.

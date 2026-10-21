@@ -550,9 +550,7 @@ async fn run_with_progress(
     let mut line = Vec::new();
     loop {
         let n = stderr.read(&mut chunk).await?;
-        let Some(read) = chunk.get(..n).filter(|read| !read.is_empty()) else {
-            break;
-        };
+        let Some(read) = chunk.get(..n).filter(|read| !read.is_empty()) else { break };
         all.extend_from_slice(read);
         for &b in read {
             if b == b'\r' || b == b'\n' {

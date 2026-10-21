@@ -157,25 +157,22 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> crate::picker::Rows {
                 return note("The form isn't on screen".into());
             };
             let set = |value: &str| Some(filling(&route, Row::Input(name.clone()), value));
-            match &input.kind {
-                InputKind::Choice(options) => (options.iter())
-                    .filter(|o| crate::picker::fuzzy_score(q, o).is_some())
-                    .map(|o| (item(o.clone(), ""), set(o)))
-                    .collect(),
-                InputKind::Boolean => ["true", "false"]
-                    .into_iter()
-                    .filter(|o| crate::picker::fuzzy_score(q, o).is_some())
-                    .map(|o| (item(o.to_owned(), ""), set(o)))
-                    .collect(),
+            let options: Vec<&str> = match &input.kind {
+                InputKind::Choice(options) => options.iter().map(String::as_str).collect(),
+                InputKind::Boolean => vec!["true", "false"],
                 InputKind::Text => {
                     let label = if q.is_empty() {
                         "Set it empty".to_owned()
                     } else {
                         format!("Set it to “{q}”")
                     };
-                    vec![(item(label, &input.description), set(q))]
+                    return vec![(item(label, &input.description), set(q))];
                 }
-            }
+            };
+            (options.into_iter())
+                .filter(|o| crate::picker::fuzzy_score(q, o).is_some())
+                .map(|o| (item(o.to_owned(), ""), set(o)))
+                .collect()
         }
     }
 }
@@ -306,9 +303,7 @@ fn blob_need(state: &State) -> Option<DataKey> {
 
 /// The form's inputs, once the file is in; `Err` says why there are none.
 fn inputs_of(state: &State) -> Result<Vec<Input>, String> {
-    let Some(key) = blob_need(state) else {
-        return Err("Loading…".into());
-    };
+    let Some(key) = blob_need(state) else { return Err("Loading…".into()) };
     let Some(blob) = state.picked::<Blob>(&key) else {
         let failed = state.remote(&key).and_then(|r| r.error.clone());
         return Err(failed.map_or_else(
@@ -382,9 +377,7 @@ pub fn action(state: &mut State) -> Cmds {
 
 /// Runs the form's workflow, if it can.
 fn run(state: &mut State) -> Cmds {
-    let Some((repo, file)) = here(state) else {
-        return Cmds::new();
-    };
+    let Some((repo, file)) = here(state) else { return Cmds::new() };
     let route = form_route((repo.clone(), file.clone()));
     let why = refused(state, &repo, &file)
         .or_else(|| (state.forms.sent(&route).sending).then(|| "It's being started".to_owned()));
@@ -484,9 +477,7 @@ pub const FEATURE: crate::features::Feature = crate::features::Feature {
 
 /// What the menu offers here: running the workflow by hand.
 pub fn doables(state: &State, out: &mut Vec<Doable>) {
-    let Some((repo, file)) = workflow_here(state) else {
-        return;
-    };
+    let Some((repo, file)) = workflow_here(state) else { return };
     let label = if here(state).is_some() {
         "Run the workflow".to_owned()
     } else {
@@ -507,9 +498,7 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
 /// A pull request's checks came in: its diff shows their annotations.
 pub fn checks_loaded(state: &mut State, pr: &crate::api::model::PrRef) {
     let key = DataKey::PrChecks(pr.clone());
-    let Some(checks) = state.picked::<crate::api::browse::Checks>(&key) else {
-        return;
-    };
+    let Some(checks) = state.picked::<crate::api::browse::Checks>(&key) else { return };
     let list: Vec<(String, crate::api::workflows::Annotation)> = (checks.items.iter())
         .flat_map(|c| {
             let placed = c.annotations.iter().filter(|a| a.path.is_some());

@@ -23,7 +23,6 @@ use crate::api::model::{PrRef, RepoId};
 use crate::api::{ApiError, GitHub};
 use crate::data::DataKey;
 use crate::diff_job::GitContext;
-use crate::ui::pages::PrTab;
 
 /// How much is kept, from `config.toml`'s `[offline]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -322,24 +321,12 @@ async fn recent(
                 };
                 let page: Vec<_> = (results.items.into_iter())
                     .map(|i| {
+                        let (n, repo) = (i.number, repo.clone());
                         let (key, route) = match i.kind {
-                            IssueKind::Pr { .. } => (
-                                format!("p{}", i.number),
-                                Route::Pulls(pulls::Pr {
-                                    pr: PrRef {
-                                        repo: repo.clone(),
-                                        number: i.number,
-                                    },
-                                    tab: PrTab::Conversation,
-                                }),
-                            ),
-                            IssueKind::Issue(_) => (
-                                format!("i{}", i.number),
-                                Route::Issues(issues::Issue {
-                                    repo: repo.clone(),
-                                    number: i.number,
-                                }),
-                            ),
+                            IssueKind::Pr { .. } => {
+                                (format!("p{n}"), Route::pr(PrRef { repo, number: n }))
+                            }
+                            IssueKind::Issue(_) => (format!("i{n}"), Route::issue(repo, n)),
                         };
                         (key, i.updated_at, route)
                     })
@@ -428,9 +415,7 @@ pub fn disk_size(path: &std::path::Path) -> u64 {
     let mut total = 0u64;
     let mut dirs = vec![path.to_owned()];
     while let Some(dir) = dirs.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
         for entry in entries.flatten() {
             match entry.file_type() {
                 Ok(t) if t.is_dir() => dirs.push(entry.path()),

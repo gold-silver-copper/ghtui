@@ -80,17 +80,13 @@ pub fn new_and_starred(language: Option<&str>, since: Since, now: u64) -> String
     let from = now.saturating_sub(since.days() * 86_400);
     let day = crate::ui::time::iso8601(from);
     let day = day.get(..10).unwrap_or(&day);
-    let mut query = format!("created:>{day}");
-    if let Some(language) = language.filter(|l| !l.trim().is_empty()) {
-        let language = language.trim();
-        if language.contains(' ') {
-            query.push_str(&format!(" language:\"{language}\""));
-        } else {
-            query.push_str(&format!(" language:{language}"));
-        }
-    }
-    query.push_str(" sort:stars");
-    query
+    let language = language.map(str::trim).filter(|l| !l.is_empty());
+    let language = match language {
+        Some(l) if l.contains(' ') => format!(" language:\"{l}\""),
+        Some(l) => format!(" language:{l}"),
+        None => String::new(),
+    };
+    format!("created:>{day}{language} sort:stars")
 }
 
 /// The search for a topic's repositories, most starred first.
@@ -101,24 +97,16 @@ pub fn topic_repos(topic: &str) -> String {
 impl GitHub {
     /// GitHub's featured topics.
     pub async fn featured_topics(&self) -> Result<Topics, ApiError> {
-        let body = self
-            .rest_get(
-                "/search/topics?q=is:featured&per_page=100",
-                "GitHub's featured topics",
-            )
-            .await?;
-        let found: wire::Found = serde_json::from_str(&body)?;
-        let mut topics: Vec<Topic> = found
-            .items
-            .into_iter()
+        let path = "/search/topics?q=is:featured&per_page=100";
+        let found: wire::Found = self.rest_json(path, "GitHub's featured topics").await?;
+        let mut topics: Vec<Topic> = (found.items.into_iter())
             .map(wire::Topic::into_topic)
             .collect();
-        topics.sort_by_key(|t| t.title().to_lowercase());
-        let topics = Topics {
+        topics.sort_by_cached_key(|t| t.title().to_lowercase());
+        Ok(Topics {
             topics,
             total: found.total_count,
-        };
-        Ok(topics)
+        })
     }
 
     /// A topic: what GitHub says of it, its stars and related topics. A
@@ -136,11 +124,10 @@ impl GitHub {
         );
         let vars = serde_json::json!({ "name": name });
         let (found, graph) = tokio::join!(
-            self.rest_get(&path, name),
-            self.graphql_json(crate::api::raw::TOPIC, vars, name, "/topic"),
+            self.rest_json::<wire::Found>(&path, name),
+            self.graphql_json::<Graph>(crate::api::raw::TOPIC, vars, name, "/topic"),
         );
-        let found: wire::Found = serde_json::from_str(&found?)?;
-        let mut topic = (found.items.into_iter())
+        let mut topic = (found?.items.into_iter())
             .find(|t| t.name.eq_ignore_ascii_case(name))
             .map_or_else(
                 || Topic {
@@ -149,7 +136,6 @@ impl GitHub {
                 },
                 wire::Topic::into_topic,
             );
-        let graph: Result<Graph, _> = graph;
         match graph {
             Ok(g) => {
                 topic.stars = Some(g.stargazer_count);

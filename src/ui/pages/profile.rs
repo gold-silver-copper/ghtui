@@ -22,13 +22,8 @@ pub(super) fn team_row(page: &mut Page, org: &str, t: &TeamSummary) {
 
 /// An organization's teams, the ones you can see.
 pub fn teams(page: &mut Page, org: &str, list: Fetched<'_, Results<TeamSummary>>) {
-    paged_list(
-        page,
-        "Teams",
-        list,
-        "No teams you can see: an organization's teams show to its members.",
-        |page, t| team_row(page, org, t),
-    );
+    let empty = "No teams you can see: an organization's teams show to its members.";
+    paged_list(page, "Teams", list, empty, |page, t| team_row(page, org, t));
 }
 
 /// A team: its description and parent, then its members, repositories
@@ -53,30 +48,24 @@ pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
         page.wrapped(vec![meta("Part of "), link], 0, Frame::None);
     }
     page.blank();
-    let title = counted("Members", &d.members);
-    list_box(page, title, Vec::new(), &d.members, "No members.", user_row);
+    let none = "No members.";
+    counted_box(page, "Members", Vec::new(), &d.members, none, user_row);
     page.blank();
-    let title = counted("Repositories", &d.repos);
-    list_box(
-        page,
-        title,
-        Vec::new(),
-        &d.repos,
-        "No repositories.",
-        |page, r| {
-            item(page, url::repo(&r.repo), |page, link| {
-                let right = vec![meta(format!("★ {}", compact(r.stars)))];
-                link_line(page, r.repo.to_string(), Role::Link, link, right);
-                if !r.description.is_empty() {
-                    body(page, vec![meta(r.description.clone())]);
-                }
-            });
-        },
-    );
+    let empty = "No repositories.";
+    let repos = &d.repos;
+    counted_box(page, "Repositories", Vec::new(), repos, empty, |page, r| {
+        item(page, url::repo(&r.repo), |page, link| {
+            let right = vec![meta(format!("★ {}", compact(r.stars)))];
+            link_line(page, r.repo.to_string(), Role::Link, link, right);
+            if !r.description.is_empty() {
+                body(page, vec![meta(r.description.clone())]);
+            }
+        });
+    });
     if !d.children.is_empty() {
         page.blank();
-        let title = counted("Child teams", &d.children);
-        list_box(page, title, Vec::new(), &d.children, "", |page, c| {
+        let children = &d.children;
+        counted_box(page, "Child teams", Vec::new(), children, "", |page, c| {
             team_row(page, org, c);
         });
     }
@@ -146,25 +135,22 @@ pub fn gist(page: &mut Page, g: &Gist, now: u64) {
 /// Someone's public gists, most recently updated first.
 pub fn gists(page: &mut Page, login: &str, list: Fetched<'_, Results<GistSummary>>, now: u64) {
     paged_list(page, "Gists", list, "No public gists.", |page, g| {
-        item(
-            page,
-            format!("{}/{login}/{}", url::gists(), g.id),
-            |page, link| {
-                let name = g.files.first().cloned().unwrap_or_else(|| g.id.clone());
-                let right = vec![meta(time::ago_iso(&g.updated_at, now))];
-                page.box_line(vec![Seg::linked(name, Role::Strong, link)], right, 0);
-                if !g.description.is_empty() {
-                    body(page, vec![Seg::new(g.description.clone(), Role::Body)]);
-                }
-                let subline = format!(
-                    "{} · {} · ★ {}",
-                    plural(g.files.len() as u64, "file"),
-                    plural(g.comments, "comment"),
-                    compact(g.stars)
-                );
-                body(page, vec![meta(subline)]);
-            },
-        );
+        let gist = format!("{}/{login}/{}", url::gists(), g.id);
+        item(page, gist, |page, link| {
+            let name = g.files.first().cloned().unwrap_or_else(|| g.id.clone());
+            let right = vec![meta(time::ago_iso(&g.updated_at, now))];
+            page.box_line(vec![Seg::linked(name, Role::Strong, link)], right, 0);
+            if !g.description.is_empty() {
+                body(page, vec![Seg::new(g.description.clone(), Role::Body)]);
+            }
+            let subline = format!(
+                "{} · {} · ★ {}",
+                plural(g.files.len() as u64, "file"),
+                plural(g.comments, "comment"),
+                compact(g.stars)
+            );
+            body(page, vec![meta(subline)]);
+        });
     });
 }
 
@@ -321,17 +307,10 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
     } else {
         ("Pinned", p.pinned.iter().collect(), true)
     };
-    let title = vec![strong(title)];
-    list_box(
-        page,
-        title,
-        Vec::new(),
-        &Whole(&repos),
-        "No public repositories yet.",
-        |page, r| {
-            repo_row(page, r, now, show_owner);
-        },
-    );
+    let (title, empty) = (vec![strong(title)], "No public repositories yet.");
+    list_box(page, title, Vec::new(), &Whole(&repos), empty, |page, r| {
+        repo_row(page, r, now, show_owner);
+    });
     if let Some(c) = &p.contributions {
         page.blank();
         contribution_graph(page, c);
@@ -474,31 +453,15 @@ pub(super) fn contribution_activity(page: &mut Page, c: &Contributions) {
             page.line(vec![Seg::new(created, Role::Body)]);
             for (repo, n) in m.commits.iter().take(5) {
                 let name = link_seg(page, repo, format!("{}/{repo}", url::base()), Role::Link);
-                page.line(vec![
-                    meta("    "),
-                    name,
-                    meta(format!("  {}", plural(*n, "commit"))),
-                ]);
+                let commits = meta(format!("  {}", plural(*n, "commit")));
+                page.line(vec![meta("    "), name, commits]);
             }
         }
+        let (pr, s) = ("pull request", &c.short);
         for (items, icon, verb, noun, path, short) in [
-            (
-                &m.pulls,
-                "⇄",
-                "Opened",
-                "pull request",
-                "pull",
-                &c.short.pulls,
-            ),
-            (&m.issues, "◉", "Opened", "issue", "issues", &c.short.issues),
-            (
-                &m.reviews,
-                "◎",
-                "Reviewed",
-                "pull request",
-                "pull",
-                &c.short.reviews,
-            ),
+            (&m.pulls, "⇄", "Opened", pr, "pull", &s.pulls),
+            (&m.issues, "◉", "Opened", "issue", "issues", &s.issues),
+            (&m.reviews, "◎", "Reviewed", pr, "pull", &s.reviews),
         ] {
             if items.is_empty() {
                 continue;

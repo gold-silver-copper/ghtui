@@ -110,9 +110,7 @@ fn every_page_reads_only_what_it_needs() {
     let keys = super::keys::screens().map(|(name, make)| (name, make()));
     let mut wrong = Vec::new();
     for (name, s) in pages().into_iter().chain(keys).chain(more()) {
-        let Screen::Page(p) = s.screen() else {
-            continue;
-        };
+        let Screen::Page(p) = s.screen() else { continue };
         let route = &p.route;
         let (_, reads) = crate::browse::reads::during(|| s.build_page(route, 100, NOW));
         let needs = s.needs(route);

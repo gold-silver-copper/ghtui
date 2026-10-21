@@ -24,9 +24,7 @@ fn by_syntax(path: &str, old: &str, new: &str) -> String {
 
 fn render(path: &str, old: &str, new: &str, structural: bool) -> String {
     let diff = FileDiff::compute(path, Some(old.as_bytes()), Some(new.as_bytes()));
-    let Content::Text(text) = &diff.content else {
-        panic!("not a text diff");
-    };
+    let Content::Text(text) = &diff.content else { panic!("not a text diff") };
     if structural && let Some(why) = text.fallback() {
         panic!("compared by lines: {}", why.reason());
     }
@@ -211,9 +209,7 @@ fn a_one_line_edit_is_unchanged() {
 /// The scopes the first added line is in.
 fn scope_of_change(path: &str, old: &str, new: &str) -> Vec<String> {
     let diff = FileDiff::compute(path, Some(old.as_bytes()), Some(new.as_bytes()));
-    let Content::Text(text) = &diff.content else {
-        panic!("not a text diff");
-    };
+    let Content::Text(text) = &diff.content else { panic!("not a text diff") };
     let line = text
         .alignment(Whitespace::Exact)
         .lines

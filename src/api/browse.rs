@@ -362,6 +362,13 @@ impl<T> Results<T> {
     }
 }
 
+/// Every page fetched, of the total.
+impl<T> From<Results<T>> for Capped<T> {
+    fn from(list: Results<T>) -> Self {
+        Capped::new(list.items, list.total)
+    }
+}
+
 /// No results (without asking `T` for a default).
 impl<T> Default for Results<T> {
     fn default() -> Self {
@@ -855,11 +862,6 @@ pub struct RepoTopic {
 }
 
 #[derive(cynic::QueryFragment, Debug)]
-pub struct Topic {
-    pub name: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Ref")]
 pub struct BranchRef {
     pub name: String,
@@ -902,6 +904,7 @@ fragments! {
     AppName = "App",
     WorkflowName = "Workflow",
     TypeName = "IssueType",
+    Topic = "Topic",
 }
 fragments! {
     number: i32;
@@ -1292,11 +1295,7 @@ pub struct PrChecks {
     pub commits: PrHeadCommits,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "PullRequestCommitConnection")]
-pub struct PrHeadCommits {
-    pub nodes: Option<Vec<Option<PrHeadCommit>>>,
-}
+fragments! { nodes: PrHeadCommits = "PullRequestCommitConnection" => PrHeadCommit }
 
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "PullRequestCommit")]
@@ -1700,7 +1699,7 @@ mod tests {
         }))
         .unwrap();
         let fetched = contexts.filter_results(Some);
-        let checks = checks("abc".into(), Capped::new(fetched.items, fetched.total));
+        let checks = checks("abc".into(), fetched.into());
         assert_eq!((checks.items.len(), checks.items.total()), (2, 5));
         assert_eq!(checks.items[0].summary, None);
         assert_eq!(checks.items[1].summary.as_deref(), Some("Built"));
@@ -3767,11 +3766,7 @@ pub enum ReadmeObject {
     Other,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "Blob")]
-pub struct ReadmeBlob {
-    pub text: Option<String>,
-}
+fragments! { text: Option<String>; ReadmeBlob = "Blob" }
 
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "UserStatus")]
@@ -3780,11 +3775,7 @@ pub struct WireStatus {
     pub message: Option<String>,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "SocialAccountConnection")]
-pub struct SocialList {
-    pub nodes: Option<Vec<Option<WireSocial>>>,
-}
+fragments! { nodes: SocialList = "SocialAccountConnection" => WireSocial }
 
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "SocialAccount")]
