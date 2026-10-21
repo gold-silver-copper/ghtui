@@ -265,22 +265,22 @@ impl GitHub {
                     .rest_write(http::Method::POST, &path, Some(&body))
                     .await;
             }
-            Manage::ConvertToDraft { pr } => (raw::CONVERT_TO_DRAFT, json!({ "id": pr.as_str() })),
+            Manage::ConvertToDraft { pr } => (raw::CONVERT_TO_DRAFT, json!({ "id": pr })),
             Manage::ChangeBase { pr, base } => {
-                (raw::CHANGE_BASE, json!({ "id": pr.as_str(), "base": base }))
+                (raw::CHANGE_BASE, json!({ "id": pr, "base": base }))
             }
             Manage::Lock { subject, reason } => (
                 raw::LOCK,
-                json!({ "id": subject.as_str(), "reason": reason.map(LockReason::wire) }),
+                json!({ "id": subject, "reason": reason.map(LockReason::wire) }),
             ),
-            Manage::Unlock { subject } => (raw::UNLOCK, json!({ "id": subject.as_str() })),
-            Manage::Pin { issue, on: true } => (raw::PIN_ISSUE, json!({ "id": issue.as_str() })),
-            Manage::Pin { issue, .. } => (raw::UNPIN_ISSUE, json!({ "id": issue.as_str() })),
+            Manage::Unlock { subject } => (raw::UNLOCK, json!({ "id": subject })),
+            Manage::Pin { issue, on: true } => (raw::PIN_ISSUE, json!({ "id": issue })),
+            Manage::Pin { issue, .. } => (raw::UNPIN_ISSUE, json!({ "id": issue })),
             Manage::Hide { comment, reason } => (
                 raw::HIDE_COMMENT,
-                json!({ "id": comment.as_str(), "reason": reason.wire() }),
+                json!({ "id": comment, "reason": reason.wire() }),
             ),
-            Manage::Unhide { comment } => (raw::UNHIDE_COMMENT, json!({ "id": comment.as_str() })),
+            Manage::Unhide { comment } => (raw::UNHIDE_COMMENT, json!({ "id": comment })),
             Manage::Revert { pr } => return self.revert(pr).await.map(drop),
             Manage::Transfer { issue, to, .. } => return self.transfer(issue, to).await.map(drop),
             Manage::CloseAsDuplicate { issue, of } => {
@@ -288,10 +288,7 @@ impl GitHub {
                     .as_ref()
                     .ok_or_else(|| ApiError::Internal("no issue it duplicates".into()))?;
                 let of = self.issue_id(of).await?;
-                (
-                    raw::CLOSE_AS_DUPLICATE,
-                    json!({ "id": issue.as_str(), "of": of.as_str() }),
-                )
+                (raw::CLOSE_AS_DUPLICATE, json!({ "id": issue, "of": of }))
             }
             Manage::SubIssue { parent, child, add } => {
                 let child = self.issue_id(child).await?;
@@ -300,10 +297,7 @@ impl GitHub {
                 } else {
                     raw::REMOVE_SUB_ISSUE
                 };
-                (
-                    query,
-                    json!({ "id": parent.as_str(), "child": child.as_str() }),
-                )
+                (query, json!({ "id": parent, "child": child }))
             }
             Manage::MoveSubIssue {
                 parent,
@@ -314,13 +308,13 @@ impl GitHub {
                 let child = self.issue_id(child).await?;
                 let sibling = self.issue_id(sibling).await?;
                 let (before, after) = if *before {
-                    (Some(sibling.as_str()), None)
+                    (Some(&sibling), None)
                 } else {
-                    (None, Some(sibling.as_str()))
+                    (None, Some(&sibling))
                 };
                 (
                     raw::MOVE_SUB_ISSUE,
-                    json!({ "id": parent.as_str(), "child": child.as_str(), "before": before, "after": after }),
+                    json!({ "id": parent, "child": child, "before": before, "after": after }),
                 )
             }
             Manage::BlockedBy { issue, by, add } => {
@@ -330,7 +324,7 @@ impl GitHub {
                 } else {
                     raw::REMOVE_BLOCKED_BY
                 };
-                (query, json!({ "id": issue.as_str(), "by": by.as_str() }))
+                (query, json!({ "id": issue, "by": by }))
             }
             Manage::LinkBranch { issue, repo, name } => {
                 let vars = json!({ "owner": repo.owner, "name": repo.name });
@@ -343,15 +337,15 @@ impl GitHub {
                 .await?;
                 (
                     raw::LINK_BRANCH,
-                    json!({ "id": issue.as_str(), "oid": oid, "name": name }),
+                    json!({ "id": issue, "oid": oid, "name": name }),
                 )
             }
             Manage::CloseDiscussion { discussion, reason } => (
                 raw::CLOSE_DISCUSSION,
-                json!({ "id": discussion.as_str(), "reason": reason.wire() }),
+                json!({ "id": discussion, "reason": reason.wire() }),
             ),
             Manage::ReopenDiscussion { discussion } => {
-                (raw::REOPEN_DISCUSSION, json!({ "id": discussion.as_str() }))
+                (raw::REOPEN_DISCUSSION, json!({ "id": discussion }))
             }
         };
         self.mutate_json(query, vars).await
@@ -361,7 +355,7 @@ impl GitHub {
     /// and a pull request of it, whose number this answers.
     pub async fn revert(&self, pr: &NodeId) -> Result<u64, ApiError> {
         let made: Value = self
-            .graphql_data(raw::REVERT_PR, json!({ "id": pr.as_str() }), false)
+            .graphql_data(raw::REVERT_PR, json!({ "id": pr }), false)
             .await?;
         made.pointer("/revertPullRequest/revertPullRequest/number")
             .and_then(Value::as_u64)
@@ -370,7 +364,7 @@ impl GitHub {
 
     /// Moves an issue to another repository: where it is now.
     pub async fn transfer(&self, issue: &NodeId, to: &NodeId) -> Result<IssueAt, ApiError> {
-        let vars = json!({ "id": issue.as_str(), "repo": to.as_str() });
+        let vars = json!({ "id": issue, "repo": to });
         let made: Value = self.graphql_data(raw::TRANSFER_ISSUE, vars, false).await?;
         let issue = made.pointer("/transferIssue/issue");
         let repo = (issue.and_then(|i| i.pointer("/repository/nameWithOwner")))
@@ -393,7 +387,7 @@ impl GitHub {
         title: &str,
         body: &str,
     ) -> Result<u64, ApiError> {
-        let vars = json!({ "repo": repo.as_str(), "category": category.as_str(), "title": title, "body": body });
+        let vars = json!({ "repo": repo, "category": category, "title": title, "body": body });
         let made: Value = self
             .graphql_data(raw::START_DISCUSSION, vars, false)
             .await?;

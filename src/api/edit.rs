@@ -314,8 +314,7 @@ impl GitHub {
         if let Some(org) = org {
             let op = TeamsQuery::build(TeamsVariables { org: org.clone() });
             let teams = self.find(op, &org, |q| {
-                let t = q.organization?.teams;
-                Some(Capped::from_nodes(t.total_count, t.nodes, Named::from))
+                Some(q.organization?.teams.into_capped(Named::from))
             });
             sidebar.teams = Some(teams.await.map_err(|err| err.to_string()));
         }
@@ -487,13 +486,7 @@ pub enum RequestedNamed {
 }
 
 fn label_names(list: Option<LabelNames>) -> Capped<Named> {
-    list.map_or_else(Capped::default, |l| {
-        Capped::from_nodes(l.total_count, l.nodes, Named::from)
-    })
-}
-
-fn user_names(list: UserNames) -> Capped<Named> {
-    Capped::from_nodes(list.total_count, list.nodes, Named::from)
+    list.map_or_else(Capped::default, |l| l.into_capped(Named::from))
 }
 
 impl SidebarRepo {
@@ -532,15 +525,14 @@ impl SidebarRepo {
         };
         let sidebar = Sidebar {
             labels: label_names(labels),
-            assignees: user_names(assignees),
+            assignees: assignees.into_capped(Named::from),
             milestone: milestone.map(Named::from),
             requested,
             author,
             all_labels: label_names(self.labels),
-            users: user_names(self.assignable_users),
-            milestones: self.milestones.map_or_else(Capped::default, |m| {
-                Capped::from_nodes(m.total_count, m.nodes, Named::from)
-            }),
+            users: self.assignable_users.into_capped(Named::from),
+            milestones: (self.milestones)
+                .map_or_else(Capped::default, |m| m.into_capped(Named::from)),
             teams: None,
         };
         Some((sidebar, org))

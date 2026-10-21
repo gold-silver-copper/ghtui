@@ -318,8 +318,8 @@ impl GitHub {
             sha: String,
         }
         let path = format!("/repos/{repo}/commits/{}", url::encode_path(rev));
-        let answer = self.rest_get(&path, format!("{rev} in {repo}")).await?;
-        Ok(serde_json::from_str::<Wire>(&answer)?.sha)
+        let wire: Wire = self.rest_json(&path, format!("{rev} in {repo}")).await?;
+        Ok(wire.sha)
     }
 
     /// Makes branch or tag `name` at commit `sha`.
@@ -363,11 +363,11 @@ impl GitHub {
             kind: String,
         }
         let path = format!("/repos/{repo}/branches/{}", url::encode_path(name));
-        let branch: Branch = serde_json::from_str(&self.rest_get(&path, name).await?)?;
+        let branch: Branch = self.rest_json(&path, name).await?;
         // Rulesets: GitHub lists the rules that apply to the branch.
         let path = format!("/repos/{repo}/rules/branches/{}", url::encode_path(name));
-        let rules: Vec<Rule> = match self.rest_get(&path, name).await {
-            Ok(body) => serde_json::from_str(&body)?,
+        let rules: Vec<Rule> = match self.rest_json(&path, name).await {
+            Ok(rules) => rules,
             // An older Enterprise Server has no rulesets.
             Err(ApiError::NotFound(_)) => Vec::new(),
             Err(err) => return Err(err),
@@ -414,12 +414,11 @@ impl GitHub {
             name: String,
         }
         let (gitignores, licenses) = tokio::try_join!(
-            self.rest_get("/gitignore/templates", "templates"),
-            self.rest_get("/licenses", "licences"),
+            self.rest_json("/gitignore/templates", "templates"),
+            self.rest_json::<Vec<License>>("/licenses", "licences"),
         )?;
-        let licenses: Vec<License> = serde_json::from_str(&licenses)?;
         Ok(Templates {
-            gitignores: serde_json::from_str(&gitignores)?,
+            gitignores,
             licenses: licenses.into_iter().map(|l| (l.key, l.name)).collect(),
         })
     }

@@ -528,7 +528,7 @@ impl GitHub {
             admin: bool,
         }
         let path = format!("/repos/{repo}");
-        let wire: Wire = serde_json::from_str(&self.rest_get(&path, repo).await?)?;
+        let wire: Wire = self.rest_json(&path, repo).await?;
         Ok(General {
             archived: wire.archived,
             visibility: wire
@@ -584,7 +584,7 @@ impl GitHub {
                 self.mutate_json(raw::UPDATE_PROTECTION_RULE, vars).await
             }
             C::DeleteRule { id, .. } => {
-                let vars = json!({ "id": id.as_str() });
+                let vars = json!({ "id": id });
                 self.mutate_json(raw::DELETE_PROTECTION_RULE, vars).await
             }
             C::SetRuleset {
@@ -720,7 +720,7 @@ fn rule_input(
             .iter()
             .map(
                 |context| match apps.iter().find(|(name, _)| name == context) {
-                    Some((_, id)) => json!({ "context": context, "appId": id.as_str() }),
+                    Some((_, id)) => json!({ "context": context, "appId": id }),
                     None => json!({ "context": context }),
                 },
             )

@@ -92,7 +92,7 @@ impl GitHub {
             .as_deref()
             .and_then(|a| a.split_once(' '))
             .map(|(_, c)| c);
-        let vars = serde_json::json!({ "id": list.id.as_str(), "after": cursor });
+        let vars = serde_json::json!({ "id": list.id, "after": cursor });
         let items: wire::Connection<wire::Repo> = self
             .graphql_json(
                 &crate::api::raw::star_list_items(),
@@ -150,23 +150,14 @@ impl GitHub {
         let mut read = 0;
         loop {
             read += page.nodes.len();
-            if page
-                .nodes
-                .iter()
-                .flatten()
-                .any(|n| n.id.as_ref() == Some(item))
-            {
+            if (page.nodes.iter().flatten()).any(|n| n.id.as_ref() == Some(item)) {
                 return Ok((Some(true), total));
             }
-            let next = page
-                .page_info
-                .end_cursor
-                .filter(|_| page.page_info.has_next_page);
-            let Some(after) = next else { return Ok((Some(false), total)) };
+            let Some(after) = page.page_info.next() else { return Ok((Some(false), total)) };
             if read >= MEMBERS_MAX {
                 return Ok((None, total));
             }
-            let vars = serde_json::json!({ "id": list.as_str(), "after": after });
+            let vars = serde_json::json!({ "id": list, "after": after });
             page = self
                 .graphql_json(
                     crate::api::raw::LIST_MEMBERS,
@@ -180,8 +171,7 @@ impl GitHub {
 
     /// Puts repository `item` in exactly `lists` of yours.
     pub async fn set_lists(&self, item: &NodeId, lists: &[NodeId]) -> Result<(), ApiError> {
-        let lists: Vec<&str> = lists.iter().map(NodeId::as_str).collect();
-        let vars = serde_json::json!({ "item": item.as_str(), "lists": lists });
+        let vars = serde_json::json!({ "item": item, "lists": lists });
         self.mutate_json(crate::api::raw::SET_LISTS, vars).await
     }
 
@@ -207,7 +197,7 @@ impl GitHub {
 
     /// Deletes one of your lists.
     pub async fn delete_list(&self, list: &NodeId) -> Result<(), ApiError> {
-        let vars = serde_json::json!({ "list": list.as_str() });
+        let vars = serde_json::json!({ "list": list });
         self.mutate_json(crate::api::raw::DELETE_LIST, vars).await
     }
 }
@@ -274,13 +264,15 @@ mod wire {
         /// The row a repository's list shows, unless GitHub left out
         /// which repository it is.
         pub fn summary(self) -> Option<RepoSummary> {
+            let (language, language_color) =
+                (self.primary_language).map_or((None, None), |l| (Some(l.name), l.color));
             Some(RepoSummary {
                 repo: RepoId::parse(self.name_with_owner.as_deref()?)?,
                 description: self.description.filter(|d| !d.trim().is_empty()),
                 stars: self.stargazer_count,
                 forks: self.fork_count,
-                language: self.primary_language.as_ref().map(|l| l.name.clone()),
-                language_color: self.primary_language.and_then(|l| l.color),
+                language,
+                language_color,
                 pushed_at: self.pushed_at,
                 private: self.is_private,
                 fork: self.is_fork,

@@ -515,16 +515,16 @@ impl GitHub {
     /// All of a secret's locations, from its alert's `path`; nothing if
     /// GitHub won't list them.
     async fn secret_locations(&self, path: &str) -> Option<Vec<SecretLocation>> {
-        match self
-            .rest_answer(&format!("{path}/locations?per_page=100"))
-            .await
-        {
+        let path = format!("{path}/locations?per_page=100");
+        match self.rest_answer(&path).await {
             Ok(answer) if (200..300).contains(&answer.status()) => {
                 wire::locations(answer.body()).ok()
             }
             Ok(answer) => {
-                let status = answer.status();
-                tracing::debug!(status, "couldn't list a secret's locations");
+                tracing::debug!(
+                    status = answer.status(),
+                    "couldn't list a secret's locations"
+                );
                 None
             }
             Err(err) => {
@@ -768,15 +768,12 @@ mod wire {
 
     pub(super) fn locations(body: &str) -> Result<Vec<SecretLocation>, ApiError> {
         let wire: Vec<WireLocation> = serde_json::from_str(body)?;
-        Ok(wire
-            .into_iter()
-            .map(|l| match (l.kind.as_str(), l.details) {
-                ("commit" | "wiki_commit", Some(d)) => {
-                    file(d).unwrap_or_else(|| SecretLocation::Other(l.kind.replace('_', " ")))
-                }
-                (kind, _) => SecretLocation::Other(kind.replace('_', " ")),
-            })
-            .collect())
+        let location = |l: WireLocation| {
+            let in_commit = matches!(l.kind.as_str(), "commit" | "wiki_commit");
+            (l.details.filter(|_| in_commit).and_then(file))
+                .unwrap_or_else(|| SecretLocation::Other(l.kind.replace('_', " ")))
+        };
+        Ok(wire.into_iter().map(location).collect())
     }
 
     fn file(d: FileAt) -> Option<SecretLocation> {

@@ -40,8 +40,8 @@ impl GitHub {
             } => (
                 raw::ADD_DISCUSSION_COMMENT,
                 serde_json::json!({
-                    "discussion": discussion.as_str(),
-                    "replyTo": reply_to.as_ref().map(NodeId::as_str),
+                    "discussion": discussion,
+                    "replyTo": reply_to,
                     "body": body,
                 }),
             ),
@@ -51,11 +51,11 @@ impl GitHub {
                 } else {
                     raw::UPDATE_DISCUSSION_COMMENT
                 },
-                serde_json::json!({ "id": id.as_str(), "body": body }),
+                serde_json::json!({ "id": id, "body": body }),
             ),
             Discuss::Delete { id } => (
                 raw::DELETE_DISCUSSION_COMMENT,
-                serde_json::json!({ "id": id.as_str() }),
+                serde_json::json!({ "id": id }),
             ),
             Discuss::Answer { comment, on } => (
                 if *on {
@@ -63,7 +63,7 @@ impl GitHub {
                 } else {
                     raw::UNMARK_ANSWER
                 },
-                serde_json::json!({ "id": comment.as_str() }),
+                serde_json::json!({ "id": comment }),
             ),
         };
         self.mutate_json(query, vars).await

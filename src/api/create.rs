@@ -232,7 +232,7 @@ impl GitHub {
         };
         let path = format!("/repos/{repo}/compare/{}...{head}", encode_path(base));
         let what = format!("{repo}'s comparison {base}...{head}");
-        let wire: wire::Compare = serde_json::from_str(&self.rest_get(&path, what).await?)?;
+        let wire: wire::Compare = self.rest_json(&path, what).await?;
         let commits = (wire.commits.into_iter())
             .map(|c| CommitMessage {
                 oid: c.sha,
