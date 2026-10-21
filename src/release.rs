@@ -1038,15 +1038,14 @@ pub fn build(state: &State, page: &mut Page, route: &Route, repo: &RepoId) {
         form_row("Pre-release", pre, false, Some(Row::Prerelease)),
         form_row("Latest", latest, form.prerelease, Some(Row::Latest)),
     ];
-    let (title, notes) = templates::split(&form.text);
     let why_not = match &form.tag {
         None => Some("Choose a tag first".to_owned()),
         Some(_) => problem(state, repo, form),
     };
     let (title, notes) = if composing {
-        (String::new(), String::new())
+        Default::default()
     } else {
-        (title, notes)
+        templates::split(&form.text)
     };
     let (heading, button) = match &form.editing {
         Some(e) => (

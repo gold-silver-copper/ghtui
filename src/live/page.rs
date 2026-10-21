@@ -255,6 +255,8 @@ impl PageWatch {
 /// Leaving a page forgets what was new on it.
 pub fn schedule(state: &mut State) -> Cmds {
     let here = watched(state);
+    // Still asking only while it's on screen: a job that ended isn't.
+    let live = here.is_some();
     if state.page_watch.as_ref().map(|w| &w.what) != here.as_ref() {
         // A job that ended stays followed until you leave it.
         let ended = matches!(
@@ -272,16 +274,10 @@ pub fn schedule(state: &mut State) -> Cmds {
         }
     }
     let focused = state.focused;
-    let live = matches!(state.page_watch.as_ref(), Some(w) if watched_now(state, &w.what));
     match state.page_watch.as_mut() {
         Some(w) if live => w.pace.due(focused).into_iter().collect(),
         _ => Cmds::new(),
     }
-}
-
-/// Whether the watch is still asking: a job that ended isn't.
-fn watched_now(state: &State, what: &Watched) -> bool {
-    watched(state).as_ref() == Some(what)
 }
 
 /// Back in focus: the next ask is soon.

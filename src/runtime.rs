@@ -231,18 +231,8 @@ impl Effects {
             }
             // Clipboard writes go to the terminal, right away.
             Cmd::Copy(text) => copy_to_clipboard(&text),
-            Cmd::Timer(timer, ms) => {
-                spawn_guarded(&self.tx, replies, |tx| async move {
-                    tokio::time::sleep(Duration::from_millis(ms)).await;
-                    let _ = tx.send(Msg::Timer(timer));
-                });
-            }
-            Cmd::SuggestLater(q) => {
-                spawn_guarded(&self.tx, replies, |tx| async move {
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                    let _ = tx.send(Msg::SuggestDue(q));
-                });
-            }
+            Cmd::Timer(timer, ms) => self.later(replies, ms, Msg::Timer(timer)),
+            Cmd::SuggestLater(q) => self.later(replies, 250, Msg::SuggestDue(q)),
             Cmd::Work(work) => {
                 let cx = crate::work::Cx {
                     gh: self.gh.clone(),
@@ -262,6 +252,14 @@ impl Effects {
             Cmd::Edit { purpose, text } => return Some((purpose, text)),
         }
         None
+    }
+
+    /// Sends `msg` back in `ms` milliseconds.
+    fn later(&self, replies: Vec<Msg>, ms: u64, msg: Msg) {
+        spawn_guarded(&self.tx, replies, |tx| async move {
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+            let _ = tx.send(msg);
+        });
     }
 
     fn git(&mut self, git: Git, replies: Vec<Msg>) {
@@ -344,9 +342,7 @@ impl Effects {
                         let head = repo
                             .rev_parse(&format!("refs/ghtui/pr/{}/head", pr.number))
                             .await?;
-                        let base = repo
-                            .rev_parse(&format!("refs/ghtui/pr/{}/base", pr.number))
-                            .await?;
+                        let base = format!("refs/ghtui/pr/{}/base", pr.number);
                         let merge_base = repo.merge_base(&base, &head).await?;
                         repo.commits(&merge_base, &head).await
                     }

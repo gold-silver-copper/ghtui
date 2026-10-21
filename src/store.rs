@@ -286,8 +286,13 @@ impl Store {
     ) -> Option<T> {
         let db = self.db.as_ref()?;
         let result = (|| -> Result<Option<T>, StoreError> {
-            if let Some(bytes) = lock(&db.later).rows.get(&(table.name(), key.to_owned())) {
-                return Ok(Some(serde_json::from_slice(bytes)?));
+            // Decoded after the lock is let go: writes behind don't wait on it.
+            let behind = lock(&db.later)
+                .rows
+                .get(&(table.name(), key.to_owned()))
+                .cloned();
+            if let Some(bytes) = behind {
+                return Ok(Some(serde_json::from_slice(&bytes)?));
             }
             let txn = db.database.begin_read()?;
             let Some(table) = open(&txn, table)? else { return Ok(None) };

@@ -431,14 +431,13 @@ impl State {
     /// What's on screen is numbered lines: a file, a blame, a job's log
     /// or a diff.
     fn shows_lines(&self) -> bool {
-        match self.screen() {
-            Screen::Diff(_) => true,
-            Screen::Page(p) => matches!(
+        self.screen().page().is_none_or(|p| {
+            matches!(
                 p.route,
                 Route::Code(code::Blob { .. } | code::Blame { .. })
                     | Route::Runs(crate::route::runs::Job { .. })
-            ),
-        }
+            )
+        })
     }
 
     /// Palette entries: somewhere to go, what you can do here (the menu's
@@ -501,11 +500,14 @@ impl State {
         }));
         let mut actions: Vec<(usize, Action)> = Vec::new();
         let mut seen = std::collections::HashSet::new();
+        // Names are snake_case: "go to" finds go_to_file, matched as typed
+        // once rather than each name spelled with spaces.
+        let underscored = input.replace(' ', "_");
         for a in order {
             if a == Action::CommandPalette || (quit_first && a == Action::Quit) || !seen.insert(a) {
                 continue;
             }
-            let by_name = fuzzy_score(input, &a.name().replace('_', " "));
+            let by_name = fuzzy_score(&underscored, a.name());
             let by_description = fuzzy_score(input, a.description());
             if let Some(score) = by_name.into_iter().chain(by_description).min() {
                 actions.push((score, a));

@@ -11,7 +11,7 @@ use crate::keymap::Action;
 use crate::nav::{Doable, row};
 use crate::picker::fuzzy_score;
 use crate::picker::{Choice, entry};
-use crate::route::{Route, people};
+use crate::route::Route;
 use crate::state::{Cmds, State};
 use crate::work::{self, Cx, Failure, Job};
 
@@ -335,10 +335,7 @@ impl Job for DeleteList {
                 if state.route() != Some(&route) {
                     return Cmds::new();
                 }
-                let stars = Route::People(people::User {
-                    login: d.login.clone(),
-                    tab: crate::ui::pages::ProfileTab::Stars,
-                });
+                let stars = super::stars(&d.login);
                 let gone = Expected::Gone {
                     login: d.login,
                     slug: d.slug,
