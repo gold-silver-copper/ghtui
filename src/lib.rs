@@ -437,22 +437,25 @@ fn init_logging(
 /// Clicks, the wheel, pastes (as one piece of text, not keys) and focus
 /// go to ghtui while it runs.
 pub fn capture_input(on: bool) {
-    use crossterm::ExecutableCommand;
     use crossterm::event::{
         DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
         EnableFocusChange, EnableMouseCapture,
     };
     let mut out = std::io::stdout();
     let result = if on {
-        (out.execute(EnableMouseCapture))
-            .and_then(|out| out.execute(EnableBracketedPaste))
-            .and_then(|out| out.execute(EnableFocusChange))
-            .map(drop)
+        crossterm::execute!(
+            out,
+            EnableMouseCapture,
+            EnableBracketedPaste,
+            EnableFocusChange
+        )
     } else {
-        (out.execute(DisableMouseCapture))
-            .and_then(|out| out.execute(DisableBracketedPaste))
-            .and_then(|out| out.execute(DisableFocusChange))
-            .map(drop)
+        crossterm::execute!(
+            out,
+            DisableMouseCapture,
+            DisableBracketedPaste,
+            DisableFocusChange
+        )
     };
     if let Err(err) = result {
         tracing::warn!(%err, "capturing input");
