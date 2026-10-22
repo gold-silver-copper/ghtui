@@ -153,6 +153,8 @@ pub trait Sent: Job {
 jobs! {
     Change(crate::act::Changing),
     Subscribe(crate::watch::Subscribe),
+    Follow(crate::social::Follow),
+    SetStatus(crate::social::SetStatus),
     SetLists(crate::site::lists::SetLists),
     DeleteList(crate::site::lists::DeleteList),
     DeleteVersion(crate::site::packages::DeleteVersion),
@@ -163,6 +165,7 @@ jobs! {
     NewRepo(crate::housekeeping::repos::Make),
     CloneTo(crate::housekeeping::repos::CloneTo),
     Commit(crate::housekeeping::files::Commit),
+    Advisory(crate::housekeeping::advisory::Draft),
     Release(crate::release::Save),
     DeleteRelease(crate::release::Delete),
     DeleteTag(crate::release::DeleteTag),
@@ -184,6 +187,9 @@ jobs! {
     EditConfig(crate::home::EditConfig),
     SetViewed(crate::review::SetViewed),
     Resolve(crate::review::Resolve),
+    CommitSuggestions(crate::suggest::Commit),
+    StartMerge(crate::conflicts::Start),
+    FinishMerge(crate::conflicts::Finish),
     SubmitReview(crate::review::Submit),
     Dispatch(crate::workflows::Dispatch),
 }

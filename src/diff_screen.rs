@@ -7,6 +7,7 @@ use crate::api::model::{NodeId, PatchFile, PrRef, RepoId, ReviewThread, ViewedFi
 use crate::diff::anchor::{Commentable, LinePos, Side};
 use crate::diff::{FileDiff, Whitespace};
 use crate::git::Oid;
+use crate::git::files::ChangedFile;
 use crate::git::repo::{Commit, PrRefs};
 use crate::store::ReviewState;
 use crate::ui::annotations::Annotation;
@@ -49,6 +50,10 @@ pub enum DiffOf {
     /// From one commit to another, as `a..b`: a comparison's
     /// files, from the merge base its page found.
     Range(RepoId, Oid, Oid),
+    /// A pull request's conflicts with its base being resolved
+    /// ([`crate::conflicts`]): from its head to the commit showing each
+    /// conflicted file as it is.
+    Conflicts(PrRef, Oid, Oid),
 }
 
 impl DiffOf {
@@ -57,13 +62,13 @@ impl DiffOf {
     pub fn pr(&self) -> Option<&PrRef> {
         match self {
             DiffOf::Pr(pr) => Some(pr),
-            DiffOf::Commit(..) | DiffOf::Range(..) => None,
+            DiffOf::Commit(..) | DiffOf::Range(..) | DiffOf::Conflicts(..) => None,
         }
     }
 
     pub fn repo(&self) -> &RepoId {
         match self {
-            DiffOf::Pr(pr) => &pr.repo,
+            DiffOf::Pr(pr) | DiffOf::Conflicts(pr, ..) => &pr.repo,
             DiffOf::Commit(repo, _) | DiffOf::Range(repo, ..) => repo,
         }
     }
@@ -72,7 +77,7 @@ impl DiffOf {
     /// one that parses back to it.
     pub fn url(&self) -> String {
         match self {
-            DiffOf::Pr(_) => self.page(),
+            DiffOf::Pr(_) | DiffOf::Conflicts(..) => self.page(),
             DiffOf::Commit(..) | DiffOf::Range(..) => links::files(&self.page()),
         }
     }
@@ -97,6 +102,8 @@ impl DiffOf {
     fn page(&self) -> String {
         match self {
             DiffOf::Pr(pr) => format!("{}/files", pr.url()),
+            // GitHub's own conflict editor.
+            DiffOf::Conflicts(pr, ..) => format!("{}/conflicts", pr.url()),
             DiffOf::Commit(repo, oid) => links::commit(repo, oid),
             DiffOf::Range(repo, from, to) => links::compare(repo, from, to),
         }
@@ -114,6 +121,7 @@ impl std::fmt::Display for DiffOf {
         match self {
             DiffOf::Pr(pr) => pr.fmt(f),
             DiffOf::Commit(repo, oid) => write!(f, "{repo}@{}", short_sha(oid)),
+            DiffOf::Conflicts(pr, ..) => write!(f, "{pr}'s conflicts"),
             DiffOf::Range(repo, from, to) => {
                 write!(f, "{repo}@{}...{}", short_sha(from), short_sha(to))
             }
@@ -480,6 +488,14 @@ impl DiffState {
         if self.doc.ready_count() == self.doc.files().len() {
             self.progress = None;
         }
+    }
+
+    /// File `index` as it changes now, and its diff: a conflict resolved
+    /// with one side may keep a file the other deleted.
+    pub fn set_change(&mut self, index: usize, meta: ChangedFile, diff: Arc<FileDiff>) {
+        self.doc.set_meta(index, meta);
+        self.set_file(index, diff);
+        self.tree = tree_rows(&self.doc);
     }
 
     pub fn status(&self) -> Option<String> {
@@ -1313,8 +1329,13 @@ pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Cmds {
             change(state, of, |d| d.set_files(*files));
         }
         JobMsg::File(index, file) => {
+            // A conflict already resolved shows as it is.
+            let resolved = crate::conflicts::as_resolved(state, of, index);
             if let Some(diff) = state.diffs.get_mut(of) {
-                diff.set_file(index, file);
+                match resolved {
+                    Some((meta, now)) => diff.set_change(index, meta, Arc::new(now)),
+                    None => diff.set_file(index, file),
+                }
             }
         }
         JobMsg::Moves(moves) => {

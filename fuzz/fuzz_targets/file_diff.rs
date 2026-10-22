@@ -54,6 +54,7 @@ fuzz_target!(|input: (u8, u8, &[u8], &[u8])| {
             now: 0,
         },
         doc: &doc,
+        owners: None,
         cursor,
         top: cursor,
         keys: Keys {

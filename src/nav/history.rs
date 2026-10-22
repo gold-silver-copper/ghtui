@@ -95,8 +95,13 @@ impl State {
                 let cmds = self
                     .record_visit(&route)
                     .and(self.ensure_route(&route, true));
+                let find = anchor.as_deref() == Some(code::FIND_FILE);
+                let anchor = anchor.filter(|_| !find);
                 let screen = PageScreen::new(route, anchor);
                 self.screens.push(Screen::Page(Box::new(screen)));
+                if find {
+                    return cmds.and(self.open_finder(false));
+                }
                 cmds
             }
             Target::Files(of) => {

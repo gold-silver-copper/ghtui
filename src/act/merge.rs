@@ -53,8 +53,9 @@ pub(super) fn plan(state: &State, pr: &PrRef, d: &PrDetail) -> Result<Plan, Stri
         }
         Readiness::Conflicts => {
             return Err(format!(
-                "It conflicts with {}: resolve that on GitHub",
-                d.base_ref
+                "It conflicts with {}: {} resolves that",
+                d.base_ref,
+                key(Action::ResolveConflicts)
             ));
         }
         // Behind, it can't merge now, but it can once updated: auto-merge

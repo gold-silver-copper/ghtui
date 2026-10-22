@@ -231,7 +231,9 @@ impl State {
             self.first_key(Action::Search),
         );
         let archive = self.first_key(Action::ArchiveItem);
+        let resolve = self.first_key(Action::ResolveConflicts);
         let keys = Keys {
+            resolve: &resolve,
             comment: &comment,
             find_file: &find_file,
             filter: &filter,

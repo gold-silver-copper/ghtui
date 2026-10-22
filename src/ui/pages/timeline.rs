@@ -1126,7 +1126,13 @@ pub(super) fn projects_inline(page: &mut Page, projects: Fetched<'_, Capped<InPr
     let list = match projects.text("the projects") {
         Ok(list) => list,
         Err(why) if why.starts_with("Loading") => return,
-        Err(why) => return inline(page, "Projects", vec![meta(why)]),
+        Err(why) => {
+            // A missing scope's words start with what it guards: Projects.
+            let why = why
+                .strip_prefix("Projects: ")
+                .map_or(why.clone(), str::to_owned);
+            return inline(page, "Projects", vec![meta(why)]);
+        }
     };
     let mut segs = Vec::new();
     for p in list {

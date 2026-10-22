@@ -8,6 +8,7 @@
 use std::path::Path;
 
 use crate::api::housekeeping::RefKind;
+use crate::git::branch::refused;
 use crate::git::repo::Repo;
 use crate::git::{GitError, commit};
 
@@ -64,26 +65,6 @@ async fn remote_has(repo: &Repo, kind: RefKind, full: &str) -> Result<bool, Stri
         .map_err(|e| format!("Couldn't ask GitHub for its {all}: {e}"))?;
     let named = |l: &str| l.strip_suffix(full).is_some_and(|l| l.ends_with('\t'));
     Ok(there.lines().any(named))
-}
-
-/// What git said when GitHub refused a push, in its own words.
-fn refused(err: &GitError) -> String {
-    match err {
-        GitError::Failed { stderr, .. } => {
-            let lines: Vec<&str> = (stderr.lines())
-                .map(str::trim)
-                .filter(|l| l.starts_with("remote:") || l.starts_with("! ") || l.contains("error"))
-                .map(|l| l.trim_start_matches("remote:").trim())
-                .filter(|l| !l.is_empty())
-                .collect();
-            if lines.is_empty() {
-                stderr.trim().to_owned()
-            } else {
-                lines.join(" ")
-            }
-        }
-        err => err.to_string(),
-    }
 }
 
 /// Makes branch or tag `name` on GitHub at `sha` with `git push`.

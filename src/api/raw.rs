@@ -106,7 +106,7 @@ pub(crate) fn teams() -> String {
 /// A team: its members, repositories and child teams.
 pub(crate) fn team() -> String {
     format!(
-        "query($org: String!, $slug: String!) {{ organization(login: $org) {{ team(slug: $slug) {{ {TEAM} parentTeam {{ {TEAM} }} memberList: members(first: 50) {{ totalCount nodes {{ login name }} }} repoList: repositories(first: 50) {{ totalCount nodes {{ nameWithOwner description stargazerCount }} }} childTeams(first: 50) {{ totalCount nodes {{ {TEAM} }} }} }} }} }}"
+        "query($org: String!, $slug: String!) {{ organization(login: $org) {{ team(slug: $slug) {{ {TEAM} viewerCanAdminister parentTeam {{ {TEAM} }} memberList: members(first: 50) {{ totalCount edges {{ role node {{ login name }} }} }} repoList: repositories(first: 50) {{ totalCount edges {{ permission node {{ nameWithOwner description stargazerCount }} }} }} childTeams(first: 50) {{ totalCount nodes {{ {TEAM} }} }} }} }} }}"
     )
 }
 
@@ -311,6 +311,13 @@ raw! {
     /// dependencies of each (under the hawkgirl preview).
     DEPENDENCY_GRAPH = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { dependencyGraphManifests(first: 20) { totalCount nodes { filename blobPath parseable exceedsMaxSize dependenciesCount dependencies(first: 100) { totalCount nodes { packageName packageManager requirements repository { nameWithOwner } } } } } } }";
 
+    /// Where a repository's security policy is, if it has one: what the
+    /// community profile leaves out.
+    SECURITY_POLICY = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { securityPolicyUrl } }";
+
+    /// A branch's merge queue: the first 50 entries, in order.
+    MERGE_QUEUE = "query($owner: String!, $name: String!, $branch: String) { repository(owner: $owner, name: $name) { mergeQueue(branch: $branch) { configuration { mergeMethod } entries(first: 50) { totalCount nodes { position state enqueuedAt estimatedTimeToMerge solo jump enqueuer { login } pullRequest { number title author { login } } } } } } }";
+
     /// A topic's stars and the topics GitHub relates to it.
     TOPIC = "query($name: String!) { topic(name: $name) { name stargazerCount relatedTopics(first: 10) { name } } }";
 
@@ -335,6 +342,28 @@ raw! {
 
     /// Your saved replies, most recently changed first.
     SAVED_REPLIES = "query { viewer { savedReplies(first: 100) { totalCount nodes { id title body } } } }";
+
+    // ---- following people, and your status ([`crate::api::social`]) ----
+
+    FOLLOW_USER = "mutation($id: ID!) { followUser(input: {userId: $id}) { user { id } } }";
+
+    UNFOLLOW_USER = "mutation($id: ID!) { unfollowUser(input: {userId: $id}) { user { id } } }";
+
+    FOLLOW_ORG = "mutation($id: ID!) { followOrganization(input: {organizationId: $id}) { organization { id } } }";
+
+    UNFOLLOW_ORG = "mutation($id: ID!) { unfollowOrganization(input: {organizationId: $id}) { organization { id } } }";
+
+    /// Sets your status; with no emoji and no message, clears it.
+    CHANGE_STATUS = "mutation($emoji: String, $message: String, $busy: Boolean, $expires: DateTime) { changeUserStatus(input: {emoji: $emoji, message: $message, limitedAvailability: $busy, expiresAt: $expires}) { status { id } } }";
+
+    // ---- code owners ([`crate::api::codeowners`]) ----
+
+    /// The CODEOWNERS file in each place GitHub looks (`REV:path`), and
+    /// the problems GitHub found in the one it reads.
+    CODEOWNERS = "query($owner: String!, $name: String!, $github: String!, $root: String!, $docs: String!, $ref: String) { repository(owner: $owner, name: $name) { github: object(expression: $github) { ... on Blob { text } } root: object(expression: $root) { ... on Blob { text } } docs: object(expression: $docs) { ... on Blob { text } } codeowners(refName: $ref) { errors { line column kind message suggestion } } } }";
+
+    /// Only the problems, where git read the file.
+    CODEOWNERS_ERRORS = "query($owner: String!, $name: String!, $ref: String) { repository(owner: $owner, name: $name) { codeowners(refName: $ref) { errors { line column kind message suggestion } } } }";
 
     // ---- a repository's settings ([`crate::api::settings`]) ----
 
@@ -378,13 +407,10 @@ pub(crate) fn all() -> Vec<(&'static str, String)> {
         ),
         ("users(user)", users("user(login: $login)", "followers")),
         ("users(user)", users("user(login: $login)", "following")),
-        (
-            "users(organization)",
-            users("organization(login: $login)", "membersWithRole"),
-        ),
     ];
     RAW.iter()
         .chain(crate::api::housekeeping::RAW)
+        .chain(crate::api::org::RAW)
         .map(|&(name, query)| (name, query.to_owned()))
         .chain(built)
         .collect()

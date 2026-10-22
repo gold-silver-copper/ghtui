@@ -22,22 +22,18 @@ pub fn advisories(
     list: Fetched<'_, Results<Advisory>>,
     now: u64,
 ) {
-    let empty = if repo.is_some() {
-        "No published advisories."
-    } else {
-        "No advisories."
-    };
+    let empty = "No advisories.";
     paged_list(page, "Security advisories", list, empty, |page, a| {
         let target = match repo {
             Some(repo) => format!("{}/security/advisories/{}", url::repo(repo), a.ghsa),
             None => format!("{}/advisories/{}", url::base(), a.ghsa),
         };
         item(page, target, |page, link| {
-            let segs = vec![
-                severity_chip(a.severity),
-                space(),
-                Seg::linked(a.summary.clone(), Role::Strong, link),
-            ];
+            let mut segs = vec![severity_chip(a.severity)];
+            if let Some(state) = unpublished(a) {
+                tag(&mut segs, state, Bg::SecondaryContainer);
+            }
+            segs.extend([space(), Seg::linked(a.summary.clone(), Role::Strong, link)]);
             hanging(page, meta(""), segs, Frame::Body);
             let mut subline = a.ghsa.clone();
             if let Some(at) = &a.published_at {
@@ -52,11 +48,23 @@ pub fn advisories(
     });
 }
 
+/// A repository's advisory's state, unless it's published: `Draft`,
+/// `Triage`, `Closed`.
+fn unpublished(a: &Advisory) -> Option<String> {
+    let state = a.state.as_deref().filter(|s| *s != "published")?;
+    let mut chars = state.chars();
+    let first = chars.next()?;
+    Some(first.to_uppercase().chain(chars).collect())
+}
+
 /// A security advisory: what's affected and fixed, how severe, and its
 /// description, credits and references.
 pub fn advisory(page: &mut Page, a: &Advisory, now: u64) {
     say(page, a.summary.clone(), Role::Title);
     let mut segs = vec![severity_chip(a.severity)];
+    if let Some(state) = unpublished(a) {
+        tag(&mut segs, state, Bg::SecondaryContainer);
+    }
     if a.withdrawn_at.is_some() {
         tag(&mut segs, "Withdrawn", Bg::SecondaryContainer);
     }
@@ -124,8 +132,15 @@ pub(super) fn wiki_links(text: &str) -> String {
 /// just the pages.
 pub fn wiki(page: &mut Page, repo: &RepoId, w: &WikiPage) {
     let base = LinkBase::wiki(repo);
+    let wiki = format!("{}/wiki", url::repo(repo));
     if let (Some(title), Some(text)) = (&w.title, &w.text) {
         say(page, title.clone(), Role::Title);
+        let history = format!(
+            "{wiki}/{}/_history",
+            url::encode_path(&title.replace(' ', "-"))
+        );
+        let history = link_seg(page, "History", history, Role::Link);
+        page.wrapped(vec![history], 0, Frame::None);
         page.rule(0, Frame::None);
         if w.markdown {
             markdown::render(page, &wiki_links(text), Some(&base), Frame::None);
@@ -137,8 +152,14 @@ pub fn wiki(page: &mut Page, repo: &RepoId, w: &WikiPage) {
         page.blank();
     }
     let title = vec![strong(format!("Pages  {}", w.pages.len()))];
+    let history = vec![link_seg(
+        page,
+        "Wiki history",
+        format!("{wiki}/_history"),
+        Role::Link,
+    )];
     let (pages, none) = (Whole(&w.pages), "No pages yet.");
-    list_box(page, title, Vec::new(), &pages, none, |page, title| {
+    list_box(page, title, history, &pages, none, |page, title| {
         let name = url::encode_path(&title.replace(' ', "-"));
         let target = format!("{}/wiki/{name}", url::repo(repo));
         item(page, target, |page, link| {
@@ -148,6 +169,104 @@ pub fn wiki(page: &mut Page, repo: &RepoId, w: &WikiPage) {
     if let Some(sidebar) = &w.sidebar {
         page.blank();
         markdown::render(page, &wiki_links(sidebar), Some(&base), Frame::None);
+    }
+}
+
+/// A wiki's history (or a page's), newest first: each change opens what
+/// it did.
+pub fn wiki_history(page: &mut Page, repo: &RepoId, h: &WikiHistory, now: u64) {
+    let wiki = format!("{}/wiki", url::repo(repo));
+    let of = h.page.as_ref().map_or_else(
+        || wiki.clone(),
+        |p| format!("{wiki}/{}", url::encode_path(p)),
+    );
+    let name = h.page.as_ref().map_or("the wiki", |p| p.as_str());
+    let title = counted("Revisions", &h.revisions);
+    let back = vec![link_seg(
+        page,
+        format!("Back to {name}"),
+        of.clone(),
+        Role::Link,
+    )];
+    list_box(
+        page,
+        title,
+        back,
+        &h.revisions,
+        "No revisions.",
+        |page, r| {
+            item(page, format!("{of}/_compare/{}", r.oid), |page, link| {
+                let mut segs = vec![Seg::linked(r.message.clone(), Role::Strong, link)];
+                if h.page.is_none() && !r.pages.is_empty() {
+                    segs.push(meta(format!("  {}", r.pages.join(", "))));
+                }
+                page.box_line(segs, vec![meta(time::ago_iso(&r.at, now))], 0);
+                let short = short_sha(&r.oid);
+                body(page, vec![meta(format!("{short} · {}", r.author))]);
+            });
+        },
+    );
+}
+
+/// What a wiki's revision changed (or what changed between two), page
+/// by page, as git prints its hunks.
+pub fn wiki_diff(page: &mut Page, repo: &RepoId, of: Option<&str>, d: &WikiDiff, now: u64) {
+    let wiki = format!("{}/wiki", url::repo(repo));
+    let r = &d.to;
+    say(page, r.message.clone(), Role::Title);
+    let at = match &d.from {
+        Some(from) => format!("{} → {}", short_sha(from), short_sha(&r.oid)),
+        None => short_sha(&r.oid).to_owned(),
+    };
+    let when = time::ago_iso(&r.at, now);
+    let history = match of {
+        Some(p) => format!("{wiki}/{}/_history", url::encode_path(p)),
+        None => format!("{wiki}/_history"),
+    };
+    let segs = vec![
+        meta(format!("{} · {at} · {when} · ", r.author)),
+        link_seg(page, "History", history, Role::Link),
+    ];
+    page.wrapped(segs, 0, Frame::None);
+    page.blank();
+    if d.files.is_empty() {
+        say(page, "No changes to pages.", Role::Meta);
+    }
+    let room = usize::from(page.room(Frame::Body, 2)).max(1);
+    for f in &d.files {
+        let target = format!("{wiki}/{}", url::encode_path(&f.title.replace(' ', "-")));
+        let title = link_seg(page, f.title.clone(), target, Role::Link);
+        page.box_top(vec![title], Vec::new());
+        for line in &f.lines {
+            let tone = match line.chars().next() {
+                Some('+') => Tone::Added,
+                Some('-') => Tone::Removed,
+                _ => Tone::Code,
+            };
+            let role = if line.starts_with("@@") {
+                Role::Meta
+            } else {
+                Role::Code
+            };
+            for piece in wrap(&line.replace('\t', "    "), room) {
+                page.push(PageLine {
+                    segs: vec![Seg::new(piece, role.clone())],
+                    indent: 2,
+                    frame: Frame::Body,
+                    tone,
+                    ..PageLine::default()
+                });
+            }
+        }
+        page.box_bottom();
+        page.blank();
+    }
+    if d.cut {
+        say(
+            page,
+            "The rest of the changes are left out: they're too long to show here.",
+            Role::Meta,
+        );
     }
 }
 

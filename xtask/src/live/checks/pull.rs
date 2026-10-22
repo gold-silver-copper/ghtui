@@ -12,7 +12,7 @@ use crate::live::{Check, Cx, Launch, gh, path, until};
 
 pub const CHECK: Check = Check::new(
     "pull",
-    "a pull request from a clone's branch: ,p proposes it, ,P pushes the branch, ,s creates it as a draft, ,r marks it ready",
+    "a pull request from a clone's branch: :new pull request proposes it, :push branch pushes the branch, ctrl-s creates it as a draft, :ready for review marks it ready",
     run,
 );
 
@@ -38,12 +38,12 @@ fn run(cx: &mut Cx) -> Result<()> {
 
     let ghtui = cx.launch(Launch::new(&[gh::REPO]).cwd(&clone))?;
     ghtui.wait_for("Pull requests")?;
-    cx.step(",p proposes the branch, which GitHub doesn't have yet")?;
-    ghtui.keys(", p")?;
+    cx.step(":new pull request proposes the branch, which GitHub doesn't have yet")?;
+    ghtui.palette("new pull request")?;
     ghtui.wait_for(&format!("{branch} isn't on GitHub"))?;
 
-    cx.step(",P pushes it, after asking")?;
-    ghtui.keys(", P")?;
+    cx.step(":push branch pushes it, after asking")?;
+    ghtui.palette("push branch")?;
     ghtui.wait_for(&format!("Push {branch} to origin?"))?;
     ghtui.keys("Enter")?;
     until("the branch on GitHub", GITHUB, || {
@@ -53,8 +53,8 @@ fn run(cx: &mut Cx) -> Result<()> {
     })?;
     ghtui.wait_for(&format!("{branch} is on GitHub as it is in your clone"))?;
 
-    cx.step(",s creates it as a draft, after asking")?;
-    ghtui.keys(", s")?;
+    cx.step("ctrl-s creates it as a draft, after asking")?;
+    ghtui.keys("C-s")?;
     ghtui.wait_for("Create draft pull request")?;
     ghtui.keys("Tab Enter")?;
     let pr = until("the pull request on GitHub", GITHUB, || {
@@ -81,8 +81,8 @@ fn run(cx: &mut Cx) -> Result<()> {
     let number = pr["number"].as_u64().context("no pull request number")?;
 
     ghtui.wait_followed()?;
-    cx.step(",r marks it ready for review")?;
-    ghtui.keys(", r")?;
+    cx.step(":ready for review marks it ready for review")?;
+    ghtui.palette("ready for review")?;
     until("ready on GitHub", GITHUB, || {
         let pr = gh::get(&format!("repos/{}/pulls/{number}", gh::REPO))?;
         Ok((pr["draft"] == false).then_some(()))

@@ -338,6 +338,7 @@ fn typed() -> Vec<(&'static str, String)> {
         Query b::ForksQuery, b::ListVariables;
         Query b::OwnerReposQuery, b::OwnerReposVariables;
         Query b::StarredQuery, b::LoginPageVariables;
+        Query b::WatchingQuery, b::AfterVariables;
         Query b::ReleasesQuery, b::ListVariables;
         Query b::ReleaseQuery, b::ReleaseVariables;
         Query b::TagsQuery, b::ListVariables;
@@ -377,6 +378,7 @@ fn typed() -> Vec<(&'static str, String)> {
         Mutation e::RequestReviews, e::ReviewersVariables;
         Mutation e::SetIssueMilestone, e::MilestoneVariables;
         Mutation e::SetPrMilestone, e::MilestoneVariables;
+        Mutation e::SetIssueType, e::IssueTypeVariables;
         Mutation crate::api::create::CreateIssue, crate::api::create::CreateIssueVariables;
         Mutation crate::api::create::CreatePr, crate::api::create::CreatePrVariables;
         Query crate::api::watch::RepoWatchQuery, crate::api::watch::RepoNameVariables;
@@ -571,6 +573,8 @@ fn every_query_is_checked() {
         .into_iter()
         .map(|(n, _)| n.split('(').next().unwrap_or(n))
         .collect();
-    let consts = crate::api::raw::RAW.len() + crate::api::housekeeping::RAW.len();
+    let consts = crate::api::raw::RAW.len()
+        + crate::api::housekeeping::RAW.len()
+        + crate::api::org::RAW.len();
     assert_eq!(names.len(), consts + built);
 }

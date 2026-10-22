@@ -260,6 +260,10 @@ pub enum Subject {
     Discussion(crate::api::browse::DiscussionsOf, u64),
     /// A page of a repository's Settings tab ([`crate::settings`]).
     Settings(RepoId, crate::api::settings::SettingsPage),
+    /// An organization's people or teams ([`crate::org`]).
+    Org(crate::org::At),
+    /// An invitation sent to you ([`crate::invited`]).
+    Invited(crate::invited::At),
 }
 
 impl Subject {
@@ -334,6 +338,8 @@ impl Subject {
                 repo: repo.clone(),
                 page: *page,
             }),
+            Subject::Org(at) => at.route(),
+            Subject::Invited(at) => at.route(),
         }
     }
 
@@ -351,6 +357,8 @@ impl Subject {
             Subject::Alert(a) => DataKey::Alert(a.clone()),
             Subject::Discussion(of, number) => DataKey::Discussion(of.clone(), *number),
             Subject::Settings(repo, page) => DataKey::Settings(repo.clone(), *page),
+            Subject::Org(at) => at.need(),
+            Subject::Invited(_) => DataKey::Invitations,
         }
     }
 
@@ -368,8 +376,12 @@ impl Subject {
             Subject::Inbox { .. } => matches!(action, A::MarkAllRead | A::MarkAllDone),
             // Moving and setting go through `crate::projects`, writing in
             // a discussion through `crate::discuss`, settings through
-            // `crate::settings`.
-            Subject::Project(..) | Subject::Settings(..) => false,
+            // `crate::settings`, an organization's people through
+            // `crate::org`, your invitations through `crate::invited`.
+            Subject::Project(..)
+            | Subject::Settings(..)
+            | Subject::Org(_)
+            | Subject::Invited(_) => false,
         }
     }
 
@@ -385,6 +397,8 @@ impl Subject {
             Subject::Alert(_) => "the alert".to_owned(),
             Subject::Discussion(..) => "the discussion".to_owned(),
             Subject::Settings(repo, _) => format!("{repo}'s settings"),
+            Subject::Org(at) => at.name(),
+            Subject::Invited(_) => "your invitation".to_owned(),
         }
     }
 }
@@ -441,9 +455,12 @@ fn thread(state: &State) -> Option<Subject> {
     let Route::Search(search::Notifications { query }) = &p.route else { return None };
     let key = DataKey::Notifications(query.clone());
     let inbox = state.picked::<Inbox>(&key)?;
-    let n = inbox.list.items.get(p.selected?)?;
-    let url = p.selected_link().and_then(crate::ui::page::Link::url);
-    (url == Some(n.url.as_str())).then(|| Subject::Thread {
+    // The rows are its notifications, in order, after any invitations.
+    let url = p.selected_link().and_then(crate::ui::page::Link::url)?;
+    let at = p.selected.and_then(|i| inbox.list.items.get(i));
+    let n =
+        (at.filter(|n| n.url == url)).or_else(|| inbox.list.items.iter().find(|n| n.url == url))?;
+    Some(Subject::Thread {
         id: n.id.clone(),
         query: query.clone(),
     })
@@ -601,7 +618,9 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
             loaded(state.remote(&subject.need()), &name)?;
             crate::manage::discussion_close(state, of, *number)
         }
-        Subject::Project(..) | Subject::Settings(..) => Err(elsewhere(action).to_owned()),
+        Subject::Project(..) | Subject::Settings(..) | Subject::Org(_) | Subject::Invited(_) => {
+            Err(elsewhere(action).to_owned())
+        }
     }
 }
 
@@ -621,8 +640,9 @@ fn pr_plan(state: &State, pr: &PrRef, d: &PrDetail, action: Action) -> Result<Pl
         Action::Merge | Action::UpdateBranch | Action::Approve if !open => Err(not_open()),
         Action::Merge => merge::plan(state, pr, d),
         Action::UpdateBranch if readiness == Readiness::Conflicts => Err(format!(
-            "It conflicts with {}: resolve that on GitHub",
-            d.base_ref
+            "It conflicts with {}: {} resolves that",
+            d.base_ref,
+            key(Action::ResolveConflicts)
         )),
         Action::Close => {
             let (title, label, reopen) = match d.state {
@@ -942,8 +962,13 @@ impl Expectation for Shows {
             matches!(self.change, Change::Edit(_)) || crate::manage::polls_activity(&self.change);
         let more = edit.then(|| crate::edit::polls(&self.about)).flatten();
         let fields = crate::projects::sidebar::polls(&self.change, &self.about);
+        let people = match &self.about {
+            Subject::Org(at) => at.also(),
+            _ => None,
+        };
         std::iter::once(self.about.need())
             .chain(more.or(fields))
+            .chain(people)
             .collect()
     }
 
@@ -998,6 +1023,8 @@ fn shown(state: &State, change: &Change, about: &Subject) -> Shown {
         (Change::Settings(c), Subject::Settings(repo, page)) => {
             yes(crate::settings::shows(state, c, repo, *page))
         }
+        (Change::Org(c), Subject::Org(at)) => yes(crate::org::shows(state, c, at)),
+        (Change::Org(c), Subject::Invited(_)) => yes(crate::invited::shows(state, c)),
         (_, Subject::Discussion(of, number)) => {
             yes(crate::discuss::shows(state, change, of, *number))
         }
@@ -1191,6 +1218,7 @@ fn said(change: &Change) -> (&'static str, &'static str) {
         Change::Project(c) => crate::projects::said(c),
         Change::Manage(m) => crate::manage::said(m),
         Change::Settings(c) => crate::settings::said(c),
+        Change::Org(c) => crate::org::said(c),
     }
 }
 
@@ -1245,6 +1273,7 @@ fn done(change: &Change) -> String {
         Change::Project(c) => crate::projects::done(c).into(),
         Change::Manage(m) => crate::manage::done(m),
         Change::Settings(c) => crate::settings::done(c),
+        Change::Org(c) => crate::org::done(c),
     }
 }
 
@@ -1276,6 +1305,7 @@ pub fn needs(change: &Change) -> &'static str {
         Change::Discussion(_) => "Discussions: write",
         Change::Manage(m) => crate::manage::needs(m),
         Change::Settings(c) => crate::settings::needs(c),
+        Change::Org(c) => crate::org::needs(c),
     }
 }
 
@@ -1307,6 +1337,7 @@ fn failure(change: &Change, err: &Failure) -> String {
         Change::Alert(_) => format!(
             "a fine-grained token needs {needs}; a classic one, the security_events or repo scope"
         ),
+        Change::Org(c) => crate::org::scope(c),
         // Fine-grained tokens can't read notifications at all.
         _ if notifies(change) => {
             "notifications take a classic token with the notifications or repo scope".into()

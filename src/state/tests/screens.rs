@@ -401,6 +401,35 @@ pub(crate) fn pages() -> Vec<(&'static str, State)> {
         ("commit search", with_search(SearchKind::Commits, "q")),
         ("code search", with_search(SearchKind::Code, "q")),
         ("wiki", with_wiki()),
+        (
+            "wiki history",
+            repo(Route::Wiki(wiki::WikiHistory {
+                repo: ghtui(),
+                page: None,
+            })),
+        ),
+        (
+            "wiki change",
+            repo(Route::Wiki(wiki::WikiCompare {
+                repo: ghtui(),
+                page: Some("Home".into()),
+                spec: "4b7d0c2e9a1f3d5b6c8e0a2b4d6f8a0c2e4b6d8f".into(),
+            })),
+        ),
+        (
+            "merge queue",
+            repo(Route::Pulls(pulls::Queue {
+                repo: ghtui(),
+                branch: "main".into(),
+            })),
+        ),
+        (
+            "community",
+            repo(Route::Site(crate::site::Page::Insights {
+                repo: ghtui(),
+                tab: crate::ui::pages::InsightsTab::Community,
+            })),
+        ),
         ("advisories", with_advisories()),
         ("advisory", with_advisory()),
         ("teams", with_teams()),

@@ -288,14 +288,13 @@ impl RepoSort {
 }
 
 /// A list of people: a repository's stargazers or watchers, someone's
-/// followers or who they follow, an organization's public members.
+/// followers or who they follow.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum UserList {
     Stargazers(RepoId),
     Watchers(RepoId),
     Followers(String),
     Following(String),
-    People(String),
 }
 
 /// One page of search results.
@@ -605,8 +604,8 @@ pub struct Profile {
     pub star_count: u64,
     /// The profile README, as markdown.
     pub readme: Option<String>,
-    /// "🌴 On vacation".
-    pub status: Option<String>,
+    /// What they say they're up to, if anything.
+    pub status: Option<UserStatus>,
     pub pronouns: Option<String>,
     /// Social accounts: (how it's shown, link).
     pub socials: Vec<(String, String)>,
@@ -618,6 +617,38 @@ pub struct Profile {
     pub people: Capped<String>,
     /// A user's contributions in the last year.
     pub contributions: Option<Contributions>,
+    /// Its node ID, which following names it by.
+    pub id: Option<NodeId>,
+    /// It's you.
+    pub is_viewer: bool,
+    /// Whether you follow them; `None` where GitHub doesn't say (an
+    /// organization, on an Enterprise Server without following).
+    pub followed: Option<bool>,
+}
+
+/// A user's status, as their avatar menu sets it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UserStatus {
+    /// A glyph or a `:name:`.
+    pub emoji: Option<String>,
+    pub message: Option<String>,
+    /// Busy: they may be slow to answer.
+    pub busy: bool,
+    /// When it clears itself.
+    pub expires_at: Option<String>,
+}
+
+impl UserStatus {
+    /// "🌴 On vacation", or `None` when there's nothing to say.
+    pub fn text(&self) -> Option<String> {
+        let words: Vec<&str> = [&self.emoji, &self.message]
+            .into_iter()
+            .flatten()
+            .map(|t| t.trim())
+            .filter(|t| !t.is_empty())
+            .collect();
+        (!words.is_empty()).then(|| words.join(" "))
+    }
 }
 
 /// The contribution graph and recent activity on a user's profile.
@@ -3136,6 +3167,8 @@ pub struct TeamRepo {
     pub repo: RepoId,
     pub description: String,
     pub stars: u64,
+    /// The team's role there.
+    pub permission: Option<crate::api::settings::Permission>,
 }
 
 /// A team: its members, repositories and child teams (the first 50 of
@@ -3144,7 +3177,12 @@ pub struct TeamRepo {
 pub struct TeamDetail {
     pub team: TeamSummary,
     pub parent: Option<TeamSummary>,
+    /// You may change its members and repositories: you maintain it, or
+    /// own its organization.
+    pub can_admin: bool,
     pub members: Capped<UserSummary>,
+    /// Those of its members listed who maintain it.
+    pub maintainers: Vec<String>,
     pub repos: Capped<TeamRepo>,
     pub children: Capped<TeamSummary>,
 }
@@ -3179,16 +3217,38 @@ pub(crate) mod wire_teams {
         pub stargazer_count: u64,
     }
 
+    /// A connection's edges, each with what it says of its node.
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Edged<T> {
+        pub total_count: u64,
+        pub edges: Vec<Option<T>>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct MemberEdge {
+        pub role: Option<String>,
+        pub node: Option<Member>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct RepoEdge {
+        pub permission: Option<String>,
+        pub node: Option<Repo>,
+    }
+
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct Detail {
         #[serde(flatten)]
         pub team: Team,
+        #[serde(default)]
+        pub viewer_can_administer: bool,
         pub parent_team: Option<Team>,
         #[serde(rename = "memberList")]
-        pub member_list: Counted<Member>,
+        pub member_list: Edged<MemberEdge>,
         #[serde(rename = "repoList")]
-        pub repo_list: Counted<Repo>,
+        pub repo_list: Edged<RepoEdge>,
         pub child_teams: Counted<Team>,
     }
 }
@@ -3208,24 +3268,42 @@ impl wire_teams::Team {
 
 impl wire_teams::Detail {
     pub(crate) fn into_detail(self) -> TeamDetail {
-        TeamDetail {
-            team: self.team.into_summary(),
-            parent: self.parent_team.map(wire_teams::Team::into_summary),
-            members: self.member_list.into_capped(|m| {
-                Some(UserSummary {
-                    login: m.login,
-                    name: m.name,
-                    bio: None,
-                    is_org: false,
-                })
-            }),
-            repos: self.repo_list.into_capped(|r| {
+        let members = self.member_list;
+        let edges: Vec<wire_teams::MemberEdge> = members.edges.into_iter().flatten().collect();
+        let maintainers = (edges.iter())
+            .filter(|e| e.role.as_deref() == Some("MAINTAINER"))
+            .filter_map(|e| Some(e.node.as_ref()?.login.clone()))
+            .collect();
+        let people = (edges.into_iter())
+            .filter_map(|e| e.node)
+            .map(|m| UserSummary {
+                login: m.login,
+                name: m.name,
+                bio: None,
+                is_org: false,
+            })
+            .collect();
+        let repos = (self.repo_list.edges.into_iter().flatten())
+            .filter_map(|e| {
+                let r = e.node?;
                 Some(TeamRepo {
                     repo: RepoId::parse(&r.name_with_owner)?,
                     description: r.description.unwrap_or_default(),
                     stars: r.stargazer_count,
+                    permission: e
+                        .permission
+                        .as_deref()
+                        .and_then(|p| crate::api::settings::Permission::parse(&p.to_lowercase())),
                 })
-            }),
+            })
+            .collect();
+        TeamDetail {
+            team: self.team.into_summary(),
+            parent: self.parent_team.map(wire_teams::Team::into_summary),
+            can_admin: self.viewer_can_administer,
+            members: Capped::new(people, members.total_count),
+            maintainers,
+            repos: Capped::new(repos, self.repo_list.total_count),
             children: self.child_teams.into_capped(|t| Some(t.into_summary())),
         }
     }
@@ -3270,6 +3348,9 @@ pub struct Advisory {
     pub packages: Vec<AdvisoryPackage>,
     pub credits: Vec<String>,
     pub references: Vec<String>,
+    /// A repository's: `draft`, `triage`, `published` or `closed`.
+    #[serde(default)]
+    pub state: Option<String>,
 }
 
 pub(crate) mod rest_advisories {
@@ -3328,12 +3409,15 @@ pub(crate) mod rest_advisories {
         pub credits: Option<Vec<Credit>>,
         #[serde(default)]
         pub references: Option<Vec<String>>,
+        #[serde(default)]
+        pub state: Option<String>,
     }
 }
 
 impl rest_advisories::Advisory {
     pub(crate) fn into_advisory(self) -> Advisory {
         Advisory {
+            state: self.state,
             ghsa: self.ghsa_id,
             cve: self.cve_id,
             summary: self.summary,
@@ -3396,6 +3480,47 @@ pub struct WikiPage {
     /// edit is made on.
     pub commit: Option<String>,
     pub file: Option<String>,
+}
+
+/// A change to a wiki, as its history lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WikiRevision {
+    pub oid: String,
+    /// Its author's git name.
+    pub author: String,
+    /// ISO 8601.
+    pub at: String,
+    pub message: String,
+    /// The titles of the pages it changed.
+    pub pages: Vec<String>,
+}
+
+/// A wiki's history (a page's, with its title), newest first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WikiHistory {
+    pub page: Option<String>,
+    pub revisions: Capped<WikiRevision>,
+}
+
+/// What a wiki's change did (or what changed between two of its
+/// revisions), page by page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WikiDiff {
+    /// The revision (or the later of two) and what it says.
+    pub to: WikiRevision,
+    /// The earlier of two revisions compared.
+    pub from: Option<String>,
+    pub files: Vec<WikiFileDiff>,
+    /// The diff was longer than is shown.
+    pub cut: bool,
+}
+
+/// One page's changes in a [`WikiDiff`]: its hunks' lines, as git
+/// prints them (`@@ … @@`, then ` `, `+` and `-` lines).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WikiFileDiff {
+    pub title: String,
+    pub lines: Vec<String>,
 }
 // ---- search: discussions, commits, code -------------------------------------------------------
 
@@ -3773,6 +3898,8 @@ fragments! { text: Option<String>; ReadmeBlob = "Blob" }
 pub struct WireStatus {
     pub emoji: Option<String>,
     pub message: Option<String>,
+    pub indicates_limited_availability: bool,
+    pub expires_at: Option<DateTime>,
 }
 
 fragments! { nodes: SocialList = "SocialAccountConnection" => WireSocial }
@@ -4039,6 +4166,9 @@ pub struct ProfileQuery {
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "User")]
 pub struct UserFull {
+    pub id: cynic::Id,
+    pub is_viewer: bool,
+    pub viewer_is_following: bool,
     pub login: String,
     pub name: Option<String>,
     pub bio: Option<String>,
@@ -4064,6 +4194,8 @@ pub struct UserFull {
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Organization")]
 pub struct OrgFull {
+    pub id: cynic::Id,
+    pub viewer_is_following: Option<bool>,
     pub login: String,
     pub name: Option<String>,
     pub description: Option<String>,
@@ -4173,6 +4305,25 @@ pub struct StarredQuery {
 pub struct UserStarred {
     #[arguments(first: 30, after: $after, orderBy: { field: STARRED_AT, direction: DESC })]
     pub starred_repositories: PagedStars,
+}
+
+#[derive(cynic::QueryVariables, Debug)]
+pub struct AfterVariables {
+    pub after: Option<String>,
+}
+
+/// The repositories you watch.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Query", variables = "AfterVariables")]
+pub struct WatchingQuery {
+    pub viewer: ViewerWatching,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "User", variables = "AfterVariables")]
+pub struct ViewerWatching {
+    #[arguments(first: 30, after: $after)]
+    pub watching: PagedRepos,
 }
 
 // ---- releases and tags ---------------------------------------------------------------------
@@ -4651,16 +4802,17 @@ fn readme_text(object: Option<ReadmeObject>) -> Option<String> {
 impl ProfileQuery {
     pub(crate) fn into_profile(self) -> Option<Profile> {
         if let Some(u) = self.user {
-            let status = u.status.and_then(|s| {
-                let text = [s.emoji, s.message]
-                    .into_iter()
-                    .flatten()
-                    .filter(|t| !t.trim().is_empty())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                (!text.is_empty()).then_some(text)
+            let status = u.status.map(|s| UserStatus {
+                emoji: s.emoji.filter(|e| !e.trim().is_empty()),
+                message: s.message.filter(|m| !m.trim().is_empty()),
+                busy: s.indicates_limited_availability,
+                expires_at: s.expires_at.map(|at| at.0),
             });
+            let status = status.filter(|s| s.text().is_some() || s.busy);
             return Some(Profile {
+                id: Some(u.id.into()),
+                is_viewer: u.is_viewer,
+                followed: Some(u.viewer_is_following),
                 readme: readme_text(self.user_readme.and_then(|r| r.object)),
                 status,
                 pronouns: u.pronouns.filter(|p| !p.trim().is_empty()),
@@ -4685,6 +4837,8 @@ impl ProfileQuery {
         }
         let o = self.organization?;
         Some(Profile {
+            id: Some(o.id.into()),
+            followed: o.viewer_is_following,
             login: o.login,
             name: o.name.filter(|n| !n.is_empty()),
             bio: o.description.filter(|b| !b.trim().is_empty()),

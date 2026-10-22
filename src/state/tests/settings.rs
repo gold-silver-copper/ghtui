@@ -79,7 +79,7 @@ fn the_settings_tab_is_for_admins() {
     assert_eq!(tabs.last().map(String::as_str), Some("Settings"));
     let text = page_text(&s);
     assert!(
-        text.contains("General · Collaborators · Branches · Webhooks · Deploy keys"),
+        text.contains("General · Collaborators · Branches · Webhooks · Pages · Deploy keys · Secrets · Variables"),
         "{text}"
     );
     assert!(text.contains("never deletes a repository"), "{text}");
@@ -338,4 +338,212 @@ fn archiving_asks_twice() {
     assert!(page_text(&s).contains("Unarchive this repository"));
     press(&mut s, "D");
     says(&s, "ghtui never deletes one");
+}
+
+/// A new secret is written in the form, named in the question, and sent
+/// sealed: its value is nowhere in what's sent. The page follows GitHub
+/// until it lists it.
+#[test]
+fn a_secret_is_sent_sealed() {
+    use crate::api::settings::ActionsChange;
+    let mut s = on(SettingsPage::Secrets);
+    let text = page_text(&s);
+    assert!(text.contains("Environment secrets · production"), "{text}");
+    assert!(text.contains("ORG_TOKEN"), "{text}");
+    press(&mut s, "a");
+    write(&mut s, "Name: new_token\nValue: hunter2\nline two");
+    press(&mut s, "<C-s>");
+    assert!(asked(&s).starts_with("Set secret NEW_TOKEN in gold-silver-copper/ghtui?"));
+    let cmds = press(&mut s, "<Enter>");
+    let (change, _) = sent(&cmds);
+    assert!(!format!("{change:?}").contains("hunter2"), "{change:?}");
+    let SettingsChange::Actions(ActionsChange::SetSecret {
+        env, name, key_id, ..
+    }) = change
+    else {
+        panic!("{change:?}")
+    };
+    assert_eq!((env, name.as_str()), (&None, "NEW_TOKEN"));
+    assert_eq!(key_id, "568250167242549743");
+    answer(&mut s, &cmds, Ok(()));
+    assert!(s.following.is_some());
+    let mut shown = crate::settings::fixtures::secrets();
+    let mut made = shown.repo.items[0].clone();
+    made.name = "NEW_TOKEN".into();
+    shown.repo.items.push(made);
+    deliver(
+        &mut s,
+        SettingsPage::Secrets,
+        Settings::Secrets(Box::new(shown)),
+    );
+    assert!(s.following.is_none());
+}
+
+/// `e` on an environment's secret asks only for its value; `D` deletes it
+/// after asking; the organization's are its own.
+#[test]
+fn an_environments_secret_is_set_and_deleted_there() {
+    use crate::api::settings::ActionsChange;
+    let mut s = on(SettingsPage::Secrets);
+    let deploy = SettingLink::Secret(Some("production".into()), "DEPLOY_KEY".into());
+    select(&mut s, |l| *l == deploy);
+    press(&mut s, "e");
+    assert_eq!(composed(&s), "Value: ");
+    write(&mut s, "Value: s3");
+    press(&mut s, "<C-s>");
+    assert!(
+        asked(&s).starts_with(
+            "Set secret DEPLOY_KEY in the production environment?\nIt replaces its value"
+        ),
+        "{}",
+        asked(&s)
+    );
+    let cmds = press(&mut s, "<Enter>");
+    assert!(matches!(
+        sent(&cmds).0,
+        SettingsChange::Actions(ActionsChange::SetSecret { env: Some(e), .. }) if e == "production"
+    ));
+
+    let mut s = on(SettingsPage::Secrets);
+    select(&mut s, |l| *l == deploy);
+    press(&mut s, "D");
+    assert!(asked(&s).starts_with("Delete secret DEPLOY_KEY from the production environment?"));
+    press(&mut s, "<Esc>");
+    select(&mut s, |l| *l == SettingLink::OrgItem("ORG_TOKEN".into()));
+    press(&mut s, "e");
+    says(&s, "the organization's settings");
+}
+
+/// A variable's edit names what changed, sends it, and the page follows.
+#[test]
+fn a_variable_is_edited() {
+    use crate::api::settings::ActionsChange;
+    let mut s = on(SettingsPage::Variables);
+    select(&mut s, |l| {
+        *l == SettingLink::Variable(None, "REGION".into())
+    });
+    press(&mut s, "e");
+    let text = composed(&s);
+    assert_eq!(text, "Name: REGION\nValue: eu");
+    write(&mut s, &text.replace("eu", "us"));
+    press(&mut s, "<C-s>");
+    assert_eq!(asked(&s), "Change variable REGION?\nValue: eu → us");
+    let cmds = press(&mut s, "<Enter>");
+    assert_eq!(
+        sent(&cmds).0,
+        &SettingsChange::Actions(ActionsChange::SetVariable {
+            repo: ghtui(),
+            env: None,
+            from: Some("REGION".into()),
+            name: "REGION".into(),
+            value: "us".into(),
+        })
+    );
+    answer(&mut s, &cmds, Ok(()));
+    let mut shown = crate::settings::fixtures::variables();
+    shown.repo.items[0].value = "us".into();
+    deliver(
+        &mut s,
+        SettingsPage::Variables,
+        Settings::Variables(Box::new(shown)),
+    );
+    assert!(s.following.is_none());
+    assert!(page_text(&s).contains("us"));
+}
+
+/// A cache is deleted alone or with every cache of its key, after
+/// asking; it takes write access.
+#[test]
+fn caches_are_deleted_one_or_by_key() {
+    use crate::api::settings::ActionsChange;
+    let mut s = on(SettingsPage::Caches);
+    let text = page_text(&s);
+    assert!(text.contains("3 caches · 900.0 MB of 10.0 GB"), "{text}");
+    select(&mut s, |l| *l == SettingLink::Cache(1));
+    press(&mut s, "D");
+    let labels: Vec<String> = overlay!(s, Ask)
+        .choices
+        .iter()
+        .map(|(l, _)| l.clone())
+        .collect();
+    assert_eq!(labels, ["Delete this cache", "Delete all 2 with this key"]);
+    let cmds = press(&mut s, "<Tab><Enter>");
+    assert!(matches!(
+        sent(&cmds).0,
+        SettingsChange::Actions(ActionsChange::DeleteCaches { count: 2, .. })
+    ));
+    answer(&mut s, &cmds, Ok(()));
+    let mut shown = crate::settings::fixtures::caches();
+    shown.items.items.retain(|c| c.key != "cargo-linux");
+    deliver(&mut s, SettingsPage::Caches, Settings::Caches(shown));
+    assert!(s.following.is_none());
+
+    let mut s = on(SettingsPage::Caches);
+    let overview = crate::api::browse::RepoOverview {
+        can_write: false,
+        ..fixtures::overview()
+    };
+    fetched(&mut s, DataKey::Repo(ghtui()), Data::from(overview));
+    select(&mut s, |l| *l == SettingLink::Cache(3));
+    press(&mut s, "D");
+    says(&s, "takes write access");
+}
+
+/// The Pages site's form changes its source after asking; `D`
+/// unpublishes it.
+#[test]
+fn the_pages_site_is_changed_and_unpublished() {
+    use crate::api::settings::PagesChange;
+    let mut s = on(SettingsPage::Pages);
+    let text = page_text(&s);
+    assert!(text.contains("The main branch, /docs"), "{text}");
+    assert!(text.contains("Page build failed."), "{text}");
+    press(&mut s, "e");
+    let text = composed(&s);
+    write(&mut s, &text.replace("Folder: /docs", "Folder: /"));
+    press(&mut s, "<C-s>");
+    assert_eq!(
+        asked(&s),
+        "Change gold-silver-copper/ghtui's site?\nFolder: /docs → /"
+    );
+    let cmds = press(&mut s, "<Enter>");
+    assert!(matches!(
+        sent(&cmds).0,
+        SettingsChange::Pages(PagesChange::Update { to, .. }) if to.path == "/"
+    ));
+    let mut s = on(SettingsPage::Pages);
+    press(&mut s, "D");
+    assert!(asked(&s).starts_with("Unpublish gold-silver-copper/ghtui's site?"));
+    press(&mut s, "<Esc>a");
+    says(&s, "It has a site");
+}
+
+/// Custom properties: the form holds those the repository may set; one
+/// only the organization sets says so.
+#[test]
+fn custom_properties_are_set_in_a_form() {
+    let mut s = on(SettingsPage::Properties);
+    select(&mut s, |l| *l == SettingLink::Property("team".into()));
+    press(&mut s, "e");
+    says(&s, "team is set by gold-silver-copper's admins");
+    select(&mut s, |l| *l == SettingLink::Property("env".into()));
+    press(&mut s, "e");
+    assert_eq!(composed(&s), "env: Dev");
+    write(&mut s, "env: prod");
+    press(&mut s, "<C-s>");
+    assert_eq!(
+        asked(&s),
+        "Set gold-silver-copper/ghtui's custom properties?\nenv: Dev → Prod"
+    );
+    let cmds = press(&mut s, "<Enter>");
+    assert_eq!(
+        sent(&cmds).0,
+        &SettingsChange::SetProperties {
+            repo: ghtui(),
+            values: vec![(
+                "env".into(),
+                Some(crate::api::settings::PropValue::One("Prod".into()))
+            )],
+        }
+    );
 }

@@ -10,7 +10,7 @@ use crate::live::{Check, Cx, gh, until};
 
 pub const CHECK: Check = Check::new(
     "labels",
-    ",o makes a label on the labels page, ,D deletes it after asking",
+    ":new here makes a label on the labels page, D deletes it after asking",
     run,
 )
 .sweep(sweep);
@@ -38,7 +38,7 @@ fn select(ghtui: &Pane, name: &str) -> Result<()> {
         if selected_is(&ghtui.screen_marked()?, name) {
             return Ok(());
         }
-        ghtui.keys("}")?;
+        ghtui.keys("Down")?;
     }
     bail!("no row starts with {name}")
 }
@@ -60,8 +60,8 @@ fn run(cx: &mut Cx) -> Result<()> {
     ghtui.wait_for("New label")?;
     ghtui.wait_followed()?;
 
-    cx.step(",o makes a label: its name first, then a colour typed")?;
-    ghtui.keys(", o")?;
+    cx.step(":new here makes a label: its name first, then a colour typed")?;
+    ghtui.palette("new here")?;
     ghtui.wait_for("Type the name")?;
     ghtui.type_text(&name)?;
     ghtui.keys("Enter")?;
@@ -69,7 +69,7 @@ fn run(cx: &mut Cx) -> Result<()> {
     ghtui.keys("Enter")?;
     pick(&ghtui, "#1d76db")?;
     ghtui.wait_for(&format!("Shows as  {name}  (#1d76db)"))?;
-    ghtui.keys(", s")?;
+    ghtui.keys("C-s")?;
     let made = until("the label on GitHub", GITHUB, || {
         Ok(gh::get(&format!("repos/{}/labels/{name}", gh::REPO)).ok())
     })?;
@@ -77,9 +77,9 @@ fn run(cx: &mut Cx) -> Result<()> {
     ghtui.wait_for(&format!("Created the label {name}"))?;
     ghtui.wait_followed()?;
 
-    cx.step(",D deletes it, after asking")?;
+    cx.step("D deletes it, after asking")?;
     select(&ghtui, &name)?;
-    ghtui.keys(", D")?;
+    ghtui.keys("D")?;
     ghtui.wait_for(&format!("Delete the label {name}?"))?;
     ghtui.keys("Enter")?;
     until("the label gone from GitHub", GITHUB, || {

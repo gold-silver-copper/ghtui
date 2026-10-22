@@ -289,6 +289,15 @@ impl Dest {
             .as_ref()
             .and_then(url::Url::fragment)
             .map(str::to_owned);
+        // GitHub's Go to file page is its tree, with Go to file open.
+        let find = (parsed.as_ref())
+            .and_then(|u| u.path_segments()?.nth(2))
+            .is_some_and(|s| s == "find");
+        let anchor = if find {
+            Some(code::FIND_FILE.to_owned())
+        } else {
+            anchor
+        };
         match parsed.as_ref().and_then(parse) {
             Some(target) => Dest { target, anchor },
             None => Target::External(s.to_owned()).into(),
@@ -460,6 +469,7 @@ const RESERVED: &[&str] = &[
     "trust-center",
     "user-attachments",
     "users",
+    "watching",
     "why-github",
 ];
 

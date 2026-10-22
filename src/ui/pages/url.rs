@@ -42,6 +42,10 @@ pub fn issues(repo: &RepoId) -> String {
 pub fn pulls(repo: &RepoId) -> String {
     format!("{}/{repo}/pulls", base())
 }
+/// A branch's merge queue.
+pub fn merge_queue(repo: &RepoId, branch: &str) -> String {
+    format!("{}/{repo}/queue/{}", base(), encode_path(branch))
+}
 pub fn issue(repo: &RepoId, number: u64) -> String {
     format!("{}/{repo}/issues/{number}", base())
 }

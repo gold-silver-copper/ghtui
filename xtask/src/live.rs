@@ -133,7 +133,11 @@ impl Cx<'_> {
             let home = path(&self.env.work.join("xdg").join(dir));
             (format!("XDG_{}_HOME", dir.to_uppercase()), home)
         };
-        let mut env = vec![xdg("cache"), xdg("data"), xdg("state")];
+        // What `launch` sets wins over the run's own directories.
+        let mut env: Vec<(String, String)> = [xdg("cache"), xdg("data"), xdg("state")]
+            .into_iter()
+            .filter(|(k, _)| !launch.env.iter().any(|(set, _)| set == k))
+            .collect();
         env.extend(launch.env.iter().cloned());
         let cwd = launch.cwd.clone().unwrap_or_else(|| self.env.work.clone());
         let mut argv = vec![

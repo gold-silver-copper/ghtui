@@ -63,6 +63,7 @@ pub fn title(screen: &Screen) -> String {
             DiffOf::Pr(pr) => format!("{}#{} files", pr.repo.name, pr.number),
             DiffOf::Commit(_, oid) => format!("{} files", short_sha(oid)),
             DiffOf::Range(_, from, to) => format!("{}..{} files", short_sha(from), short_sha(to)),
+            DiffOf::Conflicts(pr, ..) => format!("{}#{} conflicts", pr.repo.name, pr.number),
         },
     }
 }
@@ -106,6 +107,8 @@ impl State {
     /// Opens `dest` in a new tab after this one, at its anchor. Pages in
     /// the browser just open there.
     pub fn open_tab(&mut self, Dest { target, anchor }: Dest) -> Cmds {
+        let find = anchor.as_deref() == Some(crate::route::code::FIND_FILE);
+        let anchor = anchor.filter(|_| !find);
         let (first, mut cmds) = match target {
             Target::Page(route) => {
                 let route = self.followed(route);
@@ -121,6 +124,9 @@ impl State {
         };
         self.push_tab(first);
         cmds.extend(self.opened_tab());
+        if find {
+            cmds.extend(self.open_finder(false));
+        }
         cmds
     }
 
@@ -148,7 +154,7 @@ impl State {
                 Some(_) | None => Target::Page(p.route.clone()).into(),
             },
             Screen::Diff(d) => Target::Page(match &d.of {
-                DiffOf::Pr(pr) => Route::pr(pr.clone()),
+                DiffOf::Pr(pr) | DiffOf::Conflicts(pr, ..) => Route::pr(pr.clone()),
                 DiffOf::Commit(repo, oid) => Route::Code(code::Commit {
                     repo: repo.clone(),
                     oid: oid.to_string(),

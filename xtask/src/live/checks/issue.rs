@@ -10,7 +10,7 @@ use crate::live::{Check, Cx, gh, until};
 
 pub const CHECK: Check = Check::new(
     "issue",
-    ",i creates an issue, c comments on it, a comment made on GitHub shows live, ,x closes it",
+    ":new issue creates an issue, c comments on it, a comment made on GitHub shows live, x closes it",
     run,
 );
 
@@ -23,8 +23,8 @@ fn run(cx: &mut Cx) -> Result<()> {
     let ghtui = cx.ghtui(&[gh::REPO])?;
     ghtui.wait_for("Pull requests")?;
 
-    cx.step(",i writes a new issue; ctrl-s creates it")?;
-    ghtui.keys(", i")?;
+    cx.step(":new issue writes a new issue; ctrl-s creates it")?;
+    ghtui.palette("new issue")?;
     ghtui.wait_for("New issue in")?;
     ghtui.type_text(&title)?;
     ghtui.keys("Enter")?;
@@ -78,8 +78,8 @@ fn run(cx: &mut Cx) -> Result<()> {
     ghtui.wait_for_within(&elsewhere, LIVE)?;
 
     ghtui.wait_followed()?;
-    cx.step(",x closes it as completed, after asking")?;
-    ghtui.keys(", x")?;
+    cx.step("x closes it as completed, after asking")?;
+    ghtui.keys("x")?;
     ghtui.wait_for("Close as completed")?;
     ghtui.keys("Enter")?;
     until("the issue closed on GitHub", GITHUB, || {

@@ -101,6 +101,11 @@ impl<'a, T: ?Sized> Fetched<'a, T> {
             (None, Some(err)) => {
                 // GitHub's own words may end in a full stop.
                 let err = err.trim_end_matches('.');
+                // A missing scope says what it guards and how to add it:
+                // trying again wouldn't help.
+                if err.contains("`gh auth refresh") {
+                    return Err(format!("{err}."));
+                }
                 let again = match self.retry {
                     "" => String::new(),
                     key => format!(". {key} tries again."),
@@ -158,5 +163,8 @@ mod tests {
         assert!(text.iter().any(|l| l.contains(why)), "{text:?}");
         let why = "Couldn't load it: the wrong kind of data";
         assert_eq!(wrong.text("it"), Err(why.to_owned()));
+        let lacks = crate::api::scope_missing("Projects", "read:project");
+        let denied = Fetched::<u8>::new_unchecked(None, false, Some(&lacks), "r");
+        assert_eq!(denied.text("the projects"), Err(format!("{lacks}.")));
     }
 }

@@ -412,6 +412,13 @@ pub fn sidebar() -> crate::api::edit::Sidebar {
             named("T_docs", "octo-org/docs"),
         ]
         .into())),
+        issue_type: Some(named("IT_bug", "Bug")),
+        issue_types: vec![
+            named("IT_bug", "Bug"),
+            named("IT_feature", "Feature"),
+            named("IT_task", "Task"),
+        ]
+        .into(),
     }
 }
 
@@ -671,6 +678,16 @@ pub fn blob() -> Blob {
     )
 }
 
+/// A repository's CODEOWNERS: everything is octocat's but the sources
+/// (a team's and hubot's) and the docs.
+pub fn codeowners() -> crate::api::codeowners::Codeowners {
+    let text = "* @octocat
+/src/ @octo-org/core @hubot
+*.md @octo-org/docs
+";
+    crate::api::codeowners::Codeowners::new(Some((".github/CODEOWNERS", text)), Some(Vec::new()))
+}
+
 /// The file at `path`, all of it.
 pub fn file(path: &str, text: &str) -> Blob {
     Blob {
@@ -790,6 +807,8 @@ pub fn team() -> TeamDetail {
     TeamDetail {
         team: team_summary("core", "Core", false),
         parent: Some(team_summary("maintainers", "Maintainers", false)),
+        can_admin: false,
+        maintainers: vec!["octocat".into()],
         members: Capped::new(
             vec![
                 member("octocat", Some("The Octocat")),
@@ -802,6 +821,7 @@ pub fn team() -> TeamDetail {
                 repo: RepoId::new("gold-silver-copper", "ghtui"),
                 description: "GitHub in the terminal".into(),
                 stars: 1200,
+                permission: Some(crate::api::settings::Permission::Write),
             }],
             2,
         ),
@@ -925,6 +945,64 @@ pub fn wiki() -> WikiPage {
         sidebar: Some("**[Home](Home)** · [FAQ](FAQ)".into()),
         commit: Some("4b7d0c2e9a1f3d5b6c8e0a2b4d6f8a0c2e4b6d8f".into()),
         file: Some("Home.md".into()),
+    }
+}
+/// main's merge queue: one merging, one waiting for its checks.
+pub fn merge_queue() -> crate::api::queue::MergeQueue {
+    use crate::api::model::QueueState;
+    use crate::api::queue::QueueEntry;
+    let entry = |position, state, number, title: &str| QueueEntry {
+        position,
+        state,
+        enqueued_at: "2026-10-01T12:00:00Z".into(),
+        by: Some("octocat".into()),
+        eta: Some(600),
+        solo: false,
+        jump: false,
+        number: Some(number),
+        title: title.into(),
+        author: Some("octocat".into()),
+    };
+    crate::api::queue::MergeQueue {
+        exists: true,
+        method: Some("SQUASH".into()),
+        entries: Capped::new(
+            vec![
+                entry(1, QueueState::Locked, 7, "Add thing"),
+                entry(2, QueueState::AwaitingChecks, 8, "Fix other thing"),
+            ],
+            2,
+        ),
+    }
+}
+/// A wiki's change to its Home and FAQ.
+fn wiki_revision() -> crate::api::browse::WikiRevision {
+    crate::api::browse::WikiRevision {
+        oid: "4b7d0c2e9a1f3d5b6c8e0a2b4d6f8a0c2e4b6d8f".into(),
+        author: "The Octocat".into(),
+        at: "2026-10-01T12:00:00Z".into(),
+        message: "Updated Home (markdown)".into(),
+        pages: vec!["Home".into(), "FAQ".into()],
+    }
+}
+/// A wiki's history: one change.
+pub fn wiki_history() -> crate::api::browse::WikiHistory {
+    crate::api::browse::WikiHistory {
+        page: None,
+        revisions: Capped::new(vec![wiki_revision()], 3),
+    }
+}
+/// What a wiki's change did to its Home.
+pub fn wiki_diff() -> crate::api::browse::WikiDiff {
+    let lines = ["@@ -1 +1 @@", "-Welcome.", "+Welcome to the wiki."];
+    crate::api::browse::WikiDiff {
+        to: wiki_revision(),
+        from: None,
+        files: vec![crate::api::browse::WikiFileDiff {
+            title: "Home".into(),
+            lines: lines.map(str::to_owned).to_vec(),
+        }],
+        cut: false,
     }
 }
 /// octocat's commit `oid`.
@@ -1348,7 +1426,13 @@ pub fn profile() -> Profile {
         ),
         star_count: 120,
         readme: Some("### Hi there 👋\n\nI'm the Octocat. I like **terminals**.\n".into()),
-        status: Some("🐙 Reviewing pull requests".into()),
+        status: Some(crate::api::browse::UserStatus {
+            emoji: Some("🐙".into()),
+            message: Some("Reviewing pull requests".into()),
+            ..Default::default()
+        }),
+        id: Some(NodeId::new("U_octocat")),
+        followed: Some(false),
         pronouns: Some("they/them".into()),
         socials: vec![(
             "@octocat@hachyderm.io".into(),
@@ -1460,6 +1544,8 @@ pub fn org_profile() -> Profile {
         ),
         verified: true,
         people: Capped::new(vec!["joshka".into(), "orhun".into(), "kdheepak".into()], 14),
+        id: Some(NodeId::new("O_ratatui")),
+        followed: Some(true),
         ..Default::default()
     }
 }
@@ -2327,6 +2413,7 @@ pub(crate) fn sample(key: &DataKey) -> Data {
         K::Readme(_) => Data::Readme(Some(Box::new(readme()))),
         K::Tree(..) => Data::Tree(tree()),
         K::Blob(..) => Data::from(blob()),
+        K::Codeowners(..) => Data::from(codeowners()),
         K::Search(kind, _) => Data::from(search(kind)),
         K::StateCounts(_) => {
             Data::StateCounts(crate::api::browse::StateCounts { open: 2, closed: 5 })
@@ -2350,12 +2437,14 @@ pub(crate) fn sample(key: &DataKey) -> Data {
         K::PrChecks(_) | K::CommitChecks(..) => Data::from(checks()),
         K::Users(_) => Data::from(people()),
         K::Forks(_) => Data::from(forks()),
-        K::OwnerRepos(..) | K::Stars(_) => Data::from(profile_repos()),
+        K::OwnerRepos(..) | K::Stars(_) | K::Watching => Data::from(profile_repos()),
         K::Releases(_) => Data::from(releases()),
         K::Release(..) => Data::from(release(true)),
         K::Tags(_) => Data::from(tags()),
         K::Branches(_) => Data::from(branches()),
         K::Wiki(..) => Data::from(wiki()),
+        K::WikiHistory(..) => Data::from(wiki_history()),
+        K::WikiDiff(..) => Data::from(wiki_diff()),
         K::Advisories(_) => {
             let items = advisories();
             let total = items.len() as u64;
@@ -2365,6 +2454,9 @@ pub(crate) fn sample(key: &DataKey) -> Data {
         K::Sidebar(..) => Data::from(sidebar()),
         K::Teams(_) => Data::from(teams()),
         K::Team(..) => Data::from(team()),
+        K::Members(_) => Data::from(crate::org::fixtures::members()),
+        K::OrgAccess(_) => Data::from(crate::org::fixtures::access(false)),
+        K::Invitations => Data::from(crate::invited::fixtures::none()),
         K::Gist(_) => Data::from(gist()),
         K::Gists(_) => Data::from(gists()),
         K::Blame(..) => Data::from(blame()),
@@ -2388,6 +2480,8 @@ pub(crate) fn sample(key: &DataKey) -> Data {
         K::Activity(_) => Data::from(site::activity()),
         K::Traffic(_) => Data::from(site::traffic()),
         K::Dependencies(_) => Data::from(site::dependencies()),
+        K::Community(_) => Data::from(site::community()),
+        K::MergeQueue(..) => Data::from(merge_queue()),
         K::Featured => Data::from(site::featured()),
         K::Topic(_) => Data::from(site::rust()),
         K::StarLists(_) => Data::from(site::star_lists()),

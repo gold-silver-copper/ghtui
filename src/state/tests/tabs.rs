@@ -187,7 +187,8 @@ fn plain_links_open_the_branch_github_names() {
     assert_eq!(route(&s), file);
     assert_eq!(s.screens.len(), depth, "in its place");
     let text = DataKey::Blob(ghtui(), "feature/x".into(), "src/lib.rs".into());
-    assert_eq!(fetches(cmds), vec![fetch(text)]);
+    let owners = DataKey::Codeowners(ghtui(), "feature/x".into());
+    assert_eq!(fetches(cmds), vec![fetch(owners), fetch(text)]);
 
     let base = "https://github.com/gold-silver-copper/ghtui";
     let _ = s.go(Dest::from_url(&format!("{base}/tree/feature/x/src")));

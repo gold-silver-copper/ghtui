@@ -183,7 +183,6 @@ impl Pane {
             bail!("stopped");
         }
         let mut cmd = self.fux.pane(&self.name);
-        cmd.arg("keys");
         for word in keys.split_whitespace() {
             let kind = if is_key(word) { "key" } else { "text" };
             cmd.args(["str", word, kind]);
@@ -206,10 +205,17 @@ impl Pane {
         bail!("`{keys}` doesn't select {what}")
     }
 
+    /// Runs the action `name` from the palette (`:`).
+    pub fn palette(&self, name: &str) -> Result<()> {
+        self.keys(":")?;
+        self.type_text(name)?;
+        self.keys("Enter")
+    }
+
     /// Types `text` as it is, then waits for the screen to settle.
     pub fn type_text(&self, text: &str) -> Result<()> {
         let mut cmd = self.fux.pane(&self.name);
-        cmd.args(["keys", "str", text, "text"]);
+        cmd.args(["str", text, "text"]);
         cmd.args(["10", "timeout", "send-keys"]);
         settled(&cmd.output()?, "typing")
     }
@@ -217,7 +223,7 @@ impl Pane {
     /// The screen, as text.
     pub fn screen(&self) -> Result<String> {
         let out = (self.fux.pane(&self.name))
-            .args(["opts", "json", "capture"])
+            .args(["capture", "json"])
             .output()?;
         check(&out, "fux capture-pane")?;
         let json: Value = serde_json::from_slice(&out.stdout)?;
@@ -236,7 +242,7 @@ impl Pane {
     /// The screen with highlights marked `⟦…⟧` (a selection, a menu's row).
     pub fn screen_marked(&self) -> Result<String> {
         let out = (self.fux.pane(&self.name))
-            .args(["opts", "marks", "capture"])
+            .args(["marks", "capture"])
             .output()?;
         check(&out, "fux capture-pane")?;
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
@@ -314,7 +320,7 @@ impl Pane {
             }
             let secs = left.as_secs().clamp(1, 2).to_string();
             let out = (self.fux.pane(&self.name))
-                .args(["opts", &secs, "timeout", "wait"])
+                .args([&secs, "timeout", "wait"])
                 .output()?;
             match out.status.code() {
                 Some(0 | 124) => {}
@@ -333,7 +339,7 @@ impl Pane {
     /// more, for what a reply that was on its way draws.
     fn wait_idle(&self) {
         let _ = (self.fux.pane(&self.name))
-            .args(["opts", "10", "timeout", "wait"])
+            .args(["10", "timeout", "wait"])
             .output();
         std::thread::sleep(Duration::from_secs(1));
     }

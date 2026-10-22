@@ -178,7 +178,8 @@ fn packages_say_what_the_token_lacks() {
         ),
     );
     let text = page_text(&s);
-    assert!(text.contains("gh auth refresh -s read:packages"), "{text}");
+    let said = text.contains("read:packages scope") && text.contains("gh auth refresh");
+    assert!(said, "{text}");
     let tabs = s.chrome();
     let active = tabs
         .active

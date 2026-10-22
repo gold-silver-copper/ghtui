@@ -549,6 +549,8 @@ async fn edits_send_their_mutations() {
         ok("removeAssigneesFromAssignable"),
         ok("requestReviews"),
         ok("updateIssue"),
+        ok("updateIssueIssueType"),
+        ok("updateIssueIssueType"),
     ])
     .await;
     let id = |s: &str| NodeId::new(s);
@@ -612,6 +614,14 @@ async fn edits_send_their_mutations() {
             id: id("I_3"),
             milestone: None,
         },
+        Edit::IssueType {
+            issue: id("I_3"),
+            issue_type: Some(named("IT_bug")),
+        },
+        Edit::IssueType {
+            issue: id("I_3"),
+            issue_type: None,
+        },
     ];
     for edit in edits {
         gh.change(&Change::Edit(edit)).await.unwrap();
@@ -663,7 +673,89 @@ async fn edits_send_their_mutations() {
     );
     field(11, "milestoneId: $milestone");
     assert_eq!(var(11, "milestone"), serde_json::Value::Null);
-    assert_eq!(sent.len(), 12);
+    field(
+        12,
+        "updateIssueIssueType(input: {issueId: $issue, issueTypeId: $issueType})",
+    );
+    assert_eq!(
+        (var(12, "issue"), var(12, "issueType")),
+        ("I_3".into(), "IT_bug".into())
+    );
+    assert_eq!(var(13, "issueType"), serde_json::Value::Null);
+    assert_eq!(sent.len(), 14);
+}
+
+/// Following names a user or an organization by its node ID; a status
+/// sends its emoji, message, busy flag and expiry, and clearing sends
+/// none of them.
+#[tokio::test]
+async fn follows_and_statuses_send_their_mutations() {
+    use ghtui::api::social::NewStatus;
+    let (gh, seen) = github(vec![
+        ok("followUser"),
+        ok("unfollowOrganization"),
+        ok("changeUserStatus"),
+        ok("changeUserStatus"),
+    ])
+    .await;
+    gh.follow(&NodeId::new("U_1"), false, true).await.unwrap();
+    gh.follow(&NodeId::new("O_1"), true, false).await.unwrap();
+    let status = NewStatus {
+        emoji: Some(":palm_tree:".into()),
+        message: "On vacation".into(),
+        busy: true,
+        expires_at: Some("2026-10-22T00:00:00Z".into()),
+    };
+    gh.set_status(Some(&status)).await.unwrap();
+    gh.set_status(None).await.unwrap();
+    let seen = seen.lock().unwrap();
+    let vars = |i: usize| seen[i].json()["variables"].clone();
+    assert!(seen[0].query().contains("followUser(input: {userId: $id})"));
+    assert_eq!(vars(0)["id"], "U_1");
+    assert!(
+        seen[1]
+            .query()
+            .contains("unfollowOrganization(input: {organizationId: $id})")
+    );
+    assert_eq!(vars(1)["id"], "O_1");
+    assert!(seen[2].query().contains("changeUserStatus"));
+    assert_eq!(
+        vars(2),
+        serde_json::json!({"emoji": ":palm_tree:", "message": "On vacation", "busy": true, "expires": "2026-10-22T00:00:00Z"})
+    );
+    assert_eq!(
+        vars(3),
+        serde_json::json!({"emoji": null, "message": null, "busy": false, "expires": null})
+    );
+    assert_eq!(seen.len(), 4);
+}
+
+/// The CODEOWNERS file GitHub reads is the first of its three places that
+/// has one, at the revision asked; its problems come along, and `HEAD`
+/// asks for the default branch's.
+#[tokio::test]
+async fn code_owners_are_the_first_file_found_with_its_problems() {
+    let reply = r#"{"data":{"repository":{
+      "github":null,
+      "root":{"text":"* @amy\n/src/ @o/core\n"},
+      "docs":{"text":"* @bob\n"},
+      "codeowners":{"errors":[{"line":2,"column":8,"kind":"Unknown owner","message":"Unknown owner on line 2","suggestion":""}]}}}}"#;
+    let (gh, seen) = github(vec![Reply::new(200, reply)]).await;
+    let owners = gh.codeowners(&RepoId::new("o", "r"), "HEAD").await.unwrap();
+    assert_eq!(owners.path.as_deref(), Some("CODEOWNERS"));
+    let rule = owners.owner("src/main.rs").unwrap();
+    assert_eq!(
+        (rule.line, rule.owners.as_slice()),
+        (2, ["@o/core".to_owned()].as_slice())
+    );
+    let errors = owners.errors.unwrap();
+    assert_eq!(errors.len(), 1);
+    assert_eq!((errors[0].line, errors[0].suggestion.as_deref()), (2, None));
+    let seen = seen.lock().unwrap();
+    let vars = &seen[0].json()["variables"];
+    assert_eq!(vars["github"], "HEAD:.github/CODEOWNERS");
+    assert_eq!(vars["docs"], "HEAD:docs/CODEOWNERS");
+    assert_eq!(vars["ref"], serde_json::Value::Null);
 }
 
 /// Managing an issue, a pull request or a discussion sends GitHub's own
@@ -875,6 +967,7 @@ async fn a_sidebar_keeps_what_its_teams_say() {
       "labels":{"totalCount":150,"nodes":[{"id":"L1","name":"bug"}]},
       "assignableUsers":{"totalCount":1,"nodes":[{"id":"U1","login":"amy"}]},
       "milestones":{"totalCount":0,"nodes":[]},
+      "issueTypes":{"totalCount":0,"nodes":[]},
       "owner":{"__typename":"Organization","login":"o"}}}}"#;
     let forbidden = r#"{"data":{"organization":null},"errors":[{"type":"FORBIDDEN",
       "path":["organization","teams"],"message":"Resource not accessible by personal access token"}]}"#;
@@ -1834,6 +1927,27 @@ async fn review_submission_calls() {
     assert!(seen[7].query().contains("resolveReviewThread"));
 }
 
+/// A suggestion's author as its commit's co-author: their name at the
+/// no-reply address GitHub links to their account, else their login's.
+#[tokio::test]
+async fn a_co_author_is_named_at_their_noreply_address() {
+    let (gh, seen) = github(vec![
+        Reply::new(200, r#"{"login":"alice","id":42,"name":"Alice Doe"}"#),
+        Reply::new(404, r#"{"message":"Not Found"}"#),
+    ])
+    .await;
+    assert_eq!(
+        gh.co_author("alice").await,
+        "Alice Doe <42+alice@users.noreply.github.com>"
+    );
+    assert_eq!(
+        gh.co_author("gone").await,
+        "gone <gone@users.noreply.github.com>"
+    );
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].request_line.starts_with("GET /users/alice "));
+}
+
 #[tokio::test]
 async fn last_review_commit_skips_pending_reviews() {
     let (gh, seen) = github(vec![
@@ -2188,7 +2302,7 @@ async fn a_missing_root_isnt_also_left_out() {
 async fn an_organizations_profile_leaves_nothing_out() {
     let (gh, _) = github(vec![Reply::new(
         200,
-        r#"{"data":{"user":null,"organization":{"login":"o","name":null,"description":null,"location":null,"websiteUrl":null,"pinnedItems":{"nodes":[]},"repositories":{"totalCount":0,"nodes":[]},"isVerified":false,"membersWithRole":{"totalCount":0,"nodes":[]}},"user_readme":null,"org_readme":null},
+        r#"{"data":{"user":null,"organization":{"id":"O_1","viewerIsFollowing":false,"login":"o","name":null,"description":null,"location":null,"websiteUrl":null,"pinnedItems":{"nodes":[]},"repositories":{"totalCount":0,"nodes":[]},"isVerified":false,"membersWithRole":{"totalCount":0,"nodes":[]}},"user_readme":null,"org_readme":null},
             "errors":[{"type":"NOT_FOUND","path":["user"],"message":"Could not resolve to a User with the login of 'o'."},
                       {"type":"NOT_FOUND","path":["user_readme"],"message":"Could not resolve to a Repository with the name 'o/o'."}]}"#,
     )])
@@ -2977,11 +3091,8 @@ async fn setting_a_project_field_sends_its_value() {
         .unwrap();
     gh.change(&set(None)).await.unwrap();
     match gh.change(&set(Some(done))).await {
-        Err(ApiError::GraphQl(errors)) => {
-            assert!(
-                errors[0].contains("gh auth refresh -s project"),
-                "{errors:?}"
-            );
+        Err(ApiError::Denied(why)) => {
+            assert!(why.contains("gh auth refresh -s project"), "{why}");
         }
         other => panic!("{other:?}"),
     }
@@ -3039,11 +3150,8 @@ async fn an_owners_projects_page_and_say_what_scope_they_need() {
     assert_eq!((found.total, found.next.as_deref()), (31, Some("p1")));
     assert_eq!(found.items[0].items, 12);
     match gh.projects(&owner, None).await {
-        Err(ApiError::GraphQl(errors)) => {
-            assert!(
-                errors[0].contains("gh auth refresh -s read:project"),
-                "{errors:?}"
-            );
+        Err(ApiError::Denied(why)) => {
+            assert!(why.contains("gh auth refresh -s read:project"), "{why}");
         }
         other => panic!("{other:?}"),
     }
@@ -3051,6 +3159,122 @@ async fn an_owners_projects_page_and_say_what_scope_they_need() {
     assert!(seen[0].query().contains("projectsV2(first: 30"));
     assert_eq!(seen[0].json()["variables"]["login"], "o");
     assert_eq!(seen[0].json()["variables"]["after"], "p0");
+}
+
+/// A token without read:project has its issue page refused whole, for the
+/// project events in its timeline: it's asked again without them, and
+/// loads, saying once which scope adds them; later queries leave them out
+/// from the start.
+#[tokio::test]
+async fn a_page_loads_without_what_a_missing_scope_guards() {
+    let refused = r#"{"errors":[{"type":"INSUFFICIENT_SCOPES","locations":[{"line":1,"column":176}],"message":"Your token has not been granted the required scopes to execute this query. The 'createdAt' field requires one of the following scopes: ['read:project'], but your token has only been granted the: ['gist', 'read:org', 'repo', 'workflow'] scopes. Please modify your token's scopes at: https://github.com/settings/tokens."}]}"#;
+    let recorded =
+        std::fs::read_to_string(common::corpus_dir().join("46904cf99e801d39.json")).unwrap();
+    let recorded: serde_json::Value = serde_json::from_str(&recorded).unwrap();
+    let issue = recorded["response"].as_str().unwrap();
+    let (gh, seen) = github(vec![
+        Reply::new(200, refused),
+        Reply::new(200, issue),
+        Reply::new(200, issue),
+    ])
+    .await;
+    let repo = RepoId::new("rust-lang", "rust");
+    let detail = gh.issue(&repo, 97).await.unwrap().unwrap();
+    assert_eq!(detail.number, 97);
+    let said = gh.take_missing();
+    assert!(
+        said.len() == 1 && said[0].contains("gh auth refresh -s read:project"),
+        "{said:?}"
+    );
+    gh.issue(&repo, 97).await.unwrap().unwrap();
+    assert!(gh.take_missing().is_empty(), "said once");
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].query().contains("AddedToProjectV2Event"));
+    for asked in &seen[1..] {
+        let query = asked.query();
+        assert!(!query.contains("ProjectV2"), "{query}");
+        assert!(!query.contains("PROJECT_V2"), "{query}");
+        assert!(query.contains("LABELED_EVENT"), "{query}");
+    }
+    assert_eq!(seen.len(), 3);
+}
+
+/// A repository's community standards are its community profile's,
+/// with its security policy, which the profile leaves out.
+#[tokio::test]
+async fn community_standards_are_the_profile_and_the_security_policy() {
+    let profile = r#"{"health_percentage":71,"description":"A TUI","documentation":null,"files":{"code_of_conduct":null,"code_of_conduct_file":null,"contributing":{"url":"u","html_url":"https://github.com/o/r/blob/main/CONTRIBUTING.md"},"issue_template":null,"pull_request_template":null,"license":{"key":"mit","name":"MIT License","spdx_id":"MIT","url":"u","html_url":"https://github.com/o/r/blob/main/LICENSE"},"readme":{"url":"u","html_url":"https://github.com/o/r/blob/main/README.md"}},"updated_at":"2026-10-01T00:00:00Z","content_reports_enabled":false}"#;
+    let policy =
+        r#"{"data":{"repository":{"securityPolicyUrl":"https://github.com/o/r/security/policy"}}}"#;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = common::answer_on(listener, move |seen| {
+        if seen
+            .request_line
+            .starts_with("GET /repos/o/r/community/profile ")
+        {
+            Reply::new(200, profile)
+        } else if seen.query().contains("securityPolicyUrl") {
+            Reply::new(200, policy)
+        } else {
+            Reply::new(404, r#"{"message":"Not Found"}"#)
+        }
+    });
+    let gh = client(&base, Store::disabled());
+    let c = gh.community(&RepoId::new("o", "r")).await.unwrap();
+    assert_eq!(c.health, 71);
+    let met = |name: &str| {
+        let s = c.standards.iter().find(|s| s.name == name).unwrap();
+        (s.done, s.url.as_deref(), s.note.as_deref())
+    };
+    assert_eq!(met("Description"), (true, None, None));
+    assert_eq!(
+        met("License"),
+        (
+            true,
+            Some("https://github.com/o/r/blob/main/LICENSE"),
+            Some("MIT License")
+        )
+    );
+    assert_eq!(
+        met("Code of conduct"),
+        (false, None, Some("CODE_OF_CONDUCT.md"))
+    );
+    assert_eq!(
+        met("Security policy"),
+        (true, Some("https://github.com/o/r/security/policy"), None)
+    );
+    assert_eq!(met("Content reports"), (false, None, None));
+}
+
+/// A branch's merge queue is asked by its name, with its entries in order; a
+/// branch without one says so.
+#[tokio::test]
+async fn a_merge_queue_lists_its_entries() {
+    use ghtui::api::model::QueueState;
+    let queue = r#"{"data":{"repository":{"mergeQueue":{"configuration":{"mergeMethod":"SQUASH"},"entries":{"totalCount":2,"nodes":[
+        {"position":1,"state":"LOCKED","enqueuedAt":"2026-10-01T12:00:00Z","estimatedTimeToMerge":120,"solo":false,"jump":true,"enqueuer":{"login":"alice"},"pullRequest":{"number":7,"title":"Add thing","author":{"login":"bob"}}},
+        {"position":2,"state":"AWAITING_CHECKS","enqueuedAt":"2026-10-01T12:05:00Z","estimatedTimeToMerge":null,"solo":true,"jump":false,"enqueuer":null,"pullRequest":null}]}}}}}"#;
+    let none = r#"{"data":{"repository":{"mergeQueue":null}}}"#;
+    let (gh, seen) = github(vec![Reply::new(200, queue), Reply::new(200, none)]).await;
+    let repo = RepoId::new("o", "r");
+    let q = gh.merge_queue(&repo, "main").await.unwrap();
+    assert_eq!(q.method.as_deref(), Some("SQUASH"));
+    let first = &q.entries.items[0];
+    assert_eq!(
+        (first.position, first.state, first.number),
+        (1, QueueState::Locked, Some(7))
+    );
+    assert_eq!(
+        (first.by.as_deref(), first.eta, first.jump),
+        (Some("alice"), Some(120), true)
+    );
+    let hidden = &q.entries.items[1];
+    assert_eq!((hidden.number, hidden.solo), (None, true));
+    let missing = gh.merge_queue(&repo, "dev").await.unwrap();
+    assert!(!missing.exists && missing.entries.items.is_empty());
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].query().contains("mergeQueue(branch: $branch)"));
+    assert_eq!(seen[0].json()["variables"]["branch"], "main");
 }
 
 // ---- the Security tab's alerts ------------------------------------------------
@@ -4255,4 +4479,337 @@ async fn settings_send_their_requests_and_read_their_pages() {
     assert!(line(9).starts_with("PATCH /repos/o/r "));
     assert_eq!(seen[9].json(), serde_json::json!({"archived": true}));
     assert!(line(10).starts_with("GET /repos/o/r/hooks?per_page=100 "));
+}
+
+/// Secrets, variables, caches, Pages and custom properties: each change
+/// sends GitHub's own request, and the Secrets page reads the
+/// repository's, an environment's and the organization's, with the keys
+/// they're sealed with.
+#[tokio::test]
+async fn actions_settings_send_their_requests_and_read_their_pages() {
+    use ghtui::api::change::Change;
+    use ghtui::api::settings::{
+        ActionsChange as A, PagesChange, PagesForm, PropValue, Settings, SettingsChange as C,
+        SettingsPage,
+    };
+    let key = r#"{"key_id":"568","key":"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(201, ""),
+        Reply::new(204, ""),
+        Reply::new(201, ""),
+        Reply::new(204, ""),
+        Reply::new(200, r#"{"total_count":0,"actions_caches":[]}"#),
+        Reply::new(204, ""),
+        Reply::new(204, ""),
+        Reply::new(
+            200,
+            r#"{"total_count":1,"secrets":[{"name":"API_TOKEN","created_at":"2026-09-01T10:00:00Z","updated_at":"2026-10-01T10:00:00Z"}]}"#,
+        )
+        .on("/actions/secrets?per_page"),
+        Reply::new(200, key).on("/actions/secrets/public-key"),
+        Reply::new(200, r#"{"total_count":1,"environments":[{"name":"prod env"}]}"#)
+            .on("/environments?per_page"),
+        Reply::new(
+            200,
+            r#"{"total_count":1,"secrets":[{"name":"ORG","visibility":"all","updated_at":"2026-10-01T10:00:00Z"}]}"#,
+        )
+        .on("organization-secrets"),
+        Reply::new(200, r#"{"total_count":0,"secrets":[]}"#).on("/prod%20env/secrets?"),
+        Reply::new(200, key).on("/prod%20env/secrets/public-key"),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let env = Some("prod env".to_owned());
+    let changes = [
+        C::Actions(A::SetSecret {
+            repo: repo.clone(),
+            env: None,
+            name: "API_TOKEN".into(),
+            sealed: "c2VhbGVk".into(),
+            key_id: "568".into(),
+            was: None,
+        }),
+        C::Actions(A::DeleteSecret {
+            repo: repo.clone(),
+            env: env.clone(),
+            name: "API_TOKEN".into(),
+        }),
+        C::Actions(A::SetVariable {
+            repo: repo.clone(),
+            env: None,
+            from: None,
+            name: "REGION".into(),
+            value: "eu".into(),
+        }),
+        C::Actions(A::SetVariable {
+            repo: repo.clone(),
+            env: env.clone(),
+            from: Some("REGION".into()),
+            name: "ZONE".into(),
+            value: "us".into(),
+        }),
+        C::Actions(A::DeleteCaches {
+            repo: repo.clone(),
+            key: "cargo linux".into(),
+            count: 2,
+        }),
+        C::Pages(PagesChange::Update {
+            repo: repo.clone(),
+            from: Box::new(PagesForm::default()),
+            to: Box::new(PagesForm {
+                domain: "docs.example.com".into(),
+                ..PagesForm::default()
+            }),
+        }),
+        C::SetProperties {
+            repo: repo.clone(),
+            values: vec![
+                ("env".into(), Some(PropValue::One("prod".into()))),
+                ("team".into(), None),
+            ],
+        },
+    ];
+    for change in changes {
+        gh.change(&Change::Settings(change)).await.unwrap();
+    }
+    let Settings::Secrets(secrets) = gh.settings(&repo, SettingsPage::Secrets).await.unwrap()
+    else {
+        panic!("not the secrets")
+    };
+    assert_eq!(secrets.repo.items[0].name, "API_TOKEN");
+    assert_eq!(secrets.key.as_ref().map(|k| k.key_id.as_str()), Some("568"));
+    assert_eq!(secrets.environments[0].name, "prod env");
+    assert!(secrets.environments[0].key.is_some());
+    let org = secrets.org.as_ref().unwrap().as_ref().unwrap();
+    assert_eq!(org.items[0].visibility.as_deref(), Some("all"));
+
+    let seen = seen.lock().unwrap();
+    let line = |n: usize| seen[n].request_line.clone();
+    assert!(line(0).starts_with("PUT /repos/o/r/actions/secrets/API_TOKEN "));
+    assert_eq!(
+        seen[0].json(),
+        serde_json::json!({"encrypted_value": "c2VhbGVk", "key_id": "568"})
+    );
+    assert!(line(1).starts_with("DELETE /repos/o/r/environments/prod%20env/secrets/API_TOKEN "));
+    assert!(line(2).starts_with("POST /repos/o/r/actions/variables "));
+    assert_eq!(
+        seen[2].json(),
+        serde_json::json!({"name": "REGION", "value": "eu"})
+    );
+    assert!(line(3).starts_with("PATCH /repos/o/r/environments/prod%20env/variables/REGION "));
+    assert_eq!(
+        seen[3].json(),
+        serde_json::json!({"name": "ZONE", "value": "us"})
+    );
+    assert!(line(4).starts_with("DELETE /repos/o/r/actions/caches?key=cargo%20linux "));
+    assert!(line(5).starts_with("PUT /repos/o/r/pages "));
+    assert_eq!(
+        seen[5].json(),
+        serde_json::json!({"cname": "docs.example.com"})
+    );
+    assert!(line(6).starts_with("PATCH /repos/o/r/properties/values "));
+    assert_eq!(
+        seen[6].json(),
+        serde_json::json!({"properties": [
+            {"property_name": "env", "value": "prod"},
+            {"property_name": "team", "value": null},
+        ]})
+    );
+}
+
+/// An organization's members come with their roles, and its owners'
+/// invitations with what the token may do; each change to its people
+/// and teams, and each answer to an invitation sent to you, is GitHub's
+/// request.
+#[tokio::test]
+async fn organization_changes_and_invitations_send_githubs_requests() {
+    use ghtui::api::advisory::{NewAdvisory, Severity};
+    use ghtui::api::change::Change;
+    use ghtui::api::org::{OrgChange as C, OrgRole};
+    use ghtui::api::settings::Permission;
+    let members = r#"{"data":{"organization":{"membersWithRole":{"totalCount":2,"pageInfo":{"hasNextPage":true,"endCursor":"c1"},"edges":[{"role":"ADMIN","node":{"login":"octocat","name":null}},{"role":null,"node":{"login":"hubot","name":"Hubot"}}]}}}}"#;
+    let access = r#"{"data":{"organization":{"viewerCanAdminister":true,"viewerCanCreateTeams":true,"viewerIsAMember":true}}}"#;
+    let invited = r#"[{"id":41,"login":null,"email":"a@example.com","role":"direct_member","created_at":"2026-10-01T00:00:00Z","failed_at":null,"inviter":{"login":"octocat"}}]"#;
+    let yours = r#"[{"id":77,"repository":{"full_name":"octocat/secret"},"inviter":{"login":"octocat"},"permissions":"write","created_at":"2026-10-01T00:00:00Z","expired":false}]"#;
+    let orgs = r#"[{"state":"pending","role":"member","organization":{"login":"octo-org"}}]"#;
+    let mut replies = vec![
+        Reply::new(200, members),
+        Reply::new(200, access),
+        Reply::new(200, invited).header("x-oauth-scopes", "repo, read:org"),
+        Reply::new(200, yours).on("/user/repository_invitations"),
+        Reply::new(200, orgs).on("/user/memberships/orgs"),
+    ];
+    replies.extend((0..11).map(|_| Reply::new(204, "")));
+    replies.push(Reply::new(201, r#"{"ghsa_id":"GHSA-aaaa-bbbb-cccc"}"#));
+    let (gh, seen) = github(replies).await;
+
+    let page = gh.members("octo-org", None).await.unwrap();
+    assert_eq!(page.items[0].role, Some(OrgRole::Owner));
+    assert_eq!(page.items[1].role, None);
+    assert_eq!(page.next.as_deref(), Some("c1"));
+    let a = gh.org_access("octo-org").await.unwrap();
+    assert!(a.admin && a.create_teams);
+    let listed = a.invitations.unwrap().unwrap();
+    assert_eq!(listed.items[0].who(), "a@example.com");
+    assert_eq!(listed.items[0].role, "Member");
+    assert!(
+        a.lacks.unwrap().contains("gh auth refresh -s admin:org"),
+        "read:org can't change its people"
+    );
+    let yours = gh.invitations().await.unwrap();
+    assert_eq!(yours.repos[0].permission, Some(Permission::Write));
+    assert_eq!(yours.orgs.unwrap()[0].org, "octo-org");
+
+    let (org, team) = ("octo-org".to_owned(), "core".to_owned());
+    let repo = RepoId::new("octo-org", "app");
+    let changes = [
+        C::SetMember {
+            org: org.clone(),
+            login: "hubot".into(),
+            role: OrgRole::Owner,
+            invite: false,
+        },
+        C::InviteEmail {
+            org: org.clone(),
+            email: "mona@example.com".into(),
+            role: OrgRole::Member,
+        },
+        C::RemoveMember {
+            org: org.clone(),
+            login: "hubot".into(),
+        },
+        C::CancelInvitation {
+            org: org.clone(),
+            id: 41,
+            who: "a@example.com".into(),
+        },
+        C::CreateTeam {
+            org: org.clone(),
+            name: "Docs".into(),
+            secret: true,
+        },
+        C::SetTeamMember {
+            org: org.clone(),
+            team: team.clone(),
+            login: "mona".into(),
+            maintainer: true,
+            add: true,
+        },
+        C::RemoveTeamMember {
+            org: org.clone(),
+            team: team.clone(),
+            login: "mona".into(),
+        },
+        C::SetTeamRepo {
+            org: org.clone(),
+            team: team.clone(),
+            repo: repo.clone(),
+            permission: Permission::Maintain,
+            add: true,
+        },
+        C::RemoveTeamRepo {
+            org: org.clone(),
+            team,
+            repo,
+        },
+        C::AnswerRepo {
+            id: 77,
+            repo: RepoId::new("octocat", "secret"),
+            accept: true,
+        },
+        C::JoinOrg { org },
+    ];
+    for change in changes {
+        gh.change(&Change::Org(change)).await.unwrap();
+    }
+    let advisory = NewAdvisory {
+        summary: "Path traversal".into(),
+        description: "It escapes.".into(),
+        ecosystem: "rust".into(),
+        package: "app".into(),
+        affected: "< 1.0".into(),
+        patched: String::new(),
+        severity: Severity::Level("high".into()),
+        cve: None,
+        cwes: vec!["CWE-22".into()],
+    };
+    let ghsa = gh
+        .draft_advisory(&RepoId::new("o", "r"), &advisory)
+        .await
+        .unwrap();
+    assert_eq!(ghsa, "GHSA-aaaa-bbbb-cccc");
+
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].query().contains("membersWithRole(first: 30"));
+    assert!(
+        seen[2]
+            .request_line
+            .starts_with("GET /orgs/octo-org/invitations?per_page=100 ")
+    );
+    let writes: Vec<(String, Option<serde_json::Value>)> = (seen.iter().skip(5))
+        .map(|s| {
+            let line = s
+                .request_line
+                .rsplit_once(' ')
+                .map_or("", |(l, _)| l)
+                .to_owned();
+            (line, (!s.body.is_empty()).then(|| s.json()))
+        })
+        .collect();
+    let json = |v: serde_json::Value| Some(v);
+    assert_eq!(
+        writes,
+        [
+            (
+                "PUT /orgs/octo-org/memberships/hubot".into(),
+                json(serde_json::json!({"role": "admin"}))
+            ),
+            (
+                "POST /orgs/octo-org/invitations".into(),
+                json(serde_json::json!({"email": "mona@example.com", "role": "direct_member"})),
+            ),
+            ("DELETE /orgs/octo-org/members/hubot".into(), None),
+            ("DELETE /orgs/octo-org/invitations/41".into(), None),
+            (
+                "POST /orgs/octo-org/teams".into(),
+                json(serde_json::json!({"name": "Docs", "privacy": "secret"}))
+            ),
+            (
+                "PUT /orgs/octo-org/teams/core/memberships/mona".into(),
+                json(serde_json::json!({"role": "maintainer"}))
+            ),
+            (
+                "DELETE /orgs/octo-org/teams/core/memberships/mona".into(),
+                None
+            ),
+            (
+                "PUT /orgs/octo-org/teams/core/repos/octo-org/app".into(),
+                json(serde_json::json!({"permission": "maintain"}))
+            ),
+            (
+                "DELETE /orgs/octo-org/teams/core/repos/octo-org/app".into(),
+                None
+            ),
+            ("PATCH /user/repository_invitations/77".into(), None),
+            (
+                "PATCH /user/memberships/orgs/octo-org".into(),
+                json(serde_json::json!({"state": "active"}))
+            ),
+            (
+                "POST /repos/o/r/security-advisories".into(),
+                json(serde_json::json!({
+                    "summary": "Path traversal",
+                    "description": "It escapes.",
+                    "severity": "high",
+                    "cve_id": null,
+                    "cwe_ids": ["CWE-22"],
+                    "vulnerabilities": [{
+                        "package": {"ecosystem": "rust", "name": "app"},
+                        "vulnerable_version_range": "< 1.0",
+                        "patched_versions": null,
+                    }],
+                }))
+            ),
+        ]
+    );
 }

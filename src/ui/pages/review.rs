@@ -36,7 +36,7 @@ pub fn pr_review(
     open_threads(page, glance.threads, glance.fresh, cx.now);
     reviewers(page, pr, d, activity);
     all_reviews(page, pr, d, glance, cx.now);
-    merge_box(page, pr, d, cx.icons, false);
+    merge_box(page, pr, d, cx, false);
 }
 
 /// Who has reviewed and what they said last (an approval of an older

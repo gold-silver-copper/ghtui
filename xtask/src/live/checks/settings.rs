@@ -14,19 +14,19 @@ use crate::live::{Check, Cx, Launch, gh, path, until};
 
 pub const CHECK: Check = Check::new(
     "settings",
-    ",n protects ghtui-live- branches with a rule written in the form, ,D deletes it; main's rule stays as it was",
+    "a protects ghtui-live- branches with a rule written in the form, D deletes it; main's rule stays as it was",
     run,
 )
 .sweep(sweep);
 
 const GITHUB: Duration = Duration::from_secs(30);
 
-fn settings_url(page: &str) -> String {
+pub(super) fn settings_url(page: &str) -> String {
     format!("https://github.com/{}/settings{page}", gh::REPO)
 }
 
 /// ghtui with `$EDITOR` applying the sed script at `edits`.
-fn launch(cx: &mut Cx, url: &str, edits: &Path) -> Result<Pane> {
+pub(super) fn launch(cx: &mut Cx, url: &str, edits: &Path) -> Result<Pane> {
     let editor = format!("sed -i -f '{}'", path(edits));
     let env = [
         ("EDITOR".to_owned(), editor.clone()),
@@ -37,7 +37,7 @@ fn launch(cx: &mut Cx, url: &str, edits: &Path) -> Result<Pane> {
 
 /// Writes `script` for the next `ctrl-e`, then opens the form in it and
 /// asks to save it: the confirmation saying `asks` shows.
-fn write_form(ghtui: &Pane, edits: &Path, script: &str, asks: &str) -> Result<()> {
+pub(super) fn write_form(ghtui: &Pane, edits: &Path, script: &str, asks: &str) -> Result<()> {
     std::fs::write(edits, script)?;
     ghtui.keys("C-e")?;
     ghtui.wait_for("ctrl-s")?;
@@ -47,12 +47,12 @@ fn write_form(ghtui: &Pane, edits: &Path, script: &str, asks: &str) -> Result<()
 }
 
 /// Moves the selection to the row showing `text`.
-fn select_row(ghtui: &Pane, text: &str) -> Result<()> {
+pub(super) fn select_row(ghtui: &Pane, text: &str) -> Result<()> {
     ghtui.keys("g g")?;
     if selected(&ghtui.screen_marked()?, text) {
         return Ok(());
     }
-    ghtui.select("}", text, |s| selected(s, text))
+    ghtui.select("Down", text, |s| selected(s, text))
 }
 
 fn selected(screen: &str, text: &str) -> bool {
@@ -91,8 +91,8 @@ fn run(cx: &mut Cx) -> Result<()> {
     ghtui.wait_for("Branch protection rules")?;
     ghtui.wait_followed()?;
 
-    cx.step(",n writes a new rule in the form; it's named before it's made")?;
-    ghtui.keys(", n")?;
+    cx.step("a writes a new rule in the form; it's named before it's made")?;
+    ghtui.keys("a")?;
     ghtui.wait_for("New branch protection rule")?;
     write_form(
         &ghtui,
@@ -120,9 +120,9 @@ fn run(cx: &mut Cx) -> Result<()> {
     ghtui.wait_for(&pattern)?;
     ghtui.wait_followed()?;
 
-    cx.step(",D deletes it, after asking")?;
+    cx.step("D deletes it, after asking")?;
     select_row(&ghtui, &pattern)?;
-    ghtui.keys(", D")?;
+    ghtui.keys("D")?;
     ghtui.wait_for(&format!("Delete the protection rule for {pattern}?"))?;
     ghtui.keys("Enter")?;
     until("the rule gone from GitHub", GITHUB, || {

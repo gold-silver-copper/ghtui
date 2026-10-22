@@ -49,7 +49,9 @@ impl Family for Page {
     }
 
     fn needs(&self) -> Vec<DataKey> {
-        self.paged().into_iter().collect()
+        // The inbox lists the invitations sent to you first.
+        let invited = matches!(self, Notifications { .. }).then_some(DataKey::Invitations);
+        invited.into_iter().chain(self.paged()).collect()
     }
 
     fn paged(&self) -> Option<DataKey> {
@@ -118,7 +120,10 @@ impl Family for Page {
                 let results = b.list(self.paged());
                 pages::search(page, *kind, query, results, cx.icons, cx.keys, now);
             }
-            Notifications { query } => pages::notifications(page, query, b.list(self.paged()), cx),
+            Notifications { query } => {
+                let invited = b.state.picked(&DataKey::Invitations);
+                pages::notifications(page, query, b.list(self.paged()), invited, cx);
+            }
         }
     }
 }

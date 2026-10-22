@@ -1,5 +1,6 @@
-//! People: a profile at one of its tabs, an organization's teams, and a
-//! repository's stargazers, watchers and forks.
+//! People: a profile at one of its tabs, an organization's teams, a
+//! repository's stargazers, watchers and forks, an invitation sent to
+//! you, and the repositories you watch.
 
 use super::{Family, RESERVED, Route, Target, Url, valid_login, valid_slug};
 use crate::api::browse::{RepoSort, UserList};
@@ -25,6 +26,17 @@ pub enum Page {
         org: String,
         slug: String,
     },
+    /// An invitation sent to you ([`crate::invited`]).
+    Invitation(Invite),
+    /// The repositories you watch.
+    Watching,
+}
+
+/// What an invitation sent to you is to join.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Invite {
+    Repo(RepoId),
+    Org(String),
 }
 
 pub use Page::*;
@@ -52,33 +64,42 @@ impl Family for Page {
             Forks(repo) => format!("{}/forks", links::repo(repo)),
             Teams(org) => format!("{}/orgs/{org}/teams", links::base()),
             Team { org, slug } => format!("{}/orgs/{org}/teams/{slug}", links::base()),
+            Invitation(Invite::Repo(repo)) => format!("{}/invitations", links::repo(repo)),
+            Invitation(Invite::Org(org)) => format!("{}/orgs/{org}/invitation", links::base()),
+            Watching => format!("{}/watching", links::base()),
         }
     }
 
     fn title(&self) -> String {
         match self {
             User { login, .. } => format!("@{login}"),
+            Watching => "Watching".to_owned(),
             Stargazers(repo) => format!("{repo} · Stargazers"),
             Watchers(repo) => format!("{repo} · Watchers"),
             Forks(repo) => format!("{repo} · Forks"),
             Teams(org) => format!("@{org} · Teams"),
             Team { org, slug } => format!("@{org}/{slug}"),
+            Invitation(Invite::Repo(repo)) => format!("Invitation to {repo}"),
+            Invitation(Invite::Org(org)) => format!("Invitation to @{org}"),
         }
     }
 
     fn repo(&self) -> Option<&RepoId> {
         match self {
             Stargazers(repo) | Watchers(repo) | Forks(repo) => Some(repo),
-            User { .. } | Teams(_) | Team { .. } => None,
+            User { .. } | Teams(_) | Team { .. } | Invitation(_) | Watching => None,
         }
     }
 
     fn up(&self, _: &State) -> Option<Route> {
         Some(match self {
-            User { .. } => Route::App(super::app::Home),
+            User { .. } | Watching => Route::App(super::app::Home),
             Stargazers(repo) | Watchers(repo) | Forks(repo) => Route::code(repo.clone()),
             Teams(login) => Route::user(login),
             Team { org, .. } => Route::People(Teams(org.clone())),
+            Invitation(_) => Route::Search(super::search::Notifications {
+                query: String::new(),
+            }),
         })
     }
 
@@ -88,8 +109,12 @@ impl Family for Page {
                 // A user's lists show above what they starred.
                 let lists =
                     (*tab == ProfileTab::Stars).then(|| DataKey::StarLists(login.to_lowercase()));
+                // What you may change of an organization's people.
+                let access =
+                    (*tab == ProfileTab::People).then(|| DataKey::OrgAccess(login.to_lowercase()));
                 std::iter::once(DataKey::Profile(login.to_lowercase()))
                     .chain(lists)
+                    .chain(access)
                     .chain(self.paged())
                     .collect()
             }
@@ -98,8 +123,15 @@ impl Family for Page {
                     .chain(self.paged())
                     .collect()
             }
-            Teams(_) => self.paged().into_iter().collect(),
-            Team { org, slug } => vec![DataKey::Team(org.to_lowercase(), slug.clone())],
+            Teams(org) => (self.paged().into_iter())
+                .chain([DataKey::OrgAccess(org.to_lowercase())])
+                .collect(),
+            Watching => self.paged().into_iter().collect(),
+            Team { org, slug } => vec![
+                DataKey::Team(org.to_lowercase(), slug.clone()),
+                DataKey::OrgAccess(org.to_lowercase()),
+            ],
+            Invitation(_) => vec![DataKey::Invitations],
         }
     }
 
@@ -113,14 +145,15 @@ impl Family for Page {
                     ProfileTab::Stars => DataKey::Stars(login),
                     ProfileTab::Followers => DataKey::Users(UserList::Followers(login)),
                     ProfileTab::Following => DataKey::Users(UserList::Following(login)),
-                    ProfileTab::People => DataKey::Users(UserList::People(login)),
+                    ProfileTab::People => DataKey::Members(login),
                 }
             }
             Stargazers(repo) => DataKey::Users(UserList::Stargazers(repo.clone())),
             Watchers(repo) => DataKey::Users(UserList::Watchers(repo.clone())),
             Forks(repo) => DataKey::Forks(repo.clone()),
             Teams(org) => DataKey::Teams(org.to_lowercase()),
-            Team { .. } => return None,
+            Watching => DataKey::Watching,
+            Team { .. } | Invitation(_) => return None,
         })
     }
 
@@ -135,6 +168,7 @@ impl Family for Page {
                 c.crumb(org, user(org));
                 c.crumb("Teams", None);
             }
+            Watching => c.crumb("Watching", None),
             Team { org, slug } => {
                 c.crumb(org, user(org));
                 c.crumb(
@@ -146,6 +180,7 @@ impl Family for Page {
             Stargazers(repo) | Watchers(repo) | Forks(repo) => {
                 state.repo_chrome(repo, self.section(), c);
             }
+            Invitation(_) => c.crumb("Invitation", None),
         }
     }
 
@@ -154,9 +189,14 @@ impl Family for Page {
         match self {
             User { login, tab } => {
                 let key = DataKey::Profile(login.to_lowercase());
+                let hint = crate::org::hint(b.state, &crate::org::At::People(login.clone()));
                 if let Some(p) = b.get(&key).show(page, &self.title()) {
                     let list = match self.paged() {
                         Some(key @ DataKey::Users(_)) => ProfileList::People(b.get(&key)),
+                        Some(key @ DataKey::Members(_)) => {
+                            let access = DataKey::OrgAccess(login.to_lowercase());
+                            ProfileList::Members(b.get(&key), b.state.picked(&access), &hint)
+                        }
                         Some(key) if *tab == ProfileTab::Stars => {
                             let lists = b.get(&DataKey::StarLists(login.to_lowercase()));
                             ProfileList::Starred(lists, b.get(&key))
@@ -183,6 +223,7 @@ impl Family for Page {
                 pages::people_list(page, "Watchers", b.list(self.paged()), "Nobody here yet.");
             }
             Forks(_) => pages::repos(page, "Forks", b.list(self.paged()), now),
+            Watching => pages::repos(page, "Watching", b.list(self.paged()), now),
             Teams(org) => pages::teams(page, org, b.list(self.paged())),
             Team { org, slug } => {
                 let key = DataKey::Team(org.to_lowercase(), slug.clone());
@@ -190,6 +231,7 @@ impl Family for Page {
                     pages::team(page, org, t);
                 }
             }
+            Invitation(invite) => crate::invited::build(b, page, invite),
         }
     }
 }
@@ -210,16 +252,20 @@ pub(super) fn parse(url: &Url<'_>) -> Option<Target> {
     };
     let page = match url.segments {
         ["stars", login] => user(login, ProfileTab::Stars),
+        ["watching"] => Watching,
         ["orgs", login] => user(login, ProfileTab::Overview),
-        ["orgs", org, "teams"] => Teams((*org).to_owned()),
-        // GitHub's form for a new team.
-        ["orgs", _, "teams", "new"] => return None,
+        // A new team is made on the list (`a`).
+        ["orgs", org, "teams"] | ["orgs", org, "teams", "new"] => Teams((*org).to_owned()),
         // Its members, repositories and child teams are on its page.
         ["orgs", org, "teams", slug, ..] if valid_slug(slug) => Team {
             org: (*org).to_owned(),
             slug: (*slug).to_owned(),
         },
-        ["orgs", login, "people"] => user(login, ProfileTab::People),
+        // Its owners see the invitations waiting under its people.
+        ["orgs", login, "people"] | ["orgs", login, "people", "pending_invitations"] => {
+            user(login, ProfileTab::People)
+        }
+        ["orgs", org, "invitation"] => Invitation(Invite::Org((*org).to_owned())),
         ["orgs", login, "repositories"] => user(login, repos()),
         [login] if !RESERVED.contains(login) && valid_login(login) => {
             let tab = match tab.as_deref() {
@@ -245,6 +291,7 @@ pub(super) fn parse_repo(repo: &RepoId, rest: &[&str], _: &Url<'_>) -> Option<Ta
         ["stargazers"] => Stargazers(repo),
         ["watchers"] => Watchers(repo),
         ["forks"] | ["network", "members"] => Forks(repo),
+        ["invitations"] => Invitation(Invite::Repo(repo)),
         _ => return None,
     };
     Some(Target::Page(Route::People(page)))
@@ -276,6 +323,9 @@ pub(crate) fn arb() -> impl proptest::strategy::Strategy<Value = Route> {
         (login(), segment())
             .prop_filter("not the new-team form", |(_, slug)| slug != "new")
             .prop_map(|(org, slug)| Team { org, slug }),
+        repo().prop_map(|r| Invitation(Invite::Repo(r))),
+        login().prop_map(|o| Invitation(Invite::Org(o))),
+        Just(Watching),
     ];
     page.prop_map(Route::People)
 }

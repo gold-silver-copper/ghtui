@@ -67,6 +67,11 @@ pub(super) fn more() -> Vec<(&'static str, State)> {
         ("diff loading", diff_loading),
         ("settings", super::settings::on(SettingsPage::Branches)),
         ("webhook", super::settings::on(SettingsPage::Hook(11))),
+        ("secrets", super::settings::on(SettingsPage::Secrets)),
+        ("variables", super::settings::on(SettingsPage::Variables)),
+        ("pages", super::settings::on(SettingsPage::Pages)),
+        ("caches", super::settings::on(SettingsPage::Caches)),
+        ("properties", super::settings::on(SettingsPage::Properties)),
         (
             "alerts",
             super::security::with_alerts(AlertKind::Dependabot),

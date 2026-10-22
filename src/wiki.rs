@@ -3,7 +3,8 @@
 //! reads them through git, cloned into its cache like diffs.
 
 use crate::api::ApiError;
-use crate::api::browse::WikiPage;
+use crate::api::browse::{WikiDiff, WikiFileDiff, WikiHistory, WikiPage, WikiRevision};
+use crate::api::model::Capped;
 use crate::api::model::RepoId;
 use crate::git::commit;
 use crate::git::repo::Repo;
@@ -70,28 +71,211 @@ pub async fn page(
     repo: &RepoId,
     page: Option<&str>,
 ) -> Result<WikiPage, ApiError> {
-    let unread = |err: &dyn std::fmt::Display| ApiError::Git(format!("{repo}'s wiki: {err}"));
-    let failed = |err: &crate::git::GitError| {
-        if absent(err) {
+    let wiki = fetched(git, repo).await?;
+    read(&wiki, page).await.map_err(|e| unread(repo, e))
+}
+
+/// The wiki's clone, with GitHub's latest pages fetched (offline, those
+/// fetched before).
+async fn fetched(git: &GitContext, repo: &RepoId) -> Result<Repo, ApiError> {
+    let failed = |err: crate::git::GitError| {
+        if absent(&err) {
             // GitHub makes a wiki's repository only with its first page.
             ApiError::NotFound(format!(
                 "{repo}'s wiki: it's turned off, or has no pages yet (GitHub makes the first on github.com)"
             ))
         } else {
-            unread(err)
+            unread(repo, Read::Git(err))
         }
     };
-    let wiki = open(git, repo).await.map_err(|e| failed(&e))?;
-    // Offline, the pages fetched before still read.
+    let wiki = open(git, repo).await.map_err(failed)?;
     if let Err(err) = wiki.fetch_head(HEAD, &|_| {}).await
         && !wiki.has(HEAD).await
     {
-        return Err(failed(&err));
+        return Err(failed(err));
     }
-    read(&wiki, page).await.map_err(|e| match e {
-        Read::Git(err) => unread(&err),
+    Ok(wiki)
+}
+
+/// What a failed read of `repo`'s wiki says.
+fn unread(repo: &RepoId, err: Read) -> ApiError {
+    match err {
+        Read::Git(err) => ApiError::Git(format!("{repo}'s wiki: {err}")),
         Read::NoPage(wanted) => ApiError::NotFound(format!("{repo}'s wiki has no page {wanted}")),
+    }
+}
+
+/// The most revisions a history lists.
+const REVISIONS: usize = 100;
+
+/// The most lines of a diff shown.
+const DIFF_LINES: usize = 5000;
+
+/// How `git log` and `git show` print a revision for [`revisions`].
+const REVISION: &str = "--format=%x1e%H%x1f%aN%x1f%aI%x1f%s";
+
+/// The wiki's history, or a page's (by its title), newest first.
+pub async fn history(
+    git: &GitContext,
+    repo: &RepoId,
+    page: Option<&str>,
+) -> Result<WikiHistory, ApiError> {
+    history_in(&fetched(git, repo).await?, repo, page).await
+}
+
+/// [`history`], in the wiki's clone.
+async fn history_in(
+    wiki: &Repo,
+    repo: &RepoId,
+    page: Option<&str>,
+) -> Result<WikiHistory, ApiError> {
+    let file = file_of(wiki, page).await.map_err(|e| unread(repo, e))?;
+    let failed = |e: crate::git::GitError| unread(repo, Read::Git(e));
+    let max = format!("--max-count={REVISIONS}");
+    let mut log = vec!["log", REVISION, "--name-only", max.as_str(), HEAD];
+    let mut count = vec!["rev-list", "--count", HEAD];
+    if let Some(file) = &file {
+        log.extend(["--", file.as_str()]);
+        count.extend(["--", file.as_str()]);
+    }
+    let revisions = revisions(&wiki.run(&log).await.map_err(failed)?);
+    let total = wiki.run(&count).await.map_err(failed)?;
+    Ok(WikiHistory {
+        page: page.map(str::to_owned),
+        revisions: Capped::new(revisions, total.trim().parse().unwrap_or(0)),
     })
+}
+
+/// The page's file (none without a page: the whole wiki).
+async fn file_of(wiki: &Repo, page: Option<&str>) -> Result<Option<String>, Read> {
+    let Some(page) = page else { return Ok(None) };
+    match read(wiki, Some(page)).await?.file {
+        Some(file) => Ok(Some(file)),
+        None => Err(Read::NoPage(page.to_owned())),
+    }
+}
+
+/// [`REVISION`]'s revisions, each `␞oid␟author␟date␟subject` and the
+/// files it changed.
+fn revisions(out: &str) -> Vec<WikiRevision> {
+    out.split('\u{1e}')
+        .filter_map(|record| {
+            let mut lines = record.lines();
+            let mut f = lines.next()?.split('\u{1f}');
+            let (oid, author, at) = (f.next()?, f.next()?, f.next()?);
+            let pages = lines
+                .filter_map(|l| page_file(l.trim()))
+                .map(|(title, _)| title_of(title).to_owned())
+                .collect();
+            Some(WikiRevision {
+                oid: oid.to_owned(),
+                author: author.to_owned(),
+                at: at.to_owned(),
+                message: f.next().unwrap_or_default().to_owned(),
+                pages,
+            })
+        })
+        .collect()
+}
+
+/// A wiki's revisions as its compare URL names them: one (what it
+/// changed), or two (`a...b`: what changed from one to the other).
+/// Only SHAs: anything else names no revision.
+pub fn compared(spec: &str) -> Option<(Option<&str>, &str)> {
+    let sha = |s: &str| (4..=40).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_hexdigit());
+    match spec.split_once("...").or_else(|| spec.split_once("..")) {
+        Some((a, b)) => (sha(a) && sha(b)).then_some((Some(a), b)),
+        None => sha(spec).then_some((None, spec)),
+    }
+}
+
+/// What the wiki's revisions `spec` ([`compared`]) changed, of a page
+/// (by its title) or of all of them.
+pub async fn diff(
+    git: &GitContext,
+    repo: &RepoId,
+    page: Option<&str>,
+    spec: &str,
+) -> Result<WikiDiff, ApiError> {
+    if compared(spec).is_none() {
+        return Err(ApiError::NotFound(format!("{repo}'s wiki revision {spec}")));
+    }
+    diff_in(&fetched(git, repo).await?, repo, page, spec).await
+}
+
+/// [`diff`], in the wiki's clone.
+async fn diff_in(
+    wiki: &Repo,
+    repo: &RepoId,
+    page: Option<&str>,
+    spec: &str,
+) -> Result<WikiDiff, ApiError> {
+    let missing = |rev: &str| ApiError::NotFound(format!("{repo}'s wiki revision {rev}"));
+    let (from, to) = compared(spec).ok_or_else(|| missing(spec))?;
+    let file = file_of(wiki, page).await.map_err(|e| unread(repo, e))?;
+    let failed = |e: crate::git::GitError| unread(repo, Read::Git(e));
+    let commit = format!("{to}^{{commit}}");
+    let shown = wiki.run(&["show", "--no-patch", REVISION, &commit]).await;
+    let to = (revisions(&shown.map_err(|_| missing(to))?)
+        .into_iter()
+        .next())
+    .ok_or_else(|| missing(to))?;
+    let mut args = match from {
+        // A first revision has no parent: `show` diffs it with nothing.
+        None => vec![
+            "show",
+            "--format=",
+            "--patch",
+            "--no-color",
+            "--no-ext-diff",
+            &to.oid,
+        ],
+        Some(from) => vec!["diff", "--no-color", "--no-ext-diff", from, &to.oid],
+    };
+    if let Some(file) = &file {
+        args.extend(["--", file.as_str()]);
+    }
+    let out = wiki.run(&args).await.map_err(failed)?;
+    let (files, cut) = file_diffs(&out);
+    Ok(WikiDiff {
+        from: from.map(str::to_owned),
+        to,
+        files,
+        cut,
+    })
+}
+
+/// A patch's files, by their pages' titles, and whether it was cut
+/// short ([`DIFF_LINES`]).
+fn file_diffs(patch: &str) -> (Vec<WikiFileDiff>, bool) {
+    let mut files: Vec<WikiFileDiff> = Vec::new();
+    let mut shown = 0;
+    let mut hunks = false;
+    for line in patch.lines() {
+        if let Some(paths) = line.strip_prefix("diff --git ") {
+            let path = paths.rsplit_once(" b/").map_or(paths, |(_, b)| b);
+            let title = page_file(path).map_or(path, |(t, _)| title_of(t));
+            files.push(WikiFileDiff {
+                title: title.to_owned(),
+                lines: Vec::new(),
+            });
+            hunks = false;
+            continue;
+        }
+        // The header's `index`, `---` and `+++` lines say nothing here.
+        hunks |= line.starts_with("@@");
+        if !hunks {
+            continue;
+        }
+        if shown == DIFF_LINES {
+            return (files, true);
+        }
+        if let Some(file) = files.last_mut() {
+            file.lines.push(line.to_owned());
+            shown += 1;
+        }
+    }
+    (files, false)
 }
 
 /// Why a page couldn't be read.
@@ -527,5 +711,46 @@ mod tests {
         assert_eq!(page.text.as_deref(), Some("Steps.\n"));
         let again = save_in(&ours, &new).await.unwrap_err();
         assert!(again.contains("has a page named"), "{again}");
+    }
+
+    /// The history lists the wiki's changes newest first (a page's, only
+    /// its own), and a change, or two revisions apart, show what changed
+    /// page by page; a revision that isn't a SHA names nothing.
+    #[tokio::test]
+    async fn a_wikis_history_and_changes_come_from_git() {
+        let (_dir, ours, theirs) = wiki_setup().await;
+        push_page(&theirs, "FAQ.md", "Ask.\n").await;
+        push_page(&theirs, "Home.md", "Welcome, all.\n").await;
+        ours.fetch_head(HEAD, &|_| {}).await.unwrap();
+        let repo = RepoId::new("o", "r");
+        let all = history_in(&ours, &repo, None).await.unwrap();
+        let titles: Vec<&str> = all.revisions.iter().map(|r| r.message.as_str()).collect();
+        assert_eq!(titles, ["Home.md", "FAQ.md", "Home.md"]);
+        assert_eq!(all.revisions[1].pages, ["FAQ"]);
+        assert_eq!(all.revisions[0].author, "Them");
+        let home = history_in(&ours, &repo, Some("Home")).await.unwrap();
+        assert_eq!(home.revisions.len(), 2);
+        let (last, first) = (&home.revisions[0].oid, &home.revisions[1].oid);
+        let change = diff_in(&ours, &repo, None, last).await.unwrap();
+        assert_eq!(change.files[0].title, "Home");
+        assert_eq!(
+            change.files[0].lines,
+            ["@@ -1 +1 @@", "-Welcome.", "+Welcome, all."]
+        );
+        // The first revision, which has no parent.
+        let made = diff_in(&ours, &repo, None, first).await.unwrap();
+        assert_eq!(
+            made.files[0].lines.last().map(String::as_str),
+            Some("+Welcome.")
+        );
+        let spec = format!("{first}...{last}");
+        let both = diff_in(&ours, &repo, None, &spec).await.unwrap();
+        let pages: Vec<&str> = both.files.iter().map(|f| f.title.as_str()).collect();
+        assert_eq!(pages, ["FAQ", "Home"]);
+        assert_eq!(both.from.as_deref(), Some(first.as_str()));
+        let one = diff_in(&ours, &repo, Some("FAQ"), &spec).await.unwrap();
+        assert_eq!(one.files.len(), 1);
+        diff_in(&ours, &repo, None, "--output=x").await.unwrap_err();
+        diff_in(&ours, &repo, None, "abcdef0").await.unwrap_err();
     }
 }

@@ -27,8 +27,9 @@ words! {
     Log      "log"      "in job logs";
     /// A project: its board or table, or an item.
     Project  "project"  "in projects";
-    /// A repository's Settings tab.
-    Settings "settings" "in a repository's settings";
+    /// A repository's Settings tab, and an organization's people and
+    /// teams.
+    Settings "settings" "in settings, and an organization's people and teams";
     /// A pull request's (or commit's) files: the diff and its file tree.
     Diff     "diff"     "in Files changed";
     /// The diff's file tree, when it has the focus.
@@ -162,6 +163,7 @@ actions! {
     Approve           "approve"           ["A"]                    Global "Approve the pull request";
     ReadyForReview    "ready_for_review"  []                       Global "Mark the draft ready for review, or convert it to a draft";
     UpdateBranch      "update_branch"     []                       Global "Update the branch from its base";
+    ResolveConflicts  "resolve_conflicts" []                       Global "Resolve the pull request's conflicts with its base, with git";
     Close             "close"             ["x"]                    Global "Close (as a duplicate too) or reopen (an alert: dismiss it); on a running run, cancel it";
     Rerun             "rerun"             ["R"]                    Global "Re-run the workflow run or job (a refused write: send it again)";
     EditComment       "edit"              ["e"]                    Global "Edit the comment or description (a wiki page, your gist, a release, a label, a milestone, a file)";
@@ -169,6 +171,7 @@ actions! {
     React             "react"             ["+"]                    Global "React to the comment, issue or pull request";
     Checkout          "checkout"          []                       Global "Check out the pull request in your clone (an issue: a new branch for it)";
     Watch             "watch"             []                       Global "Subscribe to or ignore the thread; watch the repository";
+    SetStatus         "set_status"        []                       Global "Set your status, or clear it";
     Delete            "delete"            ["<Delete>"]             Global "Delete the selection (a draft comment, a Home section, a write waiting for GitHub)";
     UndoDelete        "undo_delete"       ["<C-z>"]                Global "Bring back what was just deleted";
     Quit              "quit"              ["q"]                    Global "Quit";
@@ -184,6 +187,7 @@ actions! {
     EditAssignees     "edit_assignees"    []                       Page   "Edit the assignees";
     RequestReviews    "request_reviews"   []                       Page   "Ask for reviews";
     EditMilestone     "edit_milestone"    []                       Page   "Set the milestone";
+    EditIssueType     "edit_issue_type"   []                       Page   "Set the issue's type";
     NewIssue          "new_issue"         []                       Page   "New issue";
     NewPr             "new_pull_request"  []                       Page   "New pull request";
     Create            "create"            ["<C-s>"]                Page   "Create or save the form on screen (an issue, a release, a label, a file…)";
@@ -195,7 +199,8 @@ actions! {
     NewWikiPage       "new_wiki_page"     []                       Page   "New wiki page";
     RunWorkflow       "run_workflow"      []                       Page   "Run the workflow by hand";
     Lists             "lists"             []                       Page   "Add the repository to your starred lists, or take it out";
-    NewHere           "new_here"          []                       Page   "New here: a label, a milestone, a branch, a tag, a file";
+    Follow            "follow"            []                       Page   "Follow the person or organization, or unfollow them";
+    NewHere           "new_here"          []                       Page   "New here: a label, a milestone, a branch, a tag, a file, a security advisory";
     Fork              "fork"              []                       Page   "Fork the repository";
     NewRepo           "new_repository"    []                       Page   "New repository";
     Branch            "branch"            ["B"]                    Page   "Switch branches or tags";
@@ -237,11 +242,12 @@ actions! {
     SetField          "set_field"         []                       Page   "Set a field of the item in its project";
     AddItem           "add_item"          ["a"]                    Project "Add an issue, a pull request or a draft";
     ArchiveItem       "archive_item"      []                       Project "Archive the item, or restore it";
-    AddSetting        "add_setting"       ["a"]                    Settings "Add a branch rule, a collaborator, a webhook or a deploy key";
-    EditSetting       "edit_setting"      ["e"]                    Settings "Edit the rule or webhook, or change the collaborator's role";
-    DeleteSetting     "delete_setting"    ["D"]                    Settings "Delete the rule, webhook or deploy key; remove the collaborator or invitation";
+    AddSetting        "add_setting"       ["a"]                    Settings "Add a branch rule, a collaborator, a webhook, a deploy key, a secret or a variable; publish a Pages site; invite a member, make a team, add to a team";
+    EditSetting       "edit_setting"      ["e"]                    Settings "Edit the rule, webhook, variable, Pages site or custom properties; set a secret; change a collaborator's, member's or team's role";
+    DeleteSetting     "delete_setting"    ["D"]                    Settings "Delete the rule, webhook, deploy key, secret, variable or cache; remove a collaborator, member or invitation, or from a team; unpublish the site";
     ToggleSetting     "toggle_setting"    ["x"]                    Settings "Turn the ruleset or webhook on or off; archive or unarchive the repository";
     Redeliver         "redeliver"         []                       Settings "Redeliver the webhook delivery";
+    AnswerInvitation  "answer_invitation" []                       Page   "Accept or decline the invitation";
 
     NextHunk          "next_change"       ["]"]                    Diff   "Next change";
     PrevHunk          "prev_change"       ["["]                    Diff   "Previous change";
@@ -274,9 +280,15 @@ actions! {
     MarkReviewed      "mark_reviewed"     ["m"]                    Diff   "Mark the change reviewed";
     VisualLines       "select_lines"      ["s", "file:s"]          Diff   "Select lines";
     Suggest           "suggest"           []                       Diff   "Suggest a change (opens $EDITOR)";
+    CommitSuggestion  "commit_suggestion" []                       Diff   "Commit the suggestion (with a batch, the batch's)";
+    BatchSuggestion   "batch_suggestion"  []                       Diff   "Add the suggestion to a batch to commit, or take it out";
     FileComment       "file_comment"      []                       Diff   "Comment on the whole file";
     ResolveThread     "resolve"           ["x"]                    Diff   "Resolve or unresolve the thread";
     SubmitReview      "submit_review"     ["<C-s>"]                Diff   "Submit your review";
+    TakeOurs          "take_ours"         ["<"]                    Diff   "Resolve the conflict with your branch's side (the old, left one)";
+    TakeTheirs        "take_theirs"       [">"]                    Diff   "Resolve the conflict with the base's side (the new, right one)";
+    CommitMerge       "commit_merge"      []                       Diff   "Commit the resolved merge and push it to the branch";
+    AbortMerge        "abort_merge"       []                       Diff   "Stop resolving the conflicts, leaving GitHub as it was";
 }
 
 impl Action {
@@ -761,6 +773,10 @@ mod tests {
         assert_eq!(keymap.resolve(key('i'), DIFF), Some(Action::Hints));
         assert_eq!(keymap.resolve(key('i'), PAGE), Some(Action::Hints));
         assert_eq!(keymap.resolve(key('2'), PAGE), Some(Action::Tab2));
+        // A conflict's sides in the diff; on pages, `>` quotes.
+        assert_eq!(keymap.resolve(key('<'), DIFF), Some(Action::TakeOurs));
+        assert_eq!(keymap.resolve(key('>'), DIFF), Some(Action::TakeTheirs));
+        assert_eq!(keymap.resolve(key('>'), PAGE), Some(Action::QuoteReply));
         assert!(keymap.keys_in(Action::ScrollLeft, TREE).next().is_none());
     }
 

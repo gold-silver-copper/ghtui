@@ -38,9 +38,10 @@
 #            anchors (the page opens at the top), tracking parameters
 #
 # GraphQL types with a URL that have no example below: the ~80
-# organization and enterprise audit-log entries, identity providers,
-# migrations and repository invitations need admin or the invitee's
-# session; StripeConnectAccount is Stripe's site; the rest (Blob, Tree,
+# organization and enterprise audit-log entries, identity providers and
+# migrations need admin or a browser's session; StripeConnectAccount is
+# Stripe's site; a RepositoryInvitation's is the repository's
+# invitations page, below; the rest (Blob, Tree,
 # Tag, GitObject, Submodule, GitActor, contributions, Push,
 # DependencyGraphDependency, DeploymentStatus, StatusContext, TeamMemberEdge,
 # CheckAnnotation, ProfileOwner, ProjectOwner, App) link to shapes listed
@@ -112,13 +113,13 @@ https://gist.github.com/discover                                            exte
 # Team
 https://github.com/orgs/github/teams/justice-league                         Team
 https://github.com/orgs/rust-lang/teams                                     Teams
-https://github.com/orgs/rust-lang/teams/new                                 external session
+https://github.com/orgs/rust-lang/teams/new                                 Teams
 # SecurityAdvisoryReference, SecurityAdvisory permalink
 https://github.com/advisories/GHSA-6r3q-mjv7-xr8m                           Advisory
 https://github.com/advisories                                               Advisories
 https://github.com/corazawaf/coraza/security/advisories/GHSA-6r3q-mjv7-xr8m Advisory
 # MergeQueue
-https://github.com/rust-lang/rust/queue/main                                external rare
+https://github.com/rust-lang/rust/queue/main                                Queue
 # Enterprise, EnterpriseUserAccount
 https://github.com/enterprises/octo-enterprise                              external session
 # MarketplaceListing, MarketplaceCategory, SponsorsListing
@@ -169,7 +170,8 @@ https://github.com/octocat/Hello-World/security/code-scanning/tools         exte
 https://github.com/owner/private-repo/security/secret-scanning/42           Alert
 https://github.com/owner/private-repo/security/secret-scanning              Alerts
 https://github.com/owner/repo/secret_scanning_exemptions/1                  external session
-https://github.com/octocat/Hello-World/invitations                          external session
+https://github.com/octocat/Hello-World/invitations                          Invitation
+https://github.com/orgs/octo-org/invitation                                 Invitation
 https://github.com/organizations/octo-org/settings/installations/1          external session
 https://github.com/settings/connections/applications/abc                    external session
 https://github.com/octocat/hello-world/copilot/tasks/abc-123                external session
@@ -191,7 +193,8 @@ https://github.com/issues/assigned                                          Sear
 https://github.com/issues/mentioned                                         Search
 https://github.com/notifications                                            Notifications
 https://github.com/notifications?query=is%3Aunread+reason%3Amention         Notifications
-https://github.com/notifications/subscriptions                              external rare
+https://github.com/notifications/subscriptions                              external no-api
+https://github.com/watching                                                 Watching
 # Search, every type
 https://github.com/search?q=tui&type=repositories                           Search
 https://github.com/search?q=tui&type=issues                                 Search
@@ -217,18 +220,19 @@ https://github.com/stars/torvalds                                           User
 https://github.com/stars/torvalds/lists/rust-tools                          StarList
 https://github.com/orgs/rust-lang/repositories                              User
 https://github.com/orgs/rust-lang/people                                    User
+https://github.com/orgs/rust-lang/people/pending_invitations                User
 https://github.com/orgs/rust-lang/projects                                  Projects
 https://github.com/orgs/rust-lang/packages                                  Packages
 https://github.com/orgs/rust-lang/discussions                               Discussions
 # A repository's tabs and lists
 https://github.com/rust-lang/rust/issues                                    Issues
 https://github.com/rust-lang/rust/issues?q=is%3Aclosed+label%3Abug          Issues
-https://github.com/rust-lang/rust/issues/views/1                            external rare
+https://github.com/rust-lang/rust/issues/views/1                            external no-api
 https://github.com/rust-lang/rust/pulls                                     Pulls
 https://github.com/rust-lang/rust/pulls?q=is%3Amerged                       Pulls
 https://github.com/rust-lang/rust/actions                                   Actions
 https://github.com/rust-lang/rust/actions?query=branch%3Amain+is%3Afailure  Actions
-https://github.com/rust-lang/rust/actions/caches                            external session
+https://github.com/rust-lang/rust/actions/caches                            Settings
 https://github.com/rust-lang/rust/discussions                               Discussions
 https://github.com/rust-lang/rust/discussions/categories/ideas              Discussions
 https://github.com/rust-lang/rust/wiki                                      Wiki
@@ -236,11 +240,13 @@ https://github.com/rust-lang/rust/wiki/Home                                 Wiki
 https://github.com/rust-lang/rust/wiki/_pages                               Wiki
 https://github.com/rust-lang/rust/wiki/_new                                 WikiEdit
 https://github.com/rust-lang/rust/wiki/Home/_edit                           WikiEdit
-https://github.com/rust-lang/rust/wiki/_history                             external rare
-https://github.com/rust-lang/rust/wiki/_compare/029a999f7a641ee25596aa00ca09f6b760f1d10e external rare
+https://github.com/rust-lang/rust/wiki/_history                             WikiHistory
+https://github.com/rust-lang/rust/wiki/Home/_history                        WikiHistory
+https://github.com/rust-lang/rust/wiki/_compare/029a999f7a641ee25596aa00ca09f6b760f1d10e WikiCompare
+https://github.com/rust-lang/rust/wiki/Home/_compare/029a999...b940084      WikiCompare
 https://github.com/rust-lang/rust/security                                  Advisories
 https://github.com/rust-lang/rust/security/advisories                       Advisories
-https://github.com/rust-lang/rust/security/advisories/new                   external session
+https://github.com/rust-lang/rust/security/advisories/new                   Housekeeping
 https://github.com/rust-lang/rust/pulse                                     external rare
 https://github.com/rust-lang/rust/graphs/contributors                       Insights
 https://github.com/rust-lang/rust/graphs/commit-activity                    Insights
@@ -250,10 +256,10 @@ https://github.com/rust-lang/rust/network/dependencies                      Insi
 https://github.com/rust-lang/rust/graphs/traffic                            Insights
 https://github.com/rust-lang/rust/network/dependents                        external no-api
 https://github.com/rust-lang/rust/network/members                           Forks
-https://github.com/rust-lang/rust/community                                 external rare
+https://github.com/rust-lang/rust/community                                 Insights
 https://github.com/rust-lang/rust/activity                                  external rare
-https://github.com/rust-lang/rust/custom-properties                         external session
-https://github.com/rust-lang/rust/attestations                              external rare
+https://github.com/rust-lang/rust/custom-properties                         Settings
+https://github.com/rust-lang/rust/attestations                              external no-api
 https://github.com/rust-lang/rust/settings                                  Settings
 https://github.com/rust-lang/rust/settings/branches                         Settings
 https://github.com/rust-lang/rust/settings/branch_protection_rules/1234     Settings
@@ -262,9 +268,10 @@ https://github.com/rust-lang/rust/settings/access                           Sett
 https://github.com/rust-lang/rust/settings/hooks                            Settings
 https://github.com/rust-lang/rust/settings/hooks/1234                       Settings
 https://github.com/rust-lang/rust/settings/keys                             Settings
-https://github.com/rust-lang/rust/settings/actions                          external session
-https://github.com/rust-lang/rust/settings/secrets/actions                  external session
-https://github.com/rust-lang/rust/settings/pages                            external session
+https://github.com/rust-lang/rust/settings/actions                          external rare
+https://github.com/rust-lang/rust/settings/secrets/actions                  Settings
+https://github.com/rust-lang/rust/settings/variables/actions                Settings
+https://github.com/rust-lang/rust/settings/pages                            Settings
 https://github.com/rust-lang/rust/branches                                  Branches
 https://github.com/rust-lang/rust/tags                                      Tags
 https://github.com/rust-lang/rust/releases                                  Releases
@@ -312,7 +319,7 @@ https://github.com/rust-lang/rust/compare/stable                            Comp
 https://github.com/rust-lang/rust/compare/8d1a76430406c877b35d0b627e7f796dcf0dfeca..b940084d7eb6a299eb4bfeb8e34901bc051e7ac4#files files
 https://github.com/rust-lang/rust/compare/8d1a76430406c877b35d0b627e7f796dcf0dfeca..b940084d7eb6a299eb4bfeb8e34901bc051e7ac4#diff-b335630551682c19a781afebcf4d07bf978fb1f8ac04c6bf87428ed5106870f5L7-R9 files
 https://github.com/rust-lang/rust/compare                                   NewPr
-https://github.com/rust-lang/rust/find/main                                 external rare
+https://github.com/rust-lang/rust/find/main                                 Tree
 https://github.com/rust-lang/rust/edit/main/README.md                       Housekeeping
 https://github.com/rust-lang/rust/new/main                                  Housekeeping
 https://github.com/rust-lang/rust/new/main/src                              Housekeeping
@@ -359,7 +366,7 @@ https://user-images.githubusercontent.com/1/abc.png                         exte
 # ---- (d) found by the live crawl ----------------------------------------------
 https://github.com/rust-lang/rust/commit/fbc187d77f9fb679d00c91dbad01a4412b5b11a5/checks/112266616044/logs Job
 https://github.com/user-attachments/assets/c5c659f4-e721-4527-af4a-3165f8b588f6  external download
-https://github.com/tokio-rs/tokio/discussions/new                           external session
+https://github.com/tokio-rs/tokio/discussions/new                           Discussions
 https://help.github.com/en/github/managing-security-vulnerabilities         external not-github
 https://github.com/rust-lang/rustfmt/actions/workflows/test.yml?query=branch%3Amain Workflow
 https://cli.github.com/manual/                                              external not-github

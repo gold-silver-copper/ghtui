@@ -153,6 +153,10 @@ impl Write {
                     Some(m) => format!("The milestone {}", m.name),
                     None => "No milestone".into(),
                 },
+                Edit::IssueType { issue_type, .. } => match issue_type {
+                    Some(t) => format!("The type {}", t.name),
+                    None => "No type".into(),
+                },
             },
             Change::Discussion(d) => match d {
                 Discuss::Comment {
