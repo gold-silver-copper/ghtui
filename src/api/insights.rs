@@ -340,11 +340,150 @@ fn from_stats(contributors: Vec<wire::Contributor>, weekdays: [u32; 7], now: u64
     }
 }
 
+// ---- community standards ----------------------------------------------------------
+
+/// One of GitHub's community standards, and whether the repository
+/// meets it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Standard {
+    pub name: String,
+    pub done: bool,
+    /// Where it is (its file, or its page).
+    pub url: Option<String>,
+    /// What it is (a licence's name), or, not met, the file that meets
+    /// it.
+    pub note: Option<String>,
+}
+
+/// A repository's community profile: how healthy GitHub counts it, and
+/// each standard.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Community {
+    /// Out of 100.
+    pub health: u8,
+    pub standards: Vec<Standard>,
+}
+
+impl GitHub {
+    /// A repository's community standards, as its Insights' Community
+    /// page lists them: GitHub's community profile, and its security
+    /// policy (which the profile leaves out).
+    pub async fn community(&self, repo: &RepoId) -> Result<Community, ApiError> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Policy {
+            security_policy_url: Option<String>,
+        }
+        let path = format!("/repos/{repo}/community/profile");
+        let what = format!("{repo}'s community profile");
+        let vars = serde_json::json!(repo);
+        let (profile, policy) = tokio::join!(
+            self.rest_json::<wire::Profile>(&path, what),
+            self.graphql_json::<Policy>(
+                crate::api::raw::SECURITY_POLICY,
+                vars,
+                repo,
+                "/repository"
+            ),
+        );
+        let (p, policy) = (profile?, policy?.security_policy_url);
+        let f = p.files;
+        let file = |name: &str, done: Option<wire::File>, add: &str| Standard {
+            name: name.to_owned(),
+            done: done.is_some(),
+            note: done.is_none().then(|| add.to_owned()),
+            url: done.and_then(|f| f.html_url),
+        };
+        let conduct = f.code_of_conduct_file.or(f.code_of_conduct);
+        let license = f.license.map(|l| (l.name, l.html_url));
+        let standards = vec![
+            Standard {
+                name: "Description".to_owned(),
+                done: p.description.is_some_and(|d| !d.is_empty()),
+                url: None,
+                note: None,
+            },
+            file("README", f.readme, "README.md"),
+            file("Code of conduct", conduct, "CODE_OF_CONDUCT.md"),
+            file("Contributing", f.contributing, "CONTRIBUTING.md"),
+            Standard {
+                name: "License".to_owned(),
+                done: license.is_some(),
+                note: Some(
+                    license
+                        .as_ref()
+                        .map_or("LICENSE", |l| l.0.as_str())
+                        .to_owned(),
+                ),
+                url: license.and_then(|l| l.1),
+            },
+            Standard {
+                name: "Security policy".to_owned(),
+                done: policy.is_some(),
+                note: policy.is_none().then(|| "SECURITY.md".to_owned()),
+                url: policy,
+            },
+            file(
+                "Issue templates",
+                f.issue_template,
+                ".github/ISSUE_TEMPLATE/",
+            ),
+            file(
+                "Pull request template",
+                f.pull_request_template,
+                ".github/pull_request_template.md",
+            ),
+            Standard {
+                name: "Content reports".to_owned(),
+                done: p.content_reports_enabled.unwrap_or(false),
+                url: None,
+                note: None,
+            },
+        ];
+        Ok(Community {
+            health: p.health_percentage.min(100),
+            standards,
+        })
+    }
+}
+
 /// The REST and GraphQL answers, as GitHub sends them.
 mod wire {
     use serde::Deserialize;
 
     use crate::api::browse::UserLogin as Login;
+
+    /// A community profile.
+    #[derive(Deserialize)]
+    pub struct Profile {
+        pub health_percentage: u8,
+        pub description: Option<String>,
+        pub files: Files,
+        pub content_reports_enabled: Option<bool>,
+    }
+
+    /// The community files GitHub found (null: none).
+    #[derive(Deserialize)]
+    pub struct Files {
+        pub code_of_conduct: Option<File>,
+        pub code_of_conduct_file: Option<File>,
+        pub contributing: Option<File>,
+        pub issue_template: Option<File>,
+        pub pull_request_template: Option<File>,
+        pub license: Option<License>,
+        pub readme: Option<File>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct File {
+        pub html_url: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct License {
+        pub name: String,
+        pub html_url: Option<String>,
+    }
 
     #[derive(Deserialize)]
     pub struct Contributor {

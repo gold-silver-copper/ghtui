@@ -947,6 +947,64 @@ pub fn wiki() -> WikiPage {
         file: Some("Home.md".into()),
     }
 }
+/// main's merge queue: one merging, one waiting for its checks.
+pub fn merge_queue() -> crate::api::queue::MergeQueue {
+    use crate::api::model::QueueState;
+    use crate::api::queue::QueueEntry;
+    let entry = |position, state, number, title: &str| QueueEntry {
+        position,
+        state,
+        enqueued_at: "2026-10-01T12:00:00Z".into(),
+        by: Some("octocat".into()),
+        eta: Some(600),
+        solo: false,
+        jump: false,
+        number: Some(number),
+        title: title.into(),
+        author: Some("octocat".into()),
+    };
+    crate::api::queue::MergeQueue {
+        url: "https://github.com/gold-silver-copper/ghtui/queue/main".into(),
+        method: Some("SQUASH".into()),
+        entries: Capped::new(
+            vec![
+                entry(1, QueueState::Locked, 7, "Add thing"),
+                entry(2, QueueState::AwaitingChecks, 8, "Fix other thing"),
+            ],
+            2,
+        ),
+    }
+}
+/// A wiki's change to its Home and FAQ.
+fn wiki_revision() -> crate::api::browse::WikiRevision {
+    crate::api::browse::WikiRevision {
+        oid: "4b7d0c2e9a1f3d5b6c8e0a2b4d6f8a0c2e4b6d8f".into(),
+        author: "The Octocat".into(),
+        at: "2026-10-01T12:00:00Z".into(),
+        message: "Updated Home (markdown)".into(),
+        pages: vec!["Home".into(), "FAQ".into()],
+    }
+}
+/// A wiki's history: one change.
+pub fn wiki_history() -> crate::api::browse::WikiHistory {
+    crate::api::browse::WikiHistory {
+        page: None,
+        revisions: Capped::new(vec![wiki_revision()], 3),
+    }
+}
+/// What a wiki's change did to its Home.
+pub fn wiki_diff() -> crate::api::browse::WikiDiff {
+    let lines = ["@@ -1 +1 @@", "-Welcome.", "+Welcome to the wiki."];
+    crate::api::browse::WikiDiff {
+        to: wiki_revision(),
+        from: None,
+        files: vec![crate::api::browse::WikiFileDiff {
+            title: "Home".into(),
+            lines: lines.map(str::to_owned).to_vec(),
+        }],
+        cut: false,
+    }
+}
 /// octocat's commit `oid`.
 fn commit_info(oid: impl Into<String>, headline: &str, date: &str) -> CommitInfo {
     CommitInfo {
@@ -2379,12 +2437,14 @@ pub(crate) fn sample(key: &DataKey) -> Data {
         K::PrChecks(_) | K::CommitChecks(..) => Data::from(checks()),
         K::Users(_) => Data::from(people()),
         K::Forks(_) => Data::from(forks()),
-        K::OwnerRepos(..) | K::Stars(_) => Data::from(profile_repos()),
+        K::OwnerRepos(..) | K::Stars(_) | K::Watching => Data::from(profile_repos()),
         K::Releases(_) => Data::from(releases()),
         K::Release(..) => Data::from(release(true)),
         K::Tags(_) => Data::from(tags()),
         K::Branches(_) => Data::from(branches()),
         K::Wiki(..) => Data::from(wiki()),
+        K::WikiHistory(..) => Data::from(wiki_history()),
+        K::WikiDiff(..) => Data::from(wiki_diff()),
         K::Advisories(_) => {
             let items = advisories();
             let total = items.len() as u64;
@@ -2420,6 +2480,8 @@ pub(crate) fn sample(key: &DataKey) -> Data {
         K::Activity(_) => Data::from(site::activity()),
         K::Traffic(_) => Data::from(site::traffic()),
         K::Dependencies(_) => Data::from(site::dependencies()),
+        K::Community(_) => Data::from(site::community()),
+        K::MergeQueue(..) => Data::from(merge_queue()),
         K::Featured => Data::from(site::featured()),
         K::Topic(_) => Data::from(site::rust()),
         K::StarLists(_) => Data::from(site::star_lists()),

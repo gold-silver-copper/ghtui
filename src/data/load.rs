@@ -140,6 +140,12 @@ async fn answer(
         K::Tags(repo) => gh.tags(repo, after).await?.into(),
         K::Branches(repo) => gh.branches(repo, after).await?.into(),
         K::Wiki(repo, page) => crate::wiki::page(git, repo, page.as_deref()).await?.into(),
+        K::WikiHistory(repo, page) => {
+            (crate::wiki::history(git, repo, page.as_deref()).await?).into()
+        }
+        K::WikiDiff(repo, page, spec) => {
+            (crate::wiki::diff(git, repo, page.as_deref(), spec).await?).into()
+        }
         K::Advisories(repo) => gh.advisories(repo.as_ref(), after).await?.into(),
         K::Advisory(repo, ghsa) => gh.advisory(repo.as_ref(), ghsa).await?.into(),
         K::Teams(org) => gh.teams(org, after).await?.into(),
@@ -166,6 +172,7 @@ async fn answer(
         K::CommitChecks(repo, oid) => gh.commit_checks(repo, oid).await?.into(),
         K::OwnerRepos(login, sort) => gh.owner_repos(login, *sort, after).await?.into(),
         K::Stars(login) => gh.starred(login, after).await?.into(),
+        K::Watching => gh.watching(after).await?.into(),
         K::Notifications(query) => gh.notifications(query, after).await?.into(),
         K::Sidebar(repo, number) => gh.sidebar(repo, *number).await?.into(),
         K::NewForm(repo) => gh.new_form(repo).await?.into(),
@@ -178,6 +185,8 @@ async fn answer(
         K::Activity(repo) => gh.activity(repo).await?.into(),
         K::Traffic(repo) => gh.traffic(repo).await?.into(),
         K::Dependencies(repo) => gh.dependencies(repo).await?.into(),
+        K::Community(repo) => gh.community(repo).await?.into(),
+        K::MergeQueue(repo, branch) => gh.merge_queue(repo, branch).await?.into(),
         K::Featured => gh.featured_topics().await?.into(),
         K::Topic(name) => gh.topic(name).await?.into(),
         K::StarLists(login) => gh.star_lists(login).await?.into(),

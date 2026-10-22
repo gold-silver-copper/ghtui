@@ -119,7 +119,7 @@ https://github.com/advisories/GHSA-6r3q-mjv7-xr8m                           Advi
 https://github.com/advisories                                               Advisories
 https://github.com/corazawaf/coraza/security/advisories/GHSA-6r3q-mjv7-xr8m Advisory
 # MergeQueue
-https://github.com/rust-lang/rust/queue/main                                external rare
+https://github.com/rust-lang/rust/queue/main                                Queue
 # Enterprise, EnterpriseUserAccount
 https://github.com/enterprises/octo-enterprise                              external session
 # MarketplaceListing, MarketplaceCategory, SponsorsListing
@@ -193,7 +193,8 @@ https://github.com/issues/assigned                                          Sear
 https://github.com/issues/mentioned                                         Search
 https://github.com/notifications                                            Notifications
 https://github.com/notifications?query=is%3Aunread+reason%3Amention         Notifications
-https://github.com/notifications/subscriptions                              external rare
+https://github.com/notifications/subscriptions                              external no-api
+https://github.com/watching                                                 Watching
 # Search, every type
 https://github.com/search?q=tui&type=repositories                           Search
 https://github.com/search?q=tui&type=issues                                 Search
@@ -226,7 +227,7 @@ https://github.com/orgs/rust-lang/discussions                               Disc
 # A repository's tabs and lists
 https://github.com/rust-lang/rust/issues                                    Issues
 https://github.com/rust-lang/rust/issues?q=is%3Aclosed+label%3Abug          Issues
-https://github.com/rust-lang/rust/issues/views/1                            external rare
+https://github.com/rust-lang/rust/issues/views/1                            external no-api
 https://github.com/rust-lang/rust/pulls                                     Pulls
 https://github.com/rust-lang/rust/pulls?q=is%3Amerged                       Pulls
 https://github.com/rust-lang/rust/actions                                   Actions
@@ -239,8 +240,10 @@ https://github.com/rust-lang/rust/wiki/Home                                 Wiki
 https://github.com/rust-lang/rust/wiki/_pages                               Wiki
 https://github.com/rust-lang/rust/wiki/_new                                 WikiEdit
 https://github.com/rust-lang/rust/wiki/Home/_edit                           WikiEdit
-https://github.com/rust-lang/rust/wiki/_history                             external rare
-https://github.com/rust-lang/rust/wiki/_compare/029a999f7a641ee25596aa00ca09f6b760f1d10e external rare
+https://github.com/rust-lang/rust/wiki/_history                             WikiHistory
+https://github.com/rust-lang/rust/wiki/Home/_history                        WikiHistory
+https://github.com/rust-lang/rust/wiki/_compare/029a999f7a641ee25596aa00ca09f6b760f1d10e WikiCompare
+https://github.com/rust-lang/rust/wiki/Home/_compare/029a999...b940084      WikiCompare
 https://github.com/rust-lang/rust/security                                  Advisories
 https://github.com/rust-lang/rust/security/advisories                       Advisories
 https://github.com/rust-lang/rust/security/advisories/new                   Housekeeping
@@ -253,10 +256,10 @@ https://github.com/rust-lang/rust/network/dependencies                      Insi
 https://github.com/rust-lang/rust/graphs/traffic                            Insights
 https://github.com/rust-lang/rust/network/dependents                        external no-api
 https://github.com/rust-lang/rust/network/members                           Forks
-https://github.com/rust-lang/rust/community                                 external rare
+https://github.com/rust-lang/rust/community                                 Insights
 https://github.com/rust-lang/rust/activity                                  external rare
 https://github.com/rust-lang/rust/custom-properties                         Settings
-https://github.com/rust-lang/rust/attestations                              external rare
+https://github.com/rust-lang/rust/attestations                              external no-api
 https://github.com/rust-lang/rust/settings                                  Settings
 https://github.com/rust-lang/rust/settings/branches                         Settings
 https://github.com/rust-lang/rust/settings/branch_protection_rules/1234     Settings
@@ -316,7 +319,7 @@ https://github.com/rust-lang/rust/compare/stable                            Comp
 https://github.com/rust-lang/rust/compare/8d1a76430406c877b35d0b627e7f796dcf0dfeca..b940084d7eb6a299eb4bfeb8e34901bc051e7ac4#files files
 https://github.com/rust-lang/rust/compare/8d1a76430406c877b35d0b627e7f796dcf0dfeca..b940084d7eb6a299eb4bfeb8e34901bc051e7ac4#diff-b335630551682c19a781afebcf4d07bf978fb1f8ac04c6bf87428ed5106870f5L7-R9 files
 https://github.com/rust-lang/rust/compare                                   NewPr
-https://github.com/rust-lang/rust/find/main                                 external rare
+https://github.com/rust-lang/rust/find/main                                 Tree
 https://github.com/rust-lang/rust/edit/main/README.md                       Housekeeping
 https://github.com/rust-lang/rust/new/main                                  Housekeeping
 https://github.com/rust-lang/rust/new/main/src                              Housekeeping

@@ -3167,6 +3167,122 @@ async fn an_owners_projects_page_and_say_what_scope_they_need() {
     assert_eq!(seen[0].json()["variables"]["after"], "p0");
 }
 
+/// A token without read:project has its issue page refused whole, for the
+/// project events in its timeline: it's asked again without them, and
+/// loads, saying once which scope adds them; later queries leave them out
+/// from the start.
+#[tokio::test]
+async fn a_page_loads_without_what_a_missing_scope_guards() {
+    let refused = r#"{"errors":[{"type":"INSUFFICIENT_SCOPES","locations":[{"line":1,"column":176}],"message":"Your token has not been granted the required scopes to execute this query. The 'createdAt' field requires one of the following scopes: ['read:project'], but your token has only been granted the: ['gist', 'read:org', 'repo', 'workflow'] scopes. Please modify your token's scopes at: https://github.com/settings/tokens."}]}"#;
+    let recorded =
+        std::fs::read_to_string(common::corpus_dir().join("46904cf99e801d39.json")).unwrap();
+    let recorded: serde_json::Value = serde_json::from_str(&recorded).unwrap();
+    let issue = recorded["response"].as_str().unwrap();
+    let (gh, seen) = github(vec![
+        Reply::new(200, refused),
+        Reply::new(200, issue),
+        Reply::new(200, issue),
+    ])
+    .await;
+    let repo = RepoId::new("rust-lang", "rust");
+    let detail = gh.issue(&repo, 97).await.unwrap().unwrap();
+    assert_eq!(detail.number, 97);
+    let said = gh.take_missing();
+    assert!(
+        said.len() == 1 && said[0].contains("gh auth refresh -s read:project"),
+        "{said:?}"
+    );
+    gh.issue(&repo, 97).await.unwrap().unwrap();
+    assert!(gh.take_missing().is_empty(), "said once");
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].query().contains("AddedToProjectV2Event"));
+    for asked in &seen[1..] {
+        let query = asked.query();
+        assert!(!query.contains("ProjectV2"), "{query}");
+        assert!(!query.contains("PROJECT_V2"), "{query}");
+        assert!(query.contains("LABELED_EVENT"), "{query}");
+    }
+    assert_eq!(seen.len(), 3);
+}
+
+/// A repository's community standards are its community profile's,
+/// with its security policy, which the profile leaves out.
+#[tokio::test]
+async fn community_standards_are_the_profile_and_the_security_policy() {
+    let profile = r#"{"health_percentage":71,"description":"A TUI","documentation":null,"files":{"code_of_conduct":null,"code_of_conduct_file":null,"contributing":{"url":"u","html_url":"https://github.com/o/r/blob/main/CONTRIBUTING.md"},"issue_template":null,"pull_request_template":null,"license":{"key":"mit","name":"MIT License","spdx_id":"MIT","url":"u","html_url":"https://github.com/o/r/blob/main/LICENSE"},"readme":{"url":"u","html_url":"https://github.com/o/r/blob/main/README.md"}},"updated_at":"2026-10-01T00:00:00Z","content_reports_enabled":false}"#;
+    let policy =
+        r#"{"data":{"repository":{"securityPolicyUrl":"https://github.com/o/r/security/policy"}}}"#;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = common::answer_on(listener, move |seen| {
+        if seen
+            .request_line
+            .starts_with("GET /repos/o/r/community/profile ")
+        {
+            Reply::new(200, profile)
+        } else if seen.query().contains("securityPolicyUrl") {
+            Reply::new(200, policy)
+        } else {
+            Reply::new(404, r#"{"message":"Not Found"}"#)
+        }
+    });
+    let gh = client(&base, Store::disabled());
+    let c = gh.community(&RepoId::new("o", "r")).await.unwrap();
+    assert_eq!(c.health, 71);
+    let met = |name: &str| {
+        let s = c.standards.iter().find(|s| s.name == name).unwrap();
+        (s.done, s.url.as_deref(), s.note.as_deref())
+    };
+    assert_eq!(met("Description"), (true, None, None));
+    assert_eq!(
+        met("License"),
+        (
+            true,
+            Some("https://github.com/o/r/blob/main/LICENSE"),
+            Some("MIT License")
+        )
+    );
+    assert_eq!(
+        met("Code of conduct"),
+        (false, None, Some("CODE_OF_CONDUCT.md"))
+    );
+    assert_eq!(
+        met("Security policy"),
+        (true, Some("https://github.com/o/r/security/policy"), None)
+    );
+    assert_eq!(met("Content reports"), (false, None, None));
+}
+
+/// A branch's merge queue is asked by its name, with its entries in order; a
+/// branch without one is not found.
+#[tokio::test]
+async fn a_merge_queue_lists_its_entries() {
+    use ghtui::api::model::QueueState;
+    let queue = r#"{"data":{"repository":{"mergeQueue":{"url":"https://github.com/o/r/queue/main","configuration":{"mergeMethod":"SQUASH"},"entries":{"totalCount":2,"nodes":[
+        {"position":1,"state":"LOCKED","enqueuedAt":"2026-10-01T12:00:00Z","estimatedTimeToMerge":120,"solo":false,"jump":true,"enqueuer":{"login":"alice"},"pullRequest":{"number":7,"title":"Add thing","author":{"login":"bob"}}},
+        {"position":2,"state":"AWAITING_CHECKS","enqueuedAt":"2026-10-01T12:05:00Z","estimatedTimeToMerge":null,"solo":true,"jump":false,"enqueuer":null,"pullRequest":null}]}}}}}"#;
+    let none = r#"{"data":{"repository":{"mergeQueue":null}}}"#;
+    let (gh, seen) = github(vec![Reply::new(200, queue), Reply::new(200, none)]).await;
+    let repo = RepoId::new("o", "r");
+    let q = gh.merge_queue(&repo, "main").await.unwrap();
+    assert_eq!(q.method.as_deref(), Some("SQUASH"));
+    let first = &q.entries.items[0];
+    assert_eq!(
+        (first.position, first.state, first.number),
+        (1, QueueState::Locked, Some(7))
+    );
+    assert_eq!(
+        (first.by.as_deref(), first.eta, first.jump),
+        (Some("alice"), Some(120), true)
+    );
+    let hidden = &q.entries.items[1];
+    assert_eq!((hidden.number, hidden.solo), (None, true));
+    let missing = gh.merge_queue(&repo, "dev").await;
+    assert!(matches!(missing, Err(ApiError::NotFound(_))), "{missing:?}");
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].query().contains("mergeQueue(branch: $branch)"));
+    assert_eq!(seen[0].json()["variables"]["branch"], "main");
+}
+
 // ---- the Security tab's alerts ------------------------------------------------
 
 /// A code scanning alert as GitHub sends it.

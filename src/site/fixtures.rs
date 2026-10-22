@@ -71,6 +71,33 @@ pub fn traffic() -> Traffic {
     }
 }
 
+/// A repository meeting its community standards but a code of conduct.
+pub fn community() -> crate::api::insights::Community {
+    use crate::api::insights::Standard;
+    let file = |name: &str, url: Option<&str>, note: Option<&str>| Standard {
+        name: name.into(),
+        done: url.is_some(),
+        url: url.map(Into::into),
+        note: note.map(Into::into),
+    };
+    crate::api::insights::Community {
+        health: 85,
+        standards: vec![
+            file(
+                "README",
+                Some("https://github.com/ratatui/ratatui/blob/main/README.md"),
+                None,
+            ),
+            file("Code of conduct", None, Some("CODE_OF_CONDUCT.md")),
+            file(
+                "License",
+                Some("https://github.com/ratatui/ratatui/blob/main/LICENSE"),
+                Some("MIT License"),
+            ),
+        ],
+    }
+}
+
 pub fn dependencies() -> Dependencies {
     let dep = |package: &str, requirements: &str, repo: Option<&str>| Dependency {
         package: package.into(),

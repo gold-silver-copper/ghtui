@@ -13,7 +13,7 @@ use crate::api::browse::{
     MilestoneDetail, MilestoneInfo, MilestoneList, Person, PrActivity, PrState, Profile, Readme,
     Release, RepoOverview, RepoSort, RepoSummary, Results, Reviewer, RunFilter, RunSummary,
     SearchKind, SearchResults, Severity, Short, Status, TagInfo, TeamDetail, TeamSummary,
-    TreeEntry, UserSummary, WikiPage, Workflow, WorkflowRun,
+    TreeEntry, UserSummary, WikiDiff, WikiHistory, WikiPage, Workflow, WorkflowRun,
 };
 use crate::api::model::{
     Capped, ChecksState, Label, Mergeable, MilestoneRef, PrDetail, PrRef, Readiness, RepoId,
@@ -24,6 +24,7 @@ use crate::store::{DraftComment, DraftSide};
 use crate::theme::{Bg, Syntax};
 
 use crate::ui::markdown::{self, LinkBase};
+use crate::ui::page::wrap;
 use crate::ui::page::{Frame, Link, Page, PageLine, Role, Seg, Tone};
 use crate::ui::text::{noun, short_sha, size, truncate, width};
 use crate::ui::{Fetched, Icons, cols, time};

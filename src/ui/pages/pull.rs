@@ -153,6 +153,13 @@ pub(super) fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons,
         let external = meta(format!("{}  ", icons.external()));
         body(page, vec![external, Seg::linked(review, Role::Link, link)]);
     });
+    if d.merge_queue {
+        let queue = url::merge_queue(&pr.repo, &d.base_ref);
+        item(page, queue, |page, link| {
+            let text = format!("See the merge queue for {}", d.base_ref);
+            body(page, vec![meta("   "), Seg::linked(text, Role::Link, link)]);
+        });
+    }
     page.box_bottom();
 }
 
@@ -179,14 +186,92 @@ pub fn queue_place(queued: &Queued, base: &str) -> String {
         1 => "Next".to_owned(),
         n => format!("#{n}"),
     };
-    let state = match queued.state {
+    let state = queue_state(queued.state);
+    format!("{place} in the merge queue for {base}: {state}")
+}
+
+/// Where an entry of a merge queue stands.
+fn queue_state(state: QueueState) -> &'static str {
+    match state {
         QueueState::AwaitingChecks => "waiting for its checks",
         QueueState::Queued => "waiting its turn",
         QueueState::Mergeable => "ready to merge",
         QueueState::Locked => "merging now",
         QueueState::Unmergeable => "it can't be merged",
-    };
-    format!("{place} in the merge queue for {base}: {state}")
+    }
+}
+
+/// A branch's merge queue, next first: each pull request, where it
+/// stands, who queued it and when, and when GitHub expects it merged.
+pub fn merge_queue(
+    page: &mut Page,
+    repo: &RepoId,
+    branch: &str,
+    q: &crate::api::queue::MergeQueue,
+    now: u64,
+) {
+    let mut right = Vec::new();
+    if let Some(method) = &q.method {
+        right.push(meta(format!("{} merges", method.to_lowercase())));
+    }
+    let title = counted(&format!("Merge queue for {branch}"), &q.entries);
+    list_box(
+        page,
+        title,
+        right,
+        &q.entries,
+        "The queue is empty.",
+        |page, e| {
+            let pr = |number| PrRef {
+                repo: repo.clone(),
+                number,
+            };
+            let target = e.number.map(|n| url::pull(&pr(n)));
+            maybe_item(page, target, |page, link| {
+                let ok = match e.state {
+                    QueueState::Unmergeable => Role::Error,
+                    QueueState::Mergeable | QueueState::Locked => Role::Success,
+                    QueueState::AwaitingChecks | QueueState::Queued => Role::Accent,
+                };
+                let place = match e.position {
+                    1 => "Next".to_owned(),
+                    n => format!("#{n}"),
+                };
+                let title = match e.number {
+                    Some(n) => format!("{} #{n}", e.title),
+                    None => "A pull request you can't see".to_owned(),
+                };
+                let segs = vec![
+                    Seg::new(format!("● {place}  "), ok),
+                    Seg::linked(title, Role::Strong, link),
+                ];
+                let right = vec![meta(queue_state(e.state))];
+                page.box_line(segs, right, 0);
+                let mut sub = Vec::new();
+                if let Some(by) = &e.by {
+                    sub.push(format!("queued by {by}"));
+                }
+                sub.push(time::ago_iso(&e.enqueued_at, now));
+                if let Some(eta) = e.eta {
+                    let mins = eta.div_ceil(60);
+                    let (h, m) = (mins / 60, mins % 60);
+                    let when = if h == 0 {
+                        format!("{m}m")
+                    } else {
+                        format!("{h}h {m}m")
+                    };
+                    sub.push(format!("merges in about {when}"));
+                }
+                if e.jump {
+                    sub.push("jumped the queue".to_owned());
+                }
+                if e.solo {
+                    sub.push("merges alone".to_owned());
+                }
+                body(page, vec![meta(sub.join(" · "))]);
+            });
+        },
+    );
 }
 
 /// A pull request's conversation: its description, then its timeline

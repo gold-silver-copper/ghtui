@@ -13,8 +13,8 @@ use crate::api::browse::{
     DeploymentList, DiscussionDetail, DiscussionList, DiscussionsOf, Gist, GistSummary,
     IssueDetail, Job, JobLog, MilestoneDetail, MilestoneList, PrActivity, Profile, Readme, Refs,
     Release, RepoOverview, RepoSort, RepoSummary, Results, RunSummary, SearchKind, SearchResults,
-    StateCounts, TagInfo, TeamDetail, TeamSummary, TreeEntry, UserList, UserSummary, WikiPage,
-    Workflow, WorkflowRun,
+    StateCounts, TagInfo, TeamDetail, TeamSummary, TreeEntry, UserList, UserSummary, WikiDiff,
+    WikiHistory, WikiPage, Workflow, WorkflowRun,
 };
 use crate::api::codeowners::Codeowners;
 use crate::api::commit_comments::CommitComment;
@@ -22,7 +22,7 @@ use crate::api::create::NewForm;
 use crate::api::edit::Sidebar;
 use crate::api::explore::{Topic, Topics};
 use crate::api::housekeeping::{BranchRules, FileLook, LabelInfo, Owners, Templates};
-use crate::api::insights::{Activity, Dependencies, Traffic};
+use crate::api::insights::{Activity, Community, Dependencies, Traffic};
 use crate::api::lists::{ListPage, MyLists, StarList};
 use crate::api::manage::{Categories, Target};
 use crate::api::mention::Mentionable;
@@ -89,6 +89,11 @@ pub enum DataKey {
     Branches(RepoId),
     /// From git, not GitHub's API.
     Wiki(RepoId, Option<String>),
+    /// A wiki's history, or a page's: from git.
+    WikiHistory(RepoId, Option<String>),
+    /// What a wiki's revisions changed (`sha`, or `a...b`), of a page or
+    /// of all: from git.
+    WikiDiff(RepoId, Option<String>, String),
     Advisories(Option<RepoId>),
     Advisory(Option<RepoId>, String),
     Teams(String),
@@ -123,6 +128,8 @@ pub enum DataKey {
     OwnerRepos(String, RepoSort),
     /// What someone starred.
     Stars(String),
+    /// The repositories you watch.
+    Watching,
     /// Your notifications, filtered as the inbox filters them
     /// ([`InboxFilter`](crate::api::notifications::InboxFilter)).
     Notifications(String),
@@ -144,6 +151,10 @@ pub enum DataKey {
     Activity(RepoId),
     Traffic(RepoId),
     Dependencies(RepoId),
+    /// Its community standards.
+    Community(RepoId),
+    /// A branch's merge queue.
+    MergeQueue(RepoId, String),
     /// GitHub's featured topics.
     Featured,
     /// A topic, by its (lowercase) name.
@@ -205,6 +216,8 @@ impl DataKey {
                 // their cache.
                 | DataKey::Lines(..)
                 | DataKey::Wiki(..)
+                | DataKey::WikiHistory(..)
+                | DataKey::WikiDiff(..)
                 // A commit's comments revalidate with their ETag.
                 | DataKey::CommitComments(..)
                 // Where a ref ends is asked anew each session.
@@ -365,6 +378,8 @@ data! {
     Tags(Box<Results<TagInfo>>) => Results<TagInfo> [|t| t.name.clone()],
     Branches(Box<Results<BranchInfo>>) => Results<BranchInfo> [|b| b.name.clone()],
     Wiki(Box<WikiPage>) => WikiPage,
+    WikiHistory(Box<WikiHistory>) => WikiHistory,
+    WikiDiff(Box<WikiDiff>) => WikiDiff,
     Advisories(Box<Results<Advisory>>) => Results<Advisory> [|a| a.ghsa.clone()],
     Advisory(Box<Advisory>) => Advisory,
     Teams(Box<Results<TeamSummary>>) => Results<TeamSummary> [|t| t.slug.clone()],
@@ -396,6 +411,8 @@ data! {
     Activity(Box<Activity>) => Activity,
     Traffic(Box<Traffic>) => Traffic,
     Dependencies(Box<Dependencies>) => Dependencies,
+    Community(Box<Community>) => Community,
+    MergeQueue(Box<crate::api::queue::MergeQueue>) => crate::api::queue::MergeQueue,
     Topics(Box<Topics>) => Topics,
     Topic(Box<Topic>) => Topic,
     StarLists(Box<Capped<StarList>>) => Capped<StarList>,

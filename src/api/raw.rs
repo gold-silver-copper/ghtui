@@ -311,6 +311,13 @@ raw! {
     /// dependencies of each (under the hawkgirl preview).
     DEPENDENCY_GRAPH = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { dependencyGraphManifests(first: 20) { totalCount nodes { filename blobPath parseable exceedsMaxSize dependenciesCount dependencies(first: 100) { totalCount nodes { packageName packageManager requirements repository { nameWithOwner } } } } } } }";
 
+    /// Where a repository's security policy is, if it has one: what the
+    /// community profile leaves out.
+    SECURITY_POLICY = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { securityPolicyUrl } }";
+
+    /// A branch's merge queue: the first 50 entries, in order.
+    MERGE_QUEUE = "query($owner: String!, $name: String!, $branch: String) { repository(owner: $owner, name: $name) { mergeQueue(branch: $branch) { url configuration { mergeMethod } entries(first: 50) { totalCount nodes { position state enqueuedAt estimatedTimeToMerge solo jump enqueuer { login } pullRequest { number title author { login } } } } } } }";
+
     /// A topic's stars and the topics GitHub relates to it.
     TOPIC = "query($name: String!) { topic(name: $name) { name stargazerCount relatedTopics(first: 10) { name } } }";
 

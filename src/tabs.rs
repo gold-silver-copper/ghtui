@@ -107,6 +107,8 @@ impl State {
     /// Opens `dest` in a new tab after this one, at its anchor. Pages in
     /// the browser just open there.
     pub fn open_tab(&mut self, Dest { target, anchor }: Dest) -> Cmds {
+        let find = anchor.as_deref() == Some(crate::route::code::FIND_FILE);
+        let anchor = anchor.filter(|_| !find);
         let (first, mut cmds) = match target {
             Target::Page(route) => {
                 let route = self.followed(route);
@@ -122,6 +124,9 @@ impl State {
         };
         self.push_tab(first);
         cmds.extend(self.opened_tab());
+        if find {
+            cmds.extend(self.open_finder(false));
+        }
         cmds
     }
 

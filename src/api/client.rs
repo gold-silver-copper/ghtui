@@ -134,6 +134,9 @@ pub struct GitHub {
 struct Enterprise {
     server: tokio::sync::OnceCell<crate::api::enterprise::Server>,
     learned: Mutex<Vec<crate::api::enterprise::Lack>>,
+    /// What the token's scopes keep queries from asking (on any GitHub),
+    /// learned from GitHub's refusals ([`crate::api::enterprise::scoped`]).
+    scoped: Mutex<Vec<crate::api::enterprise::Lack>>,
     /// What pages go without, said once each: what was, and what's yet
     /// to be.
     said: Mutex<(Vec<String>, Vec<String>)>,
@@ -334,6 +337,17 @@ impl GitHub {
 
     /// Says, once each, what pages go without on `server`.
     fn missing(&self, server: crate::api::enterprise::Server, about: &[String]) {
+        self.said_once(about, |fresh| {
+            format!(
+                "{} doesn't have {}: ghtui goes without",
+                server.name(),
+                fresh.join(", ")
+            )
+        });
+    }
+
+    /// Says what of `about` wasn't said yet, as `say` puts it.
+    fn said_once(&self, about: &[String], say: impl FnOnce(&[String]) -> String) {
         let mut said = lock(&self.enterprise.said);
         let (all, new) = &mut *said;
         let fresh: Vec<String> = (about.iter())
@@ -344,11 +358,7 @@ impl GitHub {
             return;
         }
         all.extend(fresh.iter().cloned());
-        new.push(format!(
-            "{} doesn't have {}: ghtui goes without",
-            server.name(),
-            fresh.join(", ")
-        ));
+        new.push(say(&fresh));
     }
 
     /// What an Enterprise Server lacks that pages go without, not yet
@@ -358,34 +368,53 @@ impl GitHub {
         std::mem::take(&mut said.1)
     }
 
-    /// A GraphQL request `body` as `server` can take it: without what it
-    /// lacks, and what its answer reads in place of each field left out.
-    fn for_server<'a>(
+    /// A GraphQL request `body` as this GitHub (`server`, an Enterprise
+    /// Server) and the token's scopes can take it: without what they
+    /// lack, and what its answer reads in place of each field left out.
+    fn fitted<'a>(
         &self,
-        server: crate::api::enterprise::Server,
+        server: Option<crate::api::enterprise::Server>,
         body: &'a Value,
     ) -> (Cow<'a, Value>, Vec<(Vec<String>, Value)>) {
-        use crate::api::enterprise::{lacks, rewrite};
-        let mut lacks = lacks(server);
-        lacks.extend(lock(&self.enterprise.learned).iter().cloned());
-        let query = body
-            .get("query")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let Some(done) = rewrite(query, &lacks) else {
-            return (Cow::Borrowed(body), Vec::new());
-        };
-        self.missing(server, &done.about);
-        let mut sent = body.clone();
-        if let Some(map) = sent.as_object_mut() {
-            map.insert("query".into(), Value::String(done.query));
-            if let Some(Value::Object(vars)) = map.get_mut("variables") {
-                for name in &done.unused {
-                    vars.remove(name);
-                }
+        let mut sent = Cow::Borrowed(body);
+        let mut fills = Vec::new();
+        if let Some(server) = server {
+            let mut lacks = crate::api::enterprise::lacks(server);
+            lacks.extend(lock(&self.enterprise.learned).iter().cloned());
+            if let Some(done) = rewritten(&sent, &lacks) {
+                self.missing(server, &done.about);
+                fills.extend(done.fills.iter().cloned());
+                sent = Cow::Owned(done.apply(&sent));
             }
         }
-        (Cow::Owned(sent), done.fills)
+        let scoped = lock(&self.enterprise.scoped).clone();
+        if let Some(done) = rewritten(&sent, &scoped) {
+            self.said_once(&done.about, |fresh| fresh.join("; "));
+            fills.extend(done.fills.iter().cloned());
+            sent = Cow::Owned(done.apply(&sent));
+        }
+        (sent, fills)
+    }
+
+    /// Learns what a refusal of query `sent` for scopes the token lacks
+    /// means it can't ask; whether that's new and `sent` asks it, so
+    /// asking again without it may be answered.
+    fn learn_scopes(&self, messages: &[String], sent: &Value) -> bool {
+        let lacks: Vec<_> = (messages.iter())
+            .flat_map(|m| crate::api::enterprise::scopes_wanted(m))
+            .flat_map(|scope| crate::api::enterprise::scoped(&scope))
+            .collect();
+        if rewritten(sent, &lacks).is_none() {
+            return false;
+        }
+        tracing::info!(?lacks, "the token's scopes don't let queries ask it");
+        let mut scoped = lock(&self.enterprise.scoped);
+        for lack in lacks {
+            if !scoped.iter().any(|s| s.missing == lack.missing) {
+                scoped.push(lack);
+            }
+        }
+        true
     }
 
     /// Learns what a server's refusal says it lacks; whether it learned
@@ -777,10 +806,7 @@ impl GitHub {
         let server = self.server().await;
         let mut tries = 0;
         let (mut wire, fills) = loop {
-            let (sent, fills) = match server {
-                Some(server) => self.for_server(server, body),
-                None => (Cow::Borrowed(body), Vec::new()),
-            };
+            let (sent, fills) = self.fitted(server, body);
             let request = Request::Post {
                 body: &sent,
                 idempotent,
@@ -791,12 +817,17 @@ impl GitHub {
             let wire: Wire = serde_json::from_str(&response.body)?;
             // An Enterprise Server refusing a query for what it lacks
             // has run none of it: asked again without that, it may answer.
+            // A query refused for a scope the token lacks has run none of
+            // it either: asked again without what the scope guards, the
+            // rest of the page loads.
             tries += 1;
-            if server.is_some() && wire.data.is_null() && tries < 4 {
+            if wire.data.is_null() && tries < 4 {
                 let said = (wire.errors.iter().flatten())
                     .filter_map(|e| e.message.clone())
                     .collect::<Vec<_>>();
-                if self.learn(&said) {
+                if (server.is_some() && self.learn(&said))
+                    || (idempotent && self.learn_scopes(&said, &sent))
+                {
                     continue;
                 }
             }
@@ -2010,6 +2041,22 @@ impl GitHub {
         Ok(self.checked(stars.await?, format!("{login}'s stars")))
     }
 
+    /// The repositories you watch, 30 at a time from `after`.
+    pub async fn watching(
+        &self,
+        after: Option<String>,
+    ) -> Result<browse::Results<browse::RepoSummary>, ApiError> {
+        let op = browse::WatchingQuery::build(browse::AfterVariables { after });
+        let watched = self.find(op, "the repositories you watch", |q| {
+            Some(
+                q.viewer
+                    .watching
+                    .filter_results(browse::RepoCard::into_summary),
+            )
+        });
+        Ok(self.checked(watched.await?, "the repositories you watch"))
+    }
+
     /// A repository's forks, most starred first, 30 at a time from
     /// `after`; the first page is cached.
     pub async fn forks(
@@ -2886,6 +2933,19 @@ trait Unrooted {}
 impl Unrooted for queries::RollupsQuery {}
 impl Unrooted for browse::BrowseSearch {}
 impl Unrooted for browse::StateCountsQuery {}
+
+/// GraphQL request `body`'s query without what `lacks` names, if it
+/// names any of it.
+fn rewritten(
+    body: &Value,
+    lacks: &[crate::api::enterprise::Lack],
+) -> Option<crate::api::enterprise::Rewritten> {
+    if lacks.is_empty() {
+        return None;
+    }
+    let query = body.get("query").and_then(Value::as_str)?;
+    crate::api::enterprise::rewrite(query, lacks)
+}
 
 use reply::Reply;
 mod reply {

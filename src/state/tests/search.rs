@@ -169,6 +169,26 @@ fn a_picker_list_that_failed_says_why() {
     }
 }
 
+/// GitHub's Go to file link opens the tree at its ref, with Go to file
+/// open there.
+#[test]
+fn a_find_link_opens_go_to_file() {
+    use crate::route::Dest;
+    let mut state = with_repo();
+    let link = Dest::from_url("https://github.com/gold-silver-copper/ghtui/find/next");
+    let cmds = state.go(link);
+    assert!(
+        cmds.contains(&fetch(DataKey::Files(ghtui(), "next".into()))),
+        "{cmds:?}"
+    );
+    assert!(
+        matches!(route(&state), Route::Code(code::Tree { rev, path, .. }) if rev == "next" && path.is_empty())
+    );
+    let picker = overlay!(state, Picker);
+    assert!(matches!(&picker.kind, picker::Kind::Files { rev, .. } if rev == "next"));
+    assert_eq!(page(&state).anchor, None);
+}
+
 #[test]
 fn go_to_file_and_switch_branches() {
     let mut state = with_repo();
