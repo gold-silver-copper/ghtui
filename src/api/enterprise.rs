@@ -13,7 +13,9 @@
 //! 'x' doesn't exist on type 'Y'"): ghtui learns it ([`learn`]) and asks
 //! again without it. Each thing left out is said once, as what the page
 //! goes without. A REST endpoint the server lacks isn't asked at all,
-//! and says so ([`rest_lack`]).
+//! and says so ([`rest_lack`]). A token without a scope gets the same
+//! treatment on any GitHub ([`scoped`]): GitHub refuses a query naming
+//! what the scope guards whole, so it's asked again without that.
 //!
 //! The table comes from the schemas GitHub publishes for each version
 //! (`what_an_enterprise_schema_lacks` in `query_check` lists what one
@@ -215,6 +217,44 @@ pub fn table() -> Vec<Lack> {
     lacks
 }
 
+/// What a token without `scope` can't be asked, in queries about other
+/// things: GitHub refuses such a query whole, before running any of it
+/// ("The 'createdAt' field requires one of the following scopes:
+/// ['read:project']"), so ghtui asks again without it, as it does an
+/// older server. A query about only that (a project, the projects an
+/// issue is in) is left to fail, saying the scope.
+pub fn scoped(scope: &str) -> Vec<Lack> {
+    match scope {
+        "read:project" => events(
+            &[
+                ("AddedToProjectV2Event", "ADDED_TO_PROJECT_V2_EVENT"),
+                ("RemovedFromProjectV2Event", "REMOVED_FROM_PROJECT_V2_EVENT"),
+                (
+                    "ProjectV2ItemStatusChangedEvent",
+                    "PROJECT_V2_ITEM_STATUS_CHANGED_EVENT",
+                ),
+            ],
+            None,
+            &crate::api::scope_missing("Project events in the timeline", scope),
+        ),
+        _ => Vec::new(),
+    }
+}
+
+/// The scopes GitHub's refusal of a query says the token lacks: those
+/// in "requires one of the following scopes: ['read:project']" (one is
+/// enough, so each it names).
+pub fn scopes_wanted(message: &str) -> Vec<String> {
+    let Some((_, rest)) = message.split_once("following scopes: [") else {
+        return Vec::new();
+    };
+    let list = rest.split(']').next().unwrap_or_default();
+    (list.split(','))
+        .map(|s| s.trim().trim_matches('\'').to_owned())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 /// What `server` lacks of [`table`].
 pub fn lacks(server: Server) -> Vec<Lack> {
     table()
@@ -315,6 +355,23 @@ pub struct Rewritten {
     pub fills: Vec<(Vec<String>, Value)>,
     pub unused: Vec<String>,
     pub about: Vec<String>,
+}
+
+impl Rewritten {
+    /// GraphQL request `body` with this query, without the variables it
+    /// no longer uses.
+    pub fn apply(&self, body: &Value) -> Value {
+        let mut sent = body.clone();
+        if let Some(map) = sent.as_object_mut() {
+            map.insert("query".into(), Value::String(self.query.clone()));
+            if let Some(Value::Object(vars)) = map.get_mut("variables") {
+                for name in &self.unused {
+                    vars.remove(name);
+                }
+            }
+        }
+        sent
+    }
 }
 
 /// `query` without what `lacks` names, or `None` if it names none of it

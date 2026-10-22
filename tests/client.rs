@@ -3053,6 +3053,44 @@ async fn an_owners_projects_page_and_say_what_scope_they_need() {
     assert_eq!(seen[0].json()["variables"]["after"], "p0");
 }
 
+/// A token without read:project has its issue page refused whole, for the
+/// project events in its timeline: it's asked again without them, and
+/// loads, saying once which scope adds them; later queries leave them out
+/// from the start.
+#[tokio::test]
+async fn a_page_loads_without_what_a_missing_scope_guards() {
+    let refused = r#"{"errors":[{"type":"INSUFFICIENT_SCOPES","locations":[{"line":1,"column":176}],"message":"Your token has not been granted the required scopes to execute this query. The 'createdAt' field requires one of the following scopes: ['read:project'], but your token has only been granted the: ['gist', 'read:org', 'repo', 'workflow'] scopes. Please modify your token's scopes at: https://github.com/settings/tokens."}]}"#;
+    let recorded =
+        std::fs::read_to_string(common::corpus_dir().join("46904cf99e801d39.json")).unwrap();
+    let recorded: serde_json::Value = serde_json::from_str(&recorded).unwrap();
+    let issue = recorded["response"].as_str().unwrap();
+    let (gh, seen) = github(vec![
+        Reply::new(200, refused),
+        Reply::new(200, issue),
+        Reply::new(200, issue),
+    ])
+    .await;
+    let repo = RepoId::new("rust-lang", "rust");
+    let detail = gh.issue(&repo, 97).await.unwrap().unwrap();
+    assert_eq!(detail.number, 97);
+    let said = gh.take_missing();
+    assert!(
+        said.len() == 1 && said[0].contains("gh auth refresh -s read:project"),
+        "{said:?}"
+    );
+    gh.issue(&repo, 97).await.unwrap().unwrap();
+    assert!(gh.take_missing().is_empty(), "said once");
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].query().contains("AddedToProjectV2Event"));
+    for asked in &seen[1..] {
+        let query = asked.query();
+        assert!(!query.contains("ProjectV2"), "{query}");
+        assert!(!query.contains("PROJECT_V2"), "{query}");
+        assert!(query.contains("LABELED_EVENT"), "{query}");
+    }
+    assert_eq!(seen.len(), 3);
+}
+
 // ---- the Security tab's alerts ------------------------------------------------
 
 /// A code scanning alert as GitHub sends it.

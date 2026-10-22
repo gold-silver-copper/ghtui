@@ -137,7 +137,9 @@ traffic is shown only to people who can push to it). The Security tab's alerts t
 scanning or Secret scanning alerts permission; GitHub shows them only to
 people with write access (secrets: admins) and security managers. Where
 something's missing, the page says what, and the `gh auth refresh`
-command that adds a scope.
+command that adds a scope; a page never fails whole for one (without
+`read:project`, an issue's or pull request's timeline loads without its
+project events).
 A wiki is pushed with the git credentials ghtui uses for its
 clones.
 
