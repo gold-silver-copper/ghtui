@@ -18,8 +18,9 @@ ghtui is pre-release, but it's usable every day.
   discussions, wikis, milestones, deployments, security advisories and
   alerts (Dependabot, code scanning, secret scanning), gists,
   teams, profiles, projects and search, a repository's Insights
-  (contributors, commit activity, traffic, the dependency graph),
-  Explore and topics, starred lists and packages, on github.com or a
+  (contributors, commit activity, traffic, the dependency graph,
+  community standards), a branch's merge queue, the repositories you
+  watch, a wiki's history and changes, Explore and topics, starred lists and packages, on github.com or a
   GitHub Enterprise Server. Every GitHub link opens in ghtui unless it can only work in a
   browser (a download, most of a repository's settings), and then it
   says why.
@@ -484,6 +485,9 @@ page opens it in the composer (or `$EDITOR`), `,W` writes a new one
 clone in ghtui's cache, on the wiki's latest commit, and pushes it with
 the git credentials ghtui uses. If the page changed on GitHub since you
 opened it, nothing is overwritten: saving says so and keeps your text.
+A page's History (and the wiki's, beside its list of pages) lists its
+changes from the clone, newest first; each opens what it changed, page
+by page, as do GitHub's `_compare` links between two revisions.
 
 **Subscriptions**: `:watch` on an issue, a pull request or a discussion (or
 its row in a list, your inbox included) subscribes to it, unsubscribes
@@ -492,7 +496,8 @@ repository (participating and @mentions, all activity, or ignore). The
 current choice is marked.
 
 **Insights** is a repository's last tab, as on GitHub, with GitHub's
-menu: Contributors, Commit activity, Traffic and Dependency graph.
+menu: Contributors, Commit activity, Traffic, Dependency graph and
+Community.
 Contributors and commit activity are counted with git, in your clone or
 the cache's (the page's first line says which, and at what commit): the
 default branch's commits, merges left out, week by week since the
@@ -507,7 +512,17 @@ those who can push to the repository. The dependency graph lists each
 manifest GitHub read with what it depends on and the versions it
 takes, each linked to its repository where GitHub knows it. Every
 chart is bars or a sparkline beside the numbers they stand for, scaled
-to the largest, and says what a bar counts.
+to the largest, and says what a bar counts. Community lists GitHub's
+community standards (its community profile, and the security policy
+the profile leaves out) and how healthy GitHub counts the repository:
+each file met opens, each missing one opens the form for a new file.
+
+**A merge queue** (`/queue/<branch>`, and from the merge box of a pull
+request whose base has one) lists its pull requests in order, where
+each stands, who queued it and when GitHub expects it merged.
+GitHub's Go to file links (`/find/<ref>`) open the tree there with Go
+to file open, and `/watching` (linked under the inbox) lists the
+repositories you watch.
 
 **Explore** (`:explore`, or the Space menu's Go) is the nearest GitHub's
 API comes to Trending: repositories made today, this week or this
@@ -1338,6 +1353,17 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   until the clone is made, list only its top 100 contributors.
 - The dependency graph shows 20 manifests and the first 100
   dependencies of each, and says how many more GitHub has.
+- Some of the website's pages open in the browser: the threads you're
+  subscribed to (GitHub's API lists no thread subscriptions, only
+  each one's; `:watch` changes one), saved issue views (not in the API),
+  attestations (the API finds them only by an artifact's digest), the
+  network graph, code frequency (lines added and removed, which git
+  would have to fetch every file's contents for, see above), Pulse, a
+  repository's Activity log, Sponsors, GitHub Apps' pages and gist
+  Discover.
+- A wiki's history lists its latest 100 changes, and a change shows
+  its first 5,000 lines.
+- A merge queue lists its first 50 entries.
 - Saved replies can be inserted, but not made, changed or deleted here:
   GitHub's API has no way to, so that's on github.com/settings/replies,
   which the list names. They take the `read:user` scope.

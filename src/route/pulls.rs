@@ -337,7 +337,7 @@ pub(crate) fn arb() -> impl proptest::strategy::Strategy<Value = Route> {
     let page = prop_oneof![
         (repo(), query()).prop_map(|(repo, query)| Pulls { repo, query }),
         repo().prop_map(NewPr),
-        (repo(), "[a-z][a-z0-9-]{0,8}(/[a-z0-9-]{1,8})?")
+        (repo(), "[a-z][a-z0-9-]{0,8}(/[a-z0-9][a-z0-9-]{0,7})?")
             .prop_map(|(repo, branch)| Queue { repo, branch }),
         (repo(), 1..u64::MAX).prop_map(|(repo, number)| Pr {
             pr: PrRef { repo, number },

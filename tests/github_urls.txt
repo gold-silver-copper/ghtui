@@ -224,7 +224,7 @@ https://github.com/orgs/rust-lang/discussions                               Disc
 # A repository's tabs and lists
 https://github.com/rust-lang/rust/issues                                    Issues
 https://github.com/rust-lang/rust/issues?q=is%3Aclosed+label%3Abug          Issues
-https://github.com/rust-lang/rust/issues/views/1                            external rare
+https://github.com/rust-lang/rust/issues/views/1                            external no-api
 https://github.com/rust-lang/rust/pulls                                     Pulls
 https://github.com/rust-lang/rust/pulls?q=is%3Amerged                       Pulls
 https://github.com/rust-lang/rust/actions                                   Actions
@@ -256,7 +256,7 @@ https://github.com/rust-lang/rust/network/members                           Fork
 https://github.com/rust-lang/rust/community                                 Insights
 https://github.com/rust-lang/rust/activity                                  external rare
 https://github.com/rust-lang/rust/custom-properties                         external session
-https://github.com/rust-lang/rust/attestations                              external rare
+https://github.com/rust-lang/rust/attestations                              external no-api
 https://github.com/rust-lang/rust/settings                                  Settings
 https://github.com/rust-lang/rust/settings/branches                         Settings
 https://github.com/rust-lang/rust/settings/branch_protection_rules/1234     Settings
