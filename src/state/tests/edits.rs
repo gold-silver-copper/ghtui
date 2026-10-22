@@ -350,6 +350,18 @@ fn an_issue_type_is_set_and_followed() {
     says(&s, "a pull request has none");
 }
 
+/// A file dropped on the composer pastes its path, and says why it isn't
+/// attached: GitHub's API can't upload one.
+#[test]
+fn a_dropped_file_says_it_cant_be_attached() {
+    let mut s = issue_with(|_| {});
+    press(&mut s, "c");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+    update(&mut s, Msg::Paste(format!("'{path}'")));
+    says(&s, "GitHub's API can't attach a file");
+    assert!(fixtures::composer(&mut s).text().contains("Cargo.toml"));
+}
+
 /// One milestone, or none; and a title in a one-line box.
 #[test]
 fn milestone_and_title() {

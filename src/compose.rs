@@ -142,6 +142,10 @@ impl Compose {
     }
 }
 
+/// Why a file isn't attached to a comment: GitHub uploads one only for a
+/// signed-in browser, not through its API.
+pub(crate) const NO_ATTACHMENTS: &str = "GitHub's API can't attach a file to a comment (only a signed-in browser can upload one), so its path was pasted: upload it on github.com, or link to it";
+
 /// A text box for the composer and the review's summary, holding `text`.
 pub(crate) fn editor(theme: &Theme, text: &str) -> TextArea<'static> {
     let mut input = crate::nav::new_input(theme, Bg::ContainerHigh);

@@ -12,6 +12,7 @@ mod issue;
 mod labels;
 mod offline;
 mod pages;
+mod people;
 mod pull;
 mod release;
 mod settings;
@@ -24,5 +25,6 @@ pub const ALL: &[Check] = &[
     labels::CHECK,
     settings::CHECK,
     actions::CHECK,
+    people::CHECK,
     offline::CHECK,
 ];

@@ -16,6 +16,14 @@ use crate::state::{Cmds, Overlay, Screen, State};
 /// Choices the completion list shows at most.
 pub const SHOWN: usize = 6;
 
+/// Whether a paste is the path of a file, as a terminal pastes a file
+/// dropped on it (quoted, or as a `file://` URL).
+fn dropped_file(text: &str) -> bool {
+    let path = text.trim().trim_matches(|c| c == '\'' || c == '"');
+    let path = path.strip_prefix("file://").unwrap_or(path);
+    !path.is_empty() && !path.contains('\n') && std::path::Path::new(path).is_file()
+}
+
 /// A paste: into the comment box or the review summary as it is, newlines
 /// and all; into a one-line box (a search, a filter, the palette, a
 /// picker) as one line.
@@ -30,6 +38,10 @@ pub fn on_paste(state: &mut State, text: &str) -> Cmds {
             if !c.sent.sending {
                 (c.discard_armed, c.sent.error) = (None, None);
                 c.input.insert_str(&text);
+                // A file dropped on the terminal pastes its path.
+                if dropped_file(&text) {
+                    state.info(crate::compose::NO_ATTACHMENTS);
+                }
             }
         }
         Some(Overlay::Submit(d)) => {
