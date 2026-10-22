@@ -123,15 +123,15 @@ fn selected_comment(state: &State, about: &Subject) -> Result<Said, String> {
     let found = match about {
         Subject::Issue(repo, number) => {
             let d = issue(state, repo, *number).ok_or(LOADING)?;
-            d.comments().find(|c| is(c)).cloned()
+            d.comments().find(|c| is(c))
         }
         Subject::Pr(pr) => {
             let a = state.activity(pr).ok_or(LOADING)?;
-            a.comments().find(|c| is(c)).cloned()
+            a.comments().find(|c| is(c))
         }
         Subject::Discussion(of, n) => {
             let d = discussion(state, of, *n).ok_or(LOADING)?;
-            comments(d).find(|c| is(c)).cloned()
+            comments(d).find(|c| is(c))
         }
         _ => None,
     };
@@ -248,8 +248,11 @@ fn lock_plan(
 
 fn pr_plan(state: &State, r: &PrRef, action: Action, about: Subject) -> Result<Step, String> {
     let d = state.pr(r).ok_or(LOADING)?;
-    let same_repo =
-        (d.head_repo.as_deref()).is_some_and(|h| h.eq_ignore_ascii_case(&r.repo.to_string()));
+    let same_repo = (d.head_repo.as_deref())
+        .and_then(|h| h.split_once('/'))
+        .is_some_and(|(o, n)| {
+            o.eq_ignore_ascii_case(&r.repo.owner) && n.eq_ignore_ascii_case(&r.repo.name)
+        });
     match action {
         Action::Lock => lock_plan(d.locked, d.sidebar.labels, &d.id, about, "pull request"),
         Action::DeleteBranch if d.state.is_open() => Err(format!(
@@ -710,14 +713,11 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Rows {
 
 fn base_rows(state: &State, pr: &PrRef, id: &NodeId, from: &str, head: &str, q: &str) -> Rows {
     let key = DataKey::Refs(pr.repo.clone());
-    let Some(refs) = state.picked::<crate::api::browse::Refs>(&key) else {
-        let loading = state.remote(&key).is_none_or(|r| r.loading);
-        let why = match state.remote(&key).and_then(|r| r.error.as_deref()) {
-            Some(err) if !loading => format!("Couldn't load the branches: {err}"),
-            _ => "Loading the branches…".into(),
-        };
-        return vec![crate::picker::entry(why, "", None)];
-    };
+    let refs = or_return!(listed::<crate::api::browse::Refs, _>(
+        state,
+        &key,
+        "the branches"
+    ));
     let mut hits: Vec<(usize, &String)> = (refs.branches.iter())
         .filter(|b| *b != from && *b != head)
         .filter_map(|b| Some((fuzzy_score(q, b)?, b)))
@@ -1214,10 +1214,10 @@ impl Job for Transfer {
     }
 
     fn done(self, state: &mut State, result: Result<IssueAt, Failure>) -> Cmds {
-        let (from, to) = match result {
-            Ok(to) => (self.from, to),
-            Err(why) => return refused(state, format!("GitHub refused the transfer: {why}")),
-        };
+        let to = or_return!(result, |why| {
+            refused(state, format!("GitHub refused the transfer: {why}"))
+        });
+        let from = self.from;
         close_confirm(state);
         state.info(format!("Moved {from} to {to}"));
         let here = Route::issue(from.repo, from.number);
@@ -1240,17 +1240,14 @@ impl Job for Start {
     }
 
     fn done(self, state: &mut State, result: Result<u64, Failure>) -> Cmds {
-        let number = match result {
-            Ok(number) => number,
-            Err(why) => {
-                let text = format!("GitHub didn't start the discussion: {why}");
-                match &mut state.overlay {
-                    Some(Overlay::Compose(c)) => c.sent.fail(text),
-                    _ => state.error(text),
-                }
-                return Cmds::new();
+        let number = or_return!(result, |why| {
+            let text = format!("GitHub didn't start the discussion: {why}");
+            match &mut state.overlay {
+                Some(Overlay::Compose(c)) => c.sent.fail(text),
+                _ => state.error(text),
             }
-        };
+            Cmds::new()
+        });
         if let Some(Overlay::Compose(c)) = &state.overlay
             && let crate::compose::Target::NewDiscussion(_) = c.target
         {
