@@ -13,6 +13,7 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
+use crate::api::codeowners::Codeowners;
 use crate::ui::diff_doc::{Doc, Viewed};
 use crate::ui::{Ctx, PAD_Y, changes, cols, fill, fit_spans, inset, render_split, row, text};
 
@@ -182,6 +183,8 @@ pub fn row_of_file(rows: &[TreeRow], index: usize) -> Option<usize> {
 pub struct FileTree<'a> {
     pub ctx: Ctx<'a>,
     pub doc: &'a Doc,
+    /// Who owns each file, by the base branch's CODEOWNERS.
+    pub owners: Option<&'a Codeowners>,
     pub rows: &'a [TreeRow],
     pub selected: usize,
     pub scroll: usize,
@@ -290,7 +293,21 @@ impl FileTree<'_> {
                 } else {
                     room
                 };
-                spans.push(Span::styled(text::fit(name, room), name_style));
+                // Its owners after its name, where there's room.
+                let owned = (self.owners)
+                    .and_then(|o| o.owner(file.meta.path()))
+                    .filter(|r| !r.owners.is_empty())
+                    .map(|r| r.owners.join(" "));
+                let name_width = text::width(name);
+                match owned {
+                    Some(owned) if room > name_width.saturating_add(4) => {
+                        spans.push(Span::styled(name.clone(), name_style));
+                        let left = room.saturating_sub(name_width.saturating_add(2));
+                        let owned = format!("  {}", text::fit(&owned, left));
+                        spans.push(Span::styled(owned, theme.meta(bg)));
+                    }
+                    _ => spans.push(Span::styled(text::fit(name, room), name_style)),
+                }
                 render_split(area, buf, &spans, &right, 1);
             }
         }

@@ -117,6 +117,7 @@ fn a_review_comment_keeps_its_tabs() {
             now: 0,
         },
         doc: &doc,
+        owners: None,
         cursor: Pos::default(),
         half: Side::Right,
         top: Pos::default(),

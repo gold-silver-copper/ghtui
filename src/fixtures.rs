@@ -678,6 +678,16 @@ pub fn blob() -> Blob {
     )
 }
 
+/// A repository's CODEOWNERS: everything is octocat's but the sources
+/// (a team's and hubot's) and the docs.
+pub fn codeowners() -> crate::api::codeowners::Codeowners {
+    let text = "* @octocat
+/src/ @octo-org/core @hubot
+*.md @octo-org/docs
+";
+    crate::api::codeowners::Codeowners::new(Some((".github/CODEOWNERS", text)), Some(Vec::new()))
+}
+
 /// The file at `path`, all of it.
 pub fn file(path: &str, text: &str) -> Blob {
     Blob {
@@ -2342,6 +2352,7 @@ pub(crate) fn sample(key: &DataKey) -> Data {
         K::Readme(_) => Data::Readme(Some(Box::new(readme()))),
         K::Tree(..) => Data::Tree(tree()),
         K::Blob(..) => Data::from(blob()),
+        K::Codeowners(..) => Data::from(codeowners()),
         K::Search(kind, _) => Data::from(search(kind)),
         K::StateCounts(_) => {
             Data::StateCounts(crate::api::browse::StateCounts { open: 2, closed: 5 })

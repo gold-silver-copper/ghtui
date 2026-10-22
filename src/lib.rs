@@ -47,6 +47,7 @@ mod chrome;
 mod clone;
 mod code_index;
 mod code_nav;
+mod codeowners;
 mod compose;
 mod config;
 #[cfg(test)]

@@ -120,6 +120,7 @@ fn repo_of(key: &DataKey) -> Option<RepoId> {
     match key {
         DataKey::Tree(repo, ..)
         | DataKey::Blob(repo, ..)
+        | DataKey::Codeowners(repo, _)
         | DataKey::Files(repo, _)
         | DataKey::Commit(repo, _)
         | DataKey::Blame(repo, ..)
@@ -665,6 +666,24 @@ impl Local {
                 let blob = read::blob(clone, &oid, path).await?.map(Data::from);
                 found(blob, oid, format!("{repo}/{path} at {rev}"))
             }
+            DataKey::Codeowners(_, rev) => {
+                let oid = at(rev.clone()).await?;
+                let mut found = None;
+                for path in crate::api::codeowners::PLACES {
+                    if let Some(text) = read::blob(clone, &oid, path).await?.and_then(|b| b.text) {
+                        found = Some((path, text));
+                        break;
+                    }
+                }
+                // What's wrong with it is GitHub's to say.
+                let errors = match &found {
+                    Some(_) => gh.codeowners_errors(repo, rev).await.ok(),
+                    None => Some(Vec::new()),
+                };
+                let found = found.as_ref().map(|(path, text)| (*path, text.as_str()));
+                let owners = crate::api::codeowners::Codeowners::new(found, errors);
+                Answer::Data(Data::from(owners), Some(oid))
+            }
             DataKey::Files(_, rev) => {
                 let oid = at(rev.clone()).await?;
                 let (files, cut) = read::files(clone, &oid).await?;
@@ -968,6 +987,42 @@ mod tests {
             ]
         );
         assert!(tags.items.iter().all(|t| t.date.is_some()));
+    }
+
+    /// The CODEOWNERS file is read with git, from the first place GitHub
+    /// looks; what's wrong with it is GitHub's to say, and when GitHub
+    /// can't be asked, that's unknown rather than nothing.
+    #[tokio::test]
+    async fn code_owners_are_read_with_git() {
+        let github = tempfile::tempdir().unwrap();
+        let g = github.path();
+        origin(g).await;
+        let files = [
+            ("docs/CODEOWNERS", "* @docs\n"),
+            (".github/CODEOWNERS", "* @octocat\n/src/ @o/core\n"),
+        ];
+        commit(g, &files, "Owners").await;
+        let (cache, _) = cache_clone(g).await;
+        let elsewhere = tempfile::tempdir().unwrap();
+        let local = Local::new(GitContext {
+            cache_root: cache.path().to_owned(),
+            credentials: crate::git::credentials::Credentials::Ambient,
+            cwd: elsewhere.path().to_owned(),
+        });
+        // Nothing listens there.
+        let gh = GitHub::with_base_uri(
+            crate::api::auth::Token::new("t"),
+            crate::store::Store::disabled(),
+            "http://127.0.0.1:9",
+        );
+        let key = DataKey::Codeowners(RepoId::new("o", "r"), "main".into());
+        let (data, from) = local.fetch(&gh, &key, None).await;
+        let Ok(Data::Codeowners(owners)) = data else { panic!("{data:?}") };
+        assert!(matches!(from, From::Git { .. }), "{from:?}");
+        assert_eq!(owners.path.as_deref(), Some(".github/CODEOWNERS"));
+        let owner = owners.owner("src/lib.rs").map(|r| r.owners.clone());
+        assert_eq!(owner, Some(vec!["@o/core".to_owned()]));
+        assert_eq!(owners.errors, None);
     }
 
     /// Without GitHub, the clone still answers, at the commit GitHub's

@@ -240,6 +240,7 @@ pub(crate) use screens::*;
 
 mod changes;
 mod code_nav;
+mod codeowners;
 mod create;
 mod discussions;
 mod edits;

@@ -730,6 +730,34 @@ async fn follows_and_statuses_send_their_mutations() {
     assert_eq!(seen.len(), 4);
 }
 
+/// The CODEOWNERS file GitHub reads is the first of its three places that
+/// has one, at the revision asked; its problems come along, and `HEAD`
+/// asks for the default branch's.
+#[tokio::test]
+async fn code_owners_are_the_first_file_found_with_its_problems() {
+    let reply = r#"{"data":{"repository":{
+      "github":null,
+      "root":{"text":"* @amy\n/src/ @o/core\n"},
+      "docs":{"text":"* @bob\n"},
+      "codeowners":{"errors":[{"line":2,"column":8,"kind":"Unknown owner","message":"Unknown owner on line 2","suggestion":""}]}}}}"#;
+    let (gh, seen) = github(vec![Reply::new(200, reply)]).await;
+    let owners = gh.codeowners(&RepoId::new("o", "r"), "HEAD").await.unwrap();
+    assert_eq!(owners.path.as_deref(), Some("CODEOWNERS"));
+    let rule = owners.owner("src/main.rs").unwrap();
+    assert_eq!(
+        (rule.line, rule.owners.as_slice()),
+        (2, ["@o/core".to_owned()].as_slice())
+    );
+    let errors = owners.errors.unwrap();
+    assert_eq!(errors.len(), 1);
+    assert_eq!((errors[0].line, errors[0].suggestion.as_deref()), (2, None));
+    let seen = seen.lock().unwrap();
+    let vars = &seen[0].json()["variables"];
+    assert_eq!(vars["github"], "HEAD:.github/CODEOWNERS");
+    assert_eq!(vars["docs"], "HEAD:docs/CODEOWNERS");
+    assert_eq!(vars["ref"], serde_json::Value::Null);
+}
+
 /// Managing an issue, a pull request or a discussion sends GitHub's own
 /// mutations (and REST for a branch); an issue named by its number is
 /// looked up first, and what makes something new says what it made.
@@ -939,6 +967,7 @@ async fn a_sidebar_keeps_what_its_teams_say() {
       "labels":{"totalCount":150,"nodes":[{"id":"L1","name":"bug"}]},
       "assignableUsers":{"totalCount":1,"nodes":[{"id":"U1","login":"amy"}]},
       "milestones":{"totalCount":0,"nodes":[]},
+      "issueTypes":{"totalCount":0,"nodes":[]},
       "owner":{"__typename":"Organization","login":"o"}}}}"#;
     let forbidden = r#"{"data":{"organization":null},"errors":[{"type":"FORBIDDEN",
       "path":["organization","teams"],"message":"Resource not accessible by personal access token"}]}"#;
@@ -2252,7 +2281,7 @@ async fn a_missing_root_isnt_also_left_out() {
 async fn an_organizations_profile_leaves_nothing_out() {
     let (gh, _) = github(vec![Reply::new(
         200,
-        r#"{"data":{"user":null,"organization":{"login":"o","name":null,"description":null,"location":null,"websiteUrl":null,"pinnedItems":{"nodes":[]},"repositories":{"totalCount":0,"nodes":[]},"isVerified":false,"membersWithRole":{"totalCount":0,"nodes":[]}},"user_readme":null,"org_readme":null},
+        r#"{"data":{"user":null,"organization":{"id":"O_1","viewerIsFollowing":false,"login":"o","name":null,"description":null,"location":null,"websiteUrl":null,"pinnedItems":{"nodes":[]},"repositories":{"totalCount":0,"nodes":[]},"isVerified":false,"membersWithRole":{"totalCount":0,"nodes":[]}},"user_readme":null,"org_readme":null},
             "errors":[{"type":"NOT_FOUND","path":["user"],"message":"Could not resolve to a User with the login of 'o'."},
                       {"type":"NOT_FOUND","path":["user_readme"],"message":"Could not resolve to a Repository with the name 'o/o'."}]}"#,
     )])

@@ -415,6 +415,7 @@ fn render_diff(
     DiffView {
         ctx,
         doc,
+        owners: crate::codeowners::on_screen(state),
         cursor: screen.cursor,
         half: screen.half,
         top: doc.to_pos(top),
@@ -441,6 +442,7 @@ fn render_diff(
         FileTree {
             ctx,
             doc: &diff.doc,
+            owners: crate::codeowners::on_screen(state),
             rows: &crate::ui::file_tree::unfolded(&diff.tree, &screen.folded),
             selected: screen.tree_selected,
             scroll: screen.tree_scroll,
