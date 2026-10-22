@@ -11,6 +11,14 @@ use crate::api::client::{ApiError, GitHub};
 use crate::api::model::{Capped, NodeId, RepoId};
 use crate::api::{has_scope, raw, scope_missing};
 
+pub mod actions;
+pub mod pages;
+pub mod properties;
+
+pub use actions::{ActionsChange, Caches, Secret, Store, Variable};
+pub use pages::{Pages, PagesChange, PagesForm};
+pub use properties::{PropValue, Properties, PropertyValues};
+
 /// One page of the Settings tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SettingsPage {
@@ -25,27 +33,46 @@ pub enum SettingsPage {
     Hook(u64),
     /// Deploy keys.
     Keys,
+    /// Actions secrets: the repository's, its environments' and its
+    /// organization's.
+    Secrets,
+    /// Actions variables, as secrets are kept.
+    Variables,
+    /// Its GitHub Pages site.
+    Pages,
+    /// Actions caches, under the Actions tab.
+    Caches,
+    /// Its custom properties, shown to anyone who can read it.
+    Properties,
 }
 
 impl SettingsPage {
     /// The pages of the tab's own menu, in GitHub's order.
-    pub const MENU: [SettingsPage; 5] = [
+    pub const MENU: [SettingsPage; 8] = [
         SettingsPage::General,
         SettingsPage::Access,
         SettingsPage::Branches,
         SettingsPage::Hooks,
+        SettingsPage::Pages,
         SettingsPage::Keys,
+        SettingsPage::Secrets,
+        SettingsPage::Variables,
     ];
 
-    /// What follows `/settings` in its URL.
+    /// What follows the repository's own path in its URL.
     pub fn slug(self) -> String {
         match self {
-            SettingsPage::General => String::new(),
-            SettingsPage::Branches => "/branches".into(),
-            SettingsPage::Access => "/access".into(),
-            SettingsPage::Hooks => "/hooks".into(),
-            SettingsPage::Hook(id) => format!("/hooks/{id}"),
-            SettingsPage::Keys => "/keys".into(),
+            SettingsPage::General => "/settings".into(),
+            SettingsPage::Branches => "/settings/branches".into(),
+            SettingsPage::Access => "/settings/access".into(),
+            SettingsPage::Hooks => "/settings/hooks".into(),
+            SettingsPage::Hook(id) => format!("/settings/hooks/{id}"),
+            SettingsPage::Keys => "/settings/keys".into(),
+            SettingsPage::Secrets => "/settings/secrets/actions".into(),
+            SettingsPage::Variables => "/settings/variables/actions".into(),
+            SettingsPage::Pages => "/settings/pages".into(),
+            SettingsPage::Caches => "/actions/caches".into(),
+            SettingsPage::Properties => "/custom-properties".into(),
         }
     }
 
@@ -57,7 +84,18 @@ impl SettingsPage {
             SettingsPage::Hooks => "Webhooks",
             SettingsPage::Hook(_) => "Webhook",
             SettingsPage::Keys => "Deploy keys",
+            SettingsPage::Secrets => "Secrets",
+            SettingsPage::Variables => "Variables",
+            SettingsPage::Pages => "Pages",
+            SettingsPage::Caches => "Caches",
+            SettingsPage::Properties => "Custom properties",
         }
+    }
+
+    /// GitHub shows it only to admins (caches and custom properties are
+    /// for anyone who can read the repository).
+    pub fn admins_only(self) -> bool {
+        !matches!(self, SettingsPage::Caches | SettingsPage::Properties)
     }
 
     /// The page of the menu it's under.
@@ -86,6 +124,11 @@ pub enum Settings {
     Hooks(Listed<Hook>),
     Hook(Box<HookPage>),
     Keys(Listed<DeployKey>),
+    Secrets(Box<Store<Secret>>),
+    Variables(Box<Store<Variable>>),
+    Pages(Box<Pages>),
+    Caches(Caches),
+    Properties(Properties),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -417,6 +460,13 @@ pub enum SettingsChange {
         repo: RepoId,
         archived: bool,
     },
+    /// Secrets, variables and caches.
+    Actions(ActionsChange),
+    Pages(PagesChange),
+    SetProperties {
+        repo: RepoId,
+        values: PropertyValues,
+    },
 }
 
 /// How many a REST list asks for.
@@ -470,6 +520,11 @@ impl GitHub {
             SettingsPage::Keys => {
                 Settings::Keys(self.listed(repo, "keys?", "deploy keys", wire::key).await?)
             }
+            SettingsPage::Secrets => Settings::Secrets(Box::new(self.kept(repo).await?)),
+            SettingsPage::Variables => Settings::Variables(Box::new(self.kept(repo).await?)),
+            SettingsPage::Pages => Settings::Pages(Box::new(self.pages(repo).await?)),
+            SettingsPage::Caches => Settings::Caches(self.caches(repo).await?),
+            SettingsPage::Properties => Settings::Properties(self.properties(repo).await?),
         };
         Ok(settings)
     }
@@ -668,6 +723,9 @@ impl GitHub {
                 let path = format!("/repos/{repo}");
                 self.rest_write(Method::PATCH, &path, Some(&body)).await
             }
+            C::Actions(change) => self.change_actions(change).await,
+            C::Pages(change) => self.change_pages(change).await,
+            C::SetProperties { repo, values } => self.set_properties(repo, values).await,
         }
     }
 }

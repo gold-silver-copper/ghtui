@@ -237,9 +237,9 @@ actions! {
     SetField          "set_field"         []                       Page   "Set a field of the item in its project";
     AddItem           "add_item"          ["a"]                    Project "Add an issue, a pull request or a draft";
     ArchiveItem       "archive_item"      []                       Project "Archive the item, or restore it";
-    AddSetting        "add_setting"       ["a"]                    Settings "Add a branch rule, a collaborator, a webhook or a deploy key";
-    EditSetting       "edit_setting"      ["e"]                    Settings "Edit the rule or webhook, or change the collaborator's role";
-    DeleteSetting     "delete_setting"    ["D"]                    Settings "Delete the rule, webhook or deploy key; remove the collaborator or invitation";
+    AddSetting        "add_setting"       ["a"]                    Settings "Add a branch rule, a collaborator, a webhook, a deploy key, a secret or a variable; publish a Pages site";
+    EditSetting       "edit_setting"      ["e"]                    Settings "Edit the rule, webhook, variable, Pages site or custom properties; set a secret; change the collaborator's role";
+    DeleteSetting     "delete_setting"    ["D"]                    Settings "Delete the rule, webhook, deploy key, secret, variable or cache; remove the collaborator or invitation; unpublish the site";
     ToggleSetting     "toggle_setting"    ["x"]                    Settings "Turn the ruleset or webhook on or off; archive or unarchive the repository";
     Redeliver         "redeliver"         []                       Settings "Redeliver the webhook delivery";
 

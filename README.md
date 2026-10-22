@@ -823,9 +823,9 @@ says where it works.
 
 | Keys | Action |
 | ---- | ------ |
-| `a`  | Add a branch rule, a collaborator, a webhook or a deploy key |
-| `e`  | Edit the rule or webhook, or change the collaborator's role |
-| `D`  | Delete the rule, webhook or deploy key; remove the collaborator or invitation |
+| `a`  | Add a branch rule, a collaborator, a webhook, a deploy key, a secret or a variable; publish a Pages site |
+| `e`  | Edit the rule, webhook, variable, Pages site or custom properties; set a secret; change the collaborator's role |
+| `D`  | Delete the rule, webhook, deploy key, secret, variable or cache; remove the collaborator or invitation; unpublish the site |
 | `x`  | Turn the ruleset or webhook on or off; archive or unarchive the repository |
 
 **In Files changed** (`diff:`)

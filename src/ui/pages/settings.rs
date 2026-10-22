@@ -26,7 +26,25 @@ pub enum SettingLink {
     Archive,
     /// Deleting the repository, which is GitHub's to do.
     DeleteRepo,
+    /// "New secret" (or variable) in an environment's box.
+    AddIn(String),
+    /// A secret, in an environment or (`None`) the repository.
+    Secret(Option<String>, String),
+    Variable(Option<String>, String),
+    /// An organization's secret or variable, changed in its settings.
+    OrgItem(String),
+    Cache(u64),
+    /// The Pages site's settings.
+    Site,
+    /// Unpublishing the Pages site.
+    Unpublish,
+    Property(String),
 }
+
+mod actions;
+mod site;
+
+pub(crate) use site::source as pages_source;
 
 /// The keys the page names, as they're bound.
 #[derive(Debug, Clone, Copy)]
@@ -40,7 +58,7 @@ pub struct SettingKeys<'a> {
 
 /// The tab's own menu, as GitHub's sidebar; `on` is the page shown.
 fn settings_nav(page: &mut Page, repo: &RepoId, on: SettingsPage) {
-    let base = format!("{}/settings", url::repo(repo));
+    let base = url::repo(repo);
     let tabs = SettingsPage::MENU.into_iter().map(|item| {
         (
             item.name(),
@@ -63,8 +81,10 @@ pub fn settings_page(
     admin: bool,
     now: u64,
 ) {
-    settings_nav(page, repo, at);
-    if !admin {
+    if at.admins_only() {
+        settings_nav(page, repo, at);
+    }
+    if !admin && at.admins_only() {
         let why = format!("You don't administer {repo}: GitHub shows its settings only to admins.");
         say(page, why, Role::Meta);
         page.blank();
@@ -77,6 +97,11 @@ pub fn settings_page(
         Settings::Hooks(h) => hooks(page, h, keys, now),
         Settings::Hook(h) => hook(page, h, keys, now),
         Settings::Keys(k) => deploy_keys(page, k, keys, now),
+        Settings::Secrets(s) => actions::store(page, repo, s, keys, now),
+        Settings::Variables(v) => actions::store(page, repo, v, keys, now),
+        Settings::Caches(c) => actions::caches(page, c, keys, now),
+        Settings::Pages(p) => site::pages(page, p, keys, now),
+        Settings::Properties(p) => site::properties(page, repo, p, keys),
     }
 }
 

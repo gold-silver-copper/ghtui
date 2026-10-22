@@ -228,7 +228,7 @@ https://github.com/rust-lang/rust/pulls                                     Pull
 https://github.com/rust-lang/rust/pulls?q=is%3Amerged                       Pulls
 https://github.com/rust-lang/rust/actions                                   Actions
 https://github.com/rust-lang/rust/actions?query=branch%3Amain+is%3Afailure  Actions
-https://github.com/rust-lang/rust/actions/caches                            external session
+https://github.com/rust-lang/rust/actions/caches                            Settings
 https://github.com/rust-lang/rust/discussions                               Discussions
 https://github.com/rust-lang/rust/discussions/categories/ideas              Discussions
 https://github.com/rust-lang/rust/wiki                                      Wiki
@@ -252,7 +252,7 @@ https://github.com/rust-lang/rust/network/dependents                        exte
 https://github.com/rust-lang/rust/network/members                           Forks
 https://github.com/rust-lang/rust/community                                 external rare
 https://github.com/rust-lang/rust/activity                                  external rare
-https://github.com/rust-lang/rust/custom-properties                         external session
+https://github.com/rust-lang/rust/custom-properties                         Settings
 https://github.com/rust-lang/rust/attestations                              external rare
 https://github.com/rust-lang/rust/settings                                  Settings
 https://github.com/rust-lang/rust/settings/branches                         Settings
@@ -263,8 +263,9 @@ https://github.com/rust-lang/rust/settings/hooks                            Sett
 https://github.com/rust-lang/rust/settings/hooks/1234                       Settings
 https://github.com/rust-lang/rust/settings/keys                             Settings
 https://github.com/rust-lang/rust/settings/actions                          external session
-https://github.com/rust-lang/rust/settings/secrets/actions                  external session
-https://github.com/rust-lang/rust/settings/pages                            external session
+https://github.com/rust-lang/rust/settings/secrets/actions                  Settings
+https://github.com/rust-lang/rust/settings/variables/actions                Settings
+https://github.com/rust-lang/rust/settings/pages                            Settings
 https://github.com/rust-lang/rust/branches                                  Branches
 https://github.com/rust-lang/rust/tags                                      Tags
 https://github.com/rust-lang/rust/releases                                  Releases
