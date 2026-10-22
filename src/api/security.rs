@@ -516,17 +516,9 @@ impl GitHub {
     /// GitHub won't list them.
     async fn secret_locations(&self, path: &str) -> Option<Vec<SecretLocation>> {
         let path = format!("{path}/locations?per_page=100");
-        match self.rest_answer(&path).await {
-            Ok(answer) if (200..300).contains(&answer.status()) => {
-                wire::locations(answer.body()).ok()
-            }
-            Ok(answer) => {
-                tracing::debug!(
-                    status = answer.status(),
-                    "couldn't list a secret's locations"
-                );
-                None
-            }
+        let found = self.rest_get(&path, "a secret's locations").await;
+        match found.and_then(|body| wire::locations(&body)) {
+            Ok(found) => Some(found),
             Err(err) => {
                 tracing::debug!(%err, "couldn't list a secret's locations");
                 None
@@ -586,28 +578,19 @@ impl GitHub {
     pub(crate) async fn set_alert(&self, c: &AlertChange) -> Result<(), ApiError> {
         let a = &c.alert;
         let path = format!("/repos/{}/{}/alerts/{}", a.repo, a.kind.slug(), a.number);
-        let mut body = serde_json::Map::new();
-        let mut put = |k: &str, v: &str| {
-            body.insert(k.to_owned(), v.into());
-        };
-        match (&c.dismiss, a.kind) {
-            (None, _) => put("state", "open"),
-            (Some((reason, comment)), AlertKind::SecretScanning) => {
-                put("state", "resolved");
-                put("resolution", reason);
-                if !comment.is_empty() {
-                    put("resolution_comment", comment);
-                }
-            }
-            (Some((reason, comment)), _) => {
-                put("state", "dismissed");
-                put("dismissed_reason", reason);
-                if !comment.is_empty() {
-                    put("dismissed_comment", comment);
-                }
+        let mut body = serde_json::json!({ "state": "open" });
+        if let (Some((reason, comment)), Some(map)) = (&c.dismiss, body.as_object_mut()) {
+            // A secret is resolved; the others are dismissed.
+            let (state, why, said) = match a.kind {
+                AlertKind::SecretScanning => ("resolved", "resolution", "resolution_comment"),
+                _ => ("dismissed", "dismissed_reason", "dismissed_comment"),
+            };
+            map.insert("state".into(), state.into());
+            map.insert(why.into(), reason.as_str().into());
+            if !comment.is_empty() {
+                map.insert(said.into(), comment.as_str().into());
             }
         }
-        let body = serde_json::Value::Object(body);
         self.rest_write(http::Method::PATCH, &path, Some(&body))
             .await
     }

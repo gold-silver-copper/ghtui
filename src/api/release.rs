@@ -69,13 +69,6 @@ impl GitHub {
         self.rest_write(http::Method::DELETE, &path, None).await
     }
 
-    /// Deletes tag `tag` on GitHub.
-    pub async fn delete_tag(&self, repo: &RepoId, tag: &str) -> Result<(), ApiError> {
-        let tag = crate::ui::pages::url::encode_path(tag);
-        let path = format!("/repos/{repo}/git/refs/tags/{tag}");
-        self.rest_write(http::Method::DELETE, &path, None).await
-    }
-
     /// Release `id`'s asset named `name`, by REST's ID (GraphQL doesn't
     /// say it).
     async fn asset_id(&self, repo: &RepoId, id: u64, name: &str) -> Result<u64, ApiError> {
