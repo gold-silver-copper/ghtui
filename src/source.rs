@@ -559,7 +559,7 @@ impl Local {
                     })
                 })
                 .collect();
-            for batch in blobs.chunks(KEEP_BATCH) {
+            for batch in blobs.chunks(KEEP_BATCH).map(<[String]>::to_vec) {
                 clone.prefetch(batch).await.map_err(|e| e.to_string())?;
             }
         }

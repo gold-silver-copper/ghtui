@@ -172,6 +172,13 @@ impl Repo {
         cmd
     }
 
+    /// [`Self::cmd`], never fetching an object that isn't here.
+    pub(crate) fn cmd_here(&self) -> Command {
+        let mut cmd = self.cmd();
+        cmd.env("GIT_NO_LAZY_FETCH", "1");
+        cmd
+    }
+
     pub(crate) async fn run(&self, args: &[&str]) -> Result<String, GitError> {
         stdout(&self.cmd().args(args).output().await?, &args.join(" "))
     }
@@ -274,8 +281,7 @@ impl Repo {
     /// Whether `rev` (e.g. `<sha>:<path>`) resolves locally, without lazy
     /// fetching.
     pub async fn has(&self, rev: &str) -> bool {
-        self.cmd()
-            .env("GIT_NO_LAZY_FETCH", "1")
+        self.cmd_here()
             .args(["cat-file", "-e", rev])
             .status()
             .await
@@ -408,9 +414,8 @@ impl Repo {
         if self.version < NO_LAZY_FETCH_VERSION {
             return Ok(oids.to_vec());
         }
-        let mut cmd = self.cmd();
-        cmd.env("GIT_NO_LAZY_FETCH", "1")
-            .args(["cat-file", "--batch-check=%(objectname)"]);
+        let mut cmd = self.cmd_here();
+        cmd.args(["cat-file", "--batch-check=%(objectname)"]);
         let out = run_with_stdin(cmd, "cat-file --batch-check", oids.join("\n") + "\n").await?;
         Ok(out
             .lines()
@@ -421,14 +426,13 @@ impl Repo {
 
     /// Fetches the given blobs in a single request if any are missing.
     /// Returns how many were fetched. No-op outside partial clones.
-    pub async fn prefetch(&self, oids: &[String]) -> Result<usize, GitError> {
+    pub async fn prefetch(&self, mut oids: Vec<String>) -> Result<usize, GitError> {
         if !self.partial {
             return Ok(0);
         }
-        let mut unique: Vec<String> = oids.to_vec();
-        unique.sort();
-        unique.dedup();
-        let missing = self.missing(&unique).await?;
+        oids.sort_unstable();
+        oids.dedup();
+        let missing = self.missing(&oids).await?;
         if missing.is_empty() {
             return Ok(0);
         }

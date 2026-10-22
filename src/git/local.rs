@@ -82,7 +82,7 @@ impl Branch {
 }
 
 /// The value of a git config key, if set.
-async fn config(top: &Path, key: &str) -> Option<String> {
+pub(crate) async fn config(top: &Path, key: &str) -> Option<String> {
     let value = run(Some(top), &["config", "--get", key]).await.ok()?;
     Some(value.trim().to_owned()).filter(|v| !v.is_empty())
 }

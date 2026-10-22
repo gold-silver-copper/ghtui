@@ -377,13 +377,10 @@ pub fn answered(state: &mut State, ask: &Ask, answer: Result<Answer, String>) ->
     if !still {
         return Cmds::new();
     }
-    let answer = match answer {
-        Ok(answer) => answer,
-        Err(why) => {
-            state.error(why);
-            return Cmds::new();
-        }
-    };
+    let answer = or_return!(answer, |why| {
+        state.error(why);
+        Cmds::new()
+    });
     let open = |p: &Place| {
         if p.path == ask.path {
             return Choice::Line(p.line);

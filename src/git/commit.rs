@@ -78,10 +78,7 @@ pub async fn make(repo: &Repo, parent: &str, change: &Change<'_>) -> Result<Stri
     .await;
     let _ = std::fs::remove_file(&index);
     let tree = tree?;
-    let config = |key: &'static str| async move {
-        let value = repo.run(&["config", key]).await.ok()?;
-        Some(value.trim().to_owned()).filter(|v| !v.is_empty())
-    };
+    let config = |key: &'static str| crate::git::local::config(&repo.path, key);
     let login = change.login.unwrap_or("ghtui");
     let name = (config("user.name").await).unwrap_or_else(|| login.to_owned());
     let email =
