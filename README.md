@@ -20,9 +20,10 @@ ghtui is pre-release, but it's usable every day.
   teams, profiles, projects and search, a repository's Insights
   (contributors, commit activity, traffic, the dependency graph,
   community standards), a branch's merge queue, the repositories you
-  watch, a wiki's history and changes, Explore and topics, starred lists and packages, on github.com or a
+  watch, a wiki's history and changes, Explore and topics, starred lists
+  and packages, on github.com or a
   GitHub Enterprise Server. Every GitHub link opens in ghtui unless it can only work in a
-  browser (a download, most of a repository's settings), and then it
+  browser (a download, some of a repository's settings), and then it
   says why.
 - **Reviewing** is where ghtui goes furthest. Diffs are computed locally
   with git, compared by syntax where the language allows, highlighted with
@@ -1691,14 +1692,14 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   github.com (and kept when a rule is edited here). A ruleset is turned
   on or off here, and written on github.com. A collaborator is invited
   by login (there's no search of people), and an organization's teams'
-  access isn't listed.
+  access isn't listed. Each list shows its first 100, and says when
+  GitHub has more; a webhook's deliveries are its latest 100. A
+  webhook's secret can be changed, not removed.
 - An organization's invitation sent to you can be accepted here, not
   declined: GitHub's API has no way to decline one. An invitation an
   organization sent can't change its role (GitHub's API can't either):
   cancel it and invite them again. A team's page lists its first 50
-  members and repositories; one added past those can't be seen there. Each list shows its first 100, and says when
-  GitHub has more; a webhook's deliveries are its latest 100. A
-  webhook's secret can be changed, not removed.
+  members and repositories; one added past those can't be seen there.
 - An issue form's dropdowns become a comment listing their options, to
   answer in your own words; its validations aren't checked.
 - Security alerts are listed newest first, 30 at a time, without counts
