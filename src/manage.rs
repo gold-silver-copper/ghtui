@@ -549,7 +549,9 @@ impl Pick {
             Pick::Duplicate { issue, .. }
             | Pick::SubIssues { issue, .. }
             | Pick::BlockedBy { issue, .. } => Some(DataKey::OpenIssues(issue.repo.clone())),
-            Pick::Transfer { issue, .. } => Some(DataKey::MoveTargets(issue.repo.owner.clone())),
+            Pick::Transfer { issue, .. } => {
+                Some(DataKey::MoveTargets(issue.repo.owner.to_string()))
+            }
             Pick::Category { repo } => Some(DataKey::Categories(repo.clone())),
             _ => None,
         }
@@ -761,7 +763,7 @@ fn base_rows(state: &State, pr: &PrRef, id: &NodeId, from: &str, head: &str, q: 
 
 fn transfer_rows(state: &State, issue: &IssueAt, id: &NodeId, q: &str) -> Rows {
     let owner = &issue.repo.owner;
-    let key = DataKey::MoveTargets(owner.clone());
+    let key = DataKey::MoveTargets(owner.to_string());
     let targets = match crate::picker::listed::<Capped<Target>, _>(state, &key, "the repositories")
     {
         Ok(t) => t,

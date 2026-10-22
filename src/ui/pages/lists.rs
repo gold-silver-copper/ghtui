@@ -7,7 +7,7 @@ pub(super) fn repo_row(page: &mut Page, r: &RepoSummary, now: u64, show_owner: b
     let name = if show_owner {
         r.repo.to_string()
     } else {
-        r.repo.name.clone()
+        r.repo.name.to_string()
     };
     item(page, url::repo(&r.repo), |page, link| {
         let mut segs = vec![Seg::linked(name, Role::Link, link)];

@@ -165,8 +165,8 @@ impl GitHub {
     pub async fn tag_look(&self, repo: &RepoId, tag: &str) -> Result<TagLook, ApiError> {
         use cynic::QueryBuilder;
         let op = TagQuery::build(TagVariables {
-            owner: repo.owner.clone(),
-            name: repo.name.clone(),
+            owner: repo.owner.to_string(),
+            name: repo.name.to_string(),
             qualified: format!("refs/tags/{tag}"),
             tag: tag.to_owned(),
         });

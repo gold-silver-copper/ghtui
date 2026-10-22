@@ -71,8 +71,8 @@ impl GitHub {
             }
         };
         let vars = NumberVariables {
-            owner: repo.owner.clone(),
-            name: repo.name.clone(),
+            owner: repo.owner.to_string(),
+            name: repo.name.to_string(),
             number,
         };
         match of {

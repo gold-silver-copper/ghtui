@@ -6,6 +6,7 @@
 
 use crate::schema::schema;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::api::change::MergeMethod;
 use crate::api::edit::{Editable, SidebarPermits, reactions};
@@ -131,14 +132,16 @@ impl std::fmt::Display for NodeId {
     }
 }
 
+/// A repository: its owner and its name, each shared, so the keys,
+/// routes and pages that name it copy no text.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RepoId {
-    pub owner: String,
-    pub name: String,
+    pub owner: Arc<str>,
+    pub name: Arc<str>,
 }
 
 impl RepoId {
-    pub fn new(owner: impl Into<String>, name: impl Into<String>) -> Self {
+    pub fn new(owner: impl Into<Arc<str>>, name: impl Into<Arc<str>>) -> Self {
         Self {
             owner: owner.into(),
             name: name.into(),

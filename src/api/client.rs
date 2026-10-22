@@ -1165,8 +1165,8 @@ impl GitHub {
     /// GitHub can compare them (its branch may be gone).
     async fn behind_by(&self, pr: &PrRef, detail: &PrDetail) -> Option<u64> {
         let op = queries::BehindQuery::build(queries::BehindVariables {
-            owner: pr.repo.owner.clone(),
-            name: pr.repo.name.clone(),
+            owner: pr.repo.owner.to_string(),
+            name: pr.repo.name.to_string(),
             base: format!("refs/heads/{}", detail.base_ref),
             head: detail.head_oid.clone(),
         });
@@ -1280,8 +1280,8 @@ impl GitHub {
         login: &str,
     ) -> Result<Option<String>, ApiError> {
         let op = queries::LastReviewQuery::build(queries::LastReviewVariables {
-            owner: pr.repo.owner.clone(),
-            name: pr.repo.name.clone(),
+            owner: pr.repo.owner.to_string(),
+            name: pr.repo.name.to_string(),
             number: pr_number(pr)?,
             login: login.to_owned(),
         });
@@ -1872,8 +1872,8 @@ impl GitHub {
         after: Option<String>,
     ) -> Result<browse::Results<browse::CommitInfo>, ApiError> {
         let op = browse::HistoryQuery::build(browse::HistoryVariables {
-            owner: repo.owner.clone(),
-            name: repo.name.clone(),
+            owner: repo.owner.to_string(),
+            name: repo.name.to_string(),
             expression: rev.to_owned(),
             path: (!path.is_empty()).then(|| path.to_owned()),
             after,
@@ -1920,8 +1920,8 @@ impl GitHub {
         let expression = &oid;
         let page = move |after| async move {
             let op = browse::ContextsQuery::build(browse::ContextsVariables {
-                owner: repo.owner.clone(),
-                name: repo.name.clone(),
+                owner: repo.owner.to_string(),
+                name: repo.name.to_string(),
                 expression: expression.clone(),
                 after,
             });
@@ -2053,8 +2053,8 @@ impl GitHub {
     /// A release by its tag, with its notes and assets.
     pub async fn release(&self, repo: &RepoId, tag: &str) -> Result<browse::Release, ApiError> {
         let op = browse::ReleaseQuery::build(browse::ReleaseVariables {
-            owner: repo.owner.clone(),
-            name: repo.name.clone(),
+            owner: repo.owner.to_string(),
+            name: repo.name.to_string(),
             tag: tag.to_owned(),
         });
         let release = self.find(op, format!("{repo} release {tag}"), |q| {
@@ -2858,8 +2858,8 @@ impl GitHub {
             return Ok(None);
         }
         let mut vars = serde_json::Map::new();
-        vars.insert("owner".into(), Value::from(repo.owner.as_str()));
-        vars.insert("name".into(), Value::from(repo.name.as_str()));
+        vars.insert("owner".into(), Value::from(&*repo.owner));
+        vars.insert("name".into(), Value::from(&*repo.name));
         for (i, name) in names.iter().enumerate() {
             vars.insert(format!("r{i}"), Value::from(name.as_str()));
         }
@@ -3183,24 +3183,24 @@ fn pr_number(pr: &PrRef) -> Result<i32, ApiError> {
 
 fn list_vars(repo: &RepoId, after: Option<String>) -> browse::ListVariables {
     browse::ListVariables {
-        owner: repo.owner.clone(),
-        name: repo.name.clone(),
+        owner: repo.owner.to_string(),
+        name: repo.name.to_string(),
         after,
     }
 }
 
 fn number_vars(pr: &PrRef) -> Result<queries::NumberVariables, ApiError> {
     Ok(queries::NumberVariables {
-        owner: pr.repo.owner.clone(),
-        name: pr.repo.name.clone(),
+        owner: pr.repo.owner.to_string(),
+        name: pr.repo.name.to_string(),
         number: pr_number(pr)?,
     })
 }
 
 fn page_vars(pr: &PrRef, after: Option<String>) -> Result<queries::PageVariables, ApiError> {
     Ok(queries::PageVariables {
-        owner: pr.repo.owner.clone(),
-        name: pr.repo.name.clone(),
+        owner: pr.repo.owner.to_string(),
+        name: pr.repo.name.to_string(),
         number: pr_number(pr)?,
         after,
     })

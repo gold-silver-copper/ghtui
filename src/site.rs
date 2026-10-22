@@ -362,7 +362,7 @@ pub fn parse(segments: &[&str], param: impl Fn(&str) -> Option<String>) -> Optio
                 ["packages"] => Page::Packages(PackagesOf::Repo(repo)),
                 ["pkgs", kind, name] => Page::Package {
                     at: PackageRef {
-                        owner: repo.owner,
+                        owner: repo.owner.to_string(),
                         kind: Kind::from_slug(kind)?,
                         name: (*name).to_owned(),
                     },

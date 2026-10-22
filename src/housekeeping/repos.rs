@@ -63,7 +63,7 @@ pub(super) fn follow(state: &mut State, route: &Route, fork: Option<&RepoId>) ->
     f.started = true;
     f.set(Field::Owner, viewer);
     match fork {
-        Some(repo) => f.set(Field::Name, repo.name.clone()),
+        Some(repo) => f.set(Field::Name, &*repo.name),
         None if state.overlay.is_none() => return super::open_field(state, route, Field::Name),
         None => {}
     }
@@ -292,7 +292,7 @@ impl Job for Make {
         let mut cmds = opened(state, route, &made).unwrap_or_default();
         // Offered as GitHub's page offers it: its clone command, run here.
         let Some(repo) = made.repo().filter(|_| on_form) else { return cmds };
-        let dir = PathBuf::from(&repo.name);
+        let dir = PathBuf::from(&*repo.name);
         let fact = format!(
             "Into ./{} here, with your own git: git clone {}",
             dir.display(),
