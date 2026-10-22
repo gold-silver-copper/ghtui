@@ -443,14 +443,10 @@ pub const ACTIONS: [Action; 6] = [
 
 /// What Home adds: saving a list to it, and changing its sections.
 /// Deleting one (and bringing it back) is what Delete does on a page
-/// when nothing else there takes it ([`crate::nav::page_action`]).
+/// when nothing else there takes it ([`crate::nav::page_action`]): it
+/// owns [`ACTIONS`] but those two.
 pub const FEATURE: crate::features::Feature = crate::features::Feature {
-    owns: &[
-        Action::SaveSection,
-        Action::RenameSection,
-        Action::MoveSectionUp,
-        Action::MoveSectionDown,
-    ],
+    owns: ACTIONS.split_at(4).0,
     act,
     offers,
     ..crate::features::Feature::NONE
