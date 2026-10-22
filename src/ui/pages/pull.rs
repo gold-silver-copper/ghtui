@@ -283,6 +283,9 @@ pub fn actions(
     let ignored = RunFilter::parse(query).ignored;
     let knows = "runs filter by workflow:, branch:, is:, event: and actor:";
     ignored_note(page, &ignored, knows);
+    let caches = format!("{}/actions/caches", url::repo(repo));
+    let caches = link_seg(page, "Caches", caches, Role::Link);
+    page.wrapped(vec![meta("Management: "), caches], 0, Frame::None);
     page.blank();
     let empty = if query.is_empty() {
         "No runs yet."

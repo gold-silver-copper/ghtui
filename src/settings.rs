@@ -1,5 +1,7 @@
 //! A repository's Settings tab, for its admins: branch protection rules
-//! and rulesets, collaborators, webhooks, deploy keys, and archiving.
+//! and rulesets, collaborators, webhooks, deploy keys, archiving, Actions
+//! secrets and variables ([`actions`]) and its Pages site ([`site`]);
+//! and, kept the same way, Actions' caches and its custom properties.
 //! These change a repository for everyone, so every change asks first
 //! and names what it changes: a question ([`crate::forms::Ask`]) lists
 //! it, line by line.
@@ -12,9 +14,11 @@
 
 use crate::api::change::Change;
 use crate::api::model::{NodeId, RepoId};
+use crate::api::settings::actions::SealKey;
+use crate::api::settings::properties::Property;
 use crate::api::settings::{
-    Checks, Enforcement, HookForm, Permission, Reviews, Role as Given, RuleForm, Settings,
-    SettingsChange, SettingsPage,
+    Checks, Enforcement, HookForm, PagesForm, Permission, PropertyValues, Reviews, Role as Given,
+    RuleForm, Settings, SettingsChange, SettingsPage,
 };
 use crate::route::{Route, settings};
 use crate::ui::overlays::PaletteItem;
@@ -26,6 +30,19 @@ use crate::keymap::Action;
 use crate::nav::Doable;
 use crate::state::{Cmds, State};
 use crate::ui::page::{Link, Page};
+
+pub mod actions;
+pub mod site;
+
+/// What a form asks: the key it answers, the question, its facts, the
+/// answer's label and the change.
+type Asks = (
+    Action,
+    String,
+    Vec<(String, bool)>,
+    &'static str,
+    SettingsChange,
+);
 
 /// The actions this module takes as its own.
 pub const ACTIONS: [Action; 5] = [
@@ -85,7 +102,13 @@ fn elsewhere(action: Action) -> String {
 
 fn plan(state: &State, action: Action) -> Result<Step, String> {
     let (repo, page) = here(state).ok_or_else(|| elsewhere(action))?;
-    if state.overview(&repo).is_some_and(|o| !o.can_admin) {
+    let overview = state.overview(&repo);
+    if page == SettingsPage::Caches && overview.is_some_and(|o| !o.can_write) {
+        return Err(format!(
+            "Deleting {repo}'s caches takes write access, which GitHub doesn't give you"
+        ));
+    }
+    if page != SettingsPage::Caches && overview.is_some_and(|o| !o.can_admin) {
         return Err(format!(
             "Changing {repo}'s settings takes admin access, which GitHub doesn't give you"
         ));
@@ -94,6 +117,14 @@ fn plan(state: &State, action: Action) -> Result<Step, String> {
     let settings = data(state, &repo, page).ok_or(LOADING)?;
     let at = (&repo, page);
     let row = selected(state);
+    if action == Action::Redeliver && !matches!(page, SettingsPage::Hook(_)) {
+        return Err(elsewhere(action));
+    }
+    if let Some(planned) = actions::plan(state, action, &repo, settings, row.as_ref())
+        .or_else(|| site::plan(state, action, &repo, settings, row.as_ref()))
+    {
+        return planned;
+    }
     let select = |what: &str| {
         let next = state.first_key(Action::Down);
         format!("Select {what} first: {next} goes row by row")
@@ -117,7 +148,7 @@ fn plan(state: &State, action: Action) -> Result<Step, String> {
             key_text("", "", false),
         ),
         (Action::AddSetting, Settings::General(_)) => Err(
-            "Adding works on Collaborators, Branches, Webhooks and Deploy keys: the menu above goes there"
+            "Adding works on Collaborators, Branches, Webhooks, Pages, Deploy keys, Secrets and Variables: the menu above goes there"
                 .into(),
         ),
         (Action::EditSetting | Action::DeleteSetting, Settings::General(_)) => Err(
@@ -497,6 +528,23 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
             (Action::AddSetting, "Add a deploy key"),
             (Action::DeleteSetting, "Delete the deploy key"),
         ],
+        SettingsPage::Secrets => &[
+            (Action::AddSetting, "Add a secret"),
+            (Action::EditSetting, "Set the secret's value"),
+            (Action::DeleteSetting, "Delete the secret"),
+        ],
+        SettingsPage::Variables => &[
+            (Action::AddSetting, "Add a variable"),
+            (Action::EditSetting, "Edit the variable"),
+            (Action::DeleteSetting, "Delete the variable"),
+        ],
+        SettingsPage::Pages => &[
+            (Action::AddSetting, "Publish a site"),
+            (Action::EditSetting, "Change the site's source and domain"),
+            (Action::DeleteSetting, "Unpublish the site"),
+        ],
+        SettingsPage::Caches => &[(Action::DeleteSetting, "Delete the cache")],
+        SettingsPage::Properties => &[(Action::EditSetting, "Set its custom properties")],
     };
     out.extend(rows.iter().map(|(action, label)| row(*action, label)));
 }
@@ -504,8 +552,19 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
 /// Following one of the page's rows.
 pub fn follow_link(state: &mut State, link: &SettingLink) -> Cmds {
     match link {
-        SettingLink::Add => act(state, Action::AddSetting),
-        SettingLink::Rule(_) => act(state, Action::EditSetting),
+        SettingLink::Add | SettingLink::AddIn(_) => act(state, Action::AddSetting),
+        SettingLink::Rule(_)
+        | SettingLink::Secret(..)
+        | SettingLink::Variable(..)
+        | SettingLink::Site
+        | SettingLink::Property(_) => act(state, Action::EditSetting),
+        SettingLink::Unpublish | SettingLink::Cache(_) => act(state, Action::DeleteSetting),
+        SettingLink::OrgItem(_) => {
+            let open = state.first_key(Action::OpenInBrowser);
+            state.just_say(format!(
+                "It's the organization's: it's changed in the organization's settings ({open} opens this page on github.com)"
+            ))
+        }
         SettingLink::Archive => act(state, Action::ToggleSetting),
         SettingLink::Person(login) | SettingLink::Invitation(_, login) => {
             state.push(Route::user(login))
@@ -550,6 +609,14 @@ pub fn describe(link: &SettingLink) -> &'static str {
         SettingLink::Delivery(_) => "Say how to redeliver it",
         SettingLink::Key(_) => "Say how to delete the key",
         SettingLink::DeleteRepo => "Say where a repository is deleted",
+        SettingLink::AddIn(_) => "Add one to the environment",
+        SettingLink::Secret(..) => "Set the secret's value",
+        SettingLink::Variable(..) => "Edit the variable",
+        SettingLink::OrgItem(_) => "Say where the organization's are changed",
+        SettingLink::Cache(_) => "Delete the cache, after asking",
+        SettingLink::Site => "Change the site's source and domain",
+        SettingLink::Unpublish => "Unpublish the site, after asking",
+        SettingLink::Property(_) => "Set the custom properties",
     }
 }
 
@@ -594,6 +661,35 @@ pub enum Form {
     Key {
         repo: RepoId,
     },
+    /// A secret, new (`name: None`) or given a new value; sealed with
+    /// `key` when it's confirmed.
+    Secret {
+        repo: RepoId,
+        env: Option<String>,
+        name: Option<String>,
+        key: SealKey,
+        /// The scope's secrets, and when each was set.
+        known: Vec<(String, String)>,
+    },
+    /// A variable, new or edited (its name and value before).
+    Variable {
+        repo: RepoId,
+        env: Option<String>,
+        from: Option<Box<(String, String)>>,
+        known: Vec<(String, String)>,
+    },
+    /// The Pages site, new or (as it was) changed.
+    Pages {
+        repo: RepoId,
+        from: Option<Box<PagesForm>>,
+    },
+    /// The custom properties the repository's admins may set, and their
+    /// values before.
+    Properties {
+        repo: RepoId,
+        schema: Vec<Property>,
+        values: PropertyValues,
+    },
 }
 
 /// A rule being edited: its ID, what it asks, its checks' apps.
@@ -614,20 +710,46 @@ impl Form {
                 "The webhook: events by name, * for all; an empty secret keeps it".into()
             }
             Form::Key { .. } => "New deploy key: its title, then the public key".into(),
+            Form::Secret { name: None, .. } => {
+                "New secret: its name, then its value (lines and all), never shown again".into()
+            }
+            Form::Secret { name: Some(n), .. } => {
+                format!("A new value for {n}: the old one is replaced, never shown")
+            }
+            Form::Variable { from: None, .. } => {
+                "New variable: its name, then its value (lines and all)".into()
+            }
+            Form::Variable { from: Some(f), .. } => format!("The variable {}", f.0),
+            Form::Pages { .. } => {
+                "GitHub Pages: branch or actions, / or /docs, a domain (empty for none)".into()
+            }
+            Form::Properties { .. } => {
+                "Custom properties: a value after each, empty to unset".into()
+            }
         }
     }
 
     pub fn save(&self) -> &'static str {
         match self {
-            Form::Rule { rule: None, .. } | Form::Hook { hook: None, .. } => "create…",
+            Form::Rule { rule: None, .. }
+            | Form::Hook { hook: None, .. }
+            | Form::Variable { from: None, .. } => "create…",
             Form::Key { .. } => "add…",
+            Form::Secret { .. } => "set…",
+            Form::Pages { from: None, .. } => "publish…",
             _ => "save…",
         }
     }
 
     fn repo(&self) -> &RepoId {
         match self {
-            Form::Rule { repo, .. } | Form::Hook { repo, .. } | Form::Key { repo } => repo,
+            Form::Rule { repo, .. }
+            | Form::Hook { repo, .. }
+            | Form::Key { repo }
+            | Form::Secret { repo, .. }
+            | Form::Variable { repo, .. }
+            | Form::Pages { repo, .. }
+            | Form::Properties { repo, .. } => repo,
         }
     }
 
@@ -637,6 +759,10 @@ impl Form {
             Form::Hook { hook: Some(h), .. } => SettingsPage::Hook(h.0),
             Form::Hook { hook: None, .. } => SettingsPage::Hooks,
             Form::Key { .. } => SettingsPage::Keys,
+            Form::Secret { .. } => SettingsPage::Secrets,
+            Form::Variable { .. } => SettingsPage::Variables,
+            Form::Pages { .. } => SettingsPage::Pages,
+            Form::Properties { .. } => SettingsPage::Properties,
         }
     }
 }
@@ -1020,6 +1146,8 @@ fn confirm(form: &Form, text: &str) -> Result<crate::forms::Ask, String> {
                 },
             )
         }
+        Form::Secret { .. } | Form::Variable { .. } => actions::confirm(form, text)?,
+        Form::Pages { .. } | Form::Properties { .. } => site::confirm(form, text)?,
     };
     Ok(crate::act::confirm(
         action,
@@ -1323,6 +1451,8 @@ pub fn shows(state: &State, c: &SettingsChange, repo: &RepoId, at: SettingsPage)
         }
         (C::DeleteKey { id, .. }, Settings::Keys(k)) => k.items.iter().all(|k| k.id != *id),
         (C::Archive { archived, .. }, Settings::General(g)) => g.archived == *archived,
+        (C::Actions(c), s) => actions::shows(c, s),
+        (C::Pages(_) | C::SetProperties { .. }, s) => site::shows(c, s),
         // Another page: nothing there to wait for.
         _ => true,
     }
@@ -1380,6 +1510,9 @@ pub fn said(c: &SettingsChange) -> (&'static str, &'static str) {
         C::DeleteKey { .. } => ("Deleting the key", "deleting the key"),
         C::Archive { archived: true, .. } => ("Archiving the repository", "archiving it"),
         C::Archive { .. } => ("Unarchiving the repository", "unarchiving it"),
+        C::Actions(c) => actions::said(c),
+        C::Pages(p) => site::said(p),
+        C::SetProperties { .. } => ("Setting the properties", "the properties"),
     }
 }
 
@@ -1417,6 +1550,12 @@ pub fn done(c: &SettingsChange) -> String {
             repo,
         } => format!("Archived {repo}: it's read-only"),
         C::Archive { repo, .. } => format!("Unarchived {repo}"),
+        C::Actions(c) => actions::done(c),
+        C::Pages(p) => site::done(p),
+        C::SetProperties { values, .. } => {
+            let names: Vec<&str> = values.iter().map(|(n, _)| n.as_str()).collect();
+            format!("Set {}", names.join(", "))
+        }
     }
 }
 
@@ -1428,6 +1567,9 @@ pub fn needs(c: &SettingsChange) -> &'static str {
         | C::UpdateHook { .. }
         | C::DeleteHook { .. }
         | C::Redeliver { .. } => "Webhooks: write",
+        C::Actions(c) => actions::needs(c),
+        C::Pages(_) => "Pages: write",
+        C::SetProperties { .. } => "Custom properties: write",
         _ => "Administration: write",
     }
 }
@@ -1436,10 +1578,14 @@ pub fn needs(c: &SettingsChange) -> &'static str {
 #[cfg(test)]
 pub(crate) mod fixtures {
     use crate::api::model::{Capped, NodeId};
+    use crate::api::settings::actions::{Cache, EnvStore, SealKey};
+    use crate::api::settings::pages::{PagesBuild, Site};
+    use crate::api::settings::properties::{PropKind, Property};
     use crate::api::settings::{
-        Access, Branches, Checks, Collaborator, Delivery, DeployKey, Enforcement, General, Hook,
-        HookForm, HookPage, Invitation, LastResponse, Listed, Permission, Reviews, Role, Rule,
-        RuleForm, Ruleset, Settings, SettingsPage,
+        Access, Branches, Caches, Checks, Collaborator, Delivery, DeployKey, Enforcement, General,
+        Hook, HookForm, HookPage, Invitation, LastResponse, Listed, Pages, PagesForm, Permission,
+        PropValue, Properties, Reviews, Role, Rule, RuleForm, Ruleset, Secret, Settings,
+        SettingsPage, Store, Variable,
     };
 
     /// `main`'s rule, as the test repository's: a review and a check,
@@ -1582,6 +1728,142 @@ pub(crate) mod fixtures {
                 }],
                 more: false,
             }),
+            SettingsPage::Secrets => Settings::Secrets(Box::new(secrets())),
+            SettingsPage::Variables => Settings::Variables(Box::new(variables())),
+            SettingsPage::Pages => Settings::Pages(Box::new(pages())),
+            SettingsPage::Caches => Settings::Caches(caches()),
+            SettingsPage::Properties => Settings::Properties(properties()),
+        }
+    }
+
+    fn whole<T>(items: Vec<T>) -> Listed<T> {
+        Listed { items, more: false }
+    }
+
+    /// A key that seals (any 32 bytes are an X25519 public key).
+    pub fn seal_key() -> SealKey {
+        SealKey {
+            key_id: "568250167242549743".into(),
+            key: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=".into(),
+        }
+    }
+
+    fn secret(name: &str, visibility: Option<&str>) -> Secret {
+        Secret {
+            name: name.into(),
+            created_at: "2026-09-01T10:00:00Z".into(),
+            updated_at: "2026-10-01T10:00:00Z".into(),
+            visibility: visibility.map(Into::into),
+        }
+    }
+
+    fn variable(name: &str, value: &str) -> Variable {
+        Variable {
+            name: name.into(),
+            value: value.into(),
+            created_at: "2026-09-01T10:00:00Z".into(),
+            updated_at: "2026-10-01T10:00:00Z".into(),
+            visibility: None,
+        }
+    }
+
+    /// API_TOKEN, production's DEPLOY_KEY, and the organization's
+    /// ORG_TOKEN.
+    pub fn secrets() -> Store<Secret> {
+        Store {
+            repo: whole(vec![secret("API_TOKEN", None)]),
+            key: Some(seal_key()),
+            environments: vec![EnvStore {
+                name: "production".into(),
+                items: whole(vec![secret("DEPLOY_KEY", None)]),
+                key: Some(seal_key()),
+            }],
+            more_environments: false,
+            org: Ok(whole(vec![secret("ORG_TOKEN", Some("all"))])),
+        }
+    }
+
+    /// REGION=eu, and production's URL; the organization's aren't shown.
+    pub fn variables() -> Store<Variable> {
+        Store {
+            repo: whole(vec![variable("REGION", "eu")]),
+            key: None,
+            environments: vec![EnvStore {
+                name: "production".into(),
+                items: whole(vec![variable("URL", "https://example.com")]),
+                key: None,
+            }],
+            more_environments: false,
+            org: Err("GitHub doesn't show you gold-silver-copper's organization variables".into()),
+        }
+    }
+
+    /// Built from main's /docs, with a build that failed.
+    pub fn pages() -> Pages {
+        let build = |status: &str, error: Option<&str>| PagesBuild {
+            status: status.into(),
+            error: error.map(Into::into),
+            pusher: Some("gold-silver-copper".into()),
+            commit: "8d1a76430406c877b35d0b627e7f796dcf0dfeca".into(),
+            duration: 2400,
+            created_at: "2026-10-01T10:00:00Z".into(),
+        };
+        Pages {
+            site: Some(Site {
+                url: Some("https://gold-silver-copper.github.io/ghtui/".into()),
+                status: Some("built".into()),
+                form: PagesForm {
+                    path: "/docs".into(),
+                    ..PagesForm::default()
+                },
+                certificate: None,
+            }),
+            builds: Ok(whole(vec![
+                build("built", None),
+                build("errored", Some("Page build failed.")),
+            ])),
+        }
+    }
+
+    /// Three caches, two of them with one key.
+    pub fn caches() -> Caches {
+        let cache = |id, key: &str, git_ref: &str| Cache {
+            id,
+            key: key.into(),
+            git_ref: git_ref.into(),
+            size: 300 << 20,
+            last_used: "2026-10-01T10:00:00Z".into(),
+            created_at: "2026-09-01T10:00:00Z".into(),
+        };
+        Caches {
+            items: whole(vec![
+                cache(1, "cargo-linux", "refs/heads/main"),
+                cache(2, "cargo-linux", "refs/pull/5/merge"),
+                cache(3, "cargo-macos", "refs/heads/main"),
+            ]),
+            count: 3,
+            used: 900 << 20,
+            limit: None,
+        }
+    }
+
+    /// `env` (Prod or Dev, set to Dev) the repository may set; `team`,
+    /// only the organization.
+    pub fn properties() -> Properties {
+        let prop = |name: &str, kind, allowed: &[&str], repo_may| Property {
+            name: name.into(),
+            kind,
+            required: false,
+            description: None,
+            allowed: allowed.iter().map(|s| (*s).to_owned()).collect(),
+            repo_may,
+        };
+        Properties {
+            values: vec![("env".into(), Some(PropValue::One("Dev".into())))],
+            schema: Ok(vec![
+                prop("env", PropKind::Select, &["Prod", "Dev"], true),
+                prop("team", PropKind::Text, &[], false),
+            ]),
         }
     }
 }

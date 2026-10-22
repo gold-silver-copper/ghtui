@@ -1,4 +1,6 @@
-//! A repository's Settings tab, at one of its pages ([`crate::settings`]).
+//! A repository's Settings tab, at one of its pages ([`crate::settings`]),
+//! and the two pages kept as settings are outside it: Actions' caches and
+//! the custom properties.
 
 use super::{Family, Route, Target, Url};
 use crate::api::model::RepoId;
@@ -17,13 +19,15 @@ pub struct Page {
 
 impl Family for Page {
     fn url(&self) -> String {
-        format!("{}/settings{}", links::repo(&self.repo), self.page.slug())
+        format!("{}{}", links::repo(&self.repo), self.page.slug())
     }
 
     fn title(&self) -> String {
         let repo = &self.repo;
         match self.page {
             SettingsPage::Hook(id) => format!("{repo} · Webhook {id}"),
+            SettingsPage::Caches => format!("{repo} · Actions · Caches"),
+            SettingsPage::Properties => format!("{repo} · Custom properties"),
             page => format!("{repo} · Settings · {}", page.name()),
         }
     }
@@ -39,6 +43,10 @@ impl Family for Page {
                 repo,
                 page: SettingsPage::Hooks,
             }),
+            SettingsPage::Caches => Route::Runs(super::runs::Page::Actions {
+                repo,
+                query: String::new(),
+            }),
             _ => Route::code(repo),
         })
     }
@@ -52,7 +60,11 @@ impl Family for Page {
     }
 
     fn section(&self) -> Section {
-        Section::Settings
+        match self.page {
+            SettingsPage::Caches => Section::Actions,
+            SettingsPage::Properties => Section::Code,
+            _ => Section::Settings,
+        }
     }
 
     fn build(&self, b: Build<'_>, page: &mut crate::ui::page::Page) {
@@ -61,17 +73,25 @@ impl Family for Page {
     }
 }
 
-/// The Settings tab's pages ghtui has; the rest are on GitHub.
+/// The Settings tab's pages ghtui has (the rest are on GitHub), and
+/// Actions' caches and the custom properties.
 pub(super) fn parse_repo(repo: &RepoId, rest: &[&str], _: &Url<'_>) -> Option<Target> {
     use SettingsPage as P;
-    let ["settings", rest @ ..] = rest else { return None };
     let page = match rest {
-        [] => P::General,
-        ["branches" | "branch_protection_rules" | "rules", ..] => P::Branches,
-        ["access" | "collaboration"] => P::Access,
-        ["hooks"] | ["hooks", "new"] => P::Hooks,
-        ["hooks", id] => P::Hook(id.parse().ok().filter(|&n| n > 0)?),
-        ["keys", ..] => P::Keys,
+        ["actions", "caches"] => P::Caches,
+        ["custom-properties"] => P::Properties,
+        ["settings", rest @ ..] => match rest {
+            [] => P::General,
+            ["branches" | "branch_protection_rules" | "rules", ..] => P::Branches,
+            ["access" | "collaboration"] => P::Access,
+            ["hooks"] | ["hooks", "new"] => P::Hooks,
+            ["hooks", id] => P::Hook(id.parse().ok().filter(|&n| n > 0)?),
+            ["keys", ..] => P::Keys,
+            ["secrets", "actions", ..] => P::Secrets,
+            ["variables", "actions", ..] => P::Variables,
+            ["pages"] => P::Pages,
+            _ => return None,
+        },
         _ => return None,
     };
     let repo = repo.clone();
@@ -88,6 +108,11 @@ pub(crate) fn arb() -> impl proptest::strategy::Strategy<Value = Route> {
         Just(SettingsPage::Access),
         Just(SettingsPage::Hooks),
         Just(SettingsPage::Keys),
+        Just(SettingsPage::Secrets),
+        Just(SettingsPage::Variables),
+        Just(SettingsPage::Pages),
+        Just(SettingsPage::Caches),
+        Just(SettingsPage::Properties),
         (1..u64::MAX).prop_map(SettingsPage::Hook),
     ];
     (repo(), page).prop_map(|(repo, page)| Route::Settings(Page { repo, page }))

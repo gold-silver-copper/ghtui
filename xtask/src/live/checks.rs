@@ -14,6 +14,7 @@ mod offline;
 mod pages;
 mod pull;
 mod release;
+mod secrets;
 mod settings;
 
 pub const ALL: &[Check] = &[
@@ -23,6 +24,7 @@ pub const ALL: &[Check] = &[
     release::CHECK,
     labels::CHECK,
     settings::CHECK,
+    secrets::CHECK,
     actions::CHECK,
     offline::CHECK,
 ];

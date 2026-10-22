@@ -4256,3 +4256,139 @@ async fn settings_send_their_requests_and_read_their_pages() {
     assert_eq!(seen[9].json(), serde_json::json!({"archived": true}));
     assert!(line(10).starts_with("GET /repos/o/r/hooks?per_page=100 "));
 }
+
+/// Secrets, variables, caches, Pages and custom properties: each change
+/// sends GitHub's own request, and the Secrets page reads the
+/// repository's, an environment's and the organization's, with the keys
+/// they're sealed with.
+#[tokio::test]
+async fn actions_settings_send_their_requests_and_read_their_pages() {
+    use ghtui::api::change::Change;
+    use ghtui::api::settings::{
+        ActionsChange as A, PagesChange, PagesForm, PropValue, Settings, SettingsChange as C,
+        SettingsPage,
+    };
+    let key = r#"{"key_id":"568","key":"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="}"#;
+    let (gh, seen) = github(vec![
+        Reply::new(201, ""),
+        Reply::new(204, ""),
+        Reply::new(201, ""),
+        Reply::new(204, ""),
+        Reply::new(200, r#"{"total_count":0,"actions_caches":[]}"#),
+        Reply::new(204, ""),
+        Reply::new(204, ""),
+        Reply::new(
+            200,
+            r#"{"total_count":1,"secrets":[{"name":"API_TOKEN","created_at":"2026-09-01T10:00:00Z","updated_at":"2026-10-01T10:00:00Z"}]}"#,
+        )
+        .on("/actions/secrets?per_page"),
+        Reply::new(200, key).on("/actions/secrets/public-key"),
+        Reply::new(200, r#"{"total_count":1,"environments":[{"name":"prod env"}]}"#)
+            .on("/environments?per_page"),
+        Reply::new(
+            200,
+            r#"{"total_count":1,"secrets":[{"name":"ORG","visibility":"all","updated_at":"2026-10-01T10:00:00Z"}]}"#,
+        )
+        .on("organization-secrets"),
+        Reply::new(200, r#"{"total_count":0,"secrets":[]}"#).on("/prod%20env/secrets?"),
+        Reply::new(200, key).on("/prod%20env/secrets/public-key"),
+    ])
+    .await;
+    let repo = RepoId::new("o", "r");
+    let env = Some("prod env".to_owned());
+    let changes = [
+        C::Actions(A::SetSecret {
+            repo: repo.clone(),
+            env: None,
+            name: "API_TOKEN".into(),
+            sealed: "c2VhbGVk".into(),
+            key_id: "568".into(),
+            was: None,
+        }),
+        C::Actions(A::DeleteSecret {
+            repo: repo.clone(),
+            env: env.clone(),
+            name: "API_TOKEN".into(),
+        }),
+        C::Actions(A::SetVariable {
+            repo: repo.clone(),
+            env: None,
+            from: None,
+            name: "REGION".into(),
+            value: "eu".into(),
+        }),
+        C::Actions(A::SetVariable {
+            repo: repo.clone(),
+            env: env.clone(),
+            from: Some("REGION".into()),
+            name: "ZONE".into(),
+            value: "us".into(),
+        }),
+        C::Actions(A::DeleteCaches {
+            repo: repo.clone(),
+            key: "cargo linux".into(),
+            count: 2,
+        }),
+        C::Pages(PagesChange::Update {
+            repo: repo.clone(),
+            from: Box::new(PagesForm::default()),
+            to: Box::new(PagesForm {
+                domain: "docs.example.com".into(),
+                ..PagesForm::default()
+            }),
+        }),
+        C::SetProperties {
+            repo: repo.clone(),
+            values: vec![
+                ("env".into(), Some(PropValue::One("prod".into()))),
+                ("team".into(), None),
+            ],
+        },
+    ];
+    for change in changes {
+        gh.change(&Change::Settings(change)).await.unwrap();
+    }
+    let Settings::Secrets(secrets) = gh.settings(&repo, SettingsPage::Secrets).await.unwrap()
+    else {
+        panic!("not the secrets")
+    };
+    assert_eq!(secrets.repo.items[0].name, "API_TOKEN");
+    assert_eq!(secrets.key.as_ref().map(|k| k.key_id.as_str()), Some("568"));
+    assert_eq!(secrets.environments[0].name, "prod env");
+    assert!(secrets.environments[0].key.is_some());
+    let org = secrets.org.as_ref().unwrap();
+    assert_eq!(org.items[0].visibility.as_deref(), Some("all"));
+
+    let seen = seen.lock().unwrap();
+    let line = |n: usize| seen[n].request_line.clone();
+    assert!(line(0).starts_with("PUT /repos/o/r/actions/secrets/API_TOKEN "));
+    assert_eq!(
+        seen[0].json(),
+        serde_json::json!({"encrypted_value": "c2VhbGVk", "key_id": "568"})
+    );
+    assert!(line(1).starts_with("DELETE /repos/o/r/environments/prod%20env/secrets/API_TOKEN "));
+    assert!(line(2).starts_with("POST /repos/o/r/actions/variables "));
+    assert_eq!(
+        seen[2].json(),
+        serde_json::json!({"name": "REGION", "value": "eu"})
+    );
+    assert!(line(3).starts_with("PATCH /repos/o/r/environments/prod%20env/variables/REGION "));
+    assert_eq!(
+        seen[3].json(),
+        serde_json::json!({"name": "ZONE", "value": "us"})
+    );
+    assert!(line(4).starts_with("DELETE /repos/o/r/actions/caches?key=cargo%20linux "));
+    assert!(line(5).starts_with("PUT /repos/o/r/pages "));
+    assert_eq!(
+        seen[5].json(),
+        serde_json::json!({"cname": "docs.example.com"})
+    );
+    assert!(line(6).starts_with("PATCH /repos/o/r/properties/values "));
+    assert_eq!(
+        seen[6].json(),
+        serde_json::json!({"properties": [
+            {"property_name": "env", "value": "prod"},
+            {"property_name": "team", "value": null},
+        ]})
+    );
+}
