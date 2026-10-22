@@ -198,28 +198,24 @@ impl GitHub {
         let (views, clones, referrers, paths) = tokio::join!(
             self.traffic_part::<wire::Counted>(repo, "views"),
             self.traffic_part::<wire::Counted>(repo, "clones"),
-            self.traffic_part::<Vec<wire::Referrer>>(repo, "popular/referrers"),
-            self.traffic_part::<Vec<wire::Path>>(repo, "popular/paths"),
+            self.traffic_part::<Vec<wire::Popular>>(repo, "popular/referrers"),
+            self.traffic_part::<Vec<wire::Popular>>(repo, "popular/paths"),
         );
-        let traffic = Traffic {
-            views: views?.into_counted(|d| d.views),
-            clones: clones?.into_counted(|d| d.clones),
-            referrers: (referrers?.into_iter())
-                .map(|r| Popular {
-                    name: r.referrer,
-                    title: None,
-                    count: r.count,
-                    uniques: r.uniques,
-                })
-                .collect(),
-            paths: (paths?.into_iter())
+        let popular = |list: Vec<wire::Popular>| {
+            (list.into_iter())
                 .map(|p| Popular {
-                    name: p.path,
+                    name: p.name,
                     title: Some(p.title).filter(|t| !t.is_empty()),
                     count: p.count,
                     uniques: p.uniques,
                 })
-                .collect(),
+                .collect()
+        };
+        let traffic = Traffic {
+            views: views?.into_counted(|d| d.views),
+            clones: clones?.into_counted(|d| d.clones),
+            referrers: popular(referrers?),
+            paths: popular(paths?),
         };
         Ok(traffic)
     }
@@ -400,16 +396,11 @@ mod wire {
         }
     }
 
+    /// A referring site, or a path with its page's title.
     #[derive(Deserialize)]
-    pub struct Referrer {
-        pub referrer: String,
-        pub count: u64,
-        pub uniques: u64,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Path {
-        pub path: String,
+    pub struct Popular {
+        #[serde(alias = "referrer", alias = "path")]
+        pub name: String,
         #[serde(default)]
         pub title: String,
         pub count: u64,

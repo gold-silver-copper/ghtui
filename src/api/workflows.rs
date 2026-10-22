@@ -101,6 +101,7 @@ pub struct Artifact {
     pub id: u64,
     pub name: String,
     /// Bytes, as stored (zipped).
+    #[serde(alias = "size_in_bytes")]
     pub size: u64,
     /// ISO 8601.
     pub expires_at: Option<String>,
@@ -246,16 +247,7 @@ mod rest {
     #[derive(Deserialize)]
     pub struct Artifacts {
         pub total_count: u64,
-        pub artifacts: Vec<Artifact>,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Artifact {
-        pub id: u64,
-        pub name: String,
-        pub size_in_bytes: u64,
-        pub expires_at: Option<String>,
-        pub expired: bool,
+        pub artifacts: Vec<super::Artifact>,
     }
 
     #[derive(Deserialize)]
@@ -310,14 +302,7 @@ impl GitHub {
         let wire: rest::Artifacts = self
             .rest_json(&path, format!("run {run}'s artifacts"))
             .await?;
-        let items = wire.artifacts.into_iter().map(|a| Artifact {
-            id: a.id,
-            name: a.name,
-            size: a.size_in_bytes,
-            expires_at: a.expires_at,
-            expired: a.expired,
-        });
-        Ok(Capped::new(items.collect(), wire.total_count))
+        Ok(Capped::new(wire.artifacts, wire.total_count))
     }
 
     /// Saves artifact `id` (a zip) to `dest`, replacing what's there only

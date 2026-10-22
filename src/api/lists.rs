@@ -85,7 +85,7 @@ impl GitHub {
         after: Option<String>,
     ) -> Result<ListPage, ApiError> {
         let lists = self.star_lists(login).await?;
-        let Some(list) = lists.iter().find(|l| l.slug == slug).cloned() else {
+        let Some(list) = lists.items.into_iter().find(|l| l.slug == slug) else {
             return Err(ApiError::NotFound(format!("@{login}'s list {slug}")));
         };
         let cursor = after
