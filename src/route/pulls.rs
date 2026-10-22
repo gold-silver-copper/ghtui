@@ -24,6 +24,11 @@ pub enum Page {
     },
     /// A new pull request's form.
     NewPr(RepoId),
+    /// A branch's merge queue.
+    Queue {
+        repo: RepoId,
+        branch: String,
+    },
 }
 
 pub use Page::*;
@@ -31,7 +36,7 @@ pub use Page::*;
 impl Page {
     fn repo_id(&self) -> &RepoId {
         match self {
-            Pulls { repo, .. } | NewPr(repo) => repo,
+            Pulls { repo, .. } | NewPr(repo) | Queue { repo, .. } => repo,
             Pr { pr, .. } => &pr.repo,
         }
     }
@@ -61,6 +66,7 @@ impl Family for Page {
                 PrTab::Checks => links::pull_tab(pr, "checks"),
             },
             NewPr(repo) => format!("{}/compare", links::repo(repo)),
+            Queue { repo, branch } => links::merge_queue(repo, branch),
         }
     }
 
@@ -69,6 +75,7 @@ impl Family for Page {
             Pulls { repo, .. } => format!("{repo} · Pull requests"),
             Pr { pr, .. } => pr.to_string(),
             NewPr(repo) => format!("{repo} · New pull request"),
+            Queue { repo, branch } => format!("{repo} · Merge queue for {branch}"),
         }
     }
 
@@ -80,7 +87,7 @@ impl Family for Page {
         let repo = self.repo_id().clone();
         Some(match self {
             Pulls { .. } => Route::code(repo),
-            Pr { .. } | NewPr(_) => Route::Pulls(Pulls {
+            Pr { .. } | NewPr(_) | Queue { .. } => Route::Pulls(Pulls {
                 repo,
                 query: OPEN.into(),
             }),
@@ -98,6 +105,10 @@ impl Family for Page {
                 K::Repo(repo.clone()),
                 K::Clone(repo.clone()),
                 K::NewForm(repo.clone()),
+            ],
+            Queue { repo, branch } => vec![
+                K::Repo(repo.clone()),
+                K::MergeQueue(repo.clone(), branch.clone()),
             ],
             Pr { pr, tab } => {
                 let (detail, activity) = (K::Pr(pr.clone()), K::PrActivity(pr.clone()));
@@ -131,7 +142,7 @@ impl Family for Page {
     fn paged(&self) -> Option<DataKey> {
         match self {
             Pulls { repo, query } => Some(list_search(repo, "pr", query)),
-            Pr { .. } | NewPr(_) => None,
+            Pr { .. } | NewPr(_) | Queue { .. } => None,
         }
     }
 
@@ -143,7 +154,7 @@ impl Family for Page {
                 PrTab::Commits => Width::Lists,
                 PrTab::Review | PrTab::Reviewed(_) => Width::Reading,
             },
-            Pulls { .. } => Width::Lists,
+            Pulls { .. } | Queue { .. } => Width::Lists,
             NewPr(_) => Width::Reading,
         }
     }
@@ -204,6 +215,13 @@ impl Family for Page {
                 }
                 return;
             }
+            Queue { repo, branch } => {
+                let key = DataKey::MergeQueue(repo.clone(), branch.clone());
+                if let Some(q) = b.get(&key).show(page, &self.title()) {
+                    pages::merge_queue(page, repo, branch, q, now);
+                }
+                return;
+            }
             Pr { pr, tab } => (pr, tab),
         };
         let activity = b.get(&DataKey::PrActivity(pr.clone()));
@@ -259,6 +277,13 @@ pub(super) fn parse_repo(repo: &RepoId, rest: &[&str], url: &Url<'_>) -> Option<
             repo,
             query: list_query(url),
         },
+        // A branch's name may have slashes.
+        ["queue", branch @ ..] if !branch.is_empty() && branch.iter().all(|b| valid_rev(b)) => {
+            Queue {
+                repo,
+                branch: branch.join("/"),
+            }
+        }
         // A pull request's diff is the diff viewer.
         ["pull", n] if n.ends_with(".diff") => {
             let number = n.trim_end_matches(".diff").parse().ok()?;
@@ -312,6 +337,8 @@ pub(crate) fn arb() -> impl proptest::strategy::Strategy<Value = Route> {
     let page = prop_oneof![
         (repo(), query()).prop_map(|(repo, query)| Pulls { repo, query }),
         repo().prop_map(NewPr),
+        (repo(), "[a-z][a-z0-9-]{0,8}(/[a-z0-9-]{1,8})?")
+            .prop_map(|(repo, branch)| Queue { repo, branch }),
         (repo(), 1..u64::MAX).prop_map(|(repo, number)| Pr {
             pr: PrRef { repo, number },
             tab: PrTab::Commits,

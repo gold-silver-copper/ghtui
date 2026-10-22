@@ -118,7 +118,7 @@ https://github.com/advisories/GHSA-6r3q-mjv7-xr8m                           Advi
 https://github.com/advisories                                               Advisories
 https://github.com/corazawaf/coraza/security/advisories/GHSA-6r3q-mjv7-xr8m Advisory
 # MergeQueue
-https://github.com/rust-lang/rust/queue/main                                external rare
+https://github.com/rust-lang/rust/queue/main                                Queue
 # Enterprise, EnterpriseUserAccount
 https://github.com/enterprises/octo-enterprise                              external session
 # MarketplaceListing, MarketplaceCategory, SponsorsListing

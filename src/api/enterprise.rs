@@ -178,6 +178,7 @@ pub fn table() -> Vec<Lack> {
         field("viewerCanLabel", &[], alias("viewerCanUpdate"), v(15), "who may label (it's offered to whoever may edit)"),
         field("viewerCanCreateIssues", &[], alias("hasIssuesEnabled"), v(22), "who may open an issue (it's offered wherever issues are on)"),
         field("mergeQueueEntry", &[], Fill::Null, v(12), "merge queues"),
+        field("mergeQueue", &[], Fill::Null, v(12), "merge queues"),
         field("isMergeQueueEnabled", &[], json("false"), v(12), "merge queues"),
         field("closedByPullRequestsReferences", &[], Fill::Null, v(15), "which pull requests will close an issue"),
         field("parent", &["Issue"], Fill::Null, v(16), "sub-issues"),

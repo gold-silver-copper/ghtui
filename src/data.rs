@@ -140,6 +140,8 @@ pub enum DataKey {
     Dependencies(RepoId),
     /// Its community standards.
     Community(RepoId),
+    /// A branch's merge queue.
+    MergeQueue(RepoId, String),
     /// GitHub's featured topics.
     Featured,
     /// A topic, by its (lowercase) name.
@@ -389,6 +391,7 @@ data! {
     Traffic(Box<Traffic>) => Traffic,
     Dependencies(Box<Dependencies>) => Dependencies,
     Community(Box<Community>) => Community,
+    MergeQueue(Box<crate::api::queue::MergeQueue>) => crate::api::queue::MergeQueue,
     Topics(Box<Topics>) => Topics,
     Topic(Box<Topic>) => Topic,
     StarLists(Box<Capped<StarList>>) => Capped<StarList>,

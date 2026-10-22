@@ -417,6 +417,13 @@ pub(crate) fn pages() -> Vec<(&'static str, State)> {
             })),
         ),
         (
+            "merge queue",
+            repo(Route::Pulls(pulls::Queue {
+                repo: ghtui(),
+                branch: "main".into(),
+            })),
+        ),
+        (
             "community",
             repo(Route::Site(crate::site::Page::Insights {
                 repo: ghtui(),

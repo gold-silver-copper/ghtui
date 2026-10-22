@@ -28,6 +28,7 @@ pub mod project;
 pub mod queries;
 #[cfg(test)]
 mod query_check;
+pub mod queue;
 pub mod rate_limit;
 mod raw;
 pub mod reach;

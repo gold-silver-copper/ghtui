@@ -181,6 +181,7 @@ async fn answer(
         K::Traffic(repo) => gh.traffic(repo).await?.into(),
         K::Dependencies(repo) => gh.dependencies(repo).await?.into(),
         K::Community(repo) => gh.community(repo).await?.into(),
+        K::MergeQueue(repo, branch) => gh.merge_queue(repo, branch).await?.into(),
         K::Featured => gh.featured_topics().await?.into(),
         K::Topic(name) => gh.topic(name).await?.into(),
         K::StarLists(login) => gh.star_lists(login).await?.into(),

@@ -927,6 +927,34 @@ pub fn wiki() -> WikiPage {
         file: Some("Home.md".into()),
     }
 }
+/// main's merge queue: one merging, one waiting for its checks.
+pub fn merge_queue() -> crate::api::queue::MergeQueue {
+    use crate::api::model::QueueState;
+    use crate::api::queue::QueueEntry;
+    let entry = |position, state, number, title: &str| QueueEntry {
+        position,
+        state,
+        enqueued_at: "2026-10-01T12:00:00Z".into(),
+        by: Some("octocat".into()),
+        eta: Some(600),
+        solo: false,
+        jump: false,
+        number: Some(number),
+        title: title.into(),
+        author: Some("octocat".into()),
+    };
+    crate::api::queue::MergeQueue {
+        url: "https://github.com/gold-silver-copper/ghtui/queue/main".into(),
+        method: Some("SQUASH".into()),
+        entries: Capped::new(
+            vec![
+                entry(1, QueueState::Locked, 7, "Add thing"),
+                entry(2, QueueState::AwaitingChecks, 8, "Fix other thing"),
+            ],
+            2,
+        ),
+    }
+}
 /// A wiki's change to its Home and FAQ.
 fn wiki_revision() -> crate::api::browse::WikiRevision {
     crate::api::browse::WikiRevision {
@@ -2421,6 +2449,7 @@ pub(crate) fn sample(key: &DataKey) -> Data {
         K::Traffic(_) => Data::from(site::traffic()),
         K::Dependencies(_) => Data::from(site::dependencies()),
         K::Community(_) => Data::from(site::community()),
+        K::MergeQueue(..) => Data::from(merge_queue()),
         K::Featured => Data::from(site::featured()),
         K::Topic(_) => Data::from(site::rust()),
         K::StarLists(_) => Data::from(site::star_lists()),
