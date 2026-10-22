@@ -490,15 +490,15 @@ pub(super) fn contribution_activity(page: &mut Page, c: &Contributions) {
 }
 
 /// An organization's most used languages, across the repositories loaded.
-pub(super) fn top_languages(repos: &[RepoSummary]) -> Vec<(String, usize)> {
-    let mut counts: Vec<(String, usize)> = Vec::new();
-    for lang in repos.iter().filter_map(|r| r.language.as_ref()) {
-        match counts.iter_mut().find(|(l, _)| l == lang) {
+pub(super) fn top_languages(repos: &[RepoSummary]) -> Vec<(&str, usize)> {
+    let mut counts: Vec<(&str, usize)> = Vec::new();
+    for lang in repos.iter().filter_map(|r| r.language.as_deref()) {
+        match counts.iter_mut().find(|(l, _)| *l == lang) {
             Some((_, n)) => *n += 1,
-            None => counts.push((lang.clone(), 1)),
+            None => counts.push((lang, 1)),
         }
     }
-    counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
     counts.truncate(5);
     counts
 }

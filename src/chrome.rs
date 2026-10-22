@@ -252,13 +252,12 @@ impl State {
         // An organization's projects or a user's, once that's known.
         let projects = org.map(|org| {
             let owner = if org {
-                ProjectOwner::Org(login.to_owned())
+                ProjectOwner::Org
             } else {
-                ProjectOwner::User(login.to_owned())
+                ProjectOwner::User
             };
-            Target::Page(Route::Projects(projects::Projects(ProjectsOf::Owner(
-                owner,
-            ))))
+            let of = ProjectsOf::Owner(owner(login.to_owned()));
+            Target::Page(Route::Projects(projects::Projects(of)))
         });
         if let Some(projects) = &projects {
             c.tab("▥", "Projects", None, projects.clone());

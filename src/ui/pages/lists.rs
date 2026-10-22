@@ -216,17 +216,8 @@ pub fn list_state(query: &str) -> &'static str {
             .split_whitespace()
             .any(|w| w.strip_prefix("is:").or_else(|| w.strip_prefix("state:")) == Some(state))
     };
-    if has("closed") {
-        "closed"
-    } else if has("open") {
-        "open"
-    } else if has("unread") {
-        "unread"
-    } else if has("read") {
-        "read"
-    } else {
-        "all"
-    }
+    let states = ["closed", "open", "unread", "read"];
+    states.into_iter().find(|s| has(s)).unwrap_or("all")
 }
 
 /// The sort a query asks for, by name.

@@ -91,7 +91,7 @@ fn reviewers(page: &mut Page, pr: &PrRef, d: &PrDetail, activity: Fetched<'_, Pr
 
 /// `✓ alice approved these changes`, the name following `link`.
 fn reviewed(state: ReviewState, author: &str, link: u32) -> Vec<Seg> {
-    let ((mark, role), what) = timeline::review_said(state);
+    let ((mark, role), what, _) = timeline::review_said(state);
     vec![
         Seg::new(format!("{mark}  "), role),
         Seg::linked(author, Role::Link, link),
@@ -321,11 +321,7 @@ pub(super) fn open_threads(
         let first = thread.comments.first();
         let target = first.map(|c| c.url.clone()).filter(|u| !u.is_empty());
         maybe_item(page, target, |page, link| {
-            let line = if thread.file_level {
-                None
-            } else {
-                thread.line.or(thread.original_line)
-            };
+            let line = (thread.line.or(thread.original_line)).filter(|_| !thread.file_level);
             let at = place(&thread.path, line);
             let mut segs = vec![match link {
                 Some(link) => Seg::linked(at, Role::Link, link),

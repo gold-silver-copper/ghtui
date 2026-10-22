@@ -295,11 +295,8 @@ pub fn dependencies(page: &mut Page, d: &Dependencies) {
         return;
     }
     for m in &d.manifests {
-        let count = match m.dependencies.left_out() {
-            0 => m.dependencies.len().to_string(),
-            _ => format!("{} of {}", m.dependencies.len(), m.dependencies.total()),
-        };
-        let title = vec![strong(m.path.clone()), meta(format!("  {count}"))];
+        let count = meta(format!("  {}", count_of(&m.dependencies)));
+        let title = vec![strong(m.path.clone()), count];
         page.box_top(title, Vec::new());
         if m.unparseable {
             empty_row(page, "GitHub couldn't read this manifest.");
@@ -335,11 +332,7 @@ pub fn dependencies(page: &mut Page, d: &Dependencies) {
                 body(page, segs);
             });
         }
-        if m.dependencies.left_out() > 0 {
-            page.box_rule();
-            let n = m.dependencies.left_out();
-            empty_row(page, &left_out_text(n, "more", "more"));
-        }
+        rest_row(page, m.dependencies.len(), m.dependencies.rest());
         page.box_bottom();
         page.blank();
     }
