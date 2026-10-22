@@ -145,6 +145,12 @@ impl File {
         }
     }
 
+    /// Its diff from the head's, as it's being resolved.
+    fn diff(&self, m: &Merging) -> FileDiff {
+        let now = self.now(m);
+        FileDiff::compute(&self.path, self.ours.as_deref(), now.as_deref())
+    }
+
     /// What it holds in the merge commit, once it's resolved.
     fn content(&self, m: &Merging) -> Option<Content> {
         match &self.how {
@@ -407,12 +413,33 @@ pub(crate) fn edited(state: &mut State, path: &str, part: usize, mut text: Strin
     resolved(state, m, at, "Edited")
 }
 
+/// File `index` of diff `of`, as resolving it has made it so far: a
+/// diff loaded again shows what was resolved before.
+pub(crate) fn as_resolved(state: &State, of: &DiffOf, index: usize) -> Option<FileDiff> {
+    let m = state.merging.as_ref().filter(|m| m.of() == *of)?;
+    let doc = &state.diffs.get(of)?.doc;
+    let path = doc.files().get(index)?.meta.path();
+    let file = m.files.iter().find(|f| f.path == path)?;
+    let begun = match &file.how {
+        How::Hunks(parts) => (parts.iter()).any(|p| {
+            matches!(
+                p,
+                Part::Conflict {
+                    chosen: Some(_),
+                    ..
+                }
+            )
+        }),
+        How::Whole { chosen, .. } => chosen.is_some(),
+    };
+    begun.then(|| file.diff(m))
+}
+
 /// One of file `at`'s conflicts was resolved: the diff shows it, and
 /// what's left is said.
 fn resolved(state: &mut State, m: Merging, at: usize, done: &str) -> Cmds {
     let Some(file) = m.files.get(at) else { return Cmds::new() };
-    let now = file.now(&m);
-    let diff = FileDiff::compute(&file.path, file.ours.as_deref(), now.as_deref());
+    let diff = file.diff(&m);
     let path = file.path.clone();
     let left = m.left();
     state.merging = Some(m);

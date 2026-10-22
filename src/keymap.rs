@@ -768,6 +768,10 @@ mod tests {
         assert_eq!(keymap.resolve(key('i'), DIFF), Some(Action::Hints));
         assert_eq!(keymap.resolve(key('i'), PAGE), Some(Action::Hints));
         assert_eq!(keymap.resolve(key('2'), PAGE), Some(Action::Tab2));
+        // A conflict's sides in the diff; on pages, `>` quotes.
+        assert_eq!(keymap.resolve(key('<'), DIFF), Some(Action::TakeOurs));
+        assert_eq!(keymap.resolve(key('>'), DIFF), Some(Action::TakeTheirs));
+        assert_eq!(keymap.resolve(key('>'), PAGE), Some(Action::QuoteReply));
         assert!(keymap.keys_in(Action::ScrollLeft, TREE).next().is_none());
     }
 

@@ -1320,6 +1320,8 @@ pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Cmds {
             change(state, of, |d| d.set_files(*files));
         }
         JobMsg::File(index, file) => {
+            // A conflict already resolved shows as it is.
+            let file = crate::conflicts::as_resolved(state, of, index).map_or(file, Arc::new);
             if let Some(diff) = state.diffs.get_mut(of) {
                 diff.set_file(index, file);
             }

@@ -96,9 +96,17 @@ fn resolving() -> State {
     );
     assert_eq!(start.head_repo, RepoId::new("octocat", "ghtui"));
     let cmds = fixtures::done(&mut s, start, Ok(Some(merged())));
-    let job = fixtures::diff_job(&cmds);
     let of = DiffOf::Conflicts(pr(), oid('a'), oid('d'));
     assert_eq!(on_diff(&s).of, of);
+    listed(&mut s, &cmds);
+    s
+}
+
+/// The conflicts' diff job `cmds` start lists and diffs their files, as
+/// they were merged.
+fn listed(s: &mut State, cmds: &[Cmd]) {
+    let job = fixtures::diff_job(cmds);
+    let of = DiffOf::Conflicts(pr(), oid('a'), oid('d'));
     let refs = PrRefs {
         head: oid('d'),
         base: oid('a'),
@@ -114,12 +122,11 @@ fn resolving() -> State {
         generated: Default::default(),
     };
     let job_msg = |msg| Msg::Diff(of.clone(), DiffMsg::Job(job, msg));
-    update(&mut s, job_msg(JobMsg::Files(Box::new(listed))));
+    update(s, job_msg(JobMsg::Files(Box::new(listed))));
     let a = FileDiff::compute("src/a.rs", Some(OURS.as_bytes()), Some(MARKED.as_bytes()));
     let gone = FileDiff::compute("gone.rs", Some(b"x\n"), None);
-    update(&mut s, job_msg(JobMsg::File(0, Arc::new(a))));
-    update(&mut s, job_msg(JobMsg::File(1, Arc::new(gone))));
-    s
+    update(s, job_msg(JobMsg::File(0, Arc::new(a))));
+    update(s, job_msg(JobMsg::File(1, Arc::new(gone))));
 }
 
 /// Line `line` of file `file`'s new side, as the diff shows it now.
@@ -144,6 +151,10 @@ fn conflicts_are_resolved_one_by_one_and_the_merge_pushed() {
     press(&mut s, "/mine<Enter>");
     press(&mut s, ">");
     says(&s, "Took main's side · 1 conflict left");
+    assert_eq!(shown(&s, 0, 2), "theirs");
+    // Loaded again, the diff shows what was resolved.
+    let cmds = press(&mut s, "r");
+    listed(&mut s, &cmds);
     assert_eq!(shown(&s, 0, 2), "theirs");
     act(&mut s, Action::CommitMerge);
     says(&s, "1 conflict left");
