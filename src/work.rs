@@ -163,6 +163,7 @@ jobs! {
     NewRepo(crate::housekeeping::repos::Make),
     CloneTo(crate::housekeeping::repos::CloneTo),
     Commit(crate::housekeeping::files::Commit),
+    Advisory(crate::housekeeping::advisory::Draft),
     Release(crate::release::Save),
     DeleteRelease(crate::release::Delete),
     DeleteTag(crate::release::DeleteTag),

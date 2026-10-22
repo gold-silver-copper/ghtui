@@ -3,16 +3,25 @@
 use super::*;
 
 /// Your notifications, as GitHub's inbox lists them: what each is about,
-/// why you got it and when, the unread ones marked. Words the inbox can't
-/// be filtered by are said, and so is how far a filter applied after
-/// fetching searched.
-pub fn notifications(page: &mut Page, query: &str, inbox: Fetched<'_, Inbox>, cx: PageCtx<'_>) {
+/// why you got it and when, the unread ones marked, after the invitations
+/// waiting for you. Words the inbox can't be filtered by are said, and so
+/// is how far a filter applied after fetching searched.
+pub fn notifications(
+    page: &mut Page,
+    query: &str,
+    inbox: Fetched<'_, Inbox>,
+    invited: Option<&crate::api::org::Invitations>,
+    cx: PageCtx<'_>,
+) {
     let PageCtx { icons, keys, now } = cx;
     filter_field(page, query, keys, "filter");
     let ignored = InboxFilter::parse(query).ignored;
     let knows = "notifications filter by is:unread, is:read, reason: and repo:";
     ignored_note(page, &ignored, knows);
     page.blank();
+    if let Some(invited) = invited {
+        super::invited_box(page, invited, now);
+    }
     let Some(inbox) = inbox.show(page, "your notifications") else { return };
     let l = &inbox.list;
     let shown = list_state(query);

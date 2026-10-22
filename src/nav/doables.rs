@@ -426,7 +426,8 @@ impl State {
                     | Kind::Housekeeping(_)
                     | Kind::Workflows(_)
                     | Kind::Manage(_)
-                    | Kind::Settings(_) => "choose",
+                    | Kind::Settings(_)
+                    | Kind::Org(_) => "choose",
                     Kind::Code { .. } => "go there",
                     Kind::Messages(_) => "copy",
                     Kind::Commands

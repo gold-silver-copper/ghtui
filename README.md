@@ -819,13 +819,13 @@ says where it works.
 | `m`  | Move the item to another column |
 | `a`  | Add an issue, a pull request or a draft |
 
-**In a repository's settings** (`settings:`)
+**In settings, and an organization's people and teams** (`settings:`)
 
 | Keys | Action |
 | ---- | ------ |
-| `a`  | Add a branch rule, a collaborator, a webhook or a deploy key |
-| `e`  | Edit the rule or webhook, or change the collaborator's role |
-| `D`  | Delete the rule, webhook or deploy key; remove the collaborator or invitation |
+| `a`  | Add a branch rule, a collaborator, a webhook or a deploy key; invite a member, make a team, add to a team |
+| `e`  | Edit the rule or webhook; change a collaborator's, member's or team's role |
+| `D`  | Delete the rule, webhook or deploy key; remove a collaborator, member or invitation, or from a team |
 | `x`  | Turn the ruleset or webhook on or off; archive or unarchive the repository |
 
 **In Files changed** (`diff:`)

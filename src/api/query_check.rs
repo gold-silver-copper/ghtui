@@ -571,6 +571,8 @@ fn every_query_is_checked() {
         .into_iter()
         .map(|(n, _)| n.split('(').next().unwrap_or(n))
         .collect();
-    let consts = crate::api::raw::RAW.len() + crate::api::housekeeping::RAW.len();
+    let consts = crate::api::raw::RAW.len()
+        + crate::api::housekeeping::RAW.len()
+        + crate::api::org::RAW.len();
     assert_eq!(names.len(), consts + built);
 }

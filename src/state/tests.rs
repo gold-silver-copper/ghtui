@@ -248,6 +248,7 @@ mod features;
 mod housekeeping;
 mod manage;
 mod merging;
+mod org;
 mod pages;
 mod projects;
 mod releases;

@@ -27,6 +27,7 @@ use crate::api::manage::{Categories, Target};
 use crate::api::mention::Mentionable;
 use crate::api::model::{Capped, PrDetail, PrRef, RepoId};
 use crate::api::notifications::{Inbox, Unread};
+use crate::api::org::{Invitations, Member, OrgAccess};
 use crate::api::packages::{PackageDetail, PackageList, PackageRef, PackagesOf};
 use crate::api::project::{InProject, Project, ProjectRef, ProjectSummary, ProjectsOf};
 use crate::api::release::TagLook;
@@ -89,6 +90,13 @@ pub enum DataKey {
     Advisory(Option<RepoId>, String),
     Teams(String),
     Team(String, String),
+    /// An organization's members, with their roles, by its lowercase
+    /// login.
+    Members(String),
+    /// What you may do in an organization, and its owners' invitations.
+    OrgAccess(String),
+    /// The invitations sent to you.
+    Invitations,
     Gist(String),
     Gists(String),
     Blame(RepoId, String, String),
@@ -205,6 +213,8 @@ impl DataKey {
                 | DataKey::Subscription(..)
                 | DataKey::MyLists(..)
                 | DataKey::Owners
+                | DataKey::OrgAccess(_)
+                | DataKey::Invitations
                 | DataKey::Templates
                 | DataKey::OpenIssues(_)
                 | DataKey::MoveTargets(_)
@@ -355,6 +365,11 @@ data! {
     Advisory(Box<Advisory>) => Advisory,
     Teams(Box<Results<TeamSummary>>) => Results<TeamSummary> [|t| t.slug.clone()],
     Team(Box<TeamDetail>) => TeamDetail,
+    Members(Box<Results<Member>>) => Results<Member> [|m| m.login.clone()],
+    #[serde(skip)]
+    OrgAccess(Box<OrgAccess>) => OrgAccess,
+    #[serde(skip)]
+    Invitations(Box<Invitations>) => Invitations,
     Gist(Box<Gist>) => Gist,
     Gists(Box<Results<GistSummary>>) => Results<GistSummary> [|g| g.id.clone()],
     Blame(Box<Blame>) => Blame,

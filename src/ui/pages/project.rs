@@ -22,22 +22,18 @@ pub fn advisories(
     list: Fetched<'_, Results<Advisory>>,
     now: u64,
 ) {
-    let empty = if repo.is_some() {
-        "No published advisories."
-    } else {
-        "No advisories."
-    };
+    let empty = "No advisories.";
     paged_list(page, "Security advisories", list, empty, |page, a| {
         let target = match repo {
             Some(repo) => format!("{}/security/advisories/{}", url::repo(repo), a.ghsa),
             None => format!("{}/advisories/{}", url::base(), a.ghsa),
         };
         item(page, target, |page, link| {
-            let segs = vec![
-                severity_chip(a.severity),
-                space(),
-                Seg::linked(a.summary.clone(), Role::Strong, link),
-            ];
+            let mut segs = vec![severity_chip(a.severity)];
+            if let Some(state) = unpublished(a) {
+                tag(&mut segs, state, Bg::SecondaryContainer);
+            }
+            segs.extend([space(), Seg::linked(a.summary.clone(), Role::Strong, link)]);
             hanging(page, meta(""), segs, Frame::Body);
             let mut subline = a.ghsa.clone();
             if let Some(at) = &a.published_at {
@@ -52,11 +48,23 @@ pub fn advisories(
     });
 }
 
+/// A repository's advisory's state, unless it's published: `Draft`,
+/// `Triage`, `Closed`.
+fn unpublished(a: &Advisory) -> Option<String> {
+    let state = a.state.as_deref().filter(|s| *s != "published")?;
+    let mut chars = state.chars();
+    let first = chars.next()?;
+    Some(first.to_uppercase().chain(chars).collect())
+}
+
 /// A security advisory: what's affected and fixed, how severe, and its
 /// description, credits and references.
 pub fn advisory(page: &mut Page, a: &Advisory, now: u64) {
     say(page, a.summary.clone(), Role::Title);
     let mut segs = vec![severity_chip(a.severity)];
+    if let Some(state) = unpublished(a) {
+        tag(&mut segs, state, Bg::SecondaryContainer);
+    }
     if a.withdrawn_at.is_some() {
         tag(&mut segs, "Withdrawn", Bg::SecondaryContainer);
     }

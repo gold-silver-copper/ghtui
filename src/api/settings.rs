@@ -221,7 +221,7 @@ words! {
         /// What it lets someone do, in GitHub's words.
         pub fn about,
         /// The word REST takes for it.
-        fn wire,
+        pub fn wire,
     }
     Read     "Read"     "read and clone; open and comment on issues and pull requests" "pull";
     Triage   "Triage"   "read, and manage issues and pull requests"                    "triage";

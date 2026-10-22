@@ -49,13 +49,30 @@ pub fn team(page: &mut Page, org: &str, d: &TeamDetail) {
     }
     page.blank();
     let none = "No members.";
-    counted_box(page, "Members", Vec::new(), &d.members, none, user_row);
+    counted_box(page, "Members", Vec::new(), &d.members, none, |page, u| {
+        item(page, url::user(&u.login), |page, link| {
+            let mut segs = vec![Seg::linked(u.login.clone(), Role::Link, link)];
+            if let Some(name) = &u.name {
+                segs.push(strong(format!("  {name}")));
+            }
+            let maintainer = d.maintainers.contains(&u.login);
+            let right = if maintainer {
+                vec![chip("Maintainer", Bg::PrimaryContainer)]
+            } else {
+                Vec::new()
+            };
+            page.box_line(segs, right, 0);
+        });
+    });
     page.blank();
     let empty = "No repositories.";
     let repos = &d.repos;
     counted_box(page, "Repositories", Vec::new(), repos, empty, |page, r| {
         item(page, url::repo(&r.repo), |page, link| {
-            let right = vec![meta(format!("★ {}", compact(r.stars)))];
+            let mut right = vec![meta(format!("★ {}  ", compact(r.stars)))];
+            if let Some(p) = r.permission {
+                right.push(chip(p.name(), Bg::SecondaryContainer));
+            }
             link_line(page, r.repo.to_string(), Role::Link, link, right);
             if !r.description.is_empty() {
                 body(page, vec![meta(r.description.clone())]);
@@ -162,7 +179,7 @@ pub enum ProfileTab {
     Stars,
     Followers,
     Following,
-    /// An organization's public members.
+    /// An organization's members.
     People,
 }
 
@@ -176,6 +193,13 @@ pub enum ProfileList<'a> {
         Fetched<'a, Results<RepoSummary>>,
     ),
     People(Fetched<'a, Results<UserSummary>>),
+    /// An organization's members, what you may do there, and the keys
+    /// that change them.
+    Members(
+        Fetched<'a, Results<crate::api::org::Member>>,
+        Option<&'a crate::api::org::OrgAccess>,
+        &'a str,
+    ),
     /// The overview's are in the profile.
     None,
 }
@@ -294,6 +318,10 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
                 _ => "People",
             };
             people_list(page, title, people, "Nobody here yet.");
+            return;
+        }
+        (_, ProfileList::Members(members, access, hint)) => {
+            super::members(page, members, access, hint, now);
             return;
         }
         (_, ProfileList::None | ProfileList::Starred(..)) => return,

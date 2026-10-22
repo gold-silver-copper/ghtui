@@ -26,6 +26,12 @@ pub enum SettingLink {
     Archive,
     /// Deleting the repository, which is GitHub's to do.
     DeleteRepo,
+    /// An organization's invitation, by its ID, and whom it's to when
+    /// that's a login ([`crate::org`]).
+    OrgInvitation(u64, Option<String>),
+    /// An invitation sent to you, accepted or declined
+    /// ([`crate::invited`]).
+    Answer(bool),
 }
 
 /// The keys the page names, as they're bound.
