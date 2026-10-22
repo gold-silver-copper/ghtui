@@ -516,12 +516,12 @@ impl Keymap {
         }
         let mut bindings = Vec::new();
         for &action in Action::ALL {
-            let keys: Vec<String> = match overrides.get(action.name()) {
-                Some(list) => list.clone(),
-                None => action.defaults().iter().map(|s| (*s).to_owned()).collect(),
+            let keys: Vec<&str> = match overrides.get(action.name()) {
+                Some(list) => list.iter().map(String::as_str).collect(),
+                None => action.defaults().to_vec(),
             };
             for key in keys {
-                let (key, context) = scoped(&key, action.context());
+                let (key, context) = scoped(key, action.context());
                 let key = parse_key(key).map_err(|e| format!("[keys] {}: {e}", action.name()))?;
                 bindings.push(Binding {
                     key,

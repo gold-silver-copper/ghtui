@@ -320,10 +320,7 @@ fn why_not(state: &State, h: &Here<'_>, action: Action) -> Option<String> {
         Action::ArchiveItem => editable(state, h).err(),
         Action::EditComment | Action::EditTitle => draft(state, h).err(),
         Action::SetField => {
-            let (p, _) = match editable(state, h) {
-                Ok(found) => found,
-                Err(why) => return Some(why),
-            };
+            let (p, _) = or_return!(editable(state, h), Some);
             (!p.fields.iter().any(|f| f.kind.settable())).then(|| {
                 "The project has no fields to set: only its own text, number, date, single-select and iteration fields can be"
                     .to_owned()
@@ -781,13 +778,15 @@ pub fn shows(state: &State, change: &Change, project: &ProjectRef, view: Option<
     }
 }
 
-/// What a change is doing while it's sent.
-pub fn doing(change: &ProjectChange) -> &'static str {
+/// What a change is doing while it's sent, and what it is, for "GitHub
+/// refused …".
+pub fn said(change: &ProjectChange) -> (&'static str, &'static str) {
     match change {
-        ProjectChange::Add { .. } | ProjectChange::AddDraft { .. } => "Adding it to the project",
-        ProjectChange::Archive { archived: true, .. } => "Archiving it",
-        ProjectChange::Archive { .. } => "Restoring it",
-        ProjectChange::EditDraft { .. } => "Saving the draft",
+        ProjectChange::Add { .. } => ("Adding it to the project", "adding it"),
+        ProjectChange::AddDraft { .. } => ("Adding it to the project", "the draft"),
+        ProjectChange::Archive { archived: true, .. } => ("Archiving it", "archiving it"),
+        ProjectChange::Archive { .. } => ("Restoring it", "restoring it"),
+        ProjectChange::EditDraft { .. } => ("Saving the draft", "the draft's edit"),
     }
 }
 
@@ -799,16 +798,5 @@ pub fn done(change: &ProjectChange) -> &'static str {
         ProjectChange::Archive { archived: true, .. } => "Archived",
         ProjectChange::Archive { .. } => "Restored",
         ProjectChange::EditDraft { .. } => "Draft saved",
-    }
-}
-
-/// What was refused, for "GitHub refused …".
-pub fn what(change: &ProjectChange) -> &'static str {
-    match change {
-        ProjectChange::Add { .. } => "adding it",
-        ProjectChange::AddDraft { .. } => "the draft",
-        ProjectChange::Archive { archived: true, .. } => "archiving it",
-        ProjectChange::Archive { .. } => "restoring it",
-        ProjectChange::EditDraft { .. } => "the draft's edit",
     }
 }

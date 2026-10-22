@@ -730,8 +730,11 @@ impl Matching {
             text.side_text(crate::diff::anchor::Side::Left),
             text.side_text(crate::diff::anchor::Side::Right),
         ];
-        // Each side's context lines, by the line they show on the other.
+        // Each side's context lines, by the line they show on the other,
+        // and each line's count of the code-bearing context lines before it.
         let mut counterpart = [vec![0u32; old.len() + 1], vec![0u32; new.len() + 1]];
+        let mut kept_before = counterpart.clone();
+        let mut count = 0;
         for l in &line.lines {
             if let DiffLine::Context { old: o, new: n } = *l {
                 let [co, cn] = &mut counterpart;
@@ -740,6 +743,16 @@ impl Matching {
                 }
                 if let Some(c) = cn.get_mut(n as usize) {
                     *c = o;
+                }
+                count += u32::from(!text.line(l.shown()).trim().is_empty());
+            }
+            for pos in l.lines() {
+                let s = usize::from(pos.side == crate::diff::anchor::Side::Right);
+                if let Some(c) = kept_before
+                    .get_mut(s)
+                    .and_then(|k| k.get_mut(pos.line as usize))
+                {
+                    *c = count;
                 }
             }
         }
@@ -763,17 +776,21 @@ impl Matching {
                     Some(line_at(texts.get(other)?, tok.start))
                 });
                 // A match must agree with the context lines: a context
-                // line's tokens are its counterpart's.
+                // line's tokens are its counterpart's, and a token doesn't
+                // cross one (that's code moved past code both sides keep,
+                // which the lines show as a change).
                 let agrees = there.is_some_and(|there| {
-                    let ctx = |s: usize, l: u32| {
-                        counterpart
-                            .get(s)
+                    let at = |of: &[Vec<u32>; 2], s: usize, l: u32| {
+                        of.get(s)
                             .and_then(|c| c.get(l as usize))
                             .copied()
                             .unwrap_or(0)
                     };
-                    let (mine, theirs) = (ctx(s, here), ctx(other, there));
-                    (mine == 0 || mine == there) && (theirs == 0 || theirs == here)
+                    let (mine, theirs) =
+                        (at(&counterpart, s, here), at(&counterpart, other, there));
+                    (mine == 0 || mine == there)
+                        && (theirs == 0 || theirs == here)
+                        && at(&kept_before, s, here) == at(&kept_before, other, there)
                 });
                 let ranges: Vec<(u32, u32)> = if agrees {
                     if let Some(keeps) = keeps.get_mut(s) {
@@ -940,5 +957,18 @@ mod tests {
             compare_within((&a, &old), (&b, &new), 5).err(),
             Some(Fallback::TooSlow)
         );
+    }
+
+    /// Code moved past a line both sides keep is a change, though every
+    /// token is still there; past a blank line it's still formatting.
+    #[test]
+    fn code_moved_past_a_kept_line_is_a_change() {
+        let folds = |old: &str, new: &str| {
+            let text = text_diff("a.rs", old, new);
+            let blocks = &text.view(Whitespace::Exact, true).blocks;
+            blocks.iter().all(|b| b.formatting_only)
+        };
+        assert!(!folds("b\n// c\nb\n", "// c\nb b\n"));
+        assert!(folds("f(a,\n\nb);\n", "f(a, b\n\n);\n"));
     }
 }

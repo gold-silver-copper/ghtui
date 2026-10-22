@@ -801,8 +801,8 @@ impl RepoVariables {
     /// `repo`'s object at `expression`.
     pub fn at(repo: &RepoId, expression: impl Into<String>) -> Self {
         Self {
-            owner: repo.owner.clone(),
-            name: repo.name.clone(),
+            owner: repo.owner.to_string(),
+            name: repo.name.to_string(),
             expression: expression.into(),
         }
     }
@@ -4323,10 +4323,11 @@ impl TagRef {
             ) => Some(c),
             _ => None,
         };
+        let (oid, date) = commit.map(|c| (c.oid.0, c.committed_date.0)).unzip();
         Some(TagInfo {
             name: self.name,
-            oid: commit.as_ref().map(|c| c.oid.0.clone()),
-            date: commit.map(|c| c.committed_date.0),
+            oid,
+            date,
         })
     }
 }
@@ -4390,13 +4391,14 @@ impl CommitCard {
 
 impl RepoCard {
     pub fn into_summary(self) -> Option<RepoSummary> {
+        let (language, color) = self.primary_language.map(|l| (l.name, l.color)).unzip();
         Some(RepoSummary {
             repo: RepoId::parse(&self.name_with_owner)?,
             description: self.description.filter(|d| !d.trim().is_empty()),
             stars: count(self.stargazer_count),
             forks: count(self.fork_count),
-            language: self.primary_language.as_ref().map(|l| l.name.clone()),
-            language_color: self.primary_language.and_then(|l| l.color),
+            language,
+            language_color: color.flatten(),
             pushed_at: self.pushed_at.map(|d| d.0),
             private: self.is_private,
             fork: self.is_fork,

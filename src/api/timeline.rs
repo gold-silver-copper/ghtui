@@ -331,7 +331,9 @@ macro_rules! events {
     )*};
 }
 
-// events! writes `self::String`, and the prelude's String isn't in `self`.
+// events! writes `self::String`, and the prelude's String isn't in `self`
+// (nor is the primitive bool).
+use std::primitive::bool;
 use std::string::String;
 
 events! {
@@ -378,15 +380,7 @@ events! {
     TypeAddedEv = "IssueTypeAddedEvent" { issue_type: ?TypeName },
     TypeChangedEv = "IssueTypeChangedEvent" { issue_type: ?TypeName, prev_issue_type: ?TypeName },
     TypeRemovedEv = "IssueTypeRemovedEvent" { issue_type: ?TypeName },
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "CrossReferencedEvent")]
-pub struct CrossReferencedEv {
-    pub actor: Option<Actor>,
-    pub created_at: DateTime,
-    pub source: Subject,
-    pub will_close_target: bool,
+    CrossReferencedEv = "CrossReferencedEvent" { source: Subject, will_close_target: bool },
 }
 
 /// An issue a timeline names.

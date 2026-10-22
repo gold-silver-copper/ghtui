@@ -70,9 +70,8 @@ pub async fn tree_files(repo: &Repo, commit: &Oid) -> Result<Vec<TreeFile>, GitE
     if repo.partial {
         fetch_trees(repo, commit).await?;
     }
-    let mut cmd = repo.cmd();
-    cmd.env("GIT_NO_LAZY_FETCH", "1")
-        .args(["ls-tree", "-r", "-z", "--full-tree"]);
+    let mut cmd = repo.cmd_here();
+    cmd.args(["ls-tree", "-r", "-z", "--full-tree"]);
     // Sizes are read from the blobs: a partial clone has few of them,
     // and looking for each missing one is slow.
     if !repo.partial {
@@ -89,8 +88,8 @@ const DEPTH: usize = 64;
 /// Fetches the trees of `commit` a partial clone lacks.
 async fn fetch_trees(repo: &Repo, commit: &Oid) -> Result<(), GitError> {
     for _ in 0..DEPTH {
-        let mut cmd = repo.cmd();
-        cmd.env("GIT_NO_LAZY_FETCH", "1").args([
+        let mut cmd = repo.cmd_here();
+        cmd.args([
             "rev-list",
             "--objects",
             "--no-walk",
@@ -107,7 +106,7 @@ async fn fetch_trees(repo: &Repo, commit: &Oid) -> Result<(), GitError> {
         if missing.is_empty() {
             return Ok(());
         }
-        repo.prefetch(&missing).await?;
+        repo.prefetch(missing).await?;
     }
     Ok(())
 }
@@ -138,16 +137,14 @@ pub async fn tree_of(repo: &Repo, files: &[(&str, &str)], scratch: &Path) -> Res
             let _ = writeln!(input, "100644 {blob}\t{path}");
         }
     }
-    let mut cmd = repo.cmd();
-    cmd.env("GIT_INDEX_FILE", scratch)
-        .env("GIT_NO_LAZY_FETCH", "1")
-        .args(["update-index", "--index-info"]);
-    run_with_stdin(cmd, "update-index --index-info", input).await?;
-    let mut cmd = repo.cmd();
-    cmd.env("GIT_INDEX_FILE", scratch)
-        .env("GIT_NO_LAZY_FETCH", "1")
-        .arg("write-tree");
-    let tree = stdout(&cmd.output().await?, "write-tree");
+    let scratched = |args: &[&str]| {
+        let mut cmd = repo.cmd_here();
+        cmd.env("GIT_INDEX_FILE", scratch).args(args);
+        cmd
+    };
+    let info = scratched(&["update-index", "--index-info"]);
+    run_with_stdin(info, "update-index --index-info", input).await?;
+    let tree = stdout(&scratched(&["write-tree"]).output().await?, "write-tree");
     let _ = std::fs::remove_file(scratch);
     Oid::parse(tree?.trim())
 }
@@ -162,9 +159,8 @@ pub async fn grep_word(
     limit: usize,
     within: Duration,
 ) -> Result<Hits, GitError> {
-    let mut cmd = repo.cmd();
-    cmd.env("GIT_NO_LAZY_FETCH", "1")
-        .args(["grep", "-n", "-w", "-I", "-F", "-z", "--no-color", "-e"])
+    let mut cmd = repo.cmd_here();
+    cmd.args(["grep", "-n", "-w", "-I", "-F", "-z", "--no-color", "-e"])
         .arg(word)
         .arg(&**tree)
         .arg("--")

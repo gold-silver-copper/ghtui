@@ -59,12 +59,11 @@ impl State {
 
     /// Replaces the page on screen (switching tabs, changing a filter).
     pub fn replace(&mut self, route: Route, force: bool, anchor: Option<String>) -> Cmds {
-        match self.screen_mut() {
-            Screen::Page(p) => **p = PageScreen::new(route.clone(), anchor),
-            Screen::Diff(_) => return self.push(route),
+        if let Screen::Diff(_) = self.screen() {
+            return self.push(route);
         }
-        let mut cmds = self.ensure_route(&route, force);
-        cmds.extend(self.record_visit(&route));
+        let cmds = (self.ensure_route(&route, force)).and(self.record_visit(&route));
+        *self.screen_mut() = Screen::Page(Box::new(PageScreen::new(route, anchor)));
         cmds
     }
 
@@ -93,12 +92,11 @@ impl State {
             Target::Page(route) => {
                 let route = self.followed(route);
                 self.forward.clear();
-                let mut cmds = self.record_visit(&route);
+                let cmds = self
+                    .record_visit(&route)
+                    .and(self.ensure_route(&route, true));
                 let screen = PageScreen::new(route, anchor);
                 self.screens.push(Screen::Page(Box::new(screen)));
-                if let Some(route) = self.route().cloned() {
-                    cmds.extend(self.ensure_route(&route, true));
-                }
                 cmds
             }
             Target::Files(of) => {

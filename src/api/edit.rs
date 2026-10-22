@@ -302,8 +302,8 @@ impl GitHub {
         use cynic::QueryBuilder;
         let subject = format!("{repo}#{number}");
         let op = SidebarQuery::build(NumberVariables {
-            owner: repo.owner.clone(),
-            name: repo.name.clone(),
+            owner: repo.owner.to_string(),
+            name: repo.name.to_string(),
             number: i32::try_from(number).map_err(|_| ApiError::NotFound(subject.clone()))?,
         });
         let (mut sidebar, org) = self

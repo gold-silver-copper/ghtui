@@ -27,6 +27,14 @@ use crate::api::timeline;
 use crate::host::Host;
 use crate::lock;
 
+/// GraphQL variables naming `repo` (`$owner` and `$name`), with more.
+macro_rules! repo_vars {
+    ($repo:expr $(, $key:literal: $value:expr)* $(,)?) => {
+        serde_json::json!({ "owner": $repo.owner, "name": $repo.name $(, $key: $value)* })
+    };
+}
+pub(crate) use repo_vars;
+
 const MAX_ATTEMPTS: u32 = 3;
 /// About when GitHub gives up on a request (it allows 10 seconds).
 const GITHUB_TIMEOUT: Duration = Duration::from_secs(9);
@@ -612,7 +620,7 @@ impl GitHub {
                     self.reach.lost();
                     return Err(crate::api::reach::offline(&err));
                 }
-                Err(err) => return Err(ApiError::Network(err.to_string())),
+                Err(err) => return Err(network(err)),
             };
             self.reach.found();
             let status = response.status();
@@ -638,10 +646,7 @@ impl GitHub {
                 tokio::time::sleep(self.backoff * (1 << attempt)).await;
                 continue;
             }
-            let body = response
-                .text()
-                .await
-                .map_err(|e| ApiError::Network(e.to_string()))?;
+            let body = response.text().await.map_err(network)?;
             if let Some(recorder) = &self.recorder {
                 let (request, sent) = match request {
                     Request::Get { path, .. } => (format!("GET {path}"), None),
@@ -829,13 +834,7 @@ impl GitHub {
         let vars = body.get("variables")?;
         let (owner, name) = (vars.get("owner")?.as_str()?, vars.get("name")?.as_str()?);
         let path = format!("/repos/{}/{}", encode_path(owner), encode_path(name));
-        let response = self
-            .send(&Request::Get {
-                path: &path,
-                cached: None,
-            })
-            .await;
-        let response = response.ok()?;
+        let response = self.get(&path).await.ok()?;
         (response.status == StatusCode::UNAVAILABLE_FOR_LEGAL_REASONS)
             .then(|| check_status(&response, "").err())
             .flatten()
@@ -942,9 +941,12 @@ impl GitHub {
     /// status, for a caller that reads a refusal itself (what a token's
     /// scopes lack). Not cached.
     pub(crate) async fn rest_answer(&self, path: &str) -> Result<Answer, ApiError> {
-        Ok(Answer(
-            self.send(&Request::Get { path, cached: None }).await?,
-        ))
+        Ok(Answer(self.get(path).await?))
+    }
+
+    /// GETs a REST path, without the cache.
+    async fn get(&self, path: &str) -> Result<Response, ApiError> {
+        self.send(&Request::Get { path, cached: None }).await
     }
 
     /// GETs a REST path: GitHub's answer, or, when it refused, what
@@ -1033,7 +1035,7 @@ impl GitHub {
             .header(header::ACCEPT, accept)
             .send()
             .await
-            .map_err(|e| ApiError::Network(e.to_string()))?;
+            .map_err(network)?;
         let status = response.status();
         if !status.is_success() {
             let answer = Response {
@@ -1048,11 +1050,7 @@ impl GitHub {
         let dir = dir.unwrap_or_else(|| std::path::Path::new("."));
         let mut part = tempfile::NamedTempFile::new_in(dir).map_err(|e| failed(&e))?;
         let mut size = 0u64;
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|e| ApiError::Network(e.to_string()))?
-        {
+        while let Some(chunk) = response.chunk().await.map_err(network)? {
             std::io::Write::write_all(&mut part, &chunk).map_err(|e| failed(&e))?;
             size += chunk.len() as u64;
         }
@@ -1095,14 +1093,11 @@ impl GitHub {
             .body(reqwest::Body::from(opened))
             .send()
             .await
-            .map_err(|e| ApiError::Network(e.to_string()))?;
+            .map_err(network)?;
         let answer = Response {
             status: response.status(),
             headers: std::mem::take(response.headers_mut()),
-            body: response
-                .text()
-                .await
-                .map_err(|e| ApiError::Network(e.to_string()))?,
+            body: response.text().await.map_err(network)?,
         };
         check_status(&answer, "the release's assets")?;
         Ok(answer.body)
@@ -1124,7 +1119,7 @@ impl GitHub {
         path: &str,
         what: impl std::fmt::Display,
     ) -> Result<(T, Option<String>), ApiError> {
-        let response = self.send(&Request::Get { path, cached: None }).await?;
+        let response = self.get(path).await?;
         check_status(&response, what)?;
         let next = response.header(header::LINK).and_then(next_after);
         Ok((serde_json::from_str(&response.body)?, next))
@@ -1165,8 +1160,8 @@ impl GitHub {
     /// GitHub can compare them (its branch may be gone).
     async fn behind_by(&self, pr: &PrRef, detail: &PrDetail) -> Option<u64> {
         let op = queries::BehindQuery::build(queries::BehindVariables {
-            owner: pr.repo.owner.clone(),
-            name: pr.repo.name.clone(),
+            owner: pr.repo.owner.to_string(),
+            name: pr.repo.name.to_string(),
             base: format!("refs/heads/{}", detail.base_ref),
             head: detail.head_oid.clone(),
         });
@@ -1280,8 +1275,8 @@ impl GitHub {
         login: &str,
     ) -> Result<Option<String>, ApiError> {
         let op = queries::LastReviewQuery::build(queries::LastReviewVariables {
-            owner: pr.repo.owner.clone(),
-            name: pr.repo.name.clone(),
+            owner: pr.repo.owner.to_string(),
+            name: pr.repo.name.to_string(),
             number: pr_number(pr)?,
             login: login.to_owned(),
         });
@@ -1835,7 +1830,7 @@ impl GitHub {
             })
             .collect();
         let query = raw::last_commits(&paths);
-        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "rev": rev });
+        let vars = repo_vars!(repo, "rev": rev);
         let commit: Value =
             (self.graphql_json(&query, vars, format!("{repo}@{rev}"), "/repository/object"))
                 .await?;
@@ -1872,8 +1867,8 @@ impl GitHub {
         after: Option<String>,
     ) -> Result<browse::Results<browse::CommitInfo>, ApiError> {
         let op = browse::HistoryQuery::build(browse::HistoryVariables {
-            owner: repo.owner.clone(),
-            name: repo.name.clone(),
+            owner: repo.owner.to_string(),
+            name: repo.name.to_string(),
             expression: rev.to_owned(),
             path: (!path.is_empty()).then(|| path.to_owned()),
             after,
@@ -1920,8 +1915,8 @@ impl GitHub {
         let expression = &oid;
         let page = move |after| async move {
             let op = browse::ContextsQuery::build(browse::ContextsVariables {
-                owner: repo.owner.clone(),
-                name: repo.name.clone(),
+                owner: repo.owner.to_string(),
+                name: repo.name.to_string(),
                 expression: expression.clone(),
                 after,
             });
@@ -1946,8 +1941,7 @@ impl GitHub {
     ) -> Result<browse::Results<browse::UserSummary>, ApiError> {
         use browse::UserList as L;
         let of_repo = |field, repo: &RepoId| {
-            let vars =
-                serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after });
+            let vars = repo_vars!(repo, "after": after);
             (
                 "repository(owner: $owner, name: $name)",
                 field,
@@ -2053,8 +2047,8 @@ impl GitHub {
     /// A release by its tag, with its notes and assets.
     pub async fn release(&self, repo: &RepoId, tag: &str) -> Result<browse::Release, ApiError> {
         let op = browse::ReleaseQuery::build(browse::ReleaseVariables {
-            owner: repo.owner.clone(),
-            name: repo.name.clone(),
+            owner: repo.owner.to_string(),
+            name: repo.name.to_string(),
             tag: tag.to_owned(),
         });
         let release = self.find(op, format!("{repo} release {tag}"), |q| {
@@ -2095,7 +2089,7 @@ impl GitHub {
             default_branch_ref: Option<browse::wire::Name>,
             refs: browse::wire::Connection<browse::wire_branches::Branch>,
         }
-        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after });
+        let vars = repo_vars!(repo, "after": after);
         let wire: Wire = self
             .graphql_json(raw::BRANCHES, vars, repo, "/repository")
             .await?;
@@ -2120,7 +2114,7 @@ impl GitHub {
             milestones: Connection<browse::wire_milestones::Milestone>,
         }
         let query = raw::milestones(closed);
-        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after });
+        let vars = repo_vars!(repo, "after": after);
         let wire: Wire = self.graphql_json(&query, vars, repo, "/repository").await?;
         self.check_connection(&wire.milestones, 25, format!("{repo}'s milestones"));
         let list = browse::MilestoneList {
@@ -2140,7 +2134,7 @@ impl GitHub {
         after: Option<String>,
     ) -> Result<browse::MilestoneDetail, ApiError> {
         let query = raw::milestone();
-        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number });
+        let vars = repo_vars!(repo, "number": number);
         let subject = format!("{repo} milestone {number}");
         let wire: browse::wire_milestones::Milestone =
             (self.graphql_json(&query, vars, subject, "/repository/milestone")).await?;
@@ -2186,7 +2180,7 @@ impl GitHub {
             environments: Counted<Name>,
         }
         let environments = environment.map(|e| vec![e]);
-        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "envs": environments });
+        let vars = repo_vars!(repo, "after": after, "envs": environments);
         let wire: Wire = self
             .graphql_json(raw::DEPLOYMENTS, vars, repo, "/repository")
             .await?;
@@ -2251,8 +2245,7 @@ impl GitHub {
         rev: &str,
         path: &str,
     ) -> Result<browse::Blame, ApiError> {
-        let vars =
-            serde_json::json!({ "owner": repo.owner, "name": repo.name, "rev": rev, "path": path });
+        let vars = repo_vars!(repo, "rev": rev, "path": path);
         let subject = format!("{repo}:{rev}:{path}");
         let wire: browse::wire_blame::Blame =
             (self.graphql_json(raw::BLAME, vars, subject, "/repository/object/blame")).await?;
@@ -2459,12 +2452,7 @@ impl GitHub {
             });
         }
         let path = format!("/repos/{repo}/actions/jobs/{job}/logs");
-        let response = self
-            .send(&Request::Get {
-                path: &path,
-                cached: None,
-            })
-            .await?;
+        let response = self.get(&path).await?;
         if response.status == StatusCode::GONE {
             return Err(ApiError::Gone(
                 "this log has expired (GitHub keeps logs for the repository's retention period, 90 days by default)".into(),
@@ -2560,7 +2548,7 @@ impl GitHub {
         number: u64,
         seen: Option<&str>,
     ) -> Result<Polled, ApiError> {
-        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number });
+        let vars = repo_vars!(repo, "number": number);
         let subject = format!("{repo} discussion {number}");
         let node: Value = self
             .graphql_json(
@@ -2763,7 +2751,7 @@ impl GitHub {
     ) -> Result<browse::DiscussionList, ApiError> {
         use browse::wire_discussions as w;
         let repo = self.discussions_repo(of).await?;
-        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name });
+        let vars = repo_vars!(repo);
         let at = "/repository/discussionCategories";
         let categories: browse::wire::Counted<w::Category> =
             (self.graphql_json(raw::DISCUSSION_CATEGORIES, vars, &repo, at)).await?;
@@ -2782,7 +2770,7 @@ impl GitHub {
             },
             None => None,
         };
-        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "category": category_id });
+        let vars = repo_vars!(repo, "after": after, "category": category_id);
         let page: browse::wire::Connection<w::Summary> =
             (self.graphql_json(raw::DISCUSSIONS, vars, &repo, "/repository/discussions")).await?;
         self.check_connection(&page, 25, format!("{repo}'s discussions"));
@@ -2803,7 +2791,7 @@ impl GitHub {
         number: u64,
     ) -> Result<browse::DiscussionDetail, ApiError> {
         let repo = self.discussions_repo(of).await?;
-        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number });
+        let vars = repo_vars!(repo, "number": number);
         let subject = format!("{repo} discussion {number}");
         let wire: browse::wire_discussions::Detail =
             (self.graphql_json(&raw::discussion(), vars, subject, "/repository/discussion"))
@@ -2823,7 +2811,8 @@ impl GitHub {
             tags: Connection<Name>,
         }
         let what = &format!("{repo}'s branches");
-        let vars = |after: &Option<String>| serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after, "tags": after.is_none() });
+        let vars =
+            |after: &Option<String>| repo_vars!(repo, "after": after, "tags": after.is_none());
         let heads = |heads: Connection<Name>| {
             self.check_connection(&heads, 100, what);
             heads.into_results(|n| n.name)
@@ -2858,8 +2847,8 @@ impl GitHub {
             return Ok(None);
         }
         let mut vars = serde_json::Map::new();
-        vars.insert("owner".into(), Value::from(repo.owner.as_str()));
-        vars.insert("name".into(), Value::from(repo.name.as_str()));
+        vars.insert("owner".into(), Value::from(&*repo.owner));
+        vars.insert("name".into(), Value::from(&*repo.name));
         for (i, name) in names.iter().enumerate() {
             vars.insert(format!("r{i}"), Value::from(name.as_str()));
         }
@@ -3138,6 +3127,11 @@ fn escape(s: &str, plus: bool) -> String {
     out
 }
 
+/// A request that failed on the way, or its answer on the way back.
+fn network(err: impl std::fmt::Display) -> ApiError {
+    ApiError::Network(err.to_string())
+}
+
 /// Adds what `list` doesn't have yet.
 fn note(list: &Mutex<Vec<String>>, said: impl IntoIterator<Item = String>) {
     let mut list = lock(list);
@@ -3183,24 +3177,24 @@ fn pr_number(pr: &PrRef) -> Result<i32, ApiError> {
 
 fn list_vars(repo: &RepoId, after: Option<String>) -> browse::ListVariables {
     browse::ListVariables {
-        owner: repo.owner.clone(),
-        name: repo.name.clone(),
+        owner: repo.owner.to_string(),
+        name: repo.name.to_string(),
         after,
     }
 }
 
 fn number_vars(pr: &PrRef) -> Result<queries::NumberVariables, ApiError> {
     Ok(queries::NumberVariables {
-        owner: pr.repo.owner.clone(),
-        name: pr.repo.name.clone(),
+        owner: pr.repo.owner.to_string(),
+        name: pr.repo.name.to_string(),
         number: pr_number(pr)?,
     })
 }
 
 fn page_vars(pr: &PrRef, after: Option<String>) -> Result<queries::PageVariables, ApiError> {
     Ok(queries::PageVariables {
-        owner: pr.repo.owner.clone(),
-        name: pr.repo.name.clone(),
+        owner: pr.repo.owner.to_string(),
+        name: pr.repo.name.to_string(),
         number: pr_number(pr)?,
         after,
     })

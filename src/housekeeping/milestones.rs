@@ -13,6 +13,7 @@ use super::{
     item, refused, selected, setting,
 };
 use crate::data::DataKey;
+use crate::forms::say;
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
 use crate::state::{Cmds, State};
@@ -146,12 +147,9 @@ pub(super) fn change(f: &Form) -> Result<MilestoneChange, String> {
 
 pub(super) fn submit(state: &mut State, route: &Route, repo: &RepoId, number: Option<u64>) -> Cmds {
     if let Some(why) = refused(state, repo, WHAT) {
-        return crate::forms::say(state, why);
+        return say(state, why);
     }
-    let change = match change(&form(state, route)) {
-        Ok(c) => c,
-        Err(why) => return crate::forms::say(state, why),
-    };
+    let change = or_return!(change(&form(state, route)), |why| say(state, why));
     crate::forms::form_sending(state, route);
     state.info(format!("Saving the milestone {}…", change.title));
     work::start(Save {
@@ -273,7 +271,8 @@ impl Job for Save {
             MilestoneWrite::Save(m) => {
                 let verb = if made { "Created" } else { "Saved" };
                 state.info(format!("{verb} the milestone {}", m.title));
-                (Some(false), Some(m.title.clone()))
+                // Kept open or closed as it was, on the page below.
+                (None, Some(m.title.clone()))
             }
             MilestoneWrite::Close(closed) => {
                 state.info(if *closed {
@@ -288,61 +287,44 @@ impl Job for Save {
                 (None, None)
             }
         };
+        let on_it = |route: Option<&Route>| {
+            matches!(route, Some(Route::Issues(issues::Milestone { repo: r, number: n }))
+                if *r == repo && *n == number)
+        };
         // A deleted milestone's page is gone: its list instead.
-        if write == MilestoneWrite::Delete
-            && let Some(Route::Issues(issues::Milestone { repo: r, number: n })) =
-                state.route().cloned()
-            && r == repo
-            && n == number
-        {
+        if write == MilestoneWrite::Delete && on_it(state.route()) {
             let list = Route::Issues(issues::Milestones {
                 repo: repo.clone(),
                 closed: false,
             });
             cmds.extend(state.replace(list, true, None));
         }
-        // An edit keeps it open or closed as it was: its title is what's
-        // waited for, on the list it's on.
-        let closed = match (&write, closed) {
-            (MilestoneWrite::Save(_), _) => match state.route() {
-                Some(Route::Issues(issues::Milestones { closed, .. })) => Some(*closed),
-                Some(Route::Issues(issues::Milestone { repo: r, number: n }))
-                    if *r == repo && *n == number =>
-                {
-                    state
-                        .picked::<MilestoneDetail>(&DataKey::Milestone(repo.clone(), number))
-                        .map(|d| d.info.closed)
-                }
-                _ => Some(false),
-            },
-            (_, closed) => closed,
-        };
-        let list = match state.route() {
-            Some(Route::Issues(issues::Milestones { repo: r, closed })) if *r == repo => {
-                Some(Some(*closed))
+        // Waited for on the list it's on, or its own page; an edit's title
+        // on what it shows now.
+        let Some(page) = state.route().cloned() else { return cmds };
+        let (list, shown) = match &page {
+            Route::Issues(issues::Milestones { repo: r, closed }) if *r == repo => {
+                (Some(*closed), Some(*closed))
             }
-            Some(Route::Issues(issues::Milestone { repo: r, number: n }))
-                if *r == repo && *n == number =>
-            {
-                Some(None)
+            page if on_it(Some(page)) => {
+                let key = DataKey::Milestone(repo.clone(), number);
+                (
+                    None,
+                    state.picked::<MilestoneDetail>(&key).map(|d| d.info.closed),
+                )
             }
-            _ => None,
+            _ => return cmds,
         };
-        if let (Some(list), Some(page)) = (list, state.route().cloned()) {
-            expect(
-                state,
-                page.clone(),
-                Expected::Milestone {
-                    repo,
-                    number,
-                    list,
-                    closed,
-                    title,
-                },
-            );
-            cmds.extend(state.ensure_route(&page, true));
-        }
-        cmds
+        let closed = if title.is_some() { shown } else { closed };
+        let shown = Expected::Milestone {
+            repo,
+            number,
+            list,
+            closed,
+            title,
+        };
+        expect(state, page.clone(), shown);
+        cmds.and(state.ensure_route(&page, true))
     }
 }
 

@@ -209,11 +209,11 @@ async fn prefetch_fetches_missing_blobs_in_one_batch() {
         !missing.is_empty(),
         "a blob:none clone starts without blobs"
     );
-    let fetched = repo.prefetch(&oids).await.unwrap();
+    let fetched = repo.prefetch(oids.clone()).await.unwrap();
     assert_eq!(fetched, missing.len());
     assert!(repo.missing(&oids).await.unwrap().is_empty());
     assert_eq!(
-        repo.prefetch(&oids).await.unwrap(),
+        repo.prefetch(oids).await.unwrap(),
         0,
         "second prefetch is a no-op"
     );

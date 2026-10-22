@@ -54,15 +54,12 @@ pub fn build(state: &State, page: &mut Page, route: &Route, d: &NewForm) {
             head,
             Some(Ok(HeadState { local: Some(b), .. })) if !b.pushed()
         );
-        match (&problem, head) {
-            (Some(why), None) => {
-                status.push((why.clone(), Mark::Waiting, None));
-            }
-            (Some(why), _) => {
-                let push = pushing.then_some(Row::Push);
-                status.push((why.clone(), Mark::Problem, push));
-            }
-            (None, _) => {}
+        if let Some(why) = &problem {
+            let (mark, push) = match head {
+                None => (Mark::Waiting, None),
+                Some(_) => (Mark::Problem, pushing.then_some(Row::Push)),
+            };
+            status.push((why.clone(), mark, push));
         }
         if let Some(Ok(hs)) = head {
             if let Some(b) = hs.local.as_ref().filter(|b| b.pushed()) {

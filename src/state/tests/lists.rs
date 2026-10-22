@@ -69,10 +69,7 @@ fn an_extended_list_is_kept_until_asked() {
         runs.next = next.map(str::to_owned);
         Data::from(runs)
     };
-    let refetch = Cmd::Api(Api::Fetch {
-        key: key.clone(),
-        cached: false,
-    });
+    let refetch = refetch(key.clone());
     fetched(&mut state, key.clone(), page(10, Some("2")));
     assert!(state.load_visible(false).contains(&refetch), "pending runs");
     fetched(&mut state, key.clone(), page(10, Some("2")));
@@ -295,7 +292,7 @@ fn every_list_appends_its_next_page() {
     assert_eq!(repos.next_cursor(), Some("f1"));
     let mut more = forks();
     for r in &mut more.items {
-        r.repo = RepoId::new(&r.repo.owner, format!("{}-2", r.repo.name));
+        r.repo = RepoId::new(r.repo.owner.clone(), format!("{}-2", r.repo.name));
     }
     repos.append(Data::from(more));
     assert!(matches!(&repos, Data::RepoPage(r) if r.items.len() == 4));

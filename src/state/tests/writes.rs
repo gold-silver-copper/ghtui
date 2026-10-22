@@ -9,7 +9,6 @@ use crate::route::{gists, releases, wiki};
 use ratatui_textarea::CursorMove;
 
 use super::*;
-use crate::fixtures::{self};
 
 /// Replaces the composer's text with `text`.
 fn write(s: &mut State, text: &str) {
@@ -219,11 +218,7 @@ fn a_gist_is_made_then_deleted() {
     assert_eq!(s.route(), Some(&Route::Gists(gists::NewGist)));
     write(&mut s, "hi");
     press(&mut s, "<C-s>");
-    let labels: Vec<&str> = overlay!(s, Ask)
-        .choices
-        .iter()
-        .map(|(l, _)| l.as_str())
-        .collect();
+    let labels = ask_labels(&s);
     assert_eq!(labels, ["Create secret gist", "Create public gist"]);
     let sent = press(&mut s, "l<Enter>");
     let new = crate::api::gist::NewGist {

@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use ratatui_textarea::TextArea;
 
-use crate::ui::{Ctx, PAD_X, cols, fill, fit_spans, inset, list_row, put, render_split, text};
+use crate::ui::{Ctx, PAD_X, cols, fill, fit_spans, inset, list_row, put, render_split, row, text};
 
 const BAR: Bg = Bg::Container;
 const FIELD: Bg = Bg::ContainerHighest;
@@ -305,13 +305,9 @@ pub struct TabBar<'a> {
 impl Widget for TabBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let theme = self.ctx.theme;
-        let labels = Rect { height: 1, ..area };
+        let labels = row(area, area.y);
         fill(buf, labels, theme, BAR);
-        let under = Rect {
-            y: area.y.saturating_add(1),
-            height: 1,
-            ..area
-        };
+        let under = row(area, area.y.saturating_add(1));
         if area.height > 1 {
             fill(buf, under, theme, BAR);
             let rule = "─".repeat(usize::from(under.width));
@@ -332,11 +328,10 @@ impl Widget for TabBar<'_> {
             } else {
                 theme.body(BAR)
             };
-            let number = if i < 9 {
-                char::from_digit(u32::try_from(i.saturating_add(1)).unwrap_or(0), 10).unwrap_or(' ')
-            } else {
-                ' '
-            };
+            // `1` to `9`, for `3gt`; none past them.
+            let number = (u32::try_from(i).ok())
+                .and_then(|i| char::from_digit(i.saturating_add(1), 10))
+                .unwrap_or(' ');
             let mut spans = vec![
                 Span::styled(
                     format!(" {number}"),

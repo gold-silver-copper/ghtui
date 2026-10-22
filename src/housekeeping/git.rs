@@ -259,6 +259,11 @@ mod tests {
         }
     }
 
+    /// The object `spec` names in the repository at `dir`.
+    async fn rev(dir: &Path, spec: &str) -> String {
+        git(dir, &["rev-parse", spec]).await.trim().to_owned()
+    }
+
     async fn on_github(theirs: &Path, rev: &str) -> String {
         git(theirs, &["fetch", "-q", "origin"]).await;
         git(theirs, &["show", rev]).await
@@ -270,11 +275,8 @@ mod tests {
     #[tokio::test]
     async fn a_file_is_committed_on_githubs_tip_and_pushed() {
         let (_dir, mine, theirs) = setup().await;
-        let seen = git(&mine, &["rev-parse", "HEAD:a.txt"])
-            .await
-            .trim()
-            .to_owned();
-        let before = git(&mine, &["rev-parse", "HEAD"]).await;
+        let seen = rev(&mine, "HEAD:a.txt").await;
+        let before = rev(&mine, "HEAD").await;
         std::fs::write(theirs.join("b.txt"), "b\n").unwrap();
         git(&theirs, &["add", "b.txt"]).await;
         git(&theirs, &["commit", "-q", "-m", "B"]).await;
@@ -286,11 +288,8 @@ mod tests {
         assert_eq!(on_github(&theirs, "origin/main:b.txt").await, "b\n");
         let message = git(&theirs, &["log", "-1", "--format=%B", "origin/main"]).await;
         assert_eq!(message.trim(), "Update a.txt\n\nWhy.");
-        assert_eq!(
-            git(&theirs, &["rev-parse", "origin/main"]).await.trim(),
-            made
-        );
-        assert_eq!(git(&mine, &["rev-parse", "HEAD"]).await, before);
+        assert_eq!(rev(&theirs, "origin/main").await, made);
+        assert_eq!(rev(&mine, "HEAD").await, before);
         assert_eq!(
             std::fs::read_to_string(mine.join("a.txt")).unwrap(),
             "one\n"
@@ -303,10 +302,7 @@ mod tests {
     #[tokio::test]
     async fn a_file_changed_meanwhile_is_never_overwritten() {
         let (_dir, mine, theirs) = setup().await;
-        let seen = git(&mine, &["rev-parse", "HEAD:a.txt"])
-            .await
-            .trim()
-            .to_owned();
+        let seen = rev(&mine, "HEAD:a.txt").await;
         std::fs::write(theirs.join("a.txt"), "theirs\n").unwrap();
         git(&theirs, &["commit", "-q", "-am", "Theirs"]).await;
         git(&theirs, &["push", "-q", "origin", "main"]).await;
@@ -322,11 +318,8 @@ mod tests {
     #[tokio::test]
     async fn a_rename_goes_on_a_new_branch() {
         let (_dir, mine, theirs) = setup().await;
-        let base = git(&mine, &["rev-parse", "HEAD"]).await.trim().to_owned();
-        let seen = git(&mine, &["rev-parse", "HEAD:run.sh"])
-            .await
-            .trim()
-            .to_owned();
+        let base = rev(&mine, "HEAD").await;
+        let seen = rev(&mine, "HEAD:run.sh").await;
         let rename = Commit {
             branch: "rename".into(),
             from: Some(base),
@@ -350,7 +343,7 @@ mod tests {
     #[tokio::test]
     async fn branches_and_tags_are_pushed_and_deleted() {
         let (_dir, mine, theirs) = setup().await;
-        let sha = git(&theirs, &["rev-parse", "HEAD"]).await.trim().to_owned();
+        let sha = rev(&theirs, "HEAD").await;
         push_new_ref(&mine, "origin", RefKind::Branch, "topic", &sha)
             .await
             .unwrap();

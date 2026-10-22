@@ -19,7 +19,7 @@ use crate::api::browse::{
     TagInfo, TreeEntry,
 };
 use crate::api::model::{Capped, RepoId};
-use crate::git::files::{ChangedFile, MODE_SUBMODULE, MODE_SYMLINK, ZERO_OID};
+use crate::git::files::{ChangedFile, MODE_SYMLINK, ZERO_OID};
 use crate::git::repo::{EMPTY_TREE, Repo};
 use crate::git::{GitError, Oid, piped};
 
@@ -89,32 +89,37 @@ pub async fn tree(repo: &Repo, at: &Oid, path: &str) -> Read<Option<Vec<TreeEntr
     }
     let out = repo.run(&["ls-tree", "-z", &spot]).await?;
     let dir = path.trim_matches('/');
-    let mut entries: Vec<TreeEntry> = (out.split('\0'))
-        .filter_map(|line| {
-            let (meta, name) = line.split_once('\t')?;
-            let mut meta = meta.split(' ');
-            let mode = u32::from_str_radix(meta.next()?, 8).ok()?;
-            let kind = match meta.next()? {
+    let mut entries: Vec<TreeEntry> = ls_tree(&out)
+        .map(|(mode, kind, _, name)| TreeEntry {
+            name: name.to_owned(),
+            path: if dir.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{dir}/{name}")
+            },
+            kind: match kind {
                 "tree" => EntryKind::Dir,
                 "commit" => EntryKind::Submodule,
                 _ if mode == MODE_SYMLINK => EntryKind::Symlink,
                 _ => EntryKind::File,
-            };
-            Some(TreeEntry {
-                name: name.to_owned(),
-                path: if dir.is_empty() {
-                    name.to_owned()
-                } else {
-                    format!("{dir}/{name}")
-                },
-                kind,
-                // A partial clone may not have the file to measure.
-                size: None,
-            })
+            },
+            // A partial clone may not have the file to measure.
+            size: None,
         })
         .collect();
     entries.sort_by_cached_key(|e| (e.kind != EntryKind::Dir, e.name.to_lowercase()));
     Ok(Some(entries))
+}
+
+/// The entries `git ls-tree -z` lists: each one's mode, type (`blob`,
+/// `tree`, `commit`), object ID and path.
+fn ls_tree(out: &str) -> impl Iterator<Item = (u32, &str, &str, &str)> {
+    out.split('\0').filter_map(|line| {
+        let (meta, path) = line.split_once('\t')?;
+        let mut meta = meta.split(' ');
+        let (mode, kind, oid) = (meta.next()?, meta.next()?, meta.next()?);
+        Some((u32::from_str_radix(mode, 8).ok()?, kind, oid, path))
+    })
 }
 
 /// What `path` is at `at` (`blob`, `tree`, `commit`) and its object ID,
@@ -123,12 +128,8 @@ pub async fn tree(repo: &Repo, at: &Oid, path: &str) -> Read<Option<Vec<TreeEntr
 async fn entry(repo: &Repo, at: &Oid, path: &str) -> Read<Option<(String, String)>> {
     let path = path.trim_matches('/');
     let out = repo.run(&["ls-tree", "-z", at, "--", path]).await?;
-    Ok(out.split('\0').find_map(|line| {
-        let (meta, name) = line.split_once('\t')?;
-        let mut meta = meta.split(' ');
-        let (_, kind, oid) = (meta.next()?, meta.next()?, meta.next()?);
-        (name == path).then(|| (kind.to_owned(), oid.to_owned()))
-    }))
+    let found = ls_tree(&out).find(|e| e.3 == path);
+    Ok(found.map(|(_, kind, oid, _)| (kind.to_owned(), oid.to_owned())))
 }
 
 /// The file `path` at `at` (fetched first, in a partial clone, if it
@@ -139,7 +140,7 @@ pub async fn blob(repo: &Repo, at: &Oid, path: &str) -> Read<Option<Blob>> {
     let Some(oid) = found.and_then(|(kind, oid)| (kind == "blob").then_some(oid)) else {
         return Ok(None);
     };
-    repo.prefetch(std::slice::from_ref(&oid)).await?;
+    repo.prefetch(vec![oid.clone()]).await?;
     let bytes = repo.run_bytes(&["cat-file", "blob", &oid]).await?;
     Ok(Some(blob_of(path, &bytes)))
 }
@@ -233,7 +234,7 @@ async fn line_counts(repo: &Repo, from: &str, to: &str, files: &[ChangedFile]) -
             files.len()
         )));
     }
-    repo.prefetch(&crate::git::files::blobs(files)).await?;
+    repo.prefetch(crate::git::files::blobs(files)).await?;
     let out = repo
         .run(&["diff", "--numstat", "-z", "--no-renames", from, to])
         .await?;
@@ -325,7 +326,7 @@ pub async fn blame(repo: &Repo, at: &Oid, path: &str) -> Read<Option<Blame>> {
             blobs.len()
         )));
     }
-    repo.prefetch(&Vec::from_iter(blobs)).await?;
+    repo.prefetch(blobs.into_iter().collect()).await?;
     let out = repo.run(&["blame", "--porcelain", at, "--", path]).await?;
     Ok(Some(parse_blame(&out)))
 }
@@ -636,14 +637,8 @@ pub async fn grep(repo: &Repo, of: &RepoId, at: &Oid, grep: &Grep) -> Read<Vec<C
         let mut args = vec!["ls-tree", "-r", "-z", at.as_ref(), "--"];
         args.extend(grep.paths.iter().map(String::as_str));
         let out = repo.run(&args).await?;
-        let blobs: Vec<String> = (out.split('\0'))
-            .filter_map(|line| {
-                let (meta, _) = line.split_once('\t')?;
-                let mut meta = meta.split(' ');
-                let (mode, kind, oid) = (meta.next()?, meta.next()?, meta.next()?);
-                let mode = u32::from_str_radix(mode, 8).ok()?;
-                (kind == "blob" && mode != MODE_SUBMODULE).then(|| oid.to_owned())
-            })
+        let blobs: Vec<String> = (ls_tree(&out).filter(|e| e.1 == "blob"))
+            .map(|(_, _, oid, _)| oid.to_owned())
             .collect();
         // Counted before asking which are here, which takes a while for
         // so many.
@@ -653,7 +648,7 @@ pub async fn grep(repo: &Repo, of: &RepoId, at: &Oid, grep: &Grep) -> Read<Vec<C
                 blobs.len()
             )));
         }
-        repo.prefetch(&blobs).await?;
+        repo.prefetch(blobs).await?;
     }
     let mut args = vec![
         "-c",

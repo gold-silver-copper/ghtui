@@ -1,7 +1,6 @@
 //! Fetching, refreshing and writing.
 
 use super::*;
-use crate::route::issues;
 
 #[test]
 fn duplicate_fetches_are_suppressed() {
@@ -86,7 +85,7 @@ fn only_a_review_that_went_through_counts_as_a_write() {
     assert_eq!(state.load_visible(false), Vec::new());
     outcome.accepted.push(1);
     fixtures::done(&mut state, submit, Ok(outcome));
-    let refetch = Cmd::Api(Api::Fetch { key, cached: false });
+    let refetch = refetch(key);
     assert!(state.load_visible(false).contains(&refetch));
 }
 
@@ -97,11 +96,7 @@ fn issue_comments_post_and_refresh() {
     let key = DataKey::Issue(ghtui(), 14);
     press(&mut state, "c");
     assert!(state.overlay.is_none(), "nothing to comment on yet");
-    fetched(
-        &mut state,
-        key.clone(),
-        Data::Issue(Some(Box::new(fixtures::issue()))),
-    );
+    issue_shows(&mut state, |_| {});
     press(&mut state, "c");
     let compose = overlay!(state, Compose);
     assert_eq!(
@@ -109,10 +104,7 @@ fn issue_comments_post_and_refresh() {
         "Comment on gold-silver-copper/ghtui#14"
     );
     press(&mut state, "Thanks!");
-    let cmds = update(
-        &mut state,
-        Msg::Key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)),
-    );
+    let cmds = press(&mut state, "<C-s>");
     let comment = Change::Comment {
         subject: NodeId::new("I_14"),
         body: "Thanks!".into(),
@@ -121,10 +113,7 @@ fn issue_comments_post_and_refresh() {
     assert_eq!(cmds, sent);
     let cmds = answer(&mut state, &sent, Ok(()));
     assert!(state.overlay.is_none());
-    let refetch = Cmd::Api(Api::Fetch {
-        key: key.clone(),
-        cached: false,
-    });
+    let refetch = refetch(key.clone());
     assert!(cmds.contains(&refetch), "{cmds:?}");
     // Another comment, posted while that fetch is on its way: the fetch
     // may miss it, so the page is fetched again once it lands.
@@ -172,10 +161,7 @@ fn a_fresh_copy_keeps_the_selected_issue() {
 fn an_edited_comment_stays_selected() {
     let mut s = with_repo();
     s.size = (100, 12);
-    let _ = s.push(Route::Issues(issues::Issue {
-        repo: ghtui(),
-        number: 14,
-    }));
+    let _ = s.push(issue(14));
     let key = DataKey::Issue(ghtui(), 14);
     let mut issue = fixtures::issue();
     update(

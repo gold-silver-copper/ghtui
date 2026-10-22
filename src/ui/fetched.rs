@@ -96,15 +96,15 @@ impl<'a, T: ?Sized> Fetched<'a, T> {
     /// for a state shown inside a row. Disallowed by clippy.toml: `.ok()`
     /// would drop what to say, so each use says where it's said.
     pub fn text(self, what: &str) -> Result<&'a T, String> {
-        let again = match self.retry {
-            "" => String::new(),
-            key => format!(". {key} tries again."),
-        };
         match (self.data, self.error) {
             (Some(data), _) => Ok(data),
             (None, Some(err)) => {
                 // GitHub's own words may end in a full stop.
                 let err = err.trim_end_matches('.');
+                let again = match self.retry {
+                    "" => String::new(),
+                    key => format!(". {key} tries again."),
+                };
                 Err(format!("Couldn't load {what}: {err}{again}"))
             }
             (None, None) => Err(format!("Loading {what}…")),

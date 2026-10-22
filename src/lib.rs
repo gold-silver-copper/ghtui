@@ -4,6 +4,32 @@
 #[macro_use]
 mod words;
 
+/// A result's value, or a return from the function with its error (or
+/// with what `answer` makes of it): `?` for a function that returns
+/// what it says when something's missing.
+macro_rules! or_return {
+    ($result:expr) => {
+        match $result {
+            Ok(value) => value,
+            Err(answer) => return answer,
+        }
+    };
+    ($result:expr, $answer:expr) => {
+        match $result {
+            Ok(value) => value,
+            // Through a function, so `answer`'s argument is typed as the error.
+            Err(why) => {
+                return {
+                    fn answer<E, R>(why: E, f: impl FnOnce(E) -> R) -> R {
+                        f(why)
+                    }
+                    answer(why, $answer)
+                }
+            }
+        }
+    };
+}
+
 // The parts that know nothing of the app: GitHub, diffs, git, storage,
 // the theme and drawing.
 pub mod api;
@@ -250,9 +276,7 @@ async fn run(started: Instant) -> Result<()> {
             // The home page stays underneath (Esc goes there) and loads
             // when you get there. With tabs reopened, it's a new tab after
             // them.
-            let mut cmds = state::Cmds::from(state::Cmd::Api(Api::FetchViewer));
-            cmds.extend(state.start_at(at));
-            cmds
+            state::Cmds::from(state::Cmd::Api(Api::FetchViewer)).and(state.start_at(at))
         }
         None => state.load_visible(true),
     };
@@ -413,22 +437,25 @@ fn init_logging(
 /// Clicks, the wheel, pastes (as one piece of text, not keys) and focus
 /// go to ghtui while it runs.
 pub fn capture_input(on: bool) {
-    use crossterm::ExecutableCommand;
     use crossterm::event::{
         DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
         EnableFocusChange, EnableMouseCapture,
     };
     let mut out = std::io::stdout();
     let result = if on {
-        (out.execute(EnableMouseCapture))
-            .and_then(|out| out.execute(EnableBracketedPaste))
-            .and_then(|out| out.execute(EnableFocusChange))
-            .map(drop)
+        crossterm::execute!(
+            out,
+            EnableMouseCapture,
+            EnableBracketedPaste,
+            EnableFocusChange
+        )
     } else {
-        (out.execute(DisableMouseCapture))
-            .and_then(|out| out.execute(DisableBracketedPaste))
-            .and_then(|out| out.execute(DisableFocusChange))
-            .map(drop)
+        crossterm::execute!(
+            out,
+            DisableMouseCapture,
+            DisableBracketedPaste,
+            DisableFocusChange
+        )
     };
     if let Err(err) = result {
         tracing::warn!(%err, "capturing input");

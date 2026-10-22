@@ -21,11 +21,12 @@ use crate::api::model::{Capped, NodeId, PrRef, RepoId};
 use crate::api::{ApiError, GitHub};
 use crate::git::local::{self, Branch, CommitMessage};
 
+use crate::api::browse::Refs;
 use crate::data::{Data, DataKey};
 use crate::forms::{Answer, Fields, Sent, say};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
-use crate::picker::Choice;
+use crate::picker::{Choice, listed};
 use crate::state::{Cmds, State};
 use crate::ui::form::Row;
 use crate::work::{self, Cx, Failure, Job};
@@ -250,8 +251,7 @@ fn open(state: &mut State, pr: bool) -> Cmds {
             cmds.extend(state.ensure(key, true));
         }
     }
-    cmds.extend(crate::forms::open(state, route));
-    cmds
+    cmds.and(crate::forms::open(state, route))
 }
 
 /// What a new issue's or pull request's form does.
@@ -443,10 +443,7 @@ fn head_problem<'a>(state: &'a State, repo: &RepoId, form: &Form) -> Result<&'a 
 fn ask_create(state: &mut State, route: &Route) -> Cmds {
     let Some(form) = state.forms.get::<Form>(route) else { return Cmds::new() };
     let Some(repo) = form_repo(route) else { return Cmds::new() };
-    let hs = match head_problem(state, repo, form) {
-        Ok(hs) => hs,
-        Err(why) => return say(state, why),
-    };
+    let hs = or_return!(head_problem(state, repo, form), |why| say(state, why));
     let (base, head) = (
         form.base.clone().unwrap_or_default(),
         form.head.clone().unwrap_or_default(),
@@ -551,10 +548,7 @@ pub fn answer(state: &mut State, route: &Route, draft: Option<bool>) -> Cmds {
     let work: work::Work = match draft {
         None => Push { repo, branch: head }.into(),
         Some(draft) => {
-            let hs = match head_problem(state, &repo, form) {
-                Ok(hs) => hs,
-                Err(why) => return say(state, why),
-            };
+            let hs = or_return!(head_problem(state, &repo, form), |why| say(state, why));
             let Some(d) = form_data(&state.data, &repo) else { return Cmds::new() };
             let (title, body) = templates::split(&form.text);
             let new = Submission::Pr(NewPr {
@@ -588,25 +582,21 @@ impl Job for Push {
     fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
         let Push { repo, branch } = self;
         let route = Route::Pulls(pulls::NewPr(repo.clone()));
-        match result {
-            Ok(()) => {
-                crate::forms::close_sender(state, &route);
-                state.info(format!("Pushed {branch}"));
-                // Compared again, now GitHub has it.
-                if state.forms.get::<Form>(&route).is_none() {
-                    return Cmds::new();
-                }
-                *state.forms.sent_mut(&route) = Sent::default();
-                let form = state.forms.edit::<Form>(&route);
-                form.filled_for = None;
-                let key = form.head_key(&repo);
-                key.map_or_else(Cmds::new, |key| state.ensure(key, true))
-            }
-            Err(err) => {
-                let text = format!("Couldn't push {branch}: {err}");
-                crate::forms::failed(state, &route, text)
-            }
+        if let Err(err) = result {
+            let text = format!("Couldn't push {branch}: {err}");
+            return crate::forms::failed(state, &route, text);
         }
+        crate::forms::close_sender(state, &route);
+        state.info(format!("Pushed {branch}"));
+        // Compared again, now GitHub has it.
+        if state.forms.get::<Form>(&route).is_none() {
+            return Cmds::new();
+        }
+        *state.forms.sent_mut(&route) = Sent::default();
+        let form = state.forms.edit::<Form>(&route);
+        form.filled_for = None;
+        let key = form.head_key(&repo);
+        key.map_or_else(Cmds::new, |key| state.ensure(key, true))
     }
 }
 
@@ -626,31 +616,24 @@ impl Job for Submit {
     fn done(self, state: &mut State, result: Result<u64, Failure>) -> Cmds {
         let route = &self.route;
         let Some(repo) = form_repo(route).cloned() else { return Cmds::new() };
-        match result {
-            Ok(number) => {
-                crate::forms::done::<Form>(state, route);
-                let (page, what) = match route {
-                    Route::Pulls(pulls::NewPr(_)) => {
-                        (Route::pr(PrRef { repo, number }), "pull request")
-                    }
-                    _ => (Route::issue(repo, number), "issue"),
-                };
-                state.info(format!("Opened {what} #{number}"));
-                if state.route() == Some(route) {
-                    return state.replace(page, true, None);
-                }
-                Cmds::new()
-            }
-            Err(err) => {
-                tracing::warn!(%err, "creating failed");
-                let what = match route {
-                    Route::Pulls(pulls::NewPr(_)) => "the pull request",
-                    _ => "the issue",
-                };
-                let text = format!("GitHub didn't create {what}: {err}");
-                crate::forms::failed(state, route, text)
-            }
+        let pr = matches!(route, Route::Pulls(pulls::NewPr(_)));
+        let what = if pr { "pull request" } else { "issue" };
+        let number = or_return!(result, |err| {
+            tracing::warn!(%err, "creating failed");
+            let text = format!("GitHub didn't create the {what}: {err}");
+            crate::forms::failed(state, route, text)
+        });
+        crate::forms::done::<Form>(state, route);
+        state.info(format!("Opened {what} #{number}"));
+        if state.route() != Some(route) {
+            return Cmds::new();
         }
+        let page = if pr {
+            Route::pr(PrRef { repo, number })
+        } else {
+            Route::issue(repo, number)
+        };
+        state.replace(page, true, None)
     }
 }
 
@@ -770,12 +753,7 @@ pub fn picker_rows(state: &State, pick: Pick, q: &str) -> crate::picker::Rows {
     let fits = |s: &str| crate::picker::fuzzy_score(q, s).is_some();
     if matches!(pick, Pick::Base | Pick::Head) {
         let key = DataKey::Refs(repo.clone());
-        let refs =
-            match crate::picker::listed::<crate::api::browse::Refs, _>(state, &key, "the branches")
-            {
-                Ok(refs) => refs,
-                Err(why) => return why,
-            };
+        let refs = or_return!(listed::<Refs, _>(state, &key, "the branches"));
         let chosen = if pick == Pick::Base {
             &form.base
         } else {

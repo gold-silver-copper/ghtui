@@ -139,13 +139,8 @@ impl Host {
 
     /// Whether `host` is this GitHub's gist subdomain.
     pub fn serves_gists(self, host: &str) -> bool {
-        host.len() > 5
-            && host
-                .get(..5)
-                .is_some_and(|g| g.eq_ignore_ascii_case("gist."))
-            && host
-                .get(5..)
-                .is_some_and(|rest| rest.eq_ignore_ascii_case(self.0))
+        let (gist, rest) = host.split_at_checked(5).unwrap_or_default();
+        gist.eq_ignore_ascii_case("gist.") && rest.eq_ignore_ascii_case(self.0)
     }
 }
 

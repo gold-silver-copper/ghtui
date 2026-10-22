@@ -95,10 +95,7 @@ pub fn doable(state: &State) -> Option<Doable> {
 /// `,f` on an issue or pull request: its field to set, in the one
 /// project it's in, or first which project.
 pub fn act(state: &mut State) -> Cmds {
-    let (subject, projects) = match changeable(state) {
-        Ok(found) => found,
-        Err(why) => return state.just_say(why),
-    };
+    let (subject, projects) = or_return!(changeable(state), |why| state.just_say(why));
     let pick = match projects.as_slice() {
         [one] => Pick::Field(At {
             on: On::Sidebar(subject, one.id.clone()),

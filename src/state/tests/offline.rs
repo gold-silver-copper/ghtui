@@ -62,10 +62,7 @@ fn a_comment_github_can_t_be_reached_for_waits_on_its_page_and_goes_when_it_s_ba
     offline(&mut state, OffMsg::Queue(Told::All(Vec::new())));
     let cmds = offline(&mut state, OffMsg::Queue(Told::Taken(Box::new(queued))));
     says(&state, "Sent to GitHub: A comment");
-    let refetch = Cmd::Api(Api::Fetch {
-        key: DataKey::Issue(ghtui(), 14),
-        cached: false,
-    });
+    let refetch = refetch(DataKey::Issue(ghtui(), 14));
     assert!(cmds.contains(&refetch), "{cmds:?}");
     assert!(crate::offline::header(&state).is_empty());
 }

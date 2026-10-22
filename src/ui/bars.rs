@@ -11,7 +11,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::Widget;
 
-use crate::ui::{Ctx, PAD_X, cols, fill, inset, key_hints, page, render_split, text};
+use crate::ui::{Ctx, PAD_X, cols, fill, inset, key_hints, page, render_split, row, text};
 
 const BAR: Bg = Bg::Container;
 
@@ -35,7 +35,7 @@ pub struct StatusBar<'a> {
     pub view: Option<&'a str>,
     /// `(keys, what they do)` here, most useful first; shown when there's no
     /// notice, as many as fit.
-    pub hints: &'a [(String, String)],
+    pub hints: &'a [(String, std::borrow::Cow<'static, str>)],
 }
 
 impl Widget for StatusBar<'_> {
@@ -87,7 +87,7 @@ impl Widget for StatusBar<'_> {
                 if i > 0 {
                     left.push(Span::styled("   ", theme.body(BAR)));
                 }
-                left.extend(key_hints(theme, BAR, &[(keys.as_str(), what.as_str())]));
+                left.extend(key_hints(theme, BAR, &[(keys.as_str(), &**what)]));
             }
         }
         while right
@@ -147,12 +147,7 @@ impl Widget for Banner<'_> {
         for (i, (line, y)) in lines.into_iter().zip(area.top()..area.bottom()).enumerate() {
             let hint = if i == 0 { hint } else { "" };
             let right = [Span::styled(hint, style.add_modifier(Modifier::BOLD))];
-            let row = Rect {
-                y,
-                height: 1,
-                ..inner
-            };
-            render_split(row, buf, &[Span::styled(line, style)], &right, 1);
+            render_split(row(inner, y), buf, &[Span::styled(line, style)], &right, 1);
         }
     }
 }

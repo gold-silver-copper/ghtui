@@ -88,15 +88,13 @@ pub mod url;
 
 /// 1234 → "1.2k".
 pub fn compact(n: u64) -> String {
-    match n {
-        0..1_000 => n.to_string(),
-        1_000..999_950 => trim_zero(&format!("{:.1}k", n as f64 / 1_000.0)),
-        _ => trim_zero(&format!("{:.1}m", n as f64 / 1_000_000.0)),
-    }
-}
-
-fn trim_zero(s: &str) -> String {
-    s.replace(".0k", "k").replace(".0m", "m")
+    let (n, unit) = match n {
+        0..1_000 => return n.to_string(),
+        1_000..999_950 => (n as f64 / 1_000.0, 'k'),
+        _ => (n as f64 / 1_000_000.0, 'm'),
+    };
+    let n = format!("{n:.1}");
+    format!("{}{unit}", n.strip_suffix(".0").unwrap_or(&n))
 }
 
 /// `1 file`, `2 files`, `1.2k repositories`.
@@ -186,7 +184,7 @@ fn link_seg(page: &mut Page, text: impl Into<String>, url: impl Into<Link>, role
 
 /// A login, linked to its profile.
 fn login_seg(page: &mut Page, login: &str, role: Role) -> Seg {
-    link_seg(page, login.to_owned(), url::user(login), role)
+    link_seg(page, login, url::user(login), role)
 }
 
 /// Logins, each linked to its profile, `between` them.
@@ -381,7 +379,7 @@ fn references(page: &mut Page, refs: &[String]) {
     if !refs.is_empty() {
         aside_heading(page, "References");
         for r in refs {
-            let link = link_seg(page, r.clone(), r.clone(), Role::Link);
+            let link = link_seg(page, r, r.as_str(), Role::Link);
             page.wrapped(vec![link], 0, Frame::None);
         }
     }

@@ -713,12 +713,8 @@ fn a_long_git_error_wraps() {
     assert!(screen.contains("network up?)"), "{screen}");
 }
 
-/// Scrolling stays cheap on a big PR: rendering only touches visible rows.
-/// Run with `cargo test --release -p ghtui -- --ignored scroll_timing`.
-#[test]
-#[ignore = "timing; run in release"]
-#[expect(clippy::print_stderr, reason = "reports the timings")]
-fn scroll_timing_on_500_files_20k_lines() {
+/// 500 files, `src/m{i}.rs`, each with 60 lines changed.
+fn big_doc() -> Doc {
     let regular = (0o100644, 0o100644);
     let files: Vec<ChangedFile> = (0..500)
         .map(|i| {
@@ -739,6 +735,16 @@ fn scroll_timing_on_500_files_20k_lines() {
     for i in 0..500 {
         doc.set_diff(i, diff.clone());
     }
+    doc
+}
+
+/// Scrolling stays cheap on a big PR: rendering only touches visible rows.
+/// Run with `cargo test --release -p ghtui -- --ignored scroll_timing`.
+#[test]
+#[ignore = "timing; run in release"]
+#[expect(clippy::print_stderr, reason = "reports the timings")]
+fn scroll_timing_on_500_files_20k_lines() {
+    let doc = big_doc();
     let changed: u32 = doc
         .files()
         .iter()
@@ -843,31 +849,8 @@ fn big_file_timing_50k_lines() {
 #[ignore = "timing; run in release"]
 #[expect(clippy::print_stderr, reason = "reports the timings")]
 fn draft_save_timing_on_500_files() {
-    let regular = (0o100644, 0o100644);
     let path = |i: usize| format!("src/m{i}.rs");
-    let files: Vec<ChangedFile> = (0..500)
-        .map(|i| {
-            file(
-                FileStatus::Modified,
-                Some(&path(i)),
-                Some(&path(i)),
-                regular,
-            )
-        })
-        .collect();
-    let mut doc = Doc::new(files, &HashSet::new(), Default::default());
-    let old: String = (0..60)
-        .map(|i| format!("    let v{i} = compute({i}, \"x\");\n"))
-        .collect();
-    let new: String = old.replace("compute(", "compute_fast(");
-    let diff = Arc::new(FileDiff::compute(
-        "m.rs",
-        Some(old.as_bytes()),
-        Some(new.as_bytes()),
-    ));
-    for i in 0..500 {
-        doc.set_diff(i, diff.clone());
-    }
+    let doc = big_doc();
     let mut s = state();
     s.size = (160, 50);
     open_diff(&mut s, loaded(&doc), Pos::default(), Pane::Diff);

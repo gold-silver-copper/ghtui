@@ -8,7 +8,7 @@ use std::fmt::Write as _;
 /// buttons on the right, as on GitHub.
 pub fn repo_title(page: &mut Page, repo: &RepoId, overview: Option<&RepoOverview>) {
     let owner = login_seg(page, &repo.owner, Role::Link);
-    let name = link_seg(page, repo.name.clone(), url::repo(repo), Role::Title);
+    let name = link_seg(page, &*repo.name, url::repo(repo), Role::Title);
     let mut segs = vec![owner, meta(" / "), name];
     let mut right = Vec::new();
     if let Some(o) = overview {
@@ -162,7 +162,7 @@ pub(super) fn crumbs(
     last_is_file: bool,
 ) -> Vec<Seg> {
     let root = url::tree(repo, rev, "");
-    let mut segs = vec![link_seg(page, &repo.name, root, Role::Link)];
+    let mut segs = vec![link_seg(page, &*repo.name, root, Role::Link)];
     let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
     for (i, part) in parts.iter().enumerate() {
         segs.push(meta(" / "));

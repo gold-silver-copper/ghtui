@@ -348,13 +348,14 @@ impl Build {
             return self.ready(index);
         }
         let _turn = self.one.acquire().await.map_err(|e| e.to_string())?;
-        {
+        let none_kept = {
             let mut blobs = lock(&self.indexes.blobs);
             if blobs.len() > KEPT_BLOBS {
                 blobs.clear();
             }
-        }
-        if lock(&self.indexes.blobs).is_empty() {
+            blobs.is_empty()
+        };
+        if none_kept {
             let dir = dir.clone();
             if let Some(index) = blocking(move || newest(&dir).and_then(|f| load(&f))).await {
                 self.remember(&index);
@@ -384,12 +385,7 @@ impl Build {
             let repo = repo.clone();
             // Only what's fetched a batch at a time below is read: nothing
             // one by one.
-            BlobReader::spawn(move || {
-                let mut cmd = repo.cmd();
-                cmd.env("GIT_NO_LAZY_FETCH", "1");
-                cmd
-            })
-            .map_err(|e| e.to_string())?
+            BlobReader::spawn(move || repo.cmd_here()).map_err(|e| e.to_string())?
         };
         // A partial clone doesn't know the sizes of files it hasn't
         // fetched: what's read is counted as it comes.
@@ -408,7 +404,7 @@ impl Build {
                 self.tx
                     .send_modify(|s| s.stage = Stage::Fetching { done, total });
                 let oids: Vec<String> = batch.iter().map(|f| f.blob.clone()).collect();
-                repo.prefetch(&oids).await.map_err(|e| e.to_string())?;
+                repo.prefetch(oids).await.map_err(|e| e.to_string())?;
             }
             self.tx
                 .send_modify(|s| s.stage = Stage::Reading { done, total });
@@ -426,17 +422,17 @@ impl Build {
                     // Unreadable: indexed as defining nothing.
                     let source = read.next().flatten().unwrap_or_default();
                     bytes = bytes.saturating_add(source.len() as u64);
-                    sources.push((f.path.clone(), f.blob.clone(), source));
+                    sources.push((Language::from_path(&f.path), f.blob.clone(), source));
                 }
             }
             let file_bytes = self.limits.file_bytes;
             let parsed = blocking(move || {
-                let parse = |(path, blob, bytes): (String, String, Vec<u8>)| {
+                let parse = |(lang, blob, bytes): (Option<Language>, String, Vec<u8>)| {
                     if bytes.len() as u64 > file_bytes {
                         return (blob, Arc::from([]));
                     }
                     let text = Text::new(&bytes);
-                    let scopes = scope::scopes(Language::from_path(&path), &text);
+                    let scopes = scope::scopes(lang, &text);
                     let defs = scopes.into_iter().map(|s| Def {
                         line: *s.lines.start(),
                         name: s.name,

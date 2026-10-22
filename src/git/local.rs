@@ -82,9 +82,16 @@ impl Branch {
 }
 
 /// The value of a git config key, if set.
-async fn config(top: &Path, key: &str) -> Option<String> {
+pub(crate) async fn config(top: &Path, key: &str) -> Option<String> {
     let value = run(Some(top), &["config", "--get", key]).await.ok()?;
     Some(value.trim().to_owned()).filter(|v| !v.is_empty())
+}
+
+/// Fetches `specs` from `remote`, without tags or `FETCH_HEAD`.
+async fn fetch(top: &Path, remote: &str, specs: &[String]) -> Result<String, GitError> {
+    let mut args = vec!["fetch", "--no-tags", "--no-write-fetch-head", remote];
+    args.extend(specs.iter().map(String::as_str));
+    run(Some(top), &args).await
 }
 
 /// The commit `rev` names, if it names one here.
@@ -112,17 +119,7 @@ pub async fn branch(top: &Path, fallback: &str, name: &str) -> Result<Option<Bra
     // GitHub's copy, fetched to compare with (none when it has none).
     let into = format!("refs/ghtui/remote/{remote}/{name}");
     let spec = format!("+refs/heads/{name}:{into}");
-    let fetched = run(
-        Some(top),
-        &[
-            "fetch",
-            "--no-tags",
-            "--no-write-fetch-head",
-            &remote,
-            &spec,
-        ],
-    )
-    .await;
+    let fetched = fetch(top, &remote, &[spec]).await;
     let on_github = match fetched {
         Ok(_) => commit(top, &into).await,
         Err(GitError::Failed { stderr, .. }) if stderr.contains("couldn't find remote ref") => None,
@@ -158,11 +155,7 @@ pub async fn commits(
 ) -> Result<Vec<CommitMessage>, GitError> {
     let into = format!("refs/ghtui/base/{base}");
     let spec = format!("+refs/heads/{base}:{into}");
-    run(
-        Some(top),
-        &["fetch", "--no-tags", "--no-write-fetch-head", remote, &spec],
-    )
-    .await?;
+    fetch(top, remote, &[spec]).await?;
     let range = format!("{into}..refs/heads/{head}");
     let out = run(
         Some(top),
@@ -247,9 +240,7 @@ pub async fn checkout(
             "+refs/heads/{branch}:refs/remotes/{remote}/{branch}"
         ));
     }
-    let mut args = vec!["fetch", "--no-tags", "--no-write-fetch-head", remote];
-    args.extend(specs.iter().map(String::as_str));
-    run(Some(top), &args).await?;
+    fetch(top, remote, &specs).await?;
     let head = commit(top, &head_ref)
         .await
         .ok_or_else(|| GitError::Parse(format!("{head_ref} isn't a commit")))?;

@@ -94,14 +94,14 @@ pub struct Delete {
     pub owner: String,
 }
 
+/// Whether `route` is a gist form's page.
+fn is_form(route: &Route) -> bool {
+    matches!(route, Route::Gists(gists::NewGist | gists::EditGist { .. }))
+}
+
 /// The gist form on screen (blank until it's started), and its page.
 fn here(state: &State) -> Option<(Route, Cow<'_, Form>)> {
-    let route = state.route().filter(|r| {
-        matches!(
-            r,
-            Route::Gists(gists::NewGist) | Route::Gists(gists::EditGist { .. })
-        )
-    })?;
+    let route = state.route().filter(|r| is_form(r))?;
     Some((route.clone(), state.forms.shown(route)))
 }
 
@@ -412,10 +412,7 @@ fn change(form: &Form, id: &str, files: &[(String, String)]) -> GistChange {
 /// public; saves an edit.
 fn submit(state: &mut State) -> Cmds {
     let Some((route, form)) = here(state) else { return Cmds::new() };
-    let files = match named(&form) {
-        Ok(files) => files,
-        Err(why) => return say(state, why),
-    };
+    let files = or_return!(named(&form), |why| say(state, why));
     if let Route::Gists(gists::EditGist { .. }) = route {
         let Some((id, _)) = form.gist.clone() else {
             return say(state, "The gist hasn't loaded yet".into());
@@ -449,10 +446,7 @@ fn submit(state: &mut State) -> Cmds {
 /// Makes the new gist, secret or public.
 pub fn create(state: &mut State, route: &Route, public: bool) -> Cmds {
     let Some(form) = state.forms.get::<Form>(route) else { return Cmds::new() };
-    let files = match named(form) {
-        Ok(files) => files,
-        Err(why) => return say(state, why),
-    };
+    let files = or_return!(named(form), |why| say(state, why));
     let new = NewGist {
         description: form.description.clone(),
         public,
@@ -564,10 +558,7 @@ impl Job for Create {
 
     fn done(self, state: &mut State, result: Result<MadeGist, Failure>) -> Cmds {
         let route = self.route;
-        let made = match result {
-            Ok(made) => made,
-            Err(why) => return unsaved(state, &route, &why),
-        };
+        let made = or_return!(result, |why| unsaved(state, &route, &why));
         let form: Form = crate::forms::done(state, &route);
         let owner = made.owner.map(|o| o.login).or_else(|| state.viewer.clone());
         state.info("Created the gist");
@@ -679,7 +670,7 @@ fn offers(state: &State, out: &mut Vec<Doable>) {
 /// The menu's rows: a new gist anywhere a gist or profile is; changing
 /// and deleting your gist on its page.
 fn doables(state: &State, out: &mut Vec<Doable>) {
-    let Some(route) = state.route().filter(|_| here(state).is_none()) else { return };
+    let Some(route) = state.route().filter(|r| !is_form(r)) else { return };
     if let Route::Gists(gists::Gist { .. }) = route {
         let why = match shown(state) {
             Some(g) => not_yours(state, g),

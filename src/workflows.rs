@@ -124,15 +124,15 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> crate::picker::Rows {
             })
         }
         Pick::Ref => {
-            let Some((repo, file)) = here(state) else {
+            let Some((route, repo, _)) = here(state) else {
                 return note("The form isn't on screen".into());
             };
             let key = DataKey::Refs(repo.clone());
-            let route = form_route((repo, file));
-            let refs = match crate::picker::listed::<Refs, _>(state, &key, "the branches") {
-                Ok(refs) => refs,
-                Err(why) => return why,
-            };
+            let refs = or_return!(crate::picker::listed::<Refs, _>(
+                state,
+                &key,
+                "the branches"
+            ));
             let chosen = form_ref(state);
             let mut rows: Vec<_> = (refs.branches.iter())
                 .filter(|b| crate::picker::fuzzy_score(q, b).is_some())
@@ -142,7 +142,7 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> crate::picker::Rows {
                     } else {
                         ""
                     };
-                    (item(b.clone(), hint), Some(filling(&route, Row::Ref, b)))
+                    (item(b.clone(), hint), Some(filling(route, Row::Ref, b)))
                 })
                 .collect();
             if refs.branches.left_out() > 0 {
@@ -153,10 +153,10 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> crate::picker::Rows {
         Pick::Input(name) => {
             let input =
                 (inputs_of(state).ok()).and_then(|i| i.into_iter().find(|i| i.name == *name));
-            let (Some(input), Some(route)) = (input, here(state).map(form_route)) else {
+            let (Some(input), Some((route, ..))) = (input, here(state)) else {
                 return note("The form isn't on screen".into());
             };
-            let set = |value: &str| Some(filling(&route, Row::Input(name.clone()), value));
+            let set = |value: &str| Some(filling(route, Row::Input(name.clone()), value));
             let options: Vec<&str> = match &input.kind {
                 InputKind::Choice(options) => options.iter().map(String::as_str).collect(),
                 InputKind::Boolean => vec!["true", "false"],
@@ -208,7 +208,7 @@ pub const FORM: crate::forms::Kind = crate::forms::Kind {
 fn on_row(state: &mut State, row: &Row) -> Cmds {
     match row {
         Row::Ref => {
-            let repo = here(state).map(|(r, _)| r);
+            let repo = here(state).map(|(_, repo, _)| repo.clone());
             let mut cmds = state.open_picker(crate::picker::Kind::Workflows(Pick::Ref));
             if let Some(repo) = repo {
                 cmds.extend(state.ensure(DataKey::Refs(repo), false));
@@ -260,16 +260,15 @@ fn workflow_here(state: &State) -> Option<(RepoId, String)> {
     }
 }
 
-/// The form on screen: its repository and workflow file.
-fn here(state: &State) -> Option<(RepoId, String)> {
-    match state.route()? {
-        Route::Runs(runs::Dispatch { repo, file }) => Some((repo.clone(), file.clone())),
-        _ => None,
-    }
+/// The form on screen: its page, its repository and workflow file.
+fn here(state: &State) -> Option<(&Route, &RepoId, &str)> {
+    let route = state.route()?;
+    let Route::Runs(runs::Dispatch { repo, file }) = route else { return None };
+    Some((route, repo, file))
 }
 
 /// The form's page, for the workflow `file` in `repo`.
-fn form_route((repo, file): (RepoId, String)) -> Route {
+fn form_route(repo: RepoId, file: String) -> Route {
     Route::Runs(runs::Dispatch { repo, file })
 }
 
@@ -280,12 +279,12 @@ pub(crate) fn workflow_path(file: &str) -> String {
 
 /// The form on screen, and the branch chosen on it, if one is.
 fn chosen(state: &State) -> Option<(RepoId, String, Option<String>)> {
-    let (repo, file) = here(state)?;
-    let form = state
+    let (route, repo, file) = here(state)?;
+    let git_ref = state
         .forms
-        .get::<Form>(&form_route((repo.clone(), file.clone())));
-    let git_ref = form.and_then(|f| f.git_ref.clone());
-    Some((repo, file, git_ref))
+        .get::<Form>(route)
+        .and_then(|f| f.git_ref.clone());
+    Some((repo.clone(), file.to_owned(), git_ref))
 }
 
 /// The branch the form on screen runs on: chosen, or the default.
@@ -331,7 +330,7 @@ pub fn build(state: &State, page: &mut Page, repo: &RepoId, file: &str) {
     let path = workflow_path(file);
     let workflow = state.picked::<Workflow>(&DataKey::Workflow(repo.clone(), file.to_owned()));
     let name = workflow.map_or(file, |w| w.name.as_str());
-    let route = form_route((repo.clone(), file.to_owned()));
+    let route = form_route(repo.clone(), file.to_owned());
     let form = state.forms.shown::<Form>(&route);
     let sent = state.forms.sent(&route);
     let git_ref = form_ref(state).unwrap_or_else(|| "the default branch".into());
@@ -372,13 +371,13 @@ pub fn action(state: &mut State) -> Cmds {
     if let Some(why) = refused(state, &repo, &file) {
         return state.just_say(why);
     }
-    state.push(Route::Runs(runs::Dispatch { repo, file }))
+    state.push(form_route(repo, file))
 }
 
 /// Runs the form's workflow, if it can.
 fn run(state: &mut State) -> Cmds {
-    let Some((repo, file)) = here(state) else { return Cmds::new() };
-    let route = form_route((repo.clone(), file.clone()));
+    let Some((route, repo, file)) = here(state) else { return Cmds::new() };
+    let (route, repo, file) = (route.clone(), repo.clone(), file.to_owned());
     let why = refused(state, &repo, &file)
         .or_else(|| (state.forms.sent(&route).sending).then(|| "It's being started".to_owned()));
     let inputs = inputs_of(state);
@@ -433,7 +432,7 @@ impl Job for Dispatch {
     /// A new run is followed from the form; elsewhere it's said.
     fn done(self, state: &mut State, result: Result<Option<u64>, Failure>) -> Cmds {
         let Dispatch { repo, file, .. } = self;
-        let route = form_route((repo.clone(), file.clone()));
+        let route = form_route(repo.clone(), file.clone());
         let on_form = state.route() == Some(&route);
         match result {
             Err(err) => {

@@ -126,6 +126,15 @@ pub(crate) fn select_by(state: &mut State, is: impl Fn(&crate::ui::page::Link) -
     select_where(state, |p| p.selected_link().is_some_and(&is));
 }
 
+/// Selects the comment `author` wrote that starts with `text`.
+pub(crate) fn select_comment(state: &mut State, author: &str, text: &str) {
+    use crate::ui::page::Link;
+    select_by(
+        state,
+        |l| matches!(l, Link::Quote { author: a, body, .. } if a == author && body.starts_with(text)),
+    );
+}
+
 /// Selects the row on screen whose link is `link`.
 pub(crate) fn select_link(state: &mut State, link: &crate::ui::page::Link) {
     let height = state.page_height();
@@ -279,6 +288,11 @@ pub(crate) fn found_pr(pr: &str, title: &str, state: PrState) -> IssueSummary {
 /// Delivers a message for `pr`'s diff.
 pub(crate) fn diff_msg(state: &mut State, pr: &PrRef, msg: DiffMsg) -> Cmds {
     update(state, Msg::Diff(DiffOf::Pr(pr.clone()), msg))
+}
+
+/// GitHub's review threads for `pr`'s diff.
+pub(crate) fn threads_loaded(state: &mut State, pr: &PrRef, threads: Vec<ReviewThread>) -> Cmds {
+    diff_msg(state, pr, DiffMsg::ThreadsLoaded(Ok(threads)))
 }
 
 /// The diff job `cmds` start.
@@ -481,12 +495,11 @@ pub fn overview() -> RepoOverview {
         license: Some("MIT".into()),
         topics: vec!["tui".into(), "github".into(), "rust".into()].into(),
         default_branch: Some("main".into()),
-        last_commit: Some(CommitInfo {
-            oid: "fedcba9876543210fedcba9876543210fedcba98".into(),
-            headline: "Browse GitHub like the website".into(),
-            author: Person::User(Login::unchecked("octocat")),
-            date: "2026-10-03T10:00:00Z".into(),
-        }),
+        last_commit: Some(commit_info(
+            "fedcba9876543210fedcba9876543210fedcba98",
+            "Browse GitHub like the website",
+            "2026-10-03T10:00:00Z",
+        )),
         commits: 412,
         can_write: true,
         id: NodeId::new("R_ghtui"),
@@ -522,12 +535,8 @@ pub fn readme() -> Readme {
 
 /// The latest commit touching each of [`overview`]'s entries.
 pub fn last_commits() -> std::collections::HashMap<String, CommitInfo> {
-    let commit = |headline: &str, date: &str| CommitInfo {
-        oid: "0123456789abcdef0123456789abcdef01234567".into(),
-        headline: headline.into(),
-        author: Person::User(Login::unchecked("octocat")),
-        date: date.into(),
-    };
+    let commit =
+        |headline, date| commit_info("0123456789abcdef0123456789abcdef01234567", headline, date);
     [
         (
             ".github",
@@ -918,6 +927,16 @@ pub fn wiki() -> WikiPage {
         file: Some("Home.md".into()),
     }
 }
+/// octocat's commit `oid`.
+fn commit_info(oid: impl Into<String>, headline: &str, date: &str) -> CommitInfo {
+    CommitInfo {
+        oid: oid.into(),
+        headline: headline.into(),
+        author: Person::User(Login::unchecked("octocat")),
+        date: date.into(),
+    }
+}
+
 fn label(name: &str, color: &str) -> Label {
     Label {
         name: name.into(),
@@ -1121,19 +1140,13 @@ pub fn reviews() -> Capped<Review> {
 
 /// The two commits of the fixture pull request.
 fn pr_commits() -> [CommitInfo; 2] {
-    let commit = |oid: &str, headline: &str, date: &str| CommitInfo {
-        oid: oid.into(),
-        headline: headline.into(),
-        author: Person::User(Login::unchecked("octocat")),
-        date: date.into(),
-    };
     [
-        commit(
+        commit_info(
             "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
             "Theme: derive syntax colors from the seed",
             "2026-09-30T12:00:00Z",
         ),
-        commit(
+        commit_info(
             "1b2c3d4e5f60718293a4b5c6d7e8f9012345678a",
             "Check every syntax role against diff backgrounds",
             "2026-10-01T12:00:00Z",
@@ -1143,13 +1156,16 @@ fn pr_commits() -> [CommitInfo; 2] {
 
 /// gold-silver-copper/ghtui#12, open, approved, failing checks and in
 /// conflict.
-pub(crate) fn pr_detail() -> crate::api::model::PrDetail {
-    use crate::api::model::{ChecksState, Mergeable, ReviewDecision};
-    crate::api::model::PrDetail {
-        id: crate::api::model::NodeId::new("PR_12"),
-        merge_state: crate::api::model::MergeState::Dirty,
+pub(crate) fn pr_detail() -> PrDetail {
+    use crate::api::change::MergeMethod;
+    use crate::api::model::{
+        ChecksState, MergeState, Mergeable, MilestoneRef, PrPermits, ReviewDecision,
+    };
+    PrDetail {
+        id: NodeId::new("PR_12"),
+        merge_state: MergeState::Dirty,
         behind_by: Some(2),
-        may: crate::api::model::PrPermits {
+        may: PrPermits {
             merge: true,
             close: true,
             reopen: true,
@@ -1157,10 +1173,7 @@ pub(crate) fn pr_detail() -> crate::api::model::PrDetail {
             push_head: true,
             ..Default::default()
         },
-        merge_methods: vec![
-            crate::api::change::MergeMethod::Squash,
-            crate::api::change::MergeMethod::Merge,
-        ],
+        merge_methods: vec![MergeMethod::Squash, MergeMethod::Merge],
         auto_merge_allowed: true,
         title: "Theme: generate syntax palette from seed".into(),
         author: "octocat".into(),
@@ -1182,21 +1195,11 @@ pub(crate) fn pr_detail() -> crate::api::model::PrDetail {
         head_repo: Some("octocat/ghtui".into()),
         changed_files: 7,
         mergeable: Mergeable::Conflicting,
-        milestone: Some(crate::api::model::MilestoneRef {
+        milestone: Some(MilestoneRef {
             number: 3,
             title: "Links".into(),
         }),
-        labels: vec![
-            Label {
-                name: "enhancement".into(),
-                color: "a2eeef".into(),
-            },
-            Label {
-                name: "theme".into(),
-                color: "7057ff".into(),
-            },
-        ]
-        .into(),
+        labels: vec![label("enhancement", "a2eeef"), label("theme", "7057ff")].into(),
         assignees: vec!["octocat".into()].into(),
         editable: editable("PR_12"),
         sidebar: crate::api::edit::SidebarPermits {
@@ -1856,12 +1859,8 @@ pub fn deployments() -> DeploymentList {
 }
 /// Two tags compared: the first of many commits.
 pub fn comparison() -> Comparison {
-    let commit = |oid: char, headline: &str, date: &str| CommitInfo {
-        oid: oid.to_string().repeat(40),
-        headline: headline.into(),
-        author: Person::User(Login::unchecked("octocat")),
-        date: date.into(),
-    };
+    let commit =
+        |oid: char, headline, date| commit_info(oid.to_string().repeat(40), headline, date);
     Comparison {
         ahead: 120,
         commits: Capped::new(
@@ -2009,12 +2008,7 @@ pub fn discussion_results() -> SearchResults {
 pub fn commit_results() -> SearchResults {
     let hit = |oid: char, headline: &str| CommitHit {
         repo: RepoId::new("ratatui", "ratatui"),
-        commit: CommitInfo {
-            oid: oid.to_string().repeat(40),
-            headline: headline.into(),
-            author: Person::User(Login::unchecked("octocat")),
-            date: "2026-10-01T12:00:00Z".into(),
-        },
+        commit: commit_info(oid.to_string().repeat(40), headline, "2026-10-01T12:00:00Z"),
     };
     SearchResults::Commits(page(
         60,
@@ -2183,10 +2177,7 @@ pub fn project() -> crate::api::project::Project {
             },
         )
     };
-    let enhancement = Label {
-        name: "enhancement".into(),
-        color: "a2eeef".into(),
-    };
+    let enhancement = label("enhancement", "a2eeef");
     let item = |n: u64, content, values| ProjectItem {
         id: NodeId::new(format!("PVTI_{n}")),
         number: 1000 + n,

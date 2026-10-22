@@ -223,10 +223,7 @@ pub(super) fn ask_delete(state: &mut State, repo: &RepoId, kind: RefKind) -> Cmd
             Some(Ok(_)) => {}
         }
     }
-    let clone = match clone_here(state, repo) {
-        Ok(clone) => clone,
-        Err(cmds) => return cmds,
-    };
+    let clone = or_return!(clone_here(state, repo));
     if let Some((n, _)) = open_pr {
         facts.push((
             format!("Its pull request #{n} is open: GitHub closes it"),

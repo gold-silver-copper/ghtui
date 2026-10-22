@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::api::housekeeping::{MadeRepo, NewFork, NewRepo, Owners, Templates};
 use crate::api::model::RepoId;
-use crate::picker::fuzzy_score;
+use crate::picker::{fuzzy_score, listed};
 use crate::ui::page::Page;
 use crate::ui::pages::{Mark, WriteFormView};
 
@@ -63,7 +63,7 @@ pub(super) fn follow(state: &mut State, route: &Route, fork: Option<&RepoId>) ->
     f.started = true;
     f.set(Field::Owner, viewer);
     match fork {
-        Some(repo) => f.set(Field::Name, repo.name.clone()),
+        Some(repo) => f.set(Field::Name, &*repo.name),
         None if state.overlay.is_none() => return super::open_field(state, route, Field::Name),
         None => {}
     }
@@ -173,25 +173,25 @@ pub(super) fn template_rows(
     q: &str,
 ) -> crate::picker::Rows {
     let set = |value: &str| setting(route, field, value);
-    let Some(t) = state.picked::<Templates>(&DataKey::Templates) else {
-        return vec![item("Loading GitHub's templates…", "", None)];
-    };
+    let key = DataKey::Templates;
+    let t = or_return!(listed::<Templates, _>(state, &key, "GitHub's templates"));
     let mut rows = Vec::new();
     if fuzzy_score(q, "none").is_some() {
         rows.push(item("None", "", set("")));
     }
-    let mut hits: Vec<(usize, String, String)> = match field {
+    let mut hits: Vec<(usize, &str, &str)> = match field {
         Field::Gitignore => (t.gitignores.iter())
-            .filter_map(|g| Some((fuzzy_score(q, g)?, g.clone(), g.clone())))
+            .filter_map(|g| Some((fuzzy_score(q, g)?, g.as_str(), g.as_str())))
             .collect(),
         _ => (t.licenses.iter())
-            .filter_map(|(key, name)| Some((fuzzy_score(q, name)?, name.clone(), key.clone())))
+            .filter_map(|(key, name)| Some((fuzzy_score(q, name)?, name.as_str(), key.as_str())))
             .collect(),
     };
     hits.sort_by_key(|(score, ..)| *score);
-    for (_, label, value) in hits {
-        rows.push(item(label, "", set(&value)));
-    }
+    rows.extend(
+        hits.into_iter()
+            .map(|(_, label, value)| item(label, "", set(value))),
+    );
     rows
 }
 
@@ -261,16 +261,14 @@ impl Job for Fork {
 
     fn done(self, state: &mut State, result: Result<MadeRepo, Failure>) -> Cmds {
         let Fork { route, .. } = &self;
-        match result {
-            Ok(made) => {
-                state.info(format!(
-                    "Forked as {}: GitHub may take a moment to copy it",
-                    made.full_name
-                ));
-                opened(state, route, &made).unwrap_or_default()
-            }
-            Err(why) => crate::forms::failed(state, route, why.to_string()),
-        }
+        let made = or_return!(result, |why| {
+            crate::forms::failed(state, route, why.to_string())
+        });
+        state.info(format!(
+            "Forked as {}: GitHub may take a moment to copy it",
+            made.full_name
+        ));
+        opened(state, route, &made).unwrap_or_default()
     }
 }
 
@@ -283,16 +281,15 @@ impl Job for Make {
 
     fn done(self, state: &mut State, result: Result<MadeRepo, Failure>) -> Cmds {
         let Make { route, .. } = &self;
-        let made = match result {
-            Ok(made) => made,
-            Err(why) => return crate::forms::failed(state, route, why.to_string()),
-        };
+        let made = or_return!(result, |why| {
+            crate::forms::failed(state, route, why.to_string())
+        });
         state.info(format!("Created {}", made.full_name));
         let on_form = state.route() == Some(route);
         let mut cmds = opened(state, route, &made).unwrap_or_default();
         // Offered as GitHub's page offers it: its clone command, run here.
         let Some(repo) = made.repo().filter(|_| on_form) else { return cmds };
-        let dir = PathBuf::from(&repo.name);
+        let dir = PathBuf::from(&*repo.name);
         let fact = format!(
             "Into ./{} here, with your own git: git clone {}",
             dir.display(),
@@ -321,14 +318,11 @@ impl Job for CloneTo {
     }
 
     fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {
-        let CloneTo { dir, .. } = &self;
-        match result {
-            Ok(()) => {
-                state.overlay = None;
-                state.just_say(format!("Cloned into ./{}", dir.display()))
-            }
-            Err(why) => crate::forms::say(state, why.to_string()),
+        if let Err(why) = result {
+            return crate::forms::say(state, why.to_string());
         }
+        state.overlay = None;
+        state.just_say(format!("Cloned into ./{}", self.dir.display()))
     }
 }
 

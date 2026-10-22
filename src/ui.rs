@@ -20,7 +20,7 @@ pub mod review_sheets;
 pub mod text;
 pub mod time;
 
-use crate::theme::{Bg, Theme};
+use crate::theme::{Bg, Fg, Theme};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Modifier, Style};
@@ -141,6 +141,23 @@ fn key_hints<'a>(theme: &Theme, bg: Bg, hints: &[(&'a str, &str)]) -> Vec<Span<'
         spans.push(Span::styled(format!(" {what}"), theme.meta(bg)));
     }
     spans
+}
+
+/// `+12 −3`: added and removed lines.
+fn changes(theme: &Theme, bg: Bg, (adds, dels): (u32, u32)) -> [Span<'static>; 2] {
+    [
+        Span::styled(format!("+{adds}"), theme.style(Fg::DiffAddedSign, bg)),
+        Span::styled(format!(" −{dels}"), theme.style(Fg::DiffRemovedSign, bg)),
+    ]
+}
+
+/// Row `y` of `area`.
+pub fn row(area: Rect, y: u16) -> Rect {
+    Rect {
+        y,
+        height: 1,
+        ..area
+    }
 }
 
 /// `area` shrunk by the standard padding.

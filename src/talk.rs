@@ -44,7 +44,7 @@ pub fn lines_at<'a>(state: &'a State, pr: &PrRef) -> LinesAt<'a> {
             && *repo == pr.repo
             && let Some(crate::data::Data::Lines(lines)) = state.get(key)
         {
-            at.insert((commit.clone(), path.clone()), lines.as_slice());
+            at.insert((commit.as_str(), path.as_str()), lines.as_slice());
         }
     }
     at

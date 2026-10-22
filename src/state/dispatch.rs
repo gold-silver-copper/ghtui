@@ -6,9 +6,7 @@ use crate::route::{app, issues, runs, search};
 /// Handles a message and settles the screen.
 #[cfg(test)]
 pub fn update(state: &mut State, msg: Msg) -> Cmds {
-    let mut cmds = apply_msg(state, msg);
-    cmds.extend(state.settle());
-    cmds
+    apply_msg(state, msg).and(state.settle())
 }
 
 /// Handles a message without settling the screen: the runtime handles a
@@ -178,13 +176,12 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Cmds {
         }
         Msg::Timer(Timer::Live) => {
             state.live = false;
-            let mut cmds = Cmds::new();
             let mut needs = state.running_here();
             needs.extend(crate::follow::poll(state));
-            for need in needs {
-                cmds.extend(state.ensure(need, true));
-            }
-            return cmds;
+            return needs
+                .into_iter()
+                .flat_map(|need| state.ensure(need, true))
+                .collect();
         }
         Msg::Timer(Timer::Home) => {
             state.home_timer = false;
