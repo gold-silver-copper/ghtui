@@ -607,34 +607,27 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
     fn git<T>() -> Result<T, Failure> {
         Err(Failure::msg("ghtui hit a bug"))
     }
+    fn diff(pr: &PrRef, msg: DiffMsg) -> Msg {
+        Msg::Diff(pr.clone().into(), msg)
+    }
     let msg = match cmd {
         Cmd::Api(Api::FetchViewer) => Msg::Viewer(api()),
         Cmd::Api(Api::Fetch { key, .. }) => Msg::fetched(key.clone(), api()),
         Cmd::Api(Api::FetchMore { key, after }) => {
             Msg::FetchedMore(key.clone(), after.clone(), api(), None)
         }
-        Cmd::Api(Api::FetchViewed(pr)) => {
-            Msg::Diff(pr.clone().into(), DiffMsg::ViewedLoaded(Box::new(api())))
-        }
-        Cmd::Api(Api::FetchThreads(pr)) => {
-            Msg::Diff(pr.clone().into(), DiffMsg::ThreadsLoaded(api()))
-        }
-        Cmd::Api(Api::FetchPatches(pr)) => {
-            Msg::Diff(pr.clone().into(), DiffMsg::PatchesLoaded(api()))
-        }
+        Cmd::Api(Api::FetchViewed(pr)) => diff(pr, DiffMsg::ViewedLoaded(Box::new(api()))),
+        Cmd::Api(Api::FetchThreads(pr)) => diff(pr, DiffMsg::ThreadsLoaded(api())),
+        Cmd::Api(Api::FetchPatches(pr)) => diff(pr, DiffMsg::PatchesLoaded(api())),
         Cmd::Git(Git::MapOutdated(joined)) => {
             let (pr, job, _, threads) = joined.get();
             let none = threads.iter().map(|t| (t.thread.clone(), None)).collect();
-            Msg::Diff(pr.clone().into(), DiffMsg::Job(*job, JobMsg::Mapped(none)))
+            diff(pr, DiffMsg::Job(*job, JobMsg::Mapped(none)))
         }
-        Cmd::LoadReview(pr) => Msg::Diff(pr.clone().into(), DiffMsg::ReviewLoaded(git())),
+        Cmd::LoadReview(pr) => diff(pr, DiffMsg::ReviewLoaded(git())),
         Cmd::Work(work) => Msg::Done(work.failed()),
-        Cmd::Api(Api::FetchPendingReview(pr)) => {
-            Msg::Diff(pr.clone().into(), DiffMsg::PendingReview(api()))
-        }
-        Cmd::Api(Api::FetchLastReview { pr, .. }) => {
-            Msg::Diff(pr.clone().into(), DiffMsg::LastReview(api()))
-        }
+        Cmd::Api(Api::FetchPendingReview(pr)) => diff(pr, DiffMsg::PendingReview(api())),
+        Cmd::Api(Api::FetchLastReview { pr, .. }) => diff(pr, DiffMsg::LastReview(api())),
         Cmd::Git(Git::Code(ask)) => Msg::Code(ask.clone(), Err("ghtui hit a bug".into())),
         Cmd::Api(Api::Poll { pr, .. }) => Msg::Polled(pr.clone(), Vec::new()),
         Cmd::Api(Api::Watch { what, .. }) => Msg::Watched(what.clone(), Vec::new()),
@@ -651,12 +644,9 @@ fn panic_replies(cmd: &Cmd) -> Vec<Msg> {
         }
         Cmd::Git(Git::SinceReview(joined)) => {
             let (pr, job, old) = joined.get();
-            let msg = DiffMsg::Job(*job, JobMsg::Since(old.clone(), git()));
-            Msg::Diff(pr.clone().into(), msg)
+            diff(pr, DiffMsg::Job(*job, JobMsg::Since(old.clone(), git())))
         }
-        Cmd::Git(Git::ListCommits(pr)) => {
-            Msg::Diff(pr.clone().into(), DiffMsg::CommitsListed(git()))
-        }
+        Cmd::Git(Git::ListCommits(pr)) => diff(pr, DiffMsg::CommitsListed(git())),
         // Nothing waits on these.
         Cmd::OpenUrl(_)
         | Cmd::Copy(_)

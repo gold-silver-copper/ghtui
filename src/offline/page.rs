@@ -147,12 +147,13 @@ fn entry_rows(page: &mut Page, entry: &Entry, now: u64, whole: bool) {
         page.wrapped(vec![Seg::new(why, Role::Error)], 2, Frame::Body);
     }
     if let Some(text) = entry.write.text() {
-        let lines: Vec<&str> = text.lines().collect();
-        for line in lines.iter().take(TEXT_LINES) {
-            page.wrapped(vec![Seg::new(*line, Role::Body)], 2, Frame::Body);
+        let mut lines = text.lines();
+        for line in lines.by_ref().take(TEXT_LINES) {
+            page.wrapped(vec![Seg::new(line, Role::Body)], 2, Frame::Body);
         }
-        if lines.len() > TEXT_LINES {
-            let more = format!("… {} more lines", lines.len() - TEXT_LINES);
+        let more = lines.count();
+        if more > 0 {
+            let more = format!("… {more} more lines");
             page.wrapped(vec![Seg::new(more, Role::Meta)], 2, Frame::Body);
         }
     }

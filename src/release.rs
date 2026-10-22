@@ -884,12 +884,9 @@ impl Job for Delete {
     fn done(self, state: &mut State, result: Result<bool, Failure>) -> Cmds {
         let Delete { repo, tag, .. } = &self;
         let route = page(repo.clone(), tag.clone());
-        let tagged = match result {
-            Ok(tagged) => tagged,
-            Err(why) => {
-                return say(state, format!("GitHub didn't delete the release: {why}"));
-            }
-        };
+        let tagged = or_return!(result, |why| {
+            say(state, format!("GitHub didn't delete the release: {why}"))
+        });
         crate::forms::close_sender(state, &route);
         state.info(format!("Deleted the release of {tag}"));
         let mut cmds = Cmds::new();
@@ -901,7 +898,7 @@ impl Job for Delete {
         if !tagged {
             return cmds;
         }
-        cmds.extend(crate::forms::ask(
+        cmds.and(crate::forms::ask(
             state,
             route,
             format!("Delete the tag {tag} as well?"),
@@ -918,8 +915,7 @@ impl Job for Delete {
                 (format!("Delete the tag {tag}"), Answer::DeleteTag),
                 ("Keep the tag".into(), Answer::KeepTag),
             ],
-        ));
-        cmds
+        ))
     }
 }
 
@@ -943,7 +939,7 @@ fn offers(state: &State, out: &mut Vec<Doable>) {
 /// The menu's rows: making a release from a repository's pages, and
 /// changing the release on screen.
 fn doables(state: &State, out: &mut Vec<Doable>) {
-    let Some(route) = state.route().filter(|_| here(state).is_none()) else { return };
+    let Some(route) = state.route().filter(|r| form_repo(r).is_none()) else { return };
     let Some(repo) = route.repo() else { return };
     if matches!(route, Route::Releases(releases::Release { .. })) {
         let why = unchangeable(state);

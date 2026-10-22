@@ -34,9 +34,7 @@ const MARKUPS: &[&str] = &[
 /// A page's file name split into its title and markup.
 fn page_file(path: &str) -> Option<(&str, &str)> {
     let (title, ext) = path.rsplit_once('.')?;
-    MARKUPS
-        .contains(&ext.to_ascii_lowercase().as_str())
-        .then_some((title, ext))
+    (MARKUPS.iter().any(|m| m.eq_ignore_ascii_case(ext))).then_some((title, ext))
 }
 
 /// How a title appears in a page's URL: spaces as dashes.
@@ -140,7 +138,9 @@ async fn read(wiki: &Repo, page: Option<&str>) -> Result<WikiPage, Read> {
     let (title, text, markdown, file) = match found {
         Some((t, ext, path)) => {
             let text = wiki.file_text(&commit, path).await?;
-            let markdown = matches!(ext.to_ascii_lowercase().as_str(), "md" | "markdown");
+            let markdown = ["md", "markdown"]
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case(ext));
             (
                 Some(title_of(t).to_owned()),
                 Some(text),
@@ -202,21 +202,22 @@ pub struct Save {
 /// ghtui uses: its title, as its URL names it.
 pub async fn save(git: &GitContext, save: &Save) -> Result<String, String> {
     let repo = &save.repo;
-    let wiki = open(git, repo).await.map_err(|err| {
-        if absent(&err) {
-            no_wiki(repo)
-        } else {
-            format!("Couldn't read {repo}'s wiki: {err}")
-        }
-    })?;
+    let wiki = open(git, repo)
+        .await
+        .map_err(|err| unsaved(repo, "read", &err))?;
     save_in(&wiki, save).await
 }
 
-/// What saving says when the wiki has no repository yet.
-fn no_wiki(repo: &RepoId) -> String {
-    format!(
-        "{repo}'s wiki has no pages yet, and GitHub makes its git repository only with the first page: create that on github.com"
-    )
+/// Why git couldn't `doing` the wiki to save a page: when GitHub has no
+/// repository for it yet, that it makes one only with the first page.
+fn unsaved(repo: &RepoId, doing: &str, err: &crate::git::GitError) -> String {
+    if absent(err) {
+        format!(
+            "{repo}'s wiki has no pages yet, and GitHub makes its git repository only with the first page: create that on github.com"
+        )
+    } else {
+        format!("Couldn't {doing} {repo}'s wiki: {err}")
+    }
 }
 
 /// [`save`], in the wiki's clone.
@@ -225,13 +226,7 @@ async fn save_in(wiki: &Repo, save: &Save) -> Result<String, String> {
     let failed = |err: crate::git::GitError| format!("Couldn't save the page: {err}");
     // Once more if GitHub's wiki moves on between looking and pushing.
     for attempt in 0..2 {
-        wiki.fetch_head(HEAD, &|_| {}).await.map_err(|err| {
-            if absent(&err) {
-                no_wiki(repo)
-            } else {
-                format!("Couldn't fetch {repo}'s wiki: {err}")
-            }
-        })?;
+        (wiki.fetch_head(HEAD, &|_| {}).await).map_err(|err| unsaved(repo, "fetch", &err))?;
         let head = wiki.rev_parse(HEAD).await.map_err(failed)?.to_string();
         let file = match &save.file {
             Some(file) => {

@@ -459,14 +459,16 @@ pub fn shows(state: &State, change: &Change, of: &DiscussionsOf, number: u64) ->
     }
 }
 
-/// What a change is doing while it's sent.
-pub fn doing(change: &Discuss) -> &'static str {
+/// What a change is doing while it's sent, and what it is, for "GitHub
+/// refused …".
+pub fn said(change: &Discuss) -> (&'static str, &'static str) {
     match change {
-        Discuss::Comment { .. } => "Posting",
-        Discuss::Edit { .. } => "Saving",
-        Discuss::Delete { .. } => "Deleting it",
-        Discuss::Answer { on: true, .. } => "Marking the answer",
-        Discuss::Answer { .. } => "Unmarking the answer",
+        Discuss::Comment { reply_to: None, .. } => ("Posting", "the comment"),
+        Discuss::Comment { .. } => ("Posting", "the reply"),
+        Discuss::Edit { .. } => ("Saving", "the edit"),
+        Discuss::Delete { .. } => ("Deleting it", "deleting it"),
+        Discuss::Answer { on: true, .. } => ("Marking the answer", "marking the answer"),
+        Discuss::Answer { .. } => ("Unmarking the answer", "unmarking the answer"),
     }
 }
 
@@ -479,17 +481,5 @@ pub fn done(change: &Discuss) -> &'static str {
         Discuss::Delete { .. } => "Deleted",
         Discuss::Answer { on: true, .. } => "Marked as the answer",
         Discuss::Answer { .. } => "No longer the answer",
-    }
-}
-
-/// What was refused, for "GitHub refused …".
-pub fn what(change: &Discuss) -> &'static str {
-    match change {
-        Discuss::Comment { reply_to: None, .. } => "the comment",
-        Discuss::Comment { .. } => "the reply",
-        Discuss::Edit { .. } => "the edit",
-        Discuss::Delete { .. } => "deleting it",
-        Discuss::Answer { on: true, .. } => "marking the answer",
-        Discuss::Answer { .. } => "unmarking the answer",
     }
 }

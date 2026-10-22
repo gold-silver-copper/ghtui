@@ -1186,9 +1186,9 @@ fn said(change: &Change) -> (&'static str, &'static str) {
         // Its progress names the field ([`doing`]).
         Change::SetProjectField { .. } => ("Setting the field", "setting the field"),
         Change::Edit(edit) => crate::edit::said(edit),
-        Change::Discussion(d) => (crate::discuss::doing(d), crate::discuss::what(d)),
-        Change::Alert(c) => (crate::security::doing(c), crate::security::what(c)),
-        Change::Project(c) => (crate::projects::doing(c), crate::projects::what(c)),
+        Change::Discussion(d) => crate::discuss::said(d),
+        Change::Alert(c) => crate::security::said(c),
+        Change::Project(c) => crate::projects::said(c),
         Change::Manage(m) => crate::manage::said(m),
         Change::Settings(c) => crate::settings::said(c),
     }

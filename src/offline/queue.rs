@@ -12,6 +12,8 @@
 //! check and send again or throw away. The queue is kept in the cache's
 //! database, apart for each host and account, so it outlives a restart.
 
+use std::borrow::Cow;
+
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
@@ -168,7 +170,7 @@ impl Write {
     }
 
     /// The text written, to show and to copy.
-    pub fn text(&self) -> Option<String> {
+    pub fn text(&self) -> Option<Cow<'_, str>> {
         match self {
             Write::Change(
                 Change::Comment { body, .. }
@@ -176,7 +178,7 @@ impl Write {
                 | Change::Reply { body, .. }
                 | Change::Edit(Edit::Body { body, .. })
                 | Change::Discussion(Discuss::Comment { body, .. } | Discuss::Edit { body, .. }),
-            ) => Some(body.clone()),
+            ) => Some(Cow::Borrowed(body)),
             Write::Review(r) => {
                 let comments = r.drafts.iter().map(|d| match d.line {
                     Some(line) => format!("{}:{line}\n{}", d.path, d.body),
@@ -186,7 +188,7 @@ impl Write {
                     .filter(|b| !b.trim().is_empty())
                     .chain(comments)
                     .collect();
-                (!all.is_empty()).then(|| all.join("\n\n"))
+                (!all.is_empty()).then(|| Cow::Owned(all.join("\n\n")))
             }
             Write::Change(_) => None,
         }
@@ -481,7 +483,7 @@ mod tests {
     }
 
     fn body(write: &Write) -> String {
-        write.text().unwrap_or_default()
+        write.text().unwrap_or_default().into_owned()
     }
 
     /// Sends with `answers` in turn, saying what was sent.
