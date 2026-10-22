@@ -92,12 +92,13 @@ pub fn shows(state: &State, c: &AlertChange) -> bool {
         .is_some_and(|a| a.state.is_open() == c.dismiss.is_none())
 }
 
-/// What it's doing while GitHub answers.
-pub fn doing(c: &AlertChange) -> &'static str {
+/// What it's doing while GitHub answers, and what it is, for "GitHub
+/// refused …".
+pub fn said(c: &AlertChange) -> (&'static str, &'static str) {
     match (&c.dismiss, c.alert.kind) {
-        (None, _) => "Reopening the alert",
-        (Some(_), AlertKind::SecretScanning) => "Closing the alert",
-        (Some(_), _) => "Dismissing the alert",
+        (None, _) => ("Reopening the alert", "reopening the alert"),
+        (Some(_), AlertKind::SecretScanning) => ("Closing the alert", "closing the alert"),
+        (Some(_), _) => ("Dismissing the alert", "closing the alert"),
     }
 }
 
@@ -112,14 +113,6 @@ pub fn done(c: &AlertChange) -> String {
         (None, _) => "Alert reopened".into(),
         (Some(why), AlertKind::SecretScanning) => format!("Alert closed: {why}"),
         (Some(why), _) => format!("Alert dismissed: {why}"),
-    }
-}
-
-/// What it is, for "GitHub refused …".
-pub fn what(c: &AlertChange) -> &'static str {
-    match c.dismiss {
-        None => "reopening the alert",
-        Some(_) => "closing the alert",
     }
 }
 

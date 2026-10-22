@@ -571,10 +571,8 @@ pub fn unavailable(state: &State, action: Action) -> Option<String> {
 
 /// Runs one of the actions on Home's sections.
 pub fn act(state: &mut State, action: Action) -> Cmds {
-    let (path, plan) = match plan(state, action) {
-        Ok((path, plan)) => (path.to_owned(), plan),
-        Err(why) => return state.just_say(why),
-    };
+    let (path, plan) = or_return!(plan(state, action), |why| state.just_say(why));
+    let path = path.to_owned();
     let (edit, what) = match plan {
         Plan::Title(titling, name) => {
             let cmds = state.open_picker(picker::Kind::SectionTitle(titling, path));

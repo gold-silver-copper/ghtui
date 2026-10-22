@@ -73,8 +73,7 @@ fn shape(url: &str) -> String {
         .take(5)
         .enumerate()
         .map(|(i, s)| {
-            let repo_part = host == "github.com" && i < 2;
-            if repo_part || s.bytes().any(|b| b.is_ascii_digit()) {
+            if i < 2 || s.bytes().any(|b| b.is_ascii_digit()) {
                 "*"
             } else {
                 s

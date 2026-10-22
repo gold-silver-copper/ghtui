@@ -94,14 +94,14 @@ pub struct Delete {
     pub owner: String,
 }
 
+/// Whether `route` is a gist form's page.
+fn is_form(route: &Route) -> bool {
+    matches!(route, Route::Gists(gists::NewGist | gists::EditGist { .. }))
+}
+
 /// The gist form on screen (blank until it's started), and its page.
 fn here(state: &State) -> Option<(Route, Cow<'_, Form>)> {
-    let route = state.route().filter(|r| {
-        matches!(
-            r,
-            Route::Gists(gists::NewGist) | Route::Gists(gists::EditGist { .. })
-        )
-    })?;
+    let route = state.route().filter(|r| is_form(r))?;
     Some((route.clone(), state.forms.shown(route)))
 }
 
@@ -670,7 +670,7 @@ fn offers(state: &State, out: &mut Vec<Doable>) {
 /// The menu's rows: a new gist anywhere a gist or profile is; changing
 /// and deleting your gist on its page.
 fn doables(state: &State, out: &mut Vec<Doable>) {
-    let Some(route) = state.route().filter(|_| here(state).is_none()) else { return };
+    let Some(route) = state.route().filter(|r| !is_form(r)) else { return };
     if let Route::Gists(gists::Gist { .. }) = route {
         let why = match shown(state) {
             Some(g) => not_yours(state, g),
