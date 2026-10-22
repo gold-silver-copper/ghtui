@@ -47,13 +47,9 @@ fn rows<'a>(state: &'a State, query: &str) -> Vec<Row<'a>> {
         Err(why) => vec![note(why)],
         Ok(replies) if replies.is_empty() => vec![note("You have no saved replies".to_owned())],
         Ok(replies) => {
-            let q = query.to_lowercase();
+            let has = |text: &str| crate::picker::find_ci(text, query).is_some();
             let mut found: Vec<Row> = (replies.iter())
-                .filter(|r| {
-                    q.is_empty()
-                        || r.title.to_lowercase().contains(&q)
-                        || r.body.to_lowercase().contains(&q)
-                })
+                .filter(|r| has(&r.title) || has(&r.body))
                 .map(|r| Row {
                     label: r.title.clone(),
                     insert: Some(&r.body),

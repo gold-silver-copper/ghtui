@@ -544,11 +544,11 @@ impl State {
     }
 
     fn file_rows(&self, q: &str, repo: &RepoId, rev: &str) -> Rows {
-        let (files, truncated) =
-            match listed::<Data, _>(self, &DataKey::Files(repo.clone(), rev.into()), "files") {
-                Ok(Data::Files(files, truncated)) => (files, truncated),
-                other => return other.err().unwrap_or_default(),
-            };
+        let key = DataKey::Files(repo.clone(), rev.into());
+        let Data::Files(files, truncated) = or_return!(listed::<Data, _>(self, &key, "files"))
+        else {
+            return Vec::new();
+        };
         let hits: Vec<((usize, usize, usize), &String)> = (files.iter().enumerate())
             .filter_map(|(i, p)| Some(((path_score(q, p)?, p.len(), i), p)))
             .collect();
@@ -565,14 +565,10 @@ impl State {
     }
 
     fn branch_rows(&self, q: &str, repo: &RepoId, rev: &str, path: &str, file: bool) -> Rows {
-        let refs = match listed::<crate::api::browse::Refs, _>(
-            self,
-            &DataKey::Refs(repo.clone()),
-            "branches",
-        ) {
-            Ok(refs) => refs,
-            other => return other.err().unwrap_or_default(),
-        };
+        let key = DataKey::Refs(repo.clone());
+        let refs = or_return!(listed::<crate::api::browse::Refs, _>(
+            self, &key, "branches"
+        ));
         let default = self
             .overview(repo)
             .and_then(|o| o.default_branch.as_deref());
@@ -664,32 +660,42 @@ impl State {
 }
 
 /// Case-insensitive subsequence match; lower is better. Substring matches
-/// rank before scattered ones, earlier before later.
+/// rank before scattered ones, earlier before later. ASCII (most of what's
+/// matched) is compared as it is, without lowercasing a copy.
 pub fn fuzzy_score(needle: &str, haystack: &str) -> Option<usize> {
+    /// Where the last of `needle` is found in `hay`, one after another.
+    fn scattered<T: PartialEq>(
+        needle: impl Iterator<Item = T>,
+        mut hay: impl Iterator<Item = (usize, T)>,
+    ) -> Option<usize> {
+        let mut last = 0;
+        for n in needle {
+            last = hay.find(|(_, h)| *h == n)?.0;
+        }
+        Some(1000 + last)
+    }
+    if !(needle.is_ascii() && haystack.is_ascii()) {
+        let (needle, hay) = (needle.to_lowercase(), haystack.to_lowercase());
+        return hay
+            .find(&needle)
+            .or_else(|| scattered(needle.chars(), hay.char_indices()));
+    }
+    let lower = |b: u8| b.to_ascii_lowercase();
+    find_ci(haystack, needle).or_else(|| {
+        let hay = haystack.bytes().map(lower).enumerate();
+        scattered(needle.bytes().map(lower), hay)
+    })
+}
+
+/// Where `needle` is in `hay`, in any case.
+pub(crate) fn find_ci(hay: &str, needle: &str) -> Option<usize> {
+    if !(hay.is_ascii() && needle.is_ascii()) {
+        return hay.to_lowercase().find(&needle.to_lowercase());
+    }
     if needle.is_empty() {
         return Some(0);
     }
-    let (needle, hay) = (lowered(needle), lowered(haystack));
-    if let Some(pos) = hay.find(&*needle) {
-        return Some(pos);
-    }
-    let mut chars = hay.char_indices();
-    let mut last = 0;
-    for n in needle.chars() {
-        let (i, _) = chars.find(|(_, h)| *h == n)?;
-        last = i;
-    }
-    Some(1000 + last)
-}
-
-/// `s` lowercased, copied only when that changes it: most of what's
-/// matched is lowercase already.
-fn lowered(s: &str) -> std::borrow::Cow<'_, str> {
-    if s.is_ascii() && !s.bytes().any(|b| b.is_ascii_uppercase()) {
-        std::borrow::Cow::Borrowed(s)
-    } else {
-        std::borrow::Cow::Owned(s.to_lowercase())
-    }
+    (hay.as_bytes().windows(needle.len())).position(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 /// Fuzzy file matching that prefers the file name.

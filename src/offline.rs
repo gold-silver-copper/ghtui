@@ -102,12 +102,11 @@ pub fn on_msg(state: &mut State, msg: Msg) -> Cmds {
                 return Cmds::new();
             }
             state.info("GitHub is back");
-            let mut cmds = Cmds::from(vec![
+            let cmds = Cmds::from(vec![
                 Do::Offline(Cmd::Queue(queue::Op::Flush)),
                 Do::Offline(Cmd::Keep(keep::Op::Now)),
             ]);
-            cmds.extend(state.load_visible(false));
-            return cmds;
+            return cmds.and(state.load_visible(false));
         }
         Msg::Probed(true) => state.offline.probe = None,
         Msg::Probed(false) => {
@@ -311,7 +310,7 @@ fn on_entry(state: &mut State, action: Action, entry: queue::Entry) -> Cmds {
         Action::Copy => match entry.write.text() {
             Some(text) => {
                 state.info(format!("Copied the text of {}", what.to_lowercase()));
-                Do::Copy(text).into()
+                Do::Copy(text.into_owned()).into()
             }
             None => state.just_say(format!("{what} has no text to copy")),
         },

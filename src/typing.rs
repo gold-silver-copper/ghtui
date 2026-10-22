@@ -123,23 +123,23 @@ fn repo_here(state: &State) -> Option<RepoId> {
 
 /// Who has taken part in the pull request or issue on screen, as far as
 /// what's loaded shows: its author first.
-fn participants(state: &State) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
+fn participants(state: &State) -> Vec<&str> {
+    let mut out: Vec<&str> = Vec::new();
     let pr = match (state.screen(), state.route()) {
         (Screen::Diff(screen), _) => screen.of.pr().cloned(),
         (_, Some(Route::Pulls(pulls::Pr { pr, .. }))) => Some(pr.clone()),
         _ => None,
     };
     if let Some(pr) = &pr {
-        out.extend(pr_participants(state, pr));
+        pr_participants(state, pr, &mut out);
     }
     if let Some(Route::Issues(issues::Issue { repo, number })) = state.route() {
         let issue =
             state.picked::<Option<Box<IssueDetail>>>(&DataKey::Issue(repo.clone(), *number));
         if let Some(Some(issue)) = issue {
-            out.push(issue.author.clone());
-            out.extend(issue.comments().map(|c| c.author.clone()));
-            out.extend(issue.assignees.iter().cloned());
+            out.push(&issue.author);
+            out.extend(issue.comments().map(|c| c.author.as_str()));
+            out.extend(issue.assignees.iter().map(String::as_str));
         }
     }
     let mut seen = std::collections::HashSet::new();
@@ -147,16 +147,15 @@ fn participants(state: &State) -> Vec<String> {
     out
 }
 
-fn pr_participants(state: &State, pr: &PrRef) -> Vec<String> {
-    let mut out = Vec::new();
+fn pr_participants<'a>(state: &'a State, pr: &PrRef, out: &mut Vec<&'a str>) {
     if let Some(d) = state.pr(pr) {
-        out.push(d.author.clone());
+        out.push(&d.author);
     }
     if let Some(a) = state.picked::<PrActivity>(&DataKey::PrActivity(pr.clone())) {
-        out.extend(a.comments().map(|c| c.author.clone()));
-        out.extend(a.reviews().map(|r| r.author.clone()));
+        out.extend(a.comments().map(|c| c.author.as_str()));
+        out.extend(a.reviews().map(|r| r.author.as_str()));
         out.extend(a.requested.iter().filter_map(|r| match &r.who {
-            crate::api::browse::Reviewer::User(login) => Some(login.clone()),
+            crate::api::browse::Reviewer::User(login) => Some(login.as_str()),
             crate::api::browse::Reviewer::Team(_) => None,
         }));
     }
@@ -165,10 +164,9 @@ fn pr_participants(state: &State, pr: &PrRef) -> Vec<String> {
         out.extend(
             threads
                 .iter()
-                .flat_map(|t| t.comments.iter().map(|c| c.author.clone())),
+                .flat_map(|t| t.comments.iter().map(|c| c.author.as_str())),
         );
     }
-    out
 }
 
 /// The comment box's choices for what's typed at its cursor, if it's an
@@ -182,7 +180,7 @@ pub fn completions(state: &State) -> Option<Vec<Choice>> {
     }
     let known =
         repo_here(state).and_then(|repo| state.picked::<Mentionable>(&DataKey::Mentionable(repo)));
-    let query = typed.query.to_lowercase();
+    let query = typed.query.as_str();
     let choices: Vec<Choice> = if typed.sigil == '@' {
         let mut people = participants(state);
         // GitHub lists each login once: only those taking part repeat.
@@ -193,14 +191,13 @@ pub fn completions(state: &State) -> Option<Vec<Choice>> {
                 .take(taking)
                 .any(|p| p.eq_ignore_ascii_case(login))
             {
-                people.push(login.clone());
+                people.push(login);
             }
         }
         // Logins that start with what's typed, then those that have it.
         let (first, rest): (Vec<_>, Vec<_>) = (people.into_iter())
-            .map(|login| (login.to_lowercase(), login))
-            .filter(|(low, _)| low.contains(&query))
-            .partition(|(low, _)| low.starts_with(&query));
+            .filter_map(|login| Some((picker::find_ci(login, query)?, login)))
+            .partition(|(at, _)| *at == 0);
         (first.into_iter().chain(rest))
             .take(SHOWN)
             .map(|(_, login)| Choice {
@@ -212,7 +209,7 @@ pub fn completions(state: &State) -> Option<Vec<Choice>> {
         let issues = known.iter().flat_map(|m| &m.issues);
         issues
             .filter(|(number, title)| {
-                number.to_string().starts_with(&query) || title.to_lowercase().contains(&query)
+                number.to_string().starts_with(query) || picker::find_ci(title, query).is_some()
             })
             .take(SHOWN)
             .map(|(number, title)| Choice {
