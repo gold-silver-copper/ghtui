@@ -283,10 +283,9 @@ impl Job for Make {
 
     fn done(self, state: &mut State, result: Result<MadeRepo, Failure>) -> Cmds {
         let Make { route, .. } = &self;
-        let made = match result {
-            Ok(made) => made,
-            Err(why) => return crate::forms::failed(state, route, why.to_string()),
-        };
+        let made = or_return!(result, |why| {
+            crate::forms::failed(state, route, why.to_string())
+        });
         state.info(format!("Created {}", made.full_name));
         let on_form = state.route() == Some(route);
         let mut cmds = opened(state, route, &made).unwrap_or_default();

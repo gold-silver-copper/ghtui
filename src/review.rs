@@ -726,10 +726,9 @@ pub(crate) fn review_action(state: &mut State, action: Action) -> Cmds {
             state.compose(Target::Review(Comment::File { path, reason: None }), "")
         }
         Action::Suggest => {
-            let target = match target(&diff.doc, cursor, half, screen.selection) {
-                Ok(target) => target,
-                Err(err) => return error(state, &err),
-            };
+            let target = or_return!(target(&diff.doc, cursor, half, screen.selection), |err| {
+                error(state, &err)
+            });
             let Comment::Line { path, start, end } = target else {
                 return error(state, "Suggestions need lines GitHub can comment on");
             };

@@ -290,10 +290,7 @@ pub fn repo_symbols(state: &mut State) -> Cmds {
 /// `gR`: where the word under the cursor is used in the repository, at
 /// the revision on screen.
 pub fn references(state: &mut State) -> Cmds {
-    let here = match here(state, false) {
-        Ok(here) => here,
-        Err(why) => return state.just_say(why),
-    };
+    let here = or_return!(here(state, false), |why| state.just_say(why));
     let Some(word) = name_here(state, here.word.clone()) else { return Cmds::new() };
     state.info(format!("Looking for “{word}” in {}", here.repo));
     ask(state, &here, Want::References(word))
@@ -331,10 +328,7 @@ pub fn go_to_line(state: &mut State, line: u32) -> Cmds {
 /// `gd`: the definition of the word under the cursor. One in this file
 /// is gone to (several are offered); else the repository is asked.
 pub fn definition(state: &mut State) -> Cmds {
-    let here = match here(state, true) {
-        Ok(here) => here,
-        Err(why) => return state.just_say(why),
-    };
+    let here = or_return!(here(state, true), |why| state.just_say(why));
     let Some(word) = name_here(state, here.word.clone()) else { return Cmds::new() };
     let defines = |s: &&Scope| s.defines.as_deref() == Some(word.as_str());
     let local: Vec<Scope> = here.scopes.iter().filter(defines).cloned().collect();

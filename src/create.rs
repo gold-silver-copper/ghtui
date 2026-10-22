@@ -21,11 +21,12 @@ use crate::api::model::{Capped, NodeId, PrRef, RepoId};
 use crate::api::{ApiError, GitHub};
 use crate::git::local::{self, Branch, CommitMessage};
 
+use crate::api::browse::Refs;
 use crate::data::{Data, DataKey};
 use crate::forms::{Answer, Fields, Sent, say};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
-use crate::picker::Choice;
+use crate::picker::{Choice, listed};
 use crate::state::{Cmds, State};
 use crate::ui::form::Row;
 use crate::work::{self, Cx, Failure, Job};
@@ -443,10 +444,7 @@ fn head_problem<'a>(state: &'a State, repo: &RepoId, form: &Form) -> Result<&'a 
 fn ask_create(state: &mut State, route: &Route) -> Cmds {
     let Some(form) = state.forms.get::<Form>(route) else { return Cmds::new() };
     let Some(repo) = form_repo(route) else { return Cmds::new() };
-    let hs = match head_problem(state, repo, form) {
-        Ok(hs) => hs,
-        Err(why) => return say(state, why),
-    };
+    let hs = or_return!(head_problem(state, repo, form), |why| say(state, why));
     let (base, head) = (
         form.base.clone().unwrap_or_default(),
         form.head.clone().unwrap_or_default(),
@@ -551,10 +549,7 @@ pub fn answer(state: &mut State, route: &Route, draft: Option<bool>) -> Cmds {
     let work: work::Work = match draft {
         None => Push { repo, branch: head }.into(),
         Some(draft) => {
-            let hs = match head_problem(state, &repo, form) {
-                Ok(hs) => hs,
-                Err(why) => return say(state, why),
-            };
+            let hs = or_return!(head_problem(state, &repo, form), |why| say(state, why));
             let Some(d) = form_data(&state.data, &repo) else { return Cmds::new() };
             let (title, body) = templates::split(&form.text);
             let new = Submission::Pr(NewPr {
@@ -770,12 +765,7 @@ pub fn picker_rows(state: &State, pick: Pick, q: &str) -> crate::picker::Rows {
     let fits = |s: &str| crate::picker::fuzzy_score(q, s).is_some();
     if matches!(pick, Pick::Base | Pick::Head) {
         let key = DataKey::Refs(repo.clone());
-        let refs =
-            match crate::picker::listed::<crate::api::browse::Refs, _>(state, &key, "the branches")
-            {
-                Ok(refs) => refs,
-                Err(why) => return why,
-            };
+        let refs = or_return!(listed::<Refs, _>(state, &key, "the branches"));
         let chosen = if pick == Pick::Base {
             &form.base
         } else {

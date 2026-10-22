@@ -9,8 +9,7 @@ use crate::api::model::{Capped, NodeId, RepoId};
 use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
-use crate::picker::fuzzy_score;
-use crate::picker::{Choice, entry};
+use crate::picker::{Choice, entry, fuzzy_score, listed};
 use crate::route::Route;
 use crate::state::{Cmds, State};
 use crate::work::{self, Cx, Failure, Job};
@@ -130,10 +129,7 @@ pub fn open(state: &mut State) -> Cmds {
 /// if the repository's in it; and, for a name no list has, making it.
 pub fn rows(state: &State, repo: &RepoId, q: &str) -> crate::picker::Rows {
     let key = DataKey::MyLists(repo.clone());
-    let mine = match crate::picker::listed::<MyLists, _>(state, &key, "your lists") {
-        Ok(m) => m,
-        Err(rows) => return rows,
-    };
+    let mine = or_return!(listed::<MyLists, _>(state, &key, "your lists"));
     let ids = |except: Option<&NodeId>| -> Vec<NodeId> {
         (mine.lists.iter())
             .filter(|l| l.has == Some(true) && Some(&l.id) != except)
@@ -271,10 +267,9 @@ pub fn ask_delete(state: &mut State) -> Cmds {
     };
     let list = yours(state, login).map(|l| l.list.clone());
     let route = route.clone();
-    let list = match list {
-        Ok(list) => list,
-        Err(why) => return state.just_say(format!("Can't delete the list: {why}")),
-    };
+    let list = or_return!(list, |why| {
+        state.just_say(format!("Can't delete the list: {why}"))
+    });
     let n = list.count;
     let facts = vec![(
         format!(

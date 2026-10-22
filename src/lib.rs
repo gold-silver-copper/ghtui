@@ -4,6 +4,32 @@
 #[macro_use]
 mod words;
 
+/// A result's value, or a return from the function with its error (or
+/// with what `answer` makes of it): `?` for a function that returns
+/// what it says when something's missing.
+macro_rules! or_return {
+    ($result:expr) => {
+        match $result {
+            Ok(value) => value,
+            Err(answer) => return answer,
+        }
+    };
+    ($result:expr, $answer:expr) => {
+        match $result {
+            Ok(value) => value,
+            // Through a function, so `answer`'s argument is typed as the error.
+            Err(why) => {
+                return {
+                    fn answer<E, R>(why: E, f: impl FnOnce(E) -> R) -> R {
+                        f(why)
+                    }
+                    answer(why, $answer)
+                }
+            }
+        }
+    };
+}
+
 // The parts that know nothing of the app: GitHub, diffs, git, storage,
 // the theme and drawing.
 pub mod api;

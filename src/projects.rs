@@ -320,10 +320,7 @@ fn why_not(state: &State, h: &Here<'_>, action: Action) -> Option<String> {
         Action::ArchiveItem => editable(state, h).err(),
         Action::EditComment | Action::EditTitle => draft(state, h).err(),
         Action::SetField => {
-            let (p, _) = match editable(state, h) {
-                Ok(found) => found,
-                Err(why) => return Some(why),
-            };
+            let (p, _) = or_return!(editable(state, h), Some);
             (!p.fields.iter().any(|f| f.kind.settable())).then(|| {
                 "The project has no fields to set: only its own text, number, date, single-select and iteration fields can be"
                     .to_owned()

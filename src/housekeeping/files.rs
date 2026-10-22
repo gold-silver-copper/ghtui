@@ -236,10 +236,7 @@ pub(super) fn ask_commit(state: &mut State, route: &Route) -> Cmds {
     if let Some(why) = problem(state, route, of) {
         return crate::forms::say(state, why);
     }
-    let clone = match clone_here(state, &repo) {
-        Ok(clone) => clone,
-        Err(cmds) => return cmds,
-    };
+    let clone = or_return!(clone_here(state, &repo));
     let f = form(state, route);
     let now = path(&f).to_owned();
     let branch = f.get(Field::Branch).trim().to_owned();

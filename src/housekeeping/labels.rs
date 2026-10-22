@@ -13,6 +13,7 @@ use super::{
     selected, setting,
 };
 use crate::data::DataKey;
+use crate::forms::say;
 use crate::state::{Cmds, State};
 use crate::work::{self, Cx, Failure, Job};
 
@@ -177,18 +178,15 @@ pub(super) fn change(f: &Form) -> Result<LabelChange, String> {
 /// Makes or saves the label: no question, as on GitHub.
 pub(super) fn submit(state: &mut State, route: &Route, repo: &RepoId, was: Option<&str>) -> Cmds {
     if let Some(why) = refused(state, repo, "Changing labels") {
-        return crate::forms::say(state, why);
+        return say(state, why);
     }
-    let change = match change(&form(state, route)) {
-        Ok(c) => c,
-        Err(why) => return crate::forms::say(state, why),
-    };
+    let change = or_return!(change(&form(state, route)), |why| say(state, why));
     let taken = list(state, repo).is_some_and(|l| {
         (l.items.iter())
             .any(|l| l.name.eq_ignore_ascii_case(&change.name) && Some(l.name.as_str()) != was)
     });
     if taken {
-        return crate::forms::say(
+        return say(
             state,
             format!("{repo} has a label named {} already", change.name),
         );

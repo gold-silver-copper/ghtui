@@ -26,7 +26,7 @@ use crate::act::{Step, Subject, issue};
 use crate::data::DataKey;
 use crate::keymap::Action;
 use crate::nav::Doable;
-use crate::picker::fuzzy_score;
+use crate::picker::{fuzzy_score, listed};
 use crate::state::{Cmds, Overlay, State};
 use crate::ui::page::Link;
 use crate::work::{self, Cx, Failure, Job};
@@ -764,11 +764,7 @@ fn base_rows(state: &State, pr: &PrRef, id: &NodeId, from: &str, head: &str, q: 
 fn transfer_rows(state: &State, issue: &IssueAt, id: &NodeId, q: &str) -> Rows {
     let owner = &issue.repo.owner;
     let key = DataKey::MoveTargets(owner.to_string());
-    let targets = match crate::picker::listed::<Capped<Target>, _>(state, &key, "the repositories")
-    {
-        Ok(t) => t,
-        Err(rows) => return rows,
-    };
+    let targets = or_return!(listed::<Capped<Target>, _>(state, &key, "the repositories"));
     let about = Subject::Issue(issue.repo.clone(), issue.number);
     let mut rows: Rows = (targets.iter())
         .filter(|t| t.repo != issue.repo)
@@ -922,10 +918,7 @@ fn relation_rows(state: &State, at: &IssueAt, id: &NodeId, q: &str, sub: bool) -
 
 fn category_rows(state: &State, repo: &RepoId, q: &str) -> Rows {
     let key = DataKey::Categories(repo.clone());
-    let found = match crate::picker::listed::<Categories, _>(state, &key, "its categories") {
-        Ok(c) => c,
-        Err(rows) => return rows,
-    };
+    let found = or_return!(listed::<Categories, _>(state, &key, "its categories"));
     let mut rows: Rows = (found.categories.iter())
         .filter(|c| fuzzy_score(q, &c.name).is_some())
         .map(|c| {
@@ -1199,10 +1192,9 @@ impl Job for Revert {
     }
 
     fn done(self, state: &mut State, result: Result<u64, Failure>) -> Cmds {
-        let number = match result {
-            Ok(number) => number,
-            Err(why) => return refused(state, format!("GitHub refused the revert: {why}")),
-        };
+        let number = or_return!(result, |why| {
+            refused(state, format!("GitHub refused the revert: {why}"))
+        });
         close_confirm(state);
         state.info(format!("Opened #{number}, which reverts {}", self.pr));
         let made = PrRef {

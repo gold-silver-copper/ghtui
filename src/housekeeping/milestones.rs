@@ -13,6 +13,7 @@ use super::{
     item, refused, selected, setting,
 };
 use crate::data::DataKey;
+use crate::forms::say;
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
 use crate::state::{Cmds, State};
@@ -146,12 +147,9 @@ pub(super) fn change(f: &Form) -> Result<MilestoneChange, String> {
 
 pub(super) fn submit(state: &mut State, route: &Route, repo: &RepoId, number: Option<u64>) -> Cmds {
     if let Some(why) = refused(state, repo, WHAT) {
-        return crate::forms::say(state, why);
+        return say(state, why);
     }
-    let change = match change(&form(state, route)) {
-        Ok(c) => c,
-        Err(why) => return crate::forms::say(state, why),
-    };
+    let change = or_return!(change(&form(state, route)), |why| say(state, why));
     crate::forms::form_sending(state, route);
     state.info(format!("Saving the milestone {}…", change.title));
     work::start(Save {

@@ -13,8 +13,7 @@ use crate::data::DataKey;
 use crate::follow::{Expectation, Shown};
 use crate::keymap::Action;
 use crate::nav::{Doable, row};
-use crate::picker::fuzzy_score;
-use crate::picker::{Choice, entry};
+use crate::picker::{Choice, entry, fuzzy_score, listed};
 use crate::state::{Cmds, Screen, State};
 use crate::work::{Cx, Failure, Job};
 
@@ -181,10 +180,7 @@ fn choices(of: &Watched) -> [(SubscriptionState, &'static str, &'static str); 3]
 /// there are none.
 pub fn rows(state: &State, of: &Watched, q: &str) -> crate::picker::Rows {
     let key = DataKey::Subscription(of.clone());
-    let s = match crate::picker::listed::<Subscription, _>(state, &key, "your subscription") {
-        Ok(s) => s,
-        Err(rows) => return rows,
-    };
+    let s = or_return!(listed::<Subscription, _>(state, &key, "your subscription"));
     if !s.can {
         return vec![entry("GitHub doesn't let you subscribe to it", "", None)];
     }

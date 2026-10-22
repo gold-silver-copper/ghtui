@@ -222,10 +222,7 @@ fn submit(state: &mut State) -> Cmds {
     if page.is_some() && form.page.is_none() {
         return say(state, "The page hasn't loaded yet".into());
     }
-    let save = match to_save(state, &repo, &form) {
-        Ok(save) => save,
-        Err(why) => return say(state, why),
-    };
+    let save = or_return!(to_save(state, &repo, &form), |why| say(state, why));
     crate::forms::form_sending(state, &route);
     state.info(format!("Saving {}…", save.title));
     work::start(Save { route, save })

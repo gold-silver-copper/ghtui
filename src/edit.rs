@@ -612,10 +612,7 @@ pub fn rows(state: &State, c: &Choosing, q: &str) -> Rows {
             }
         }
         Choosing::Milestone { .. } => {
-            let s = match sidebar(state, c) {
-                Ok(s) => s,
-                Err(rows) => return rows,
-            };
+            let s = or_return!(sidebar(state, c));
             let now = s.milestone.as_ref().map(|m| m.name.as_str());
             let mark = |on: bool| if on { "✓" } else { " " };
             let mut rows = Vec::new();
@@ -650,10 +647,7 @@ pub fn rows(state: &State, c: &Choosing, q: &str) -> Rows {
             rows
         }
         Choosing::Many { field, chosen, .. } => {
-            let s = match sidebar(state, c) {
-                Ok(s) => s,
-                Err(rows) => return rows,
-            };
+            let s = or_return!(sidebar(state, c));
             let (set, options) = field_names(s, *field);
             let set: Vec<&str> = set.iter().map(|n| n.name.as_str()).collect();
             let chosen: BTreeSet<&str> = match chosen {

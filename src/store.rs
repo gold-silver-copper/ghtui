@@ -345,10 +345,9 @@ impl Store {
     /// Writes `value` behind ([`Db::flush`]): reads see it at once.
     fn write_later<T: Serialize + ?Sized>(&self, table: &'static str, key: &str, value: &T) {
         let Some(db) = &self.db else { return };
-        let bytes = match serde_json::to_vec(value) {
-            Ok(bytes) => bytes,
-            Err(err) => return tracing::warn!(key, %err, "cannot encode for the cache"),
-        };
+        let bytes = or_return!(serde_json::to_vec(value), |err| {
+            tracing::warn!(key, %err, "cannot encode for the cache");
+        });
         let start = {
             let mut later = lock(&db.later);
             later.rows.insert((table, key.to_owned()), bytes.into());

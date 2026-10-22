@@ -129,10 +129,11 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> crate::picker::Rows {
             };
             let key = DataKey::Refs(repo.clone());
             let route = form_route((repo, file));
-            let refs = match crate::picker::listed::<Refs, _>(state, &key, "the branches") {
-                Ok(refs) => refs,
-                Err(why) => return why,
-            };
+            let refs = or_return!(crate::picker::listed::<Refs, _>(
+                state,
+                &key,
+                "the branches"
+            ));
             let chosen = form_ref(state);
             let mut rows: Vec<_> = (refs.branches.iter())
                 .filter(|b| crate::picker::fuzzy_score(q, b).is_some())

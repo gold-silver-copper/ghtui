@@ -323,10 +323,9 @@ async fn diff_file(reader: &BlobReader, file: &ChangedFile) -> FileDiff {
         let side = |oid: &Oid| (!oid.is_zero()).then(|| oid.to_string());
         return FileDiff::submodule(side(&file.old_oid), side(&file.new_oid));
     }
-    let (old, new) = match sides(reader, file).await {
-        Ok(sides) => sides,
-        Err(err) => return FileDiff::error(err.to_string()),
-    };
+    let (old, new) = or_return!(sides(reader, file).await, |err| {
+        FileDiff::error(err.to_string())
+    });
     let sides = [(&file.old_oid, &old), (&file.new_oid, &new)];
     if let Some((oid, _)) = sides
         .iter()
