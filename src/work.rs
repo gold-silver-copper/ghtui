@@ -185,6 +185,9 @@ jobs! {
     EditConfig(crate::home::EditConfig),
     SetViewed(crate::review::SetViewed),
     Resolve(crate::review::Resolve),
+    CommitSuggestions(crate::suggest::Commit),
+    StartMerge(crate::conflicts::Start),
+    FinishMerge(crate::conflicts::Finish),
     SubmitReview(crate::review::Submit),
     Dispatch(crate::workflows::Dispatch),
 }

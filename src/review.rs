@@ -200,6 +200,9 @@ pub enum EditPurpose {
     },
     /// The review summary.
     Summary,
+    /// A conflict of `path` being resolved, by its part of the file
+    /// ([`crate::conflicts`]).
+    Conflict { path: String, part: usize },
 }
 
 /// What happened on submit.
@@ -525,6 +528,9 @@ pub(crate) fn on_edited(
             if let Some(Overlay::Submit(dialog)) = &mut state.overlay {
                 dialog.input = editor(theme, text.trim_end());
             }
+        }
+        EditPurpose::Conflict { path, part } => {
+            return crate::conflicts::edited(state, &path, part, text);
         }
         EditPurpose::Suggest {
             path,

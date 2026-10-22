@@ -163,6 +163,7 @@ actions! {
     Approve           "approve"           ["A"]                    Global "Approve the pull request";
     ReadyForReview    "ready_for_review"  []                       Global "Mark the draft ready for review, or convert it to a draft";
     UpdateBranch      "update_branch"     []                       Global "Update the branch from its base";
+    ResolveConflicts  "resolve_conflicts" []                       Global "Resolve the pull request's conflicts with its base, with git";
     Close             "close"             ["x"]                    Global "Close (as a duplicate too) or reopen (an alert: dismiss it); on a running run, cancel it";
     Rerun             "rerun"             ["R"]                    Global "Re-run the workflow run or job (a refused write: send it again)";
     EditComment       "edit"              ["e"]                    Global "Edit the comment or description (a wiki page, your gist, a release, a label, a milestone, a file)";
@@ -276,9 +277,15 @@ actions! {
     MarkReviewed      "mark_reviewed"     ["m"]                    Diff   "Mark the change reviewed";
     VisualLines       "select_lines"      ["s", "file:s"]          Diff   "Select lines";
     Suggest           "suggest"           []                       Diff   "Suggest a change (opens $EDITOR)";
+    CommitSuggestion  "commit_suggestion" []                       Diff   "Commit the suggestion (with a batch, the batch's)";
+    BatchSuggestion   "batch_suggestion"  []                       Diff   "Add the suggestion to a batch to commit, or take it out";
     FileComment       "file_comment"      []                       Diff   "Comment on the whole file";
     ResolveThread     "resolve"           ["x"]                    Diff   "Resolve or unresolve the thread";
     SubmitReview      "submit_review"     ["<C-s>"]                Diff   "Submit your review";
+    TakeOurs          "take_ours"         ["<"]                    Diff   "Resolve the conflict with your branch's side (the old, left one)";
+    TakeTheirs        "take_theirs"       [">"]                    Diff   "Resolve the conflict with the base's side (the new, right one)";
+    CommitMerge       "commit_merge"      []                       Diff   "Commit the resolved merge and push it to the branch";
+    AbortMerge        "abort_merge"       []                       Diff   "Stop resolving the conflicts, leaving GitHub as it was";
 }
 
 impl Action {
@@ -763,6 +770,10 @@ mod tests {
         assert_eq!(keymap.resolve(key('i'), DIFF), Some(Action::Hints));
         assert_eq!(keymap.resolve(key('i'), PAGE), Some(Action::Hints));
         assert_eq!(keymap.resolve(key('2'), PAGE), Some(Action::Tab2));
+        // A conflict's sides in the diff; on pages, `>` quotes.
+        assert_eq!(keymap.resolve(key('<'), DIFF), Some(Action::TakeOurs));
+        assert_eq!(keymap.resolve(key('>'), DIFF), Some(Action::TakeTheirs));
+        assert_eq!(keymap.resolve(key('>'), PAGE), Some(Action::QuoteReply));
         assert!(keymap.keys_in(Action::ScrollLeft, TREE).next().is_none());
     }
 

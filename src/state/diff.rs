@@ -14,7 +14,7 @@ impl State {
     pub fn diff_screen(&mut self, of: DiffOf, anchor: Option<String>) -> (Screen, Cmds) {
         let mut cmds = match &of {
             DiffOf::Pr(pr) => self.ensure(DataKey::Pr(pr.clone()), false),
-            DiffOf::Commit(..) | DiffOf::Range(..) => Cmds::new(),
+            DiffOf::Commit(..) | DiffOf::Range(..) | DiffOf::Conflicts(..) => Cmds::new(),
         };
         if !self.diffs.get(&of).is_some_and(|d| d.error.is_none()) {
             cmds.extend(self.start_diff(&of));
@@ -43,7 +43,9 @@ impl State {
                 Some(base) => base,
                 None => return Cmds::new(),
             },
-            DiffOf::Commit(..) | DiffOf::Range(..) => crate::diff_job::PrBase::default(),
+            DiffOf::Commit(..) | DiffOf::Range(..) | DiffOf::Conflicts(..) => {
+                crate::diff_job::PrBase::default()
+            }
         };
         let diff = DiffState::fresh();
         let job = diff.job;

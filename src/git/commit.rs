@@ -1,7 +1,9 @@
 //! Commits made from objects alone, through an index of their own, to
 //! push by their IDs: a clone's branches, index and working tree stay as
-//! they are. A wiki's pages ([`crate::wiki`]) and the files housekeeping
-//! commits ([`crate::housekeeping`]) are saved this way.
+//! they are. A wiki's pages ([`crate::wiki`]), the files housekeeping
+//! commits ([`crate::housekeeping`]) and a review's suggestions
+//! (`crate::suggest`) are saved this way; a merge resolving conflicts
+//! ([`crate::git::merge`]) shares its index and its author.
 
 use crate::git::GitError;
 use crate::git::repo::Repo;
@@ -34,7 +36,7 @@ pub fn moved_on(err: &GitError) -> bool {
 
 /// The mode of `path` at `rev` (an executable stays one), else a plain
 /// file's.
-async fn mode(repo: &Repo, rev: &str, path: &str) -> String {
+pub(crate) async fn mode(repo: &Repo, rev: &str, path: &str) -> String {
     let out = repo.run(&["ls-tree", rev, "--", path]).await;
     out.ok()
         .and_then(|o| o.split_whitespace().next().map(str::to_owned))
@@ -45,11 +47,7 @@ async fn mode(repo: &Repo, rev: &str, path: &str) -> String {
 /// The commit of `change` on `parent`, by you as git knows you (else as
 /// your login's GitHub address).
 pub async fn make(repo: &Repo, parent: &str, change: &Change<'_>) -> Result<String, GitError> {
-    let index = repo
-        .run(&["rev-parse", "--git-path", "ghtui-edit-index"])
-        .await?;
-    let index = repo.path.join(index.trim());
-    let index = index.with_file_name(format!("ghtui-edit-index-{}", std::process::id()));
+    let index = own_index(repo, "edit").await?;
     let index_path = index.to_string_lossy().into_owned();
     let env = [("GIT_INDEX_FILE", index_path.as_str())];
     let tree = async {
@@ -78,8 +76,30 @@ pub async fn make(repo: &Repo, parent: &str, change: &Change<'_>) -> Result<Stri
     .await;
     let _ = std::fs::remove_file(&index);
     let tree = tree?;
+    commit_tree(repo, tree.trim(), &[parent], change.message, change.login).await
+}
+
+/// An index of this process's own in `repo`, `name`d for what it's for,
+/// apart from the clone's.
+pub(crate) async fn own_index(repo: &Repo, name: &str) -> Result<std::path::PathBuf, GitError> {
+    let index = repo
+        .run(&["rev-parse", "--git-path", "ghtui-edit-index"])
+        .await?;
+    let index = repo.path.join(index.trim());
+    Ok(index.with_file_name(format!("ghtui-{name}-index-{}", std::process::id())))
+}
+
+/// The commit of `tree` on `parents`, saying `message`, by you as git
+/// knows you (else as your login's GitHub address).
+pub(crate) async fn commit_tree(
+    repo: &Repo,
+    tree: &str,
+    parents: &[&str],
+    message: &str,
+    login: Option<&str>,
+) -> Result<String, GitError> {
     let config = |key: &'static str| crate::git::local::config(&repo.path, key);
-    let login = change.login.unwrap_or("ghtui");
+    let login = login.unwrap_or("ghtui");
     let name = (config("user.name").await).unwrap_or_else(|| login.to_owned());
     let email =
         (config("user.email").await).unwrap_or_else(|| format!("{login}@users.noreply.github.com"));
@@ -89,9 +109,11 @@ pub async fn make(repo: &Repo, parent: &str, change: &Change<'_>) -> Result<Stri
         ("GIT_COMMITTER_NAME", name.as_str()),
         ("GIT_COMMITTER_EMAIL", email.as_str()),
     ];
-    let args = ["commit-tree", tree.trim(), "-p", parent, "-F", "-"];
-    let made = repo
-        .git(&args, &who, Some(change.message.to_owned()))
-        .await?;
+    let mut args = vec!["commit-tree", tree];
+    for parent in parents {
+        args.extend(["-p", parent]);
+    }
+    args.extend(["-F", "-"]);
+    let made = repo.git(&args, &who, Some(message.to_owned())).await?;
     Ok(made.trim().to_owned())
 }

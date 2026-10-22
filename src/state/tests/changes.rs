@@ -191,7 +191,10 @@ fn what_github_forbids_is_refused() {
 
     let mut s = with_pr();
     press(&mut s, "M");
-    says(&s, "It conflicts with main: resolve that on GitHub");
+    says(
+        &s,
+        "It conflicts with main: :resolve conflicts resolves that",
+    );
     let mut s = pr_with(|d| d.merge_state = MergeState::Blocked);
     press(&mut s, "M");
     says(&s, "blocked");

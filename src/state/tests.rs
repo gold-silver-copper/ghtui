@@ -240,6 +240,7 @@ pub(crate) use screens::*;
 
 mod changes;
 mod code_nav;
+mod conflicts;
 mod create;
 mod discussions;
 mod edits;
@@ -257,6 +258,7 @@ mod security;
 mod settings;
 mod site;
 mod smoke;
+mod suggestions;
 mod workflows;
 mod writes;
 

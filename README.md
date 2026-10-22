@@ -26,9 +26,12 @@ ghtui is pre-release, but it's usable every day.
 - **Reviewing** is where ghtui goes furthest. Diffs are computed locally
   with git, compared by syntax where the language allows, highlighted with
   tree-sitter, and shown unified or split. You
-  can reply, resolve, comment on lines or ranges, suggest changes, and
-  submit a review. Every review reads as on GitHub, with the threads it
-  started, and opens the changes it reviewed and what changed since.
+  can reply, resolve, comment on lines or ranges, suggest changes, commit
+  someone's suggestion (alone or in a batch), and submit a review. Every
+  review reads as on GitHub, with the threads it started, and opens the
+  changes it reviewed and what changed since. A pull request's conflicts
+  with its base are resolved with git, conflict by conflict, in the diff
+  viewer.
 - **Acting** works from a page or from a row in a list: merge (now, when
   checks pass, or through a merge queue), approve, mark ready for review,
   update a branch, close or reopen, re-run or cancel a workflow run, run
@@ -393,6 +396,38 @@ conversation: links follow (`i` letters them, `↵` on a link's line
 follows it), and a suggested change shows as a small diff of the lines it
 replaces.
 
+**Committing a suggestion**, as the website's "Commit suggestion" does:
+`:commit suggestion` on someone's suggestion (from the Space menu, where
+the cursor is on one) asks first, then commits it with git, in the clone
+the diff is in (yours or ghtui's): the suggested lines go in place of the
+ones it's on, in a commit on GitHub's latest of the head branch, with
+GitHub's message ("Update src/a.rs", each other author a
+`Co-authored-by`), pushed there by its ID; your branches, index and
+working tree stay as they are. Then its thread is resolved, and Files
+changed loads the new head once GitHub shows it. `:batch suggestion`
+adds one to a batch (or takes it out), and `:commit suggestion` then
+commits the batch as one commit ("Apply suggestions from code review").
+What GitHub wouldn't commit says why: an outdated suggestion, one in a
+pending review, one on deleted lines, a branch you can't push to (a
+fork whose author doesn't let maintainers push), a file changed on the
+branch since.
+
+**Resolving conflicts**, git first, where the website has its conflict
+editor: `:resolve conflicts` on a pull request that conflicts merges
+GitHub's latest of its base into GitHub's latest of its head with `git
+merge-tree` (git 2.38 or newer), in objects alone, and opens the
+conflicted files in the diff viewer against your branch's, each conflict
+between its markers. `<` takes your branch's side of the conflict under
+the cursor, `>` the base's, and `e` edits it in `$EDITOR`; a file changed
+on one side and deleted on the other (or not text) takes one side whole.
+The diff shows each file as it's resolved. `:commit merge` asks, then
+commits the merge commit GitHub's editor makes ("Merge branch 'main'
+into topic") and pushes it to the head branch, unless that moved since;
+the pull request then follows GitHub until it shows the merge.
+`:abort merge` stops at any step, leaving GitHub and your clone's
+branches as they were. A merge only, as GitHub's editor: rebasing is
+left to your clone.
+
 **While you review**, ghtui keeps an eye on the pull request: while its
 Files changed, its Review tab or its conversation is on screen, it asks
 GitHub now and then for new review comments, a new push and check
@@ -745,7 +780,9 @@ says where it works.
   and `⇧→` pick the old or new half of a split row to comment on. `↵`
   opens a fold or a gap, folds a file at its header, and jumps between
   the ends of moved code. In the file tree, `←` and `→` fold and unfold
-  folders, and the diff shows the file selected there.
+  folders, and the diff shows the file selected there. In a pull
+  request's conflicts, `<` takes your branch's side of the one under the
+  cursor (the old side, on the left), `>` the base's, and `e` edits it.
 - The diff's view: `w` wraps long lines, `W` ignores whitespace, `y`
   compares by syntax or by lines, `|` switches split and unified, `\`
   shows or hides the file tree, `z` folds or unfolds what's under the
@@ -902,6 +939,8 @@ says where it works.
 | `s`      | Select lines |
 | `x`      | Resolve or unresolve the thread |
 | `ctrl-s` | Submit your review |
+| `<`      | Resolve the conflict with your branch's side (the old, left one) |
+| `>`      | Resolve the conflict with the base's side (the new, right one) |
 
 **In Files changed's file tree** (`tree:`)
 
@@ -1310,6 +1349,15 @@ checks; `cargo xtask live issue offline` runs only those.
     says it's left out. Inviting someone (GitHub emails them), changing a
     member's role and answering an invitation sent to you (it takes a
     second account to send one) are left to the tests.
+  - `suggestion` opens a pull request of a branch of its own with a
+    suggestion on it (made with `gh api`), commits it with `:commit
+    suggestion`, and checks the branch has it with GitHub's message and
+    its thread is resolved.
+  - `conflicts` makes two branches of its own that add one file each
+    their own way, and a pull request of one into the other; once GitHub
+    finds the conflict, `:resolve conflicts` merges with git, `>` takes
+    the base's side and `:commit merge` pushes the merge, which GitHub
+    then has with both parents and GitHub's message.
   - `offline` runs ghtui against a stand-in Enterprise Server (below)
     on port 8451, and stops it to make GitHub go away, without touching
     the machine's network: the page stays, marked offline; a comment
@@ -1339,7 +1387,7 @@ checks; `cargo xtask live issue offline` runs only those.
 - **What it touches and cleans up:** it writes only to the test
   repository (and, for `orgs`, to an organization the account owns).
   Each check undoes what it made, pass or fail: the issues (deleted), the
-  pull request (closed) and its branch, the release and its tag, the
+  pull requests (closed) and their branches, the release and its tag, the
   label, the protection rule, the workflow run, the variable, the secret,
   the Pages site, the draft advisory (closed) and the team (deleted); and
   the fux server and the stand-in are stopped. ctrl-c stops the run after
@@ -1422,6 +1470,10 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
 - `:lists` reads up to 1,000 of a list's repositories to say whether one is
   in it, and says when a list is longer. A new list is public; its
   name, description and privacy are changed on github.com.
+- Committing a suggestion uses GitHub's own message, without asking for
+  another. Resolving conflicts makes a merge commit, as GitHub's
+  conflict editor does (a rebase is your clone's to do), and takes git
+  2.38 or newer, for `git merge-tree`.
 
 - A running job's log shows once the job ends: GitHub's API has no log
   until then (its website streams it over a connection only a signed-in

@@ -74,6 +74,38 @@ impl Login {
     }
 }
 
+/// `login` as a commit's co-author: at their no-reply address, as GitHub
+/// gives every account, with their number in front (`123+login@…`) once
+/// that's known, which is how GitHub links it.
+fn co_author(name: &str, login: &str, id: Option<u64>) -> String {
+    let host = crate::host::current().name();
+    let host = host.split(':').next().unwrap_or(host);
+    let user = id.map_or_else(|| login.to_owned(), |id| format!("{id}+{login}"));
+    format!("{name} <{user}@users.noreply.{host}>")
+}
+
+/// An account, as much as a co-author needs of it.
+#[derive(Deserialize)]
+struct Account {
+    login: String,
+    id: u64,
+    name: Option<String>,
+}
+
+impl crate::api::GitHub {
+    /// `login` as a commit's co-author, as GitHub writes one when it
+    /// commits a suggestion of theirs: their name (else login) at their
+    /// no-reply address. When GitHub can't say, their login's address,
+    /// which GitHub links for older accounts.
+    pub async fn co_author(&self, login: &str) -> String {
+        let path = format!("/users/{login}");
+        let found = self.rest_json::<Account>(&path, format!("@{login}")).await;
+        let Ok(a) = found else { return co_author(login, login, None) };
+        let name = a.name.as_deref().map(str::trim).filter(|n| !n.is_empty());
+        co_author(name.unwrap_or(&a.login), &a.login, Some(a.id))
+    }
+}
+
 impl From<Option<GitActor>> for Person {
     fn from(actor: Option<GitActor>) -> Person {
         match actor {

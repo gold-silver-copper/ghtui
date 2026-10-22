@@ -10,6 +10,7 @@ use super::Check;
 mod actions;
 mod issue;
 mod labels;
+mod merging;
 mod offline;
 mod orgs;
 mod pages;
@@ -29,5 +30,7 @@ pub const ALL: &[Check] = &[
     actions::CHECK,
     orgs::ADVISORY,
     orgs::ORGS,
+    merging::SUGGESTION,
+    merging::CONFLICTS,
     offline::CHECK,
 ];
