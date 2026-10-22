@@ -131,8 +131,12 @@ pub fn on_hints_key(state: &mut State, key: KeyEvent) -> Cmds {
             state.overlay = None;
             match link {
                 // The page's own tab: switched to, not gone to.
-                Link::Url(_) if !browser && !tab && page_tab.is_some() => {
-                    switch_tab(state, page_tab.unwrap_or(1))
+                Link::Url(_)
+                    if !browser
+                        && !tab
+                        && let Some(n) = page_tab =>
+                {
+                    switch_tab(state, n)
                 }
                 Link::Url(url) if browser => state.go(Target::External(url).into()),
                 Link::Url(url) if tab => state.open_tab(Dest::from_url(&url)),

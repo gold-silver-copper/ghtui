@@ -228,13 +228,13 @@ fn the_menu_lists_and_runs_what_you_can_do() {
 #[test]
 fn status_bar_hints_follow_the_context() {
     let mut state = with_repo();
-    let hints: Vec<String> = state.key_hints().into_iter().map(|(_, w)| w).collect();
-    assert_eq!(hints[..2], ["menu", "open"]);
-    assert!(hints.contains(&"go to file".to_owned()));
+    let hints = |state: &State| Vec::from_iter(state.key_hints().into_iter().map(|(_, w)| w));
+    assert_eq!(hints(&state)[..2], ["menu", "open"]);
+    assert!(hints(&state).contains(&"go to file".into()));
     press(&mut state, "2");
-    let hints: Vec<String> = state.key_hints().into_iter().map(|(_, w)| w).collect();
+    let hints = hints(&state);
     assert!(
-        hints.contains(&"filter".to_owned()) && hints.contains(&"tabs".to_owned()),
+        hints.contains(&"filter".into()) && hints.contains(&"tabs".into()),
         "{hints:?}"
     );
 }

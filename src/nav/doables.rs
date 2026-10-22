@@ -371,9 +371,10 @@ impl State {
         availability_in(&self.doables(), action)
     }
 
-    /// The status bar's key hints.
-    pub fn key_hints(&self) -> Vec<(String, String)> {
-        let pair = |keys: &str, what: &str| (keys.to_owned(), what.to_owned());
+    /// The status bar's key hints: what they do is mostly written in, so
+    /// the rebuild each frame copies none.
+    pub fn key_hints(&self) -> Vec<(String, Cow<'static, str>)> {
+        let pair = |keys: &str, what: &'static str| (keys.to_owned(), what.into());
         match &self.overlay {
             Some(Overlay::Search(sb)) => {
                 let enter = match self.route() {
@@ -442,14 +443,14 @@ impl State {
         // The menu first: everything else is in it, so it must never be
         // the hint a narrow terminal drops. Then what fits the thing under
         // the cursor, then the screen's usual verbs.
-        let menu = (self.first_key(Action::Menu), "menu".to_owned());
+        let menu = (self.first_key(Action::Menu), "menu".into());
         let focused = self.focus_hints();
         // The file tree's keys are all its own.
         let tree = self.contexts().first() == Some(&crate::keymap::Context::Tree);
         let usual = ((!tree).then(|| self.doables()).into_iter().flatten())
             .filter(|d| d.unavailable.is_none() && !d.short.is_empty())
             .filter(|d| !focused.iter().any(|(a, _)| *a == d.action))
-            .map(|d| (d.action, d.short.to_owned()));
+            .map(|d| (d.action, d.short.into()));
         let hints = focused
             .iter()
             .cloned()
@@ -474,17 +475,17 @@ impl State {
 
     /// Verbs for what's under the diff's cursor (a thread, a draft) and for
     /// a review in progress, most useful first.
-    pub(super) fn focus_hints(&self) -> Vec<(Action, String)> {
+    pub(super) fn focus_hints(&self) -> Vec<(Action, Cow<'static, str>)> {
         let Screen::Diff(screen) = self.screen() else { return Vec::new() };
         let Some(diff) = self.diffs.get(&screen.of) else { return Vec::new() };
         let mut out = Vec::new();
         // The file tree has its own keys.
         if screen.focus == Pane::Tree && screen.prefs.tree_visible {
             return vec![
-                (Action::Open, "show file".to_owned()),
-                (Action::Fold, "fold".to_owned()),
-                (Action::Unfold, "unfold".to_owned()),
-                (Action::SwitchPane, "to the diff".to_owned()),
+                (Action::Open, "show file".into()),
+                (Action::Fold, "fold".into()),
+                (Action::Unfold, "unfold".into()),
+                (Action::SwitchPane, "to the diff".into()),
             ];
         }
         let here = diff
@@ -493,17 +494,17 @@ impl State {
             .and_then(|i| diff.doc.annotations().get(i as usize));
         match here {
             Some(a) if a.is_draft() => {
-                out.push((Action::Open, "edit".to_owned()));
-                out.push((Action::Delete, "delete".to_owned()));
+                out.push((Action::Open, "edit".into()));
+                out.push((Action::Delete, "delete".into()));
             }
             Some(a) => {
                 if a.can_reply {
-                    out.push((Action::Comment, "reply".to_owned()));
+                    out.push((Action::Comment, "reply".into()));
                 }
                 if a.resolved && a.can_unresolve {
-                    out.push((Action::ResolveThread, "unresolve".to_owned()));
+                    out.push((Action::ResolveThread, "unresolve".into()));
                 } else if !a.resolved && a.can_resolve {
-                    out.push((Action::ResolveThread, "resolve".to_owned()));
+                    out.push((Action::ResolveThread, "resolve".into()));
                 }
             }
             None => {}
@@ -516,14 +517,17 @@ impl State {
             && left != right
         {
             match diff.doc.half_at(screen.cursor, screen.half) {
-                Some(Side::Left) => out.push((Action::NewSide, "new side".to_owned())),
-                Some(Side::Right) => out.push((Action::OldSide, "old side".to_owned())),
+                Some(Side::Left) => out.push((Action::NewSide, "new side".into())),
+                Some(Side::Right) => out.push((Action::OldSide, "old side".into())),
                 None => {}
             }
         }
         let pending = diff.inputs().review.pending.len();
         if pending > 0 {
-            out.push((Action::SubmitReview, format!("submit ({pending} pending)")));
+            out.push((
+                Action::SubmitReview,
+                format!("submit ({pending} pending)").into(),
+            ));
         }
         out
     }

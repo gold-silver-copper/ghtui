@@ -657,10 +657,9 @@ impl State {
     /// Rebuilds the page if its data changed and keeps the page (or the
     /// diff) in bounds.
     pub fn settle(&mut self) -> Cmds {
-        let mut cmds = self.settle_ref();
+        let cmds = self.settle_ref();
         self.sync_page();
-        cmds.extend(self.settle_diff());
-        cmds
+        cmds.and(self.settle_diff())
     }
 
     /// Opens the page an unsplit one ([`code::Unsplit`]) is, once where its ref
