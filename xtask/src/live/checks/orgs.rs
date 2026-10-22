@@ -49,15 +49,6 @@ fn select(ghtui: &Pane, name: &str) -> Result<()> {
     bail!("no row starts with {name}")
 }
 
-/// Runs what the palette finds for `what` (the menu's label).
-fn palette(ghtui: &Pane, what: &str) -> Result<()> {
-    ghtui.keys(":")?;
-    ghtui.type_text(what)?;
-    ghtui.wait_for(what)?;
-    ghtui.keys("Enter")?;
-    Ok(())
-}
-
 /// Sets the form's row `name` in its picker to `value`.
 fn fill(ghtui: &Pane, name: &str, value: &str) -> Result<()> {
     select(ghtui, name)?;
@@ -99,7 +90,7 @@ fn advisory(cx: &mut Cx) -> Result<()> {
     ghtui.wait_followed()?;
 
     cx.step("New draft security advisory opens GitHub's form, its title first")?;
-    palette(&ghtui, "new here")?;
+    ghtui.palette("new here")?;
     ghtui.wait_for("New draft security advisory in")?;
     ghtui.wait_for("Type the title")?;
     ghtui.type_text(&summary)?;

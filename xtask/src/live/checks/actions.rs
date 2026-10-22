@@ -11,7 +11,7 @@ use crate::live::{Check, Cx, gh, until};
 
 pub const CHECK: Check = Check::new(
     "actions",
-    ",E runs actions.yml with an input and follows the run until it ends",
+    ":run workflow runs actions.yml with an input and follows the run until it ends",
     run,
 );
 
@@ -30,20 +30,20 @@ fn run(cx: &mut Cx) -> Result<()> {
     ghtui.wait_for(".github/workflows/actions.yml")?;
     ghtui.wait_followed()?;
 
-    cx.step(",E opens the form with the inputs the workflow declares")?;
-    ghtui.keys(", E")?;
+    cx.step(":run workflow opens the form with the inputs the workflow declares")?;
+    ghtui.palette("run workflow")?;
     ghtui.wait_for("Run workflow")?;
     ghtui.wait_for("How long the job writes its log, in seconds")?;
-    ghtui.select("}", "the seconds input", |s| s.contains("⟦▌seconds"))?;
+    ghtui.select("Down", "the seconds input", |s| s.contains("⟦▌seconds"))?;
     ghtui.keys("Enter")?;
     ghtui.wait_for("Set the input")?;
     ghtui.type_text(SECONDS)?;
     ghtui.keys("Enter")?;
     ghtui.wait_for(&format!("“{SECONDS}”"))?;
 
-    cx.step(",E runs it; the page follows the run it started")?;
+    cx.step("ctrl-s runs it; the page follows the run it started")?;
     let since = gh::iso8601(gh::epoch().saturating_sub(5));
-    ghtui.keys(", E")?;
+    ghtui.keys("C-s")?;
     let run = until("the run on GitHub", GITHUB, || {
         let runs = gh::get(&format!(
             "repos/{}/actions/workflows/actions.yml/runs?event=workflow_dispatch&per_page=5",

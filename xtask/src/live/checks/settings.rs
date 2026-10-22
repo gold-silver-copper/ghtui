@@ -14,7 +14,7 @@ use crate::live::{Check, Cx, Launch, gh, path, until};
 
 pub const CHECK: Check = Check::new(
     "settings",
-    ",n protects ghtui-live- branches with a rule written in the form, ,D deletes it; main's rule stays as it was",
+    "a protects ghtui-live- branches with a rule written in the form, D deletes it; main's rule stays as it was",
     run,
 )
 .sweep(sweep);
@@ -52,7 +52,7 @@ pub(super) fn select_row(ghtui: &Pane, text: &str) -> Result<()> {
     if selected(&ghtui.screen_marked()?, text) {
         return Ok(());
     }
-    ghtui.select("}", text, |s| selected(s, text))
+    ghtui.select("Down", text, |s| selected(s, text))
 }
 
 fn selected(screen: &str, text: &str) -> bool {
@@ -91,8 +91,8 @@ fn run(cx: &mut Cx) -> Result<()> {
     ghtui.wait_for("Branch protection rules")?;
     ghtui.wait_followed()?;
 
-    cx.step(",n writes a new rule in the form; it's named before it's made")?;
-    ghtui.keys(", n")?;
+    cx.step("a writes a new rule in the form; it's named before it's made")?;
+    ghtui.keys("a")?;
     ghtui.wait_for("New branch protection rule")?;
     write_form(
         &ghtui,
@@ -120,9 +120,9 @@ fn run(cx: &mut Cx) -> Result<()> {
     ghtui.wait_for(&pattern)?;
     ghtui.wait_followed()?;
 
-    cx.step(",D deletes it, after asking")?;
+    cx.step("D deletes it, after asking")?;
     select_row(&ghtui, &pattern)?;
-    ghtui.keys(", D")?;
+    ghtui.keys("D")?;
     ghtui.wait_for(&format!("Delete the protection rule for {pattern}?"))?;
     ghtui.keys("Enter")?;
     until("the rule gone from GitHub", GITHUB, || {

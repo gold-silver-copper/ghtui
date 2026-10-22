@@ -9,7 +9,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, ensure};
 use serde_json::json;
 
-use crate::live::{Check, Cx, Pane, gh, until};
+use crate::live::{Check, Cx, gh, until};
 
 pub const SUGGESTION: Check = Check::new(
     "suggestion",
@@ -102,13 +102,6 @@ fn resolved(number: u64) -> Result<bool> {
     Ok(threads[0]["isResolved"] == true)
 }
 
-/// Runs the command `what` from the palette.
-fn palette(ghtui: &Pane, what: &str) -> Result<()> {
-    ghtui.keys(":")?;
-    ghtui.type_text(what)?;
-    ghtui.keys("Enter")
-}
-
 fn suggestion(cx: &mut Cx) -> Result<()> {
     let branch = format!("{}suggest-{}", gh::BRANCH_PREFIX, cx.env.run_id);
     let path = format!("live-suggest-{}.txt", cx.env.run_id);
@@ -131,8 +124,8 @@ fn suggestion(cx: &mut Cx) -> Result<()> {
     ghtui.wait_for(&path)?;
     ghtui.wait_for("Better:")?;
     cx.step(":commit suggestion on its thread commits it, after asking")?;
-    palette(&ghtui, "next thread")?;
-    palette(&ghtui, "commit suggestion")?;
+    ghtui.palette("next thread")?;
+    ghtui.palette("commit suggestion")?;
     ghtui.wait_for(&format!("Commit the suggestion to {branch}?"))?;
     ghtui.keys("Enter")?;
     until("the suggestion on GitHub's branch", GITHUB, || {
@@ -179,7 +172,7 @@ fn conflicts(cx: &mut Cx) -> Result<()> {
     // The pull request ghtui loaded may predate GitHub finding the
     // conflict: then it says so, and `r` loads it again.
     for _ in 0..5 {
-        palette(&ghtui, "resolve conflicts")?;
+        ghtui.palette("resolve conflicts")?;
         if ghtui
             .wait_for_within(&marker, Duration::from_secs(20))
             .is_ok()
@@ -198,7 +191,7 @@ fn conflicts(cx: &mut Cx) -> Result<()> {
     ghtui.keys(">")?;
     ghtui.wait_for("all resolved")?;
     cx.step(":commit merge pushes the merge, after asking")?;
-    palette(&ghtui, "commit merge")?;
+    ghtui.palette("commit merge")?;
     ghtui.wait_for(&format!("Commit the merge and push it to {head}?"))?;
     ghtui.keys("Enter")?;
     let merge = until("the merge on GitHub's branch", GITHUB, || {
@@ -221,6 +214,6 @@ fn conflicts(cx: &mut Cx) -> Result<()> {
         text_on(&head, &path)? == "theirs\n",
         "the file isn't the base's"
     );
-    ghtui.wait_for("Merged into")?;
+    ghtui.wait_for("No conflicts with the base branch")?;
     Ok(())
 }

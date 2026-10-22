@@ -10,7 +10,6 @@ use std::time::Duration;
 use anyhow::{Result, ensure};
 use serde_json::{Value, json};
 
-use crate::live::fux::Pane;
 use crate::live::{Check, Cx, gh, until};
 
 pub const CHECK: Check = Check::new(
@@ -26,14 +25,6 @@ const ORG: &str = "github";
 
 const STATUS: &str =
     "query { viewer { status { emoji message indicatesLimitedAvailability expiresAt } } }";
-
-/// Runs the action named `name` from the palette.
-fn palette(ghtui: &Pane, name: &str) -> Result<()> {
-    ghtui.keys(":")?;
-    ghtui.type_text(name)?;
-    ghtui.keys("Enter")?;
-    Ok(())
-}
 
 fn has(cx: &Cx, scopes: &[&str]) -> bool {
     cx.env.scopes.iter().any(|s| scopes.contains(&s.as_str()))
@@ -96,7 +87,7 @@ fn follow(cx: &mut Cx) -> Result<()> {
     for on in [!was, was] {
         let doing = if on { "follows" } else { "unfollows" };
         cx.step(&format!(":follow {doing} @{ORG}"))?;
-        palette(&ghtui, "follow")?;
+        ghtui.palette("follow")?;
         until("GitHub to show the follow", GITHUB, || {
             Ok((following()? == on).then_some(()))
         })?;
@@ -137,7 +128,7 @@ fn status(cx: &mut Cx) -> Result<()> {
 
     cx.step(":set status sets one that clears in 30 minutes")?;
     let message = cx.mark("status");
-    palette(&ghtui, "set status")?;
+    ghtui.palette("set status")?;
     ghtui.wait_for("Your status")?;
     ghtui.keys("C-u")?;
     ghtui.type_text(&format!("🧪 {message}"))?;
@@ -157,7 +148,7 @@ fn status(cx: &mut Cx) -> Result<()> {
     ghtui.wait_for(&message)?;
 
     cx.step(":set status clears it")?;
-    palette(&ghtui, "set status")?;
+    ghtui.palette("set status")?;
     ghtui.wait_for("Your status")?;
     ghtui.keys("C-u")?;
     ghtui.wait_for("Clear your status")?;
@@ -198,7 +189,7 @@ fn issue_type(cx: &mut Cx) -> Result<()> {
     ghtui.wait_followed()?;
 
     cx.step(&format!(":edit issue type sets it to {kind}"))?;
-    palette(&ghtui, "edit issue type")?;
+    ghtui.palette("edit issue type")?;
     ghtui.wait_for("No type")?;
     ghtui.type_text(&kind)?;
     ghtui.keys("Enter")?;

@@ -1351,7 +1351,7 @@ each kind of page, and makes one write of each kind, checked against
 GitHub's own answer (`gh api`), not only the screen. What a write sends
 and what the app does with each key are tested above; this checks that
 the real app does it against real GitHub. It's run by hand, not in CI,
-and takes about five minutes. `cargo xtask live --list` names the
+and takes about ten minutes. `cargo xtask live --list` names the
 checks; `cargo xtask live issue offline` runs only those.
 
 - **The checks:**

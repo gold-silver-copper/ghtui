@@ -205,6 +205,13 @@ impl Pane {
         bail!("`{keys}` doesn't select {what}")
     }
 
+    /// Runs the action `name` from the palette (`:`).
+    pub fn palette(&self, name: &str) -> Result<()> {
+        self.keys(":")?;
+        self.type_text(name)?;
+        self.keys("Enter")
+    }
+
     /// Types `text` as it is, then waits for the screen to settle.
     pub fn type_text(&self, text: &str) -> Result<()> {
         let mut cmd = self.fux.pane(&self.name);

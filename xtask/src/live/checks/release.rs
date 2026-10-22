@@ -9,7 +9,7 @@ use crate::live::{Check, Cx, gh, until};
 
 pub const CHECK: Check = Check::new(
     "release",
-    ",V makes a release with a new tag, published; it and its tag are deleted after",
+    ":new release makes a release with a new tag, published; it and its tag are deleted after",
     run,
 )
 .sweep(sweep_releases);
@@ -27,8 +27,8 @@ fn run(cx: &mut Cx) -> Result<()> {
     ghtui.wait_for("Pull requests")?;
     ghtui.wait_followed()?;
 
-    cx.step(",V starts with a tag: a new one, made when it's published")?;
-    ghtui.keys(", V")?;
+    cx.step(":new release starts with a tag: a new one, made when it's published")?;
+    ghtui.palette("new release")?;
     ghtui.wait_for("Choose a tag")?;
     ghtui.type_text(&tag)?;
     ghtui.wait_for(&format!("Create new tag: {tag}"))?;
