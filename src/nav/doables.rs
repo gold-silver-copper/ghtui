@@ -416,6 +416,7 @@ impl State {
                     | Kind::Project(_)
                     | Kind::Alert(_)
                     | Kind::Watch(_)
+                    | Kind::Status(_)
                     | Kind::Tag(_)
                     | Kind::Target(_)
                     | Kind::SaveAsset(_)

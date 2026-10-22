@@ -16,6 +16,7 @@ use crate::api::browse::{
     StateCounts, TagInfo, TeamDetail, TeamSummary, TreeEntry, UserList, UserSummary, WikiPage,
     Workflow, WorkflowRun,
 };
+use crate::api::codeowners::Codeowners;
 use crate::api::commit_comments::CommitComment;
 use crate::api::create::NewForm;
 use crate::api::edit::Sidebar;
@@ -47,6 +48,8 @@ pub enum DataKey {
     Readme(RepoId),
     Tree(RepoId, String, String),
     Blob(RepoId, String, String),
+    /// Who owns what: the CODEOWNERS file at a revision.
+    Codeowners(RepoId, String),
     Search(SearchKind, String),
     /// A filtered list's open and closed counts
     /// ([`crate::route::issues`]).
@@ -324,6 +327,7 @@ data! {
     Readme(Option<Box<Readme>>) => Option<Box<Readme>>,
     Tree(Vec<TreeEntry>) as [TreeEntry],
     Blob(Box<Blob>) => Blob,
+    Codeowners(Box<Codeowners>) => Codeowners,
     Search(Box<SearchResults>) => SearchResults,
     StateCounts(StateCounts) => StateCounts,
     /// `None`: the number is a pull request.

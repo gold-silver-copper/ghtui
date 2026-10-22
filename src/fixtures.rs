@@ -412,6 +412,13 @@ pub fn sidebar() -> crate::api::edit::Sidebar {
             named("T_docs", "octo-org/docs"),
         ]
         .into())),
+        issue_type: Some(named("IT_bug", "Bug")),
+        issue_types: vec![
+            named("IT_bug", "Bug"),
+            named("IT_feature", "Feature"),
+            named("IT_task", "Task"),
+        ]
+        .into(),
     }
 }
 
@@ -669,6 +676,16 @@ pub fn blob() -> Blob {
         "src/main.rs",
         "use std::io;\n\n/// Says hello.\nfn main() -> io::Result<()> {\n    println!(\"hello, {}\", 42);\n    Ok(())\n}\n",
     )
+}
+
+/// A repository's CODEOWNERS: everything is octocat's but the sources
+/// (a team's and hubot's) and the docs.
+pub fn codeowners() -> crate::api::codeowners::Codeowners {
+    let text = "* @octocat
+/src/ @octo-org/core @hubot
+*.md @octo-org/docs
+";
+    crate::api::codeowners::Codeowners::new(Some((".github/CODEOWNERS", text)), Some(Vec::new()))
 }
 
 /// The file at `path`, all of it.
@@ -1351,7 +1368,13 @@ pub fn profile() -> Profile {
         ),
         star_count: 120,
         readme: Some("### Hi there 👋\n\nI'm the Octocat. I like **terminals**.\n".into()),
-        status: Some("🐙 Reviewing pull requests".into()),
+        status: Some(crate::api::browse::UserStatus {
+            emoji: Some("🐙".into()),
+            message: Some("Reviewing pull requests".into()),
+            ..Default::default()
+        }),
+        id: Some(NodeId::new("U_octocat")),
+        followed: Some(false),
         pronouns: Some("they/them".into()),
         socials: vec![(
             "@octocat@hachyderm.io".into(),
@@ -1463,6 +1486,8 @@ pub fn org_profile() -> Profile {
         ),
         verified: true,
         people: Capped::new(vec!["joshka".into(), "orhun".into(), "kdheepak".into()], 14),
+        id: Some(NodeId::new("O_ratatui")),
+        followed: Some(true),
         ..Default::default()
     }
 }
@@ -2330,6 +2355,7 @@ pub(crate) fn sample(key: &DataKey) -> Data {
         K::Readme(_) => Data::Readme(Some(Box::new(readme()))),
         K::Tree(..) => Data::Tree(tree()),
         K::Blob(..) => Data::from(blob()),
+        K::Codeowners(..) => Data::from(codeowners()),
         K::Search(kind, _) => Data::from(search(kind)),
         K::StateCounts(_) => {
             Data::StateCounts(crate::api::browse::StateCounts { open: 2, closed: 5 })

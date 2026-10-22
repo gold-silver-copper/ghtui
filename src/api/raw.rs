@@ -336,6 +336,28 @@ raw! {
     /// Your saved replies, most recently changed first.
     SAVED_REPLIES = "query { viewer { savedReplies(first: 100) { totalCount nodes { id title body } } } }";
 
+    // ---- following people, and your status ([`crate::api::social`]) ----
+
+    FOLLOW_USER = "mutation($id: ID!) { followUser(input: {userId: $id}) { user { id } } }";
+
+    UNFOLLOW_USER = "mutation($id: ID!) { unfollowUser(input: {userId: $id}) { user { id } } }";
+
+    FOLLOW_ORG = "mutation($id: ID!) { followOrganization(input: {organizationId: $id}) { organization { id } } }";
+
+    UNFOLLOW_ORG = "mutation($id: ID!) { unfollowOrganization(input: {organizationId: $id}) { organization { id } } }";
+
+    /// Sets your status; with no emoji and no message, clears it.
+    CHANGE_STATUS = "mutation($emoji: String, $message: String, $busy: Boolean, $expires: DateTime) { changeUserStatus(input: {emoji: $emoji, message: $message, limitedAvailability: $busy, expiresAt: $expires}) { status { id } } }";
+
+    // ---- code owners ([`crate::api::codeowners`]) ----
+
+    /// The CODEOWNERS file in each place GitHub looks (`REV:path`), and
+    /// the problems GitHub found in the one it reads.
+    CODEOWNERS = "query($owner: String!, $name: String!, $github: String!, $root: String!, $docs: String!, $ref: String) { repository(owner: $owner, name: $name) { github: object(expression: $github) { ... on Blob { text } } root: object(expression: $root) { ... on Blob { text } } docs: object(expression: $docs) { ... on Blob { text } } codeowners(refName: $ref) { errors { line column kind message suggestion } } } }";
+
+    /// Only the problems, where git read the file.
+    CODEOWNERS_ERRORS = "query($owner: String!, $name: String!, $ref: String) { repository(owner: $owner, name: $name) { codeowners(refName: $ref) { errors { line column kind message suggestion } } } }";
+
     // ---- a repository's settings ([`crate::api::settings`]) ----
 
     /// A repository's branch protection rules, with what each asks.

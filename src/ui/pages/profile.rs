@@ -219,9 +219,20 @@ pub fn profile(page: &mut Page, p: &Profile, tab: ProfileTab, list: ProfileList<
     if p.verified {
         tag(&mut segs, "✓ Verified", Bg::SuccessContainer);
     }
+    if p.followed == Some(true) {
+        tag(&mut segs, "Following", Bg::SecondaryContainer);
+    }
     page.line(segs);
     if let Some(status) = &p.status {
-        say(page, status.clone(), Role::Meta);
+        let mut said = status.text().unwrap_or_default();
+        if status.busy {
+            let gap = if said.is_empty() { "" } else { " · " };
+            said.push_str(&format!("{gap}Busy"));
+        }
+        if let Some(at) = &status.expires_at {
+            said.push_str(&format!(" · clears {}", time::until_iso(at, now)));
+        }
+        say(page, said, Role::Meta);
     }
     if let Some(bio) = &p.bio {
         say(page, bio.clone(), Role::Body);

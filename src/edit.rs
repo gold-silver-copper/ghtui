@@ -1,6 +1,7 @@
 //! Editing what's already on GitHub: your comments and descriptions (in
 //! the composer, in place), titles, reactions, and an issue's or pull
-//! request's sidebar (labels, assignees, reviewers, milestone) in pickers
+//! request's sidebar (labels, assignees, reviewers, milestone, an issue's
+//! type) in pickers
 //! the way GitHub's sidebar has them. What an action does where you are is
 //! decided once, by [`plan`]: the key and the menu both ask it, so they
 //! agree, and it asks GitHub's word on what you may do. Each edit goes to
@@ -27,7 +28,7 @@ use crate::ui::diff_doc::{Pos, Row};
 use crate::ui::overlays::PaletteItem;
 
 /// The actions that edit what's on GitHub, as the menu lists them.
-pub const ACTIONS: [Action; 8] = [
+pub const ACTIONS: [Action; 9] = [
     Action::EditComment,
     Action::DeleteComment,
     Action::React,
@@ -36,6 +37,7 @@ pub const ACTIONS: [Action; 8] = [
     Action::EditAssignees,
     Action::RequestReviews,
     Action::EditMilestone,
+    Action::EditIssueType,
 ];
 
 /// A comment or description being edited in the composer.
@@ -82,6 +84,10 @@ pub enum Choosing {
     Milestone {
         about: Subject,
     },
+    /// An issue's type.
+    IssueType {
+        about: Subject,
+    },
     /// Your reaction to `target` (a comment, or the description).
     React {
         about: Subject,
@@ -102,6 +108,8 @@ pub enum Pick {
     Toggle(String),
     /// Set the milestone to this one (by name), or none.
     Milestone(Option<String>),
+    /// Set the issue's type to this one (by name), or none.
+    IssueType(Option<String>),
     React(ReactionContent),
     Title(String),
 }
@@ -111,6 +119,7 @@ impl Choosing {
         match self {
             Choosing::Many { field, .. } => field.name(),
             Choosing::Milestone { .. } => "Milestone",
+            Choosing::IssueType { .. } => "Type",
             Choosing::React { .. } => "React",
             Choosing::Title { .. } => "Edit the title",
         }
@@ -119,7 +128,9 @@ impl Choosing {
     pub fn placeholder(&self) -> &'static str {
         match self {
             Choosing::Many { .. } => "Filter · ↵ checks · ctrl-s applies · esc cancels",
-            Choosing::Milestone { .. } => "Filter · ↵ sets it · esc cancels",
+            Choosing::Milestone { .. } | Choosing::IssueType { .. } => {
+                "Filter · ↵ sets it · esc cancels"
+            }
             Choosing::React { .. } => "↵ gives or takes back your reaction",
             Choosing::Title { .. } => "The title",
         }
@@ -128,7 +139,9 @@ impl Choosing {
     /// What it reads: the sidebar, for a sidebar field.
     pub fn need(&self) -> Option<DataKey> {
         match self {
-            Choosing::Many { about, .. } | Choosing::Milestone { about } => {
+            Choosing::Many { about, .. }
+            | Choosing::Milestone { about }
+            | Choosing::IssueType { about } => {
                 let (repo, number) = numbered(about)?;
                 Some(DataKey::Sidebar(repo, number))
             }
@@ -435,7 +448,8 @@ fn plan(state: &State, action: Action) -> Result<Step, String> {
         Action::EditLabels
         | Action::EditAssignees
         | Action::RequestReviews
-        | Action::EditMilestone => {
+        | Action::EditMilestone
+        | Action::EditIssueType => {
             let d = detail(state, &about).ok_or("It's still loading")?;
             let (may, open) = (d.sidebar, d.open);
             let triage = "it takes triage access";
@@ -452,6 +466,14 @@ fn plan(state: &State, action: Action) -> Result<Step, String> {
                 Action::RequestReviews if !matches!(about, Subject::Pr(_)) => {
                     Err("Reviews are asked for on pull requests".into())
                 }
+                Action::EditIssueType if !matches!(about, Subject::Issue(..)) => {
+                    Err("Types are an issue's: a pull request has none".into())
+                }
+                // Triage access, as a label takes.
+                Action::EditIssueType if !may.labels => {
+                    Err(format!("GitHub doesn't let you set its type: {triage}"))
+                }
+                Action::EditIssueType => choose(Choosing::IssueType { about }),
                 Action::RequestReviews if !open => {
                     Err("It isn't open: reviews are asked for on open pull requests".into())
                 }
@@ -513,6 +535,7 @@ pub fn doables(state: &State) -> Vec<Doable> {
                 )
         })
         .filter(|a| *a != Action::RequestReviews || matches!(about, Subject::Pr(_)))
+        .filter(|a| *a != Action::EditIssueType || matches!(about, Subject::Issue(..)))
         // A draft's are your drafts' ([`crate::review::takes`]).
         .filter(|a| !crate::review::takes(state, *a))
         .map(|action| {
@@ -525,6 +548,7 @@ pub fn doables(state: &State) -> Vec<Doable> {
                 Action::EditAssignees => Field::Assignees.name().into(),
                 Action::RequestReviews => Field::Reviewers.name().into(),
                 Action::EditMilestone => "Milestone".into(),
+                Action::EditIssueType => "Type".into(),
                 _ => action.description().into(),
             };
             crate::nav::row("Edit", action, label, "", plan(state, action).err())
@@ -644,6 +668,34 @@ pub fn rows(state: &State, c: &Choosing, q: &str) -> Rows {
                 "milestone",
                 "milestones",
             );
+            rows
+        }
+        Choosing::IssueType { .. } => {
+            let s = or_return!(sidebar(state, c));
+            if s.issue_types.total() == 0 {
+                let none = "The repository has no issue types: its organization's owners add them on github.com";
+                return vec![row(none, "", None)];
+            }
+            let now = s.issue_type.as_ref().map(|t| t.name.as_str());
+            let mark = |on: bool| if on { "✓" } else { " " };
+            let mut rows = Vec::new();
+            if fits("No type") {
+                rows.push(row(
+                    format!("{} No type", mark(now.is_none())),
+                    "",
+                    Some(Pick::IssueType(None)),
+                ));
+            }
+            let names = (s.issue_types.iter()).map(|t| t.name.as_str());
+            for name in names.filter(|n| fits(n)) {
+                let on = Some(name) == now;
+                rows.push(row(
+                    format!("{} {name}", mark(on)),
+                    if on { "current" } else { "" },
+                    Some(Pick::IssueType(Some(name.to_owned()))),
+                ));
+            }
+            more(&mut rows, s.issue_types.left_out(), "type", "types");
             rows
         }
         Choosing::Many { field, chosen, .. } => {
@@ -808,6 +860,16 @@ fn send_pick(state: &mut State, pick: Pick) -> Cmds {
                 (about.clone(), Edit::Milestone { pr, id, milestone })
             })
         }
+        (Pick::IssueType(name), Choosing::IssueType { about }) => {
+            let Ok(s) = sidebar(state, c) else { return Cmds::new() };
+            if s.issue_type.as_ref().map(|t| &t.name) == name.as_ref() {
+                state.overlay = None;
+                return state.just_say("That's its type now");
+            }
+            let issue_type =
+                name.and_then(|name| s.issue_types.iter().find(|t| t.name == name).cloned());
+            node(state, about).map(|issue| (about.clone(), Edit::IssueType { issue, issue_type }))
+        }
         _ => None,
     };
     let Some((about, edit)) = edit else { return Cmds::new() };
@@ -952,6 +1014,13 @@ pub fn shown(state: &State, edit: &Edit, about: &Subject) -> bool {
         Edit::Milestone {
             milestone: want, ..
         } => d.milestone.map(|m| m.title.as_str()) == want.as_ref().map(|m| m.name.as_str()),
+        Edit::IssueType {
+            issue_type: want, ..
+        } => {
+            let Subject::Issue(repo, number) = about else { return true };
+            let now = issue(state, repo, *number).and_then(|i| i.issue_type.as_deref());
+            now == want.as_ref().map(|t| t.name.as_str())
+        }
         Edit::Reviewers {
             users, teams, bots, ..
         } => {
@@ -999,6 +1068,7 @@ pub fn said(edit: &Edit) -> (&'static str, &'static str) {
         Edit::Assignees { .. } => ("Changing the assignees", "the assignees"),
         Edit::Reviewers { .. } => ("Asking for reviews", "the review request"),
         Edit::Milestone { .. } => ("Setting the milestone", "the milestone"),
+        Edit::IssueType { .. } => ("Setting the type", "the issue type"),
     }
 }
 
@@ -1017,5 +1087,9 @@ pub fn done(edit: &Edit) -> &'static str {
             milestone: None, ..
         } => "Milestone cleared",
         Edit::Milestone { .. } => "Milestone set",
+        Edit::IssueType {
+            issue_type: None, ..
+        } => "Type cleared",
+        Edit::IssueType { .. } => "Type set",
     }
 }

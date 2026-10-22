@@ -54,7 +54,15 @@ ghtui is pre-release, but it's usable every day.
   category's form, and close one with GitHub's reasons.
 - **Editing** what's there: your comments and descriptions (or anyone's,
   where GitHub lets you), titles, reactions, and an issue's or pull
-  request's labels, assignees, reviewers and milestone.
+  request's labels, assignees, reviewers and milestone, and an issue's
+  type.
+- **People**: follow and unfollow people and organizations from their
+  profile, and set your status (an emoji and a message, busy or not,
+  and when it clears) or clear it, as the website's avatar menu does.
+- **Code owners**: a file's page says who owns it, and a pull request's
+  file tree and file headers say who owns each file, from the
+  CODEOWNERS file GitHub reads (with git where there's a clone); that
+  file's own page shows the problems GitHub found in it.
 - **Creating**: open issues (from the repository's templates) and pull
   requests, and check a pull request out in your clone; make, edit and
   delete releases, and upload, save and delete their assets; write gists
@@ -505,8 +513,27 @@ text. Reactions show under each comment as GitHub shows them, yours
 marked, and `+` picks one of GitHub's eight to give or take back. The
 sidebar's fields are edited in pickers, as on GitHub: check and uncheck
 labels, assignees or reviewers (people and teams), then apply them with
-`ctrl-s`; a milestone is one choice. In Files changed, the same keys work
-on the review comment under the cursor.
+`ctrl-s`; a milestone is one choice, and so is an issue's type
+(`:edit issue type`, from its repository's types). In Files changed, the
+same keys work on the review comment under the cursor.
+
+**Following and your status**: `:follow` on a profile follows the person
+or organization, or unfollows them; the profile says when you follow
+them. `:set status`, from anywhere, writes your status in a picker: an
+emoji (a glyph or a `:name:`) and a message, then when it clears;
+`Busy` marks you as slow to answer, and `Clear your status` clears it.
+Your profile shows it, busy and when it clears. Each follows GitHub
+until your profile shows it. Following takes the token's `user:follow`
+scope and a status its `user` scope (`gh auth refresh -s user`): the
+error names the one missing.
+
+**Code owners**: a file's page says `Owned by` whom, by the rule that
+owns it in the CODEOWNERS file GitHub reads there (the first of
+`.github/`, the root and `docs/`), and on that file's own page, the
+problems GitHub found in it (an unknown owner, a bad pattern). In a pull
+request's Files changed, each file's header and its row in the file tree
+(where there's room) name its owners by the base branch's file. The file
+is read with git in a clone; what's wrong with it is GitHub's to say.
 
 **A new issue** (`:new issue` from any of a repository's pages) starts from the
 repository's templates, as on GitHub: choose one, and its title, text,
@@ -1358,6 +1385,15 @@ checks; `cargo xtask live issue offline` runs only those.
     finds the conflict, `:resolve conflicts` merges with git, `>` takes
     the base's side and `:commit merge` pushes the merge, which GitHub
     then has with both parents and GitHub's message.
+  - `people` follows the `github` organization with `:follow` and
+    unfollows it again, sets your status with `:set status` (clearing in
+    30 minutes) and clears it, and sets a new issue's type with `:edit
+    issue type` where the test repository has types. Following and the
+    status write to the account, not the test repository: each is put
+    back as it was, pass or fail. Without the token's `user:follow`
+    (following) or `user` (the status) scope, or with a test repository
+    that has no issue types (a user's has none), those steps are left
+    out, and it says so.
   - `offline` runs ghtui against a stand-in Enterprise Server (below)
     on port 8451, and stops it to make GitHub go away, without touching
     the machine's network: the page stays, marked offline; a comment
@@ -1385,7 +1421,9 @@ checks; `cargo xtask live issue offline` runs only those.
   `failures/`. A stand-in `xdg-open`, first on the server's `PATH`,
   writes down the URLs ghtui opens instead of opening a browser.
 - **What it touches and cleans up:** it writes only to the test
-  repository (and, for `orgs`, to an organization the account owns).
+  repository (and, for `orgs`, to an organization the account owns),
+  but for `people`'s follow and status (put back as they were; a killed
+  run's status clears itself in 30 minutes).
   Each check undoes what it made, pass or fail: the issues (deleted), the
   pull requests (closed) and their branches, the release and its tag, the
   label, the protection rule, the workflow run, the variable, the secret,
@@ -1447,6 +1485,20 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   until the clone is made, list only its top 100 contributors.
 - The dependency graph shows 20 manifests and the first 100
   dependencies of each, and says how many more GitHub has.
+- A comment can't have a file or an image attached: GitHub uploads one
+  only for a browser signed in to github.com, and no token can (its
+  REST and GraphQL APIs have no upload for comments). A file dropped on
+  the composer pastes its path, and ghtui says so; upload it on
+  github.com, or link to it.
+- Issue types are an organization's: a user's repository has none to
+  set. A status clears after 30 minutes, an hour, 4 hours, a day or a
+  week: GitHub's "today" and "this week" are your time zone's, which
+  ghtui doesn't know. A status is seen by everyone (one limited to an
+  organization's members is set on github.com).
+- Code owners follow GitHub's patterns as its documentation describes
+  them (gitignore's, with `docs/*` only one folder deep); an odd pattern
+  GitHub reads its own way may differ, and the file's page then shows
+  GitHub's own complaint about it.
 - Saved replies can be inserted, but not made, changed or deleted here:
   GitHub's API has no way to, so that's on github.com/settings/replies,
   which the list names. They take the `read:user` scope.

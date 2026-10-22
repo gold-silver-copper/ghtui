@@ -332,7 +332,10 @@ impl Family for Page {
             ],
             Blob {
                 repo, rev, path, ..
-            } => vec![K::Blob(repo.clone(), rev.clone(), path.clone())],
+            } => vec![
+                K::Codeowners(repo.clone(), rev.clone()),
+                K::Blob(repo.clone(), rev.clone(), path.clone()),
+            ],
             Blame {
                 repo, rev, path, ..
             } => vec![
@@ -486,7 +489,8 @@ impl Family for Page {
                         path,
                         lines: *lines,
                     };
-                    pages::file(page, file, blob, cx.keys);
+                    let owners = b.get(&DataKey::Codeowners(repo.clone(), rev.clone()));
+                    pages::file(page, file, blob, owners, cx.keys);
                 }
             }
             Blame {

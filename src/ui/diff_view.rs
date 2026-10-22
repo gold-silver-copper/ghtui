@@ -58,6 +58,8 @@ pub struct Keys<'a> {
 pub struct DiffView<'a> {
     pub ctx: Ctx<'a>,
     pub doc: &'a Doc,
+    /// Who owns each file, by the base branch's CODEOWNERS.
+    pub owners: Option<&'a crate::api::codeowners::Codeowners>,
     pub cursor: Pos,
     /// The half of a split row the cursor asks for.
     pub half: Side,
@@ -296,6 +298,21 @@ impl DiffView<'_> {
         }
         if file.diff.is_some() {
             right.extend(changes(theme, bg, self.doc.file_counts(file)));
+        }
+        // Who owns it, where there's room.
+        let owned = (self.owners)
+            .and_then(|o| o.owner(meta.path()))
+            .filter(|r| !r.owners.is_empty());
+        if let Some(rule) = owned {
+            let used = text::spans_width(left.iter().chain(&right));
+            let room = usize::from(area.width).saturating_sub(used + 2 * usize::from(PAD_X) + 6);
+            if room > 8 {
+                let owners = rule.owners.join(" ");
+                left.push(Span::styled(
+                    format!("  {}", text::fit(&owners, room)),
+                    theme.meta(bg),
+                ));
+            }
         }
         if !scope.is_empty() {
             // What's left between the file name and the counts.
@@ -1111,6 +1128,7 @@ mod tests {
         DiffView {
             ctx: ctx(&theme),
             doc: &doc,
+            owners: None,
             cursor: Pos::default(),
             half: Side::Right,
             top: Pos::default(),

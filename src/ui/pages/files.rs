@@ -1,6 +1,7 @@
 //! A file, and its blame.
 
 use super::*;
+use crate::api::codeowners::Codeowners;
 
 /// A file at a revision, and the lines a link points at.
 #[derive(Clone, Copy)]
@@ -12,8 +13,15 @@ pub struct FileAt<'a> {
     pub lines: Option<(u32, u32)>,
 }
 
-/// A file: highlighted with line numbers, or Markdown rendered.
-pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
+/// A file: highlighted with line numbers, or Markdown rendered; who owns
+/// it, and for the CODEOWNERS file itself, what GitHub found wrong in it.
+pub fn file(
+    page: &mut Page,
+    at: FileAt<'_>,
+    blob: &Blob,
+    owners: Fetched<'_, Codeowners>,
+    keys: Keys<'_>,
+) {
     let FileAt {
         repo,
         rev,
@@ -21,6 +29,7 @@ pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
         lines: marked,
     } = at;
     code_toolbar(page, repo, rev, path, true, None, keys);
+    code_owners(page, path, owners);
     let size = size(blob.size);
     let Some(text) = &blob.text else {
         let why = "Binary file not shown here: open it on GitHub.";
@@ -57,6 +66,75 @@ pub fn file(page: &mut Page, at: FileAt<'_>, blob: &Blob, keys: Keys<'_>) {
         page.item(start, link);
     }
     page.box_bottom();
+}
+
+/// Who owns `path`, as the CODEOWNERS file says, if there is one; on that
+/// file, the problems GitHub found in it.
+fn code_owners(page: &mut Page, path: &str, owners: Fetched<'_, Codeowners>) {
+    #[expect(clippy::disallowed_methods, reason = "said as the file's line")]
+    let owners = match owners.text("the code owners") {
+        Ok(owners) => owners,
+        // Loading says nothing: the file is what's waited for.
+        Err(why) if why.starts_with("Loading") => return,
+        Err(why) => return say(page, why, Role::Meta),
+    };
+    let Some(file) = &owners.path else { return };
+    let mut segs = vec![meta("Owned by ")];
+    match owners.owner(path).filter(|r| !r.owners.is_empty()) {
+        Some(rule) => {
+            for (i, who) in rule.owners.iter().enumerate() {
+                if i > 0 {
+                    segs.push(meta(", "));
+                }
+                let link = match who.strip_prefix('@').map(|w| w.split_once('/')) {
+                    Some(Some((org, slug))) => Some(url::team(org, slug)),
+                    Some(None) => Some(url::user(who.trim_start_matches('@'))),
+                    None => None,
+                };
+                segs.push(match link {
+                    Some(link) => link_seg(page, who.clone(), link, Role::Link),
+                    None => meta(who.clone()),
+                });
+            }
+            segs.push(meta(format!("  ({file}, line {})", rule.line)));
+        }
+        None => segs = vec![meta(format!("No code owner in {file}"))],
+    }
+    page.wrapped(segs, 0, Frame::None);
+    if path != file.as_str() {
+        return;
+    }
+    let found = match &owners.errors {
+        None => {
+            return say(
+                page,
+                "GitHub's check of this file couldn't be read.",
+                Role::Meta,
+            );
+        }
+        Some(errors) if errors.is_empty() => {
+            return say(page, "GitHub found no problems in this file.", Role::Meta);
+        }
+        Some(errors) => errors,
+    };
+    page.blank();
+    let title = format!(
+        "GitHub found {} in this file",
+        plural(found.len() as u64, "problem")
+    );
+    page.box_top(vec![strong(title)], Vec::new());
+    for e in found {
+        let mut said = format!(
+            "Line {}, column {} · {}: {}",
+            e.line, e.column, e.kind, e.message
+        );
+        if let Some(fix) = &e.suggestion {
+            said.push_str(&format!(" ({fix})"));
+        }
+        body(page, vec![Seg::new(said, Role::Body)]);
+    }
+    page.box_bottom();
+    page.blank();
 }
 
 /// A file with, beside each run of lines, the commit that last changed

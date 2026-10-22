@@ -84,6 +84,7 @@ async fn answer(
         K::Readme(repo) => Data::Readme(gh.readme(repo).await?.map(Box::new)),
         K::Tree(repo, rev, path) => Data::Tree(gh.tree(repo, rev, path).await?),
         K::Blob(repo, rev, path) => gh.blob(repo, rev, path).await?.into(),
+        K::Codeowners(repo, rev) => gh.codeowners(repo, rev).await?.into(),
         K::Search(kind, query) => {
             let found = |r: &crate::api::browse::SearchResults| {
                 if let Some(tx) = early {

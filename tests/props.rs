@@ -131,6 +131,7 @@ fn render_doc(doc: &Doc, cursor: Pos, width: u16, height: u16) {
     DiffView {
         ctx,
         doc,
+        owners: None,
         cursor,
         half: Side::Left,
         top: cursor,

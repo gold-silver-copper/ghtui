@@ -153,6 +153,8 @@ pub trait Sent: Job {
 jobs! {
     Change(crate::act::Changing),
     Subscribe(crate::watch::Subscribe),
+    Follow(crate::social::Follow),
+    SetStatus(crate::social::SetStatus),
     SetLists(crate::site::lists::SetLists),
     DeleteList(crate::site::lists::DeleteList),
     DeleteVersion(crate::site::packages::DeleteVersion),

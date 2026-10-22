@@ -549,6 +549,8 @@ async fn edits_send_their_mutations() {
         ok("removeAssigneesFromAssignable"),
         ok("requestReviews"),
         ok("updateIssue"),
+        ok("updateIssueIssueType"),
+        ok("updateIssueIssueType"),
     ])
     .await;
     let id = |s: &str| NodeId::new(s);
@@ -612,6 +614,14 @@ async fn edits_send_their_mutations() {
             id: id("I_3"),
             milestone: None,
         },
+        Edit::IssueType {
+            issue: id("I_3"),
+            issue_type: Some(named("IT_bug")),
+        },
+        Edit::IssueType {
+            issue: id("I_3"),
+            issue_type: None,
+        },
     ];
     for edit in edits {
         gh.change(&Change::Edit(edit)).await.unwrap();
@@ -663,7 +673,89 @@ async fn edits_send_their_mutations() {
     );
     field(11, "milestoneId: $milestone");
     assert_eq!(var(11, "milestone"), serde_json::Value::Null);
-    assert_eq!(sent.len(), 12);
+    field(
+        12,
+        "updateIssueIssueType(input: {issueId: $issue, issueTypeId: $issueType})",
+    );
+    assert_eq!(
+        (var(12, "issue"), var(12, "issueType")),
+        ("I_3".into(), "IT_bug".into())
+    );
+    assert_eq!(var(13, "issueType"), serde_json::Value::Null);
+    assert_eq!(sent.len(), 14);
+}
+
+/// Following names a user or an organization by its node ID; a status
+/// sends its emoji, message, busy flag and expiry, and clearing sends
+/// none of them.
+#[tokio::test]
+async fn follows_and_statuses_send_their_mutations() {
+    use ghtui::api::social::NewStatus;
+    let (gh, seen) = github(vec![
+        ok("followUser"),
+        ok("unfollowOrganization"),
+        ok("changeUserStatus"),
+        ok("changeUserStatus"),
+    ])
+    .await;
+    gh.follow(&NodeId::new("U_1"), false, true).await.unwrap();
+    gh.follow(&NodeId::new("O_1"), true, false).await.unwrap();
+    let status = NewStatus {
+        emoji: Some(":palm_tree:".into()),
+        message: "On vacation".into(),
+        busy: true,
+        expires_at: Some("2026-10-22T00:00:00Z".into()),
+    };
+    gh.set_status(Some(&status)).await.unwrap();
+    gh.set_status(None).await.unwrap();
+    let seen = seen.lock().unwrap();
+    let vars = |i: usize| seen[i].json()["variables"].clone();
+    assert!(seen[0].query().contains("followUser(input: {userId: $id})"));
+    assert_eq!(vars(0)["id"], "U_1");
+    assert!(
+        seen[1]
+            .query()
+            .contains("unfollowOrganization(input: {organizationId: $id})")
+    );
+    assert_eq!(vars(1)["id"], "O_1");
+    assert!(seen[2].query().contains("changeUserStatus"));
+    assert_eq!(
+        vars(2),
+        serde_json::json!({"emoji": ":palm_tree:", "message": "On vacation", "busy": true, "expires": "2026-10-22T00:00:00Z"})
+    );
+    assert_eq!(
+        vars(3),
+        serde_json::json!({"emoji": null, "message": null, "busy": false, "expires": null})
+    );
+    assert_eq!(seen.len(), 4);
+}
+
+/// The CODEOWNERS file GitHub reads is the first of its three places that
+/// has one, at the revision asked; its problems come along, and `HEAD`
+/// asks for the default branch's.
+#[tokio::test]
+async fn code_owners_are_the_first_file_found_with_its_problems() {
+    let reply = r#"{"data":{"repository":{
+      "github":null,
+      "root":{"text":"* @amy\n/src/ @o/core\n"},
+      "docs":{"text":"* @bob\n"},
+      "codeowners":{"errors":[{"line":2,"column":8,"kind":"Unknown owner","message":"Unknown owner on line 2","suggestion":""}]}}}}"#;
+    let (gh, seen) = github(vec![Reply::new(200, reply)]).await;
+    let owners = gh.codeowners(&RepoId::new("o", "r"), "HEAD").await.unwrap();
+    assert_eq!(owners.path.as_deref(), Some("CODEOWNERS"));
+    let rule = owners.owner("src/main.rs").unwrap();
+    assert_eq!(
+        (rule.line, rule.owners.as_slice()),
+        (2, ["@o/core".to_owned()].as_slice())
+    );
+    let errors = owners.errors.unwrap();
+    assert_eq!(errors.len(), 1);
+    assert_eq!((errors[0].line, errors[0].suggestion.as_deref()), (2, None));
+    let seen = seen.lock().unwrap();
+    let vars = &seen[0].json()["variables"];
+    assert_eq!(vars["github"], "HEAD:.github/CODEOWNERS");
+    assert_eq!(vars["docs"], "HEAD:docs/CODEOWNERS");
+    assert_eq!(vars["ref"], serde_json::Value::Null);
 }
 
 /// Managing an issue, a pull request or a discussion sends GitHub's own
@@ -875,6 +967,7 @@ async fn a_sidebar_keeps_what_its_teams_say() {
       "labels":{"totalCount":150,"nodes":[{"id":"L1","name":"bug"}]},
       "assignableUsers":{"totalCount":1,"nodes":[{"id":"U1","login":"amy"}]},
       "milestones":{"totalCount":0,"nodes":[]},
+      "issueTypes":{"totalCount":0,"nodes":[]},
       "owner":{"__typename":"Organization","login":"o"}}}}"#;
     let forbidden = r#"{"data":{"organization":null},"errors":[{"type":"FORBIDDEN",
       "path":["organization","teams"],"message":"Resource not accessible by personal access token"}]}"#;
@@ -2209,7 +2302,7 @@ async fn a_missing_root_isnt_also_left_out() {
 async fn an_organizations_profile_leaves_nothing_out() {
     let (gh, _) = github(vec![Reply::new(
         200,
-        r#"{"data":{"user":null,"organization":{"login":"o","name":null,"description":null,"location":null,"websiteUrl":null,"pinnedItems":{"nodes":[]},"repositories":{"totalCount":0,"nodes":[]},"isVerified":false,"membersWithRole":{"totalCount":0,"nodes":[]}},"user_readme":null,"org_readme":null},
+        r#"{"data":{"user":null,"organization":{"id":"O_1","viewerIsFollowing":false,"login":"o","name":null,"description":null,"location":null,"websiteUrl":null,"pinnedItems":{"nodes":[]},"repositories":{"totalCount":0,"nodes":[]},"isVerified":false,"membersWithRole":{"totalCount":0,"nodes":[]}},"user_readme":null,"org_readme":null},
             "errors":[{"type":"NOT_FOUND","path":["user"],"message":"Could not resolve to a User with the login of 'o'."},
                       {"type":"NOT_FOUND","path":["user_readme"],"message":"Could not resolve to a Repository with the name 'o/o'."}]}"#,
     )])

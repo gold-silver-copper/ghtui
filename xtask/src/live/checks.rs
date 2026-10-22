@@ -14,6 +14,7 @@ mod merging;
 mod offline;
 mod orgs;
 mod pages;
+mod people;
 mod pull;
 mod release;
 mod secrets;
@@ -32,5 +33,6 @@ pub const ALL: &[Check] = &[
     orgs::ORGS,
     merging::SUGGESTION,
     merging::CONFLICTS,
+    people::CHECK,
     offline::CHECK,
 ];
