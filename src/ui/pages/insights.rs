@@ -364,16 +364,28 @@ pub fn community(page: &mut Page, repo: &RepoId, c: &Community, branch: Option<&
             } else {
                 ("✗ ", Role::Meta)
             };
+            // A missing file opens the form for a new file in its folder.
             let add = match (s.done, branch, s.note.as_deref()) {
-                (false, Some(b), Some(file)) if !file.ends_with('/') => {
-                    Some(format!("{}/new/{b}", url::repo(repo)))
+                (false, Some(b), Some(file)) => {
+                    let dir = match file.strip_suffix('/') {
+                        Some(dir) => dir,
+                        None => file.rsplit_once('/').map_or("", |(dir, _)| dir),
+                    };
+                    let at = format!("{}/new/{b}", url::repo(repo));
+                    Some(match dir {
+                        "" => at,
+                        dir => format!("{at}/{dir}"),
+                    })
                 }
                 _ => None,
             };
-            let note = s.note.as_ref().map(|n| match s.done {
-                true => meta(format!("  {n}")),
-                false => meta(format!("  add {n}")),
-            });
+            let note = match (&s.note, s.done) {
+                (Some(n), true) => Some(meta(format!("  {n}"))),
+                (Some(n), false) => Some(meta(format!("  add {n}"))),
+                // A description, content reports: set in the website's settings.
+                (None, false) => Some(meta("  set on github.com")),
+                (None, true) => None,
+            };
             maybe_item(page, s.url.clone().or(add), |page, link| {
                 let name = link.map_or(Role::Body, |_| Role::Link);
                 let mut segs = vec![

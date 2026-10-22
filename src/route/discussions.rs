@@ -149,7 +149,8 @@ impl Family for Page {
 /// A discussions page from what follows `/discussions` in its URL.
 fn discussions(of: DiscussionsOf, rest: &[&str]) -> Option<Target> {
     let page = match rest {
-        [] => Discussions { of, category: None },
+        // A new one is started from the list, in its menu.
+        [] | ["new"] | ["new", "choose"] => Discussions { of, category: None },
         ["categories", slug] if valid_slug(slug) => Discussions {
             of,
             category: Some((*slug).to_owned()),

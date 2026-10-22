@@ -3091,11 +3091,8 @@ async fn setting_a_project_field_sends_its_value() {
         .unwrap();
     gh.change(&set(None)).await.unwrap();
     match gh.change(&set(Some(done))).await {
-        Err(ApiError::GraphQl(errors)) => {
-            assert!(
-                errors[0].contains("gh auth refresh -s project"),
-                "{errors:?}"
-            );
+        Err(ApiError::Denied(why)) => {
+            assert!(why.contains("gh auth refresh -s project"), "{why}");
         }
         other => panic!("{other:?}"),
     }
@@ -3153,11 +3150,8 @@ async fn an_owners_projects_page_and_say_what_scope_they_need() {
     assert_eq!((found.total, found.next.as_deref()), (31, Some("p1")));
     assert_eq!(found.items[0].items, 12);
     match gh.projects(&owner, None).await {
-        Err(ApiError::GraphQl(errors)) => {
-            assert!(
-                errors[0].contains("gh auth refresh -s read:project"),
-                "{errors:?}"
-            );
+        Err(ApiError::Denied(why)) => {
+            assert!(why.contains("gh auth refresh -s read:project"), "{why}");
         }
         other => panic!("{other:?}"),
     }
@@ -3253,11 +3247,11 @@ async fn community_standards_are_the_profile_and_the_security_policy() {
 }
 
 /// A branch's merge queue is asked by its name, with its entries in order; a
-/// branch without one is not found.
+/// branch without one says so.
 #[tokio::test]
 async fn a_merge_queue_lists_its_entries() {
     use ghtui::api::model::QueueState;
-    let queue = r#"{"data":{"repository":{"mergeQueue":{"url":"https://github.com/o/r/queue/main","configuration":{"mergeMethod":"SQUASH"},"entries":{"totalCount":2,"nodes":[
+    let queue = r#"{"data":{"repository":{"mergeQueue":{"configuration":{"mergeMethod":"SQUASH"},"entries":{"totalCount":2,"nodes":[
         {"position":1,"state":"LOCKED","enqueuedAt":"2026-10-01T12:00:00Z","estimatedTimeToMerge":120,"solo":false,"jump":true,"enqueuer":{"login":"alice"},"pullRequest":{"number":7,"title":"Add thing","author":{"login":"bob"}}},
         {"position":2,"state":"AWAITING_CHECKS","enqueuedAt":"2026-10-01T12:05:00Z","estimatedTimeToMerge":null,"solo":true,"jump":false,"enqueuer":null,"pullRequest":null}]}}}}}"#;
     let none = r#"{"data":{"repository":{"mergeQueue":null}}}"#;
@@ -3276,8 +3270,8 @@ async fn a_merge_queue_lists_its_entries() {
     );
     let hidden = &q.entries.items[1];
     assert_eq!((hidden.number, hidden.solo), (None, true));
-    let missing = gh.merge_queue(&repo, "dev").await;
-    assert!(matches!(missing, Err(ApiError::NotFound(_))), "{missing:?}");
+    let missing = gh.merge_queue(&repo, "dev").await.unwrap();
+    assert!(!missing.exists && missing.entries.items.is_empty());
     let seen = seen.lock().unwrap();
     assert!(seen[0].query().contains("mergeQueue(branch: $branch)"));
     assert_eq!(seen[0].json()["variables"]["branch"], "main");
@@ -4586,7 +4580,7 @@ async fn actions_settings_send_their_requests_and_read_their_pages() {
     assert_eq!(secrets.key.as_ref().map(|k| k.key_id.as_str()), Some("568"));
     assert_eq!(secrets.environments[0].name, "prod env");
     assert!(secrets.environments[0].key.is_some());
-    let org = secrets.org.as_ref().unwrap();
+    let org = secrets.org.as_ref().unwrap().as_ref().unwrap();
     assert_eq!(org.items[0].visibility.as_deref(), Some("all"));
 
     let seen = seen.lock().unwrap();

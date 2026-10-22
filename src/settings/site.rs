@@ -180,6 +180,9 @@ fn properties(
         return Err("A property's value is set or unset in the form, not added or deleted".into());
     }
     let schema = p.schema.as_ref().map_err(Clone::clone)?;
+    if schema.is_empty() {
+        return Err(format!("{} has no custom properties to set", repo.owner));
+    }
     if let Some(SettingLink::Property(name)) = row
         && let Some(prop) = schema.iter().find(|s| s.name == *name)
         && !prop.repo_may

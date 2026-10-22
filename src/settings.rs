@@ -1650,6 +1650,7 @@ pub(crate) mod fixtures {
                 visibility: "public".into(),
                 default_branch: "main".into(),
                 admin: true,
+                by_org: true,
             }),
             SettingsPage::Branches => Settings::Branches(Branches {
                 repo_id: NodeId::new("R_ghtui"),
@@ -1792,7 +1793,7 @@ pub(crate) mod fixtures {
                 key: Some(seal_key()),
             }],
             more_environments: false,
-            org: Ok(whole(vec![secret("ORG_TOKEN", Some("all"))])),
+            org: Some(Ok(whole(vec![secret("ORG_TOKEN", Some("all"))]))),
         }
     }
 
@@ -1807,7 +1808,9 @@ pub(crate) mod fixtures {
                 key: None,
             }],
             more_environments: false,
-            org: Err("GitHub doesn't show you gold-silver-copper's organization variables".into()),
+            org: Some(Err(
+                "GitHub doesn't show you gold-silver-copper's organization variables".into(),
+            )),
         }
     }
 

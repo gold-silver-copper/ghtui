@@ -70,8 +70,13 @@ impl Job for Subscribe {
 struct Subscribed(Watched, SubscriptionState);
 
 impl Expectation for Subscribed {
-    fn needs(&self, _: &State, _: &Route) -> Vec<DataKey> {
-        vec![DataKey::Subscription(self.0.clone())]
+    fn needs(&self, _: &State, route: &Route) -> Vec<DataKey> {
+        let mut keys = vec![DataKey::Subscription(self.0.clone())];
+        // The list of what you watch follows too.
+        if *route == Route::People(crate::route::people::Page::Watching) {
+            keys.push(DataKey::Watching);
+        }
+        keys
     }
 
     fn waiting(&self) -> &'static str {
@@ -124,6 +129,10 @@ pub fn subject(state: &State) -> Option<Watched> {
                     | Route::Pulls(pulls::Pr { .. })
                     | Route::Discussions(discussions::Discussion { .. })),
                 ) => of_route(&route),
+                // A repository's row (what you watch, a search) is about it.
+                Target::Page(Route::Code(crate::route::code::Page::Repo(repo))) => {
+                    Some(Watched::Repo(repo))
+                }
                 // A row that opens a pull request's files is about it too.
                 Target::Files(crate::diff_screen::DiffOf::Pr(pr)) => {
                     Some(Watched::Thread(pr.repo, pr.number))

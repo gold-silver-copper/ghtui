@@ -32,25 +32,28 @@ pub struct QueueEntry {
 /// A branch's merge queue.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeQueue {
-    pub url: String,
+    /// The branch has one (else the rest is empty).
+    pub exists: bool,
     /// How it merges (`SQUASH`), where GitHub says.
     pub method: Option<String>,
     pub entries: Capped<QueueEntry>,
 }
 
 impl GitHub {
-    /// `branch`'s merge queue in `repo`; not found where it has none.
+    /// `branch`'s merge queue in `repo`, if it has one.
     pub async fn merge_queue(&self, repo: &RepoId, branch: &str) -> Result<MergeQueue, ApiError> {
         let vars = crate::api::client::repo_vars!(repo, "branch": branch);
         let what = format!("a merge queue for {repo}'s {branch}");
-        let q: wire::Queue = self
-            .graphql_json(
-                crate::api::raw::MERGE_QUEUE,
-                vars,
-                what,
-                "/repository/mergeQueue",
-            )
+        let repository: wire::Repository = self
+            .graphql_json(crate::api::raw::MERGE_QUEUE, vars, what, "/repository")
             .await?;
+        let Some(q) = repository.merge_queue else {
+            return Ok(MergeQueue {
+                exists: false,
+                method: None,
+                entries: Capped::default(),
+            });
+        };
         let entries = q.entries.into_capped(|e| {
             let pr = e.pull_request;
             Some(QueueEntry {
@@ -69,7 +72,7 @@ impl GitHub {
             })
         });
         Ok(MergeQueue {
-            url: q.url,
+            exists: true,
             method: q.configuration.and_then(|c| c.merge_method),
             entries,
         })
@@ -84,8 +87,13 @@ mod wire {
     use crate::api::model::QueueState;
 
     #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Repository {
+        pub merge_queue: Option<Queue>,
+    }
+
+    #[derive(Deserialize)]
     pub struct Queue {
-        pub url: String,
         pub configuration: Option<Configuration>,
         pub entries: Counted<Entry>,
     }

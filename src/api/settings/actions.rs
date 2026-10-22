@@ -104,8 +104,9 @@ pub struct Store<T> {
     pub environments: Vec<EnvStore<T>>,
     /// It has more environments than are listed.
     pub more_environments: bool,
-    /// Its organization's that it may use, or why GitHub won't list them.
-    pub org: Result<Listed<T>, String>,
+    /// Its organization's that it may use, or why GitHub won't list them;
+    /// none when its owner is a user.
+    pub org: Option<Result<Listed<T>, String>>,
 }
 
 impl<T> Store<T> {
@@ -289,17 +290,20 @@ impl GitHub {
         let org = format!("/repos/{repo}/actions/organization-{kind}?per_page={per}");
         let org = async {
             let what = format!("{}'s organization {kind}", repo.owner);
-            let answer = self.rest_refusable(&org, &what, |status, _, answer| {
-                unread(status, answer.header("x-oauth-scopes"), &what)
+            // A user's repository has no organization: GitHub answers 422.
+            let answer = self.rest_refusable(&org, &what, |status, _, answer| match status {
+                422 => Some(None),
+                _ => unread(status, answer.header("x-oauth-scopes"), &what).map(Some),
             });
             match answer.await? {
-                Err(why) => Ok(Err(why)),
+                Err(None) => Ok(None),
+                Err(Some(why)) => Ok(Some(Err(why))),
                 Ok(answer) => {
                     let mut found: Value = serde_json::from_str(answer.body())?;
                     let items = found.get_mut(kind).map_or(json!([]), Value::take);
                     let items = serde_json::from_value(items)?;
                     let more = answer.next_page().is_some();
-                    Ok::<_, ApiError>(Ok(Listed { items, more }))
+                    Ok::<_, ApiError>(Some(Ok(Listed { items, more })))
                 }
             }
         };

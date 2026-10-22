@@ -91,11 +91,15 @@ pub(super) fn store<T: Row>(
         let why = format!("Only the first {n} environments are listed: the rest are on GitHub.");
         say(page, why, Role::Meta);
     }
-    page.blank();
     let title = format!("Organization {kind}");
     match &s.org {
-        Err(why) => empty_box(page, strong(title), &format!("{why}.")),
-        Ok(org) => {
+        None => {}
+        Some(Err(why)) => {
+            page.blank();
+            empty_box(page, strong(title), &format!("{why}."));
+        }
+        Some(Ok(org)) => {
+            page.blank();
             let none = format!("{} shares no {kind} with it.", repo.owner);
             counted_box(page, &title, Vec::new(), org, &none, |page, t| {
                 let link = SettingLink::OrgItem(t.name().to_owned());
@@ -107,13 +111,15 @@ pub(super) fn store<T: Row>(
     }
     page.blank();
     let (edit, delete) = (keys.edit, keys.delete);
+    let org = match s.org {
+        Some(_) => " The organization's are changed in its settings.",
+        None => "",
+    };
     let how = match kind {
         "secrets" => format!(
-            "GitHub never shows a secret's value, nor does ghtui: {edit} sets a new one, {delete} deletes it. The organization's are changed in its settings."
+            "GitHub never shows a secret's value, nor does ghtui: {edit} sets a new one, {delete} deletes it.{org}"
         ),
-        _ => format!(
-            "{edit} edits the selected one, {delete} deletes it. The organization's are changed in its settings."
-        ),
+        _ => format!("{edit} edits the selected one, {delete} deletes it.{org}"),
     };
     say(page, how, Role::Meta);
 }
@@ -142,7 +148,7 @@ pub(super) fn caches(page: &mut Page, c: &Caches, keys: SettingKeys<'_>, now: u6
     });
     page.blank();
     let how = format!(
-        "{} deletes the selected cache, or every cache with its key, after asking",
+        "{} deletes the selected cache, or every cache with its key, after asking.",
         keys.delete
     );
     say(page, how, Role::Meta);

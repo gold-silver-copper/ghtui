@@ -964,7 +964,7 @@ pub fn merge_queue() -> crate::api::queue::MergeQueue {
         author: Some("octocat".into()),
     };
     crate::api::queue::MergeQueue {
-        url: "https://github.com/gold-silver-copper/ghtui/queue/main".into(),
+        exists: true,
         method: Some("SQUASH".into()),
         entries: Capped::new(
             vec![

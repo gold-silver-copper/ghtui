@@ -164,9 +164,11 @@ fn general(page: &mut Page, repo: &RepoId, g: &General, keys: SettingKeys<'_>) {
         body(page, vec![name, Seg::new(value, Role::Body)]);
     }
     page.box_bottom();
-    let properties = format!("{}/custom-properties", url::repo(repo));
-    let properties = link_seg(page, "Custom properties", properties, Role::Link);
-    page.wrapped(vec![meta("See also: "), properties], 0, Frame::None);
+    if g.by_org {
+        let properties = format!("{}/custom-properties", url::repo(repo));
+        let properties = link_seg(page, "Custom properties", properties, Role::Link);
+        page.wrapped(vec![meta("See also: "), properties], 0, Frame::None);
+    }
     page.blank();
     if !g.admin {
         let why = "You don't administer it: GitHub shows its settings only to admins.";

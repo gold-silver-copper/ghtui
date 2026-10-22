@@ -673,7 +673,7 @@ pub fn rows(state: &State, c: &Choosing, q: &str) -> Rows {
         Choosing::IssueType { .. } => {
             let s = or_return!(sidebar(state, c));
             if s.issue_types.total() == 0 {
-                let none = "The repository has no issue types: its organization's owners add them on github.com";
+                let none = "No issue types here: an organization's owners add them on github.com, and a user's repositories have none";
                 return vec![row(none, "", None)];
             }
             let now = s.issue_type.as_ref().map(|t| t.name.as_str());

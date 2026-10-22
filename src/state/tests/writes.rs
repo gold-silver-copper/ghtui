@@ -309,3 +309,30 @@ fn a_wiki_page_is_edited_never_over_a_newer_one() {
     says(&s, "Saved Home");
     assert!(s.following.is_some(), "until GitHub shows the text");
 }
+
+/// `,w` on a row of the repositories you watch is about that repository;
+/// once it's changed, the list is fetched again with it.
+#[test]
+fn a_watched_repository_is_changed_from_its_row() {
+    let mut s = super::screens::at(state(), Route::People(crate::route::people::Page::Watching));
+    let of = Watched::Repo(RepoId::new("octocat", "Spoon-Knife"));
+    let cmds = act(&mut s, Action::Watch);
+    assert!(
+        fixtures::asks(&cmds, &DataKey::Subscription(of.clone())),
+        "{cmds:?}"
+    );
+    fetched(
+        &mut s,
+        DataKey::Subscription(of.clone()),
+        Data::from(fixtures::subscription()),
+    );
+    let sent = press(&mut s, "Ignore<Enter>");
+    let work = crate::watch::Subscribe {
+        of,
+        id: crate::api::model::NodeId::new("I_sub"),
+        state: SubscriptionState::Ignored,
+    };
+    assert_eq!(sent, [fixtures::start(work.clone())]);
+    fixtures::done(&mut s, work, Ok(()));
+    assert!(crate::follow::poll(&mut s).contains(&DataKey::Watching));
+}

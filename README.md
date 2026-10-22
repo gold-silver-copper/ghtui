@@ -627,7 +627,8 @@ request whose base has one) lists its pull requests in order, where
 each stands, who queued it and when GitHub expects it merged.
 GitHub's Go to file links (`/find/<ref>`) open the tree there with Go
 to file open, and `/watching` (linked under the inbox) lists the
-repositories you watch.
+repositories you watch: `:watch` on one's row changes how you watch it,
+and the list follows.
 
 **Explore** (`:explore`, or the Space menu's Go) is the nearest GitHub's
 API comes to Trending: repositories made today, this week or this

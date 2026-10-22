@@ -18,10 +18,11 @@ pub(super) fn pages(page: &mut Page, p: &Pages, keys: SettingKeys<'_>, now: u64)
     let Some(site) = &p.site else {
         let right = add_button(page, "Publish a site", keys);
         page.box_top(vec![strong("GitHub Pages")], right);
-        empty_row(
-            page,
-            "No site: it's published from a branch or by a workflow.",
+        let how = format!(
+            "No site yet. {} publishes one, from a branch or by a workflow.",
+            keys.add
         );
+        empty_row(page, &how);
         page.box_bottom();
         return;
     };
@@ -120,9 +121,12 @@ fn build_row(page: &mut Page, b: &PagesBuild, now: u64) {
 }
 
 pub(super) fn properties(page: &mut Page, repo: &RepoId, p: &Properties, keys: SettingKeys<'_>) {
-    let right = vec![meta(format!("{} sets them", keys.edit))];
     match &p.schema {
         Ok(schema) => {
+            let right = match schema.iter().any(|s| s.repo_may) {
+                true => vec![meta(format!("{} sets them", keys.edit))],
+                false => Vec::new(),
+            };
             let none = format!("{} has no custom properties.", repo.owner);
             let schema = Whole(schema);
             let title = vec![strong(format!("Custom properties  {}", schema.0.len()))];

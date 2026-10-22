@@ -641,6 +641,8 @@ pub struct Keys<'a> {
     pub find_file: &'a str,
     pub archive: &'a str,
     pub filter: &'a str,
+    /// Resolving a pull request's conflicts.
+    pub resolve: &'a str,
 }
 
 /// What every page builder needs besides its data.

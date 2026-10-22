@@ -60,7 +60,14 @@ pub(super) fn pr_summary(page: &mut Page, pr: &PrRef, d: &PrDetail, now: u64) {
 
 /// GitHub's merge box: checks, reviews, conflicts, auto-merge and the
 /// merge queue. On a timeline, it's joined to what's above.
-pub(super) fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons, timeline: bool) {
+pub(super) fn merge_box(
+    page: &mut Page,
+    pr: &PrRef,
+    d: &PrDetail,
+    cx: PageCtx<'_>,
+    timeline: bool,
+) {
+    let icons = cx.icons;
     let readiness = d.readiness();
     if matches!(readiness, Readiness::Merged | Readiness::Closed) {
         return;
@@ -101,7 +108,13 @@ pub(super) fn merge_box(page: &mut Page, pr: &PrRef, d: &PrDetail, icons: Icons,
     });
     let conflicts = match d.mergeable {
         Mergeable::Yes => (Some(true), "No conflicts with the base branch".to_owned()),
-        Mergeable::Conflicting => (Some(false), "This branch has conflicts".to_owned()),
+        Mergeable::Conflicting => (
+            Some(false),
+            format!(
+                "This branch has conflicts: {} resolves them, with git",
+                cx.keys.resolve
+            ),
+        ),
         Mergeable::Unknown => (None, "Checking for conflicts…".to_owned()),
     };
     // Behind is a problem only where the repository requires it up to date.
@@ -210,6 +223,11 @@ pub fn merge_queue(
     q: &crate::api::queue::MergeQueue,
     now: u64,
 ) {
+    if !q.exists {
+        let why = format!("{branch} has no merge queue: its pull requests merge as they're ready.");
+        empty_box(page, strong(format!("Merge queue for {branch}")), &why);
+        return;
+    }
     let mut right = Vec::new();
     if let Some(method) = &q.method {
         right.push(meta(format!("{} merges", method.to_lowercase())));
@@ -344,7 +362,7 @@ pub fn pr_conversation(
         icons,
     };
     timeline::entries(page, &talk, &place, &a.timeline, marks);
-    merge_box(page, pr, d, icons, true);
+    merge_box(page, pr, d, cx, true);
     add_comment(page, keys);
 }
 

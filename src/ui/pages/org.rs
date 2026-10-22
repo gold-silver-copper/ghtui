@@ -18,7 +18,9 @@ pub fn members(
     now: u64,
 ) {
     let admin = access.is_some_and(|a| a.admin);
-    if let Some(lacks) = access.and_then(|a| a.lacks.as_ref()) {
+    // A member changes no one here: what their token lacks is said on
+    // the Teams page.
+    if admin && let Some(lacks) = access.and_then(|a| a.lacks.as_ref()) {
         say(page, lacks.clone(), Role::Meta);
         page.blank();
     }

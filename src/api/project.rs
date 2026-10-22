@@ -709,12 +709,9 @@ fn scoped(err: ApiError) -> ApiError {
     let read = messages.iter().any(|m| m.contains("'read:project'"));
     let write = messages.iter().any(|m| m.contains("'project'"));
     if write {
-        ApiError::GraphQl(vec![crate::api::scope_missing(
-            "Changing a project",
-            "project",
-        )])
+        ApiError::Denied(crate::api::scope_missing("Changing a project", "project"))
     } else if read {
-        ApiError::GraphQl(vec![crate::api::scope_missing("Projects", "read:project")])
+        ApiError::Denied(crate::api::scope_missing("Projects", "read:project"))
     } else {
         err
     }

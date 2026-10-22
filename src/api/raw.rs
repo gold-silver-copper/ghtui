@@ -316,7 +316,7 @@ raw! {
     SECURITY_POLICY = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { securityPolicyUrl } }";
 
     /// A branch's merge queue: the first 50 entries, in order.
-    MERGE_QUEUE = "query($owner: String!, $name: String!, $branch: String) { repository(owner: $owner, name: $name) { mergeQueue(branch: $branch) { url configuration { mergeMethod } entries(first: 50) { totalCount nodes { position state enqueuedAt estimatedTimeToMerge solo jump enqueuer { login } pullRequest { number title author { login } } } } } } }";
+    MERGE_QUEUE = "query($owner: String!, $name: String!, $branch: String) { repository(owner: $owner, name: $name) { mergeQueue(branch: $branch) { configuration { mergeMethod } entries(first: 50) { totalCount nodes { position state enqueuedAt estimatedTimeToMerge solo jump enqueuer { login } pullRequest { number title author { login } } } } } } }";
 
     /// A topic's stars and the topics GitHub relates to it.
     TOPIC = "query($name: String!) { topic(name: $name) { name stargazerCount relatedTopics(first: 10) { name } } }";

@@ -141,6 +141,9 @@ pub struct General {
     pub default_branch: String,
     /// You administer it.
     pub admin: bool,
+    /// Its owner is an organization (only theirs have custom properties).
+    #[serde(default)]
+    pub by_org: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -578,11 +581,18 @@ impl GitHub {
             default_branch: String,
             #[serde(default)]
             permissions: Option<Perms>,
+            #[serde(default)]
+            owner: Option<Owner>,
         }
         #[derive(Deserialize)]
         struct Perms {
             #[serde(default)]
             admin: bool,
+        }
+        #[derive(Deserialize)]
+        struct Owner {
+            #[serde(rename = "type", default)]
+            kind: String,
         }
         let path = format!("/repos/{repo}");
         let wire: Wire = self.rest_json(&path, repo).await?;
@@ -593,6 +603,7 @@ impl GitHub {
                 .unwrap_or_else(|| if wire.private { "private" } else { "public" }.into()),
             default_branch: wire.default_branch,
             admin: wire.permissions.is_some_and(|p| p.admin),
+            by_org: wire.owner.is_some_and(|o| o.kind == "Organization"),
         })
     }
 
