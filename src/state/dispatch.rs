@@ -176,13 +176,12 @@ pub(super) fn handle(state: &mut State, msg: Msg) -> Cmds {
         }
         Msg::Timer(Timer::Live) => {
             state.live = false;
-            let mut cmds = Cmds::new();
             let mut needs = state.running_here();
             needs.extend(crate::follow::poll(state));
-            for need in needs {
-                cmds.extend(state.ensure(need, true));
-            }
-            return cmds;
+            return needs
+                .into_iter()
+                .flat_map(|need| state.ensure(need, true))
+                .collect();
         }
         Msg::Timer(Timer::Home) => {
             state.home_timer = false;

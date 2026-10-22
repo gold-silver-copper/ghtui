@@ -13,7 +13,6 @@ use crate::housekeeping::{FileChange, FormOf, MilestoneWrite, RefWrite};
 use crate::housekeeping::{files, labels, milestones, refs, repos};
 
 use super::*;
-use crate::fixtures::{self};
 
 fn picker(s: &State) -> bool {
     matches!(&s.overlay, Some(Overlay::Picker(_)))
@@ -389,6 +388,16 @@ fn look() -> FileLook {
     fixtures::file_look()
 }
 
+/// The form for `change` to the fixture file.
+fn main_rs(change: FileChange) -> Route {
+    Route::Housekeeping(FormOf::File {
+        repo: ghtui(),
+        rev: "main".into(),
+        path: "src/main.rs".into(),
+        change,
+    })
+}
+
 /// `,e` on a file reads it from GitHub and opens the composer on it; a
 /// new branch is chosen, ctrl-s asks before committing, and the commit
 /// names the file as it was read. The file then opens on the new branch,
@@ -398,12 +407,7 @@ fn a_file_is_edited_and_committed_on_a_new_branch() {
     let mut s = with_file();
     fixtures::cloned(&mut s, &ghtui(), None);
     let cmds = press(&mut s, "e");
-    let form = Route::Housekeeping(FormOf::File {
-        repo: ghtui(),
-        rev: "main".into(),
-        path: "src/main.rs".into(),
-        change: FileChange::Edit,
-    });
+    let form = main_rs(FileChange::Edit);
     assert_eq!(s.route(), Some(&form));
     let file = DataKey::FileLook(ghtui(), "main".into(), "src/main.rs".into());
     assert!(fixtures::asks(&cmds, &file), "{cmds:?}");
@@ -459,12 +463,7 @@ fn a_file_changed_meanwhile_keeps_your_text() {
     let mut s = with_file();
     fixtures::cloned(&mut s, &ghtui(), None);
     press(&mut s, "e");
-    let form = Route::Housekeeping(FormOf::File {
-        repo: ghtui(),
-        rev: "main".into(),
-        path: "src/main.rs".into(),
-        change: FileChange::Edit,
-    });
+    let form = main_rs(FileChange::Edit);
     read(&mut s);
     let c = fixtures::composer(&mut s);
     c.input.insert_str("Mine. ");
@@ -492,12 +491,7 @@ fn a_file_is_deleted_with_a_commit() {
     let mut s = with_file();
     fixtures::cloned(&mut s, &ghtui(), None);
     press(&mut s, "D");
-    let form = Route::Housekeeping(FormOf::File {
-        repo: ghtui(),
-        rev: "main".into(),
-        path: "src/main.rs".into(),
-        change: FileChange::Delete,
-    });
+    let form = main_rs(FileChange::Delete);
     assert_eq!(s.route(), Some(&form));
     read(&mut s);
     press(&mut s, "<C-s>");

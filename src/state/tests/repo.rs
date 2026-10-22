@@ -132,10 +132,7 @@ fn repo_tabs_filters_state_sort_and_star() {
     assert_eq!(state.chrome().active, Some(1));
     // r refreshes the list's counts too, which the header holds.
     let cmds = fetches(press(&mut state, "r"));
-    let header = Cmd::Api(Api::Fetch {
-        key: DataKey::Repo(ghtui()),
-        cached: false,
-    });
+    let header = refetch(DataKey::Repo(ghtui()));
     assert!(cmds.contains(&header), "{cmds:?}");
 
     // `/` on a list edits its filter.

@@ -9,7 +9,6 @@ use crate::api::timeline::{Item, What};
 use crate::route::pulls;
 
 use super::*;
-use crate::fixtures::{self};
 use crate::ui::page::{Link, ReviewLink};
 
 /// The page on screen, as text.
@@ -20,6 +19,13 @@ fn text(s: &State) -> String {
         let right: String = l.right.iter().map(crate::ui::page::Seg::text).collect();
         format!("{}  {right}", l.text())
     });
+    lines.collect::<Vec<_>>().join("\n")
+}
+
+/// The page's sidebar, as text.
+fn aside(s: &State) -> String {
+    let aside = page(s).page().aside.as_ref().expect("a sidebar");
+    let lines = aside.lines.iter().map(crate::ui::page::PageLine::text);
     lines.collect::<Vec<_>>().join("\n")
 }
 
@@ -61,15 +67,7 @@ fn a_review_shows_its_threads_and_opens_them() {
 /// closes.
 #[test]
 fn the_sidebar_says_where_each_reviewer_stands() {
-    let s = conversation();
-    let p = page(&s);
-    let aside = p.page().aside.as_ref().expect("a sidebar");
-    let aside: Vec<String> = aside
-        .lines
-        .iter()
-        .map(crate::ui::page::PageLine::text)
-        .collect();
-    let aside = aside.join("\n");
+    let aside = aside(&conversation());
     for part in [
         "✓ monalisa approved · before the",
         "for octo-org/design",
@@ -145,10 +143,7 @@ fn the_review_tab_lists_reviews_and_one_opens_its_page() {
 #[test]
 fn a_reviews_summary_is_edited() {
     let mut s = conversation();
-    fixtures::select_by(
-        &mut s,
-        |l| matches!(l, Link::Quote { author, body, .. } if author == "hubot" && body.starts_with("Yes")),
-    );
+    select_comment(&mut s, "hubot", "Yes");
     press(&mut s, "e");
     let c = fixtures::composer(&mut s);
     assert_eq!(c.text(), "Yes: every role is checked at both depths.");
@@ -212,14 +207,7 @@ fn an_issues_timeline_and_development() {
         page.contains("monalisa linked a pull request that will close this issue"),
         "{page}"
     );
-    let p = super::page(&s);
-    let aside = p.page().aside.as_ref().expect("a sidebar");
-    let aside: Vec<String> = aside
-        .lines
-        .iter()
-        .map(crate::ui::page::PageLine::text)
-        .collect();
-    let aside = aside.join("\n");
+    let aside = aside(&s);
     assert!(aside.contains("Development"), "{aside}");
     assert!(aside.contains("#12 Cap the reading width"), "{aside}");
     assert!(aside.contains("Bug"), "{aside}");

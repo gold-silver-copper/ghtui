@@ -42,18 +42,21 @@ fn comment_links_scroll_to_the_comment() {
     );
 
     // Issue comments too.
-    let mut s = with_repo();
-    s.size = (100, 12);
-    let url = format!(
-        "https://github.com/{}/issues/14#issuecomment-1000001",
-        ghtui()
-    );
-    let _ = s.follow(&crate::ui::page::Link::Url(url));
+    let mut s = to_comment();
     let issue = Data::Issue(Some(Box::new(fixtures::issue())));
     fetched(&mut s, DataKey::Issue(ghtui(), 14), issue);
     let p = page(&s);
     assert!(p.page().anchors.contains_key("issuecomment-1000001"));
     assert!(p.scroll > 0);
+}
+
+/// A short terminal, gone to a link to the fixture issue's comment.
+fn to_comment() -> State {
+    let mut s = with_repo();
+    s.size = (100, 12);
+    let url = format!("{}#issuecomment-1000001", issue(14).url());
+    let _ = s.follow(&crate::ui::page::Link::Url(url));
+    s
 }
 
 /// A comment's link opened on a cached issue whose body has grown
@@ -62,16 +65,10 @@ fn comment_links_scroll_to_the_comment() {
 #[test]
 fn a_comment_link_follows_its_comment_when_the_issue_refreshes() {
     let open = |moved: &dyn Fn(&mut State)| {
-        let mut s = with_repo();
-        s.size = (100, 12);
-        let url = format!(
-            "https://github.com/{}/issues/14#issuecomment-1000001",
-            ghtui()
-        );
-        let _ = s.follow(&crate::ui::page::Link::Url(url));
+        let mut s = to_comment();
         let key = DataKey::Issue(ghtui(), 14);
         let cached = Data::Issue(Some(Box::new(fixtures::issue())));
-        let _ = update(&mut s, Msg::fetched_at(key.clone(), Ok(cached), Some(0)));
+        let _ = update(&mut s, Msg::fetched_at(key, Ok(cached), Some(0)));
         moved(&mut s);
         let shown = |s: &State| {
             let p = page(s);
@@ -84,9 +81,7 @@ fn a_comment_link_follows_its_comment_when_the_issue_refreshes() {
             )
         };
         let at = shown(&s);
-        let mut issue = fixtures::issue();
-        issue.body.push_str(&"\n\nMore.".repeat(20));
-        fetched(&mut s, key, Data::Issue(Some(Box::new(issue))));
+        issue_shows(&mut s, |d| d.body.push_str(&"\n\nMore.".repeat(20)));
         (
             at,
             shown(&s),

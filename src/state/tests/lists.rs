@@ -69,10 +69,7 @@ fn an_extended_list_is_kept_until_asked() {
         runs.next = next.map(str::to_owned);
         Data::from(runs)
     };
-    let refetch = Cmd::Api(Api::Fetch {
-        key: key.clone(),
-        cached: false,
-    });
+    let refetch = refetch(key.clone());
     fetched(&mut state, key.clone(), page(10, Some("2")));
     assert!(state.load_visible(false).contains(&refetch), "pending runs");
     fetched(&mut state, key.clone(), page(10, Some("2")));

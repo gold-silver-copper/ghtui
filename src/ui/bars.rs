@@ -35,7 +35,7 @@ pub struct StatusBar<'a> {
     pub view: Option<&'a str>,
     /// `(keys, what they do)` here, most useful first; shown when there's no
     /// notice, as many as fit.
-    pub hints: &'a [(String, String)],
+    pub hints: &'a [(String, std::borrow::Cow<'static, str>)],
 }
 
 impl Widget for StatusBar<'_> {
@@ -87,7 +87,7 @@ impl Widget for StatusBar<'_> {
                 if i > 0 {
                     left.push(Span::styled("   ", theme.body(BAR)));
                 }
-                left.extend(key_hints(theme, BAR, &[(keys.as_str(), what.as_str())]));
+                left.extend(key_hints(theme, BAR, &[(keys.as_str(), &**what)]));
             }
         }
         while right

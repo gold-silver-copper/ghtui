@@ -4,8 +4,6 @@ use crate::api::discussion::Discuss;
 use crate::api::edit::{Edit, ReactionContent};
 
 use super::*;
-use crate::fixtures::{self};
-use crate::ui::page::Link;
 
 fn about() -> Subject {
     Subject::Discussion(DiscussionsOf::Repo(ghtui()), 14603)
@@ -17,14 +15,6 @@ fn deliver(s: &mut State, f: impl FnOnce(&mut DiscussionDetail)) -> Cmds {
     f(&mut d);
     let key = DataKey::Discussion(DiscussionsOf::Repo(ghtui()), 14603);
     fetched(s, key, Data::from(d))
-}
-
-/// Selects the comment `author` wrote that starts with `text`.
-fn select(s: &mut State, author: &str, text: &str) {
-    fixtures::select_by(
-        s,
-        |l| matches!(l, Link::Quote { author: a, body, .. } if a == author && body.starts_with(text)),
-    );
 }
 
 /// `c` with no comment selected writes an answer (it's a Q&A); on a
@@ -60,7 +50,7 @@ fn c_answers_or_replies_in_the_thread() {
 
     // On a reply, the reply goes in its comment's thread.
     for (author, text) in [("hubot", "Fetch"), ("octocat", "That works")] {
-        select(&mut s, author, text);
+        select_comment(&mut s, author, text);
         press(&mut s, "c");
         let cmds = press(&mut s, "Thanks<C-s>");
         let reply = Change::Discussion(Discuss::Comment {
@@ -79,7 +69,7 @@ fn c_answers_or_replies_in_the_thread() {
 #[test]
 fn the_answer_is_marked_and_unmarked() {
     let mut s = with_discussion();
-    select(&mut s, "monalisa", "Drafts");
+    select_comment(&mut s, "monalisa", "Drafts");
     let cmds = act(&mut s, Action::MarkAnswer);
     let mark = Change::Discussion(Discuss::Answer {
         comment: NodeId::new("DC_18765100"),
@@ -95,7 +85,7 @@ fn the_answer_is_marked_and_unmarked() {
     assert!(s.following.is_none());
 
     let mut s = with_discussion();
-    select(&mut s, "hubot", "Fetch");
+    select_comment(&mut s, "hubot", "Fetch");
     let cmds = act(&mut s, Action::MarkAnswer);
     let unmark = Change::Discussion(Discuss::Answer {
         comment: NodeId::new("DC_18765024"),
@@ -103,11 +93,11 @@ fn the_answer_is_marked_and_unmarked() {
     });
     assert_eq!(fixtures::sent_change(&cmds).0, &unmark);
 
-    select(&mut s, "octocat", "That works");
+    select_comment(&mut s, "octocat", "That works");
     assert!(act(&mut s, Action::MarkAnswer).is_empty());
     says(&s, "A reply can't be the answer, only a comment");
     deliver(&mut s, |d| d.answerable = false);
-    select(&mut s, "monalisa", "Drafts");
+    select_comment(&mut s, "monalisa", "Drafts");
     act(&mut s, Action::MarkAnswer);
     says(&s, "Q&A doesn't take answers");
 }
@@ -118,7 +108,7 @@ fn the_answer_is_marked_and_unmarked() {
 #[test]
 fn comments_are_reacted_to_edited_and_deleted() {
     let mut s = with_discussion();
-    select(&mut s, "monalisa", "Drafts");
+    select_comment(&mut s, "monalisa", "Drafts");
     press(&mut s, "+");
     assert!(matches!(s.overlay, Some(Overlay::Picker(_))));
     let cmds = press(&mut s, "<Enter>");
@@ -148,7 +138,7 @@ fn comments_are_reacted_to_edited_and_deleted() {
 
     press(&mut s, "e");
     says(&s, "GitHub doesn't let you edit monalisa's comment");
-    select(&mut s, "octocat", "That works");
+    select_comment(&mut s, "octocat", "That works");
     press(&mut s, "e");
     let c = fixtures::composer(&mut s);
     assert_eq!(c.text(), "That works, thanks!");

@@ -76,13 +76,9 @@ fn arrows_move_comment_by_comment_and_enter_quotes() {
     let mut state = state();
     update(&mut state, Msg::Resize(100, 14));
     let _ = state.push(issue(14));
-    let mut issue = fixtures::issue();
-    issue.body = (1..=30).map(|n| format!("Line {n}.\n\n")).collect();
-    fetched(
-        &mut state,
-        DataKey::Issue(ghtui(), 14),
-        Data::Issue(Some(Box::new(issue))),
-    );
+    issue_shows(&mut state, |d| {
+        d.body = (1..=30).map(|n| format!("Line {n}.\n\n")).collect();
+    });
     assert_eq!(
         page(&state).selected,
         None,
@@ -228,13 +224,13 @@ fn the_menu_lists_and_runs_what_you_can_do() {
 #[test]
 fn status_bar_hints_follow_the_context() {
     let mut state = with_repo();
-    let hints: Vec<String> = state.key_hints().into_iter().map(|(_, w)| w).collect();
-    assert_eq!(hints[..2], ["menu", "open"]);
-    assert!(hints.contains(&"go to file".to_owned()));
+    let hints = |state: &State| Vec::from_iter(state.key_hints().into_iter().map(|(_, w)| w));
+    assert_eq!(hints(&state)[..2], ["menu", "open"]);
+    assert!(hints(&state).contains(&"go to file".into()));
     press(&mut state, "2");
-    let hints: Vec<String> = state.key_hints().into_iter().map(|(_, w)| w).collect();
+    let hints = hints(&state);
     assert!(
-        hints.contains(&"filter".to_owned()) && hints.contains(&"tabs".to_owned()),
+        hints.contains(&"filter".into()) && hints.contains(&"tabs".into()),
         "{hints:?}"
     );
 }
@@ -604,12 +600,8 @@ fn pr_commits_step_and_go_up() {
 /// it; Enter on a comment doesn't start writing.
 #[test]
 fn a_quote_reply_opens_under_the_comment() {
-    use crate::ui::page::Link;
     let mut s = super::sized(super::with_issue(), 100, 40);
-    fixtures::select_by(
-        &mut s,
-        |l| matches!(l, Link::Quote { author, .. } if author == "hubot"),
-    );
+    select_comment(&mut s, "hubot", "");
     press(&mut s, "<Enter>");
     assert!(s.overlay.is_none(), "Enter doesn't start writing");
     press(&mut s, ">");

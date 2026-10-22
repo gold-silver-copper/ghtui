@@ -19,7 +19,7 @@ fn polling_asks_with_etags_and_marks_new_threads() {
     let (mut s, pr) = diff_state(120);
     s.viewer = Some("octocat".into());
     let old = thread("old", Some(1), false, false);
-    diff_msg(&mut s, &pr, DiffMsg::ThreadsLoaded(Ok(vec![old.clone()])));
+    threads_loaded(&mut s, &pr, vec![old.clone()]);
 
     let (asks, wait) = next_ask(&mut s);
     assert_eq!(wait, crate::live::FIRST_MS);
@@ -55,7 +55,7 @@ fn polling_asks_with_etags_and_marks_new_threads() {
     );
 
     let new = thread("new", Some(14), false, false);
-    diff_msg(&mut s, &pr, DiffMsg::ThreadsLoaded(Ok(vec![old, new])));
+    threads_loaded(&mut s, &pr, vec![old, new]);
     let anns = s.diffs[&DiffOf::Pr(pr.clone())].doc.annotations();
     let marked = |id: &str| {
         let ann = anns
@@ -72,11 +72,7 @@ fn polling_asks_with_etags_and_marks_new_threads() {
 #[test]
 fn a_comment_before_the_first_answer_is_fetched() {
     let (mut s, pr) = diff_state(120);
-    diff_msg(
-        &mut s,
-        &pr,
-        DiffMsg::ThreadsLoaded(Ok(vec![thread("old", Some(1), false, false)])),
-    );
+    threads_loaded(&mut s, &pr, vec![thread("old", Some(1), false, false)]);
     let _ = next_ask(&mut s);
     let seen = vec![(
         Probe::ReviewComments,
@@ -84,11 +80,7 @@ fn a_comment_before_the_first_answer_is_fetched() {
     )];
     assert!(update(&mut s, Msg::Polled(pr.clone(), seen)).is_empty());
     let (mut s, pr) = diff_state(120);
-    diff_msg(
-        &mut s,
-        &pr,
-        DiffMsg::ThreadsLoaded(Ok(vec![thread("old", Some(1), false, false)])),
-    );
+    threads_loaded(&mut s, &pr, vec![thread("old", Some(1), false, false)]);
     let _ = next_ask(&mut s);
     let came = vec![(
         Probe::ReviewComments,
