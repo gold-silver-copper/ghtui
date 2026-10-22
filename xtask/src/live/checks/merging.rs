@@ -30,7 +30,13 @@ const MERGEABLE: Duration = Duration::from_secs(120);
 /// A branch made from `from` with `path` holding `text`, from objects;
 /// its commit. Deleted, with its pull requests closed, when the check
 /// ends.
-fn branch_with(cx: &mut Cx, name: &str, from: &str, path: &str, text: &str) -> Result<String> {
+pub(super) fn branch_with(
+    cx: &mut Cx,
+    name: &str,
+    from: &str,
+    path: &str,
+    text: &str,
+) -> Result<String> {
     let repo = gh::REPO;
     let base = gh::get(&format!("repos/{repo}/git/ref/heads/{from}"))?;
     let parent = base["object"]["sha"].as_str().context("no tip")?.to_owned();

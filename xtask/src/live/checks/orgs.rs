@@ -2,9 +2,8 @@
 //! the Security tab and closed after (GitHub's API can't delete one); and
 //! an organization's team, made from its Teams page, given a repository
 //! and its role changed and taken away, then deleted, when the account
-//! owns an organization. Inviting someone (it emails a real person),
-//! changing a member's role and answering an invitation sent to you
-//! (that takes a second account to send it) are left to the tests.
+//! owns an organization. The README lists the organization writes it
+//! leaves to their tests, and why.
 
 use std::time::Duration;
 
@@ -161,7 +160,7 @@ fn delete_team(org: &str, slug: &str) -> Result<()> {
 fn orgs(cx: &mut Cx) -> Result<()> {
     let Some(org) = owned_org()? else {
         say(
-            "    · left out: the account owns no organization, so its people and teams aren't changed",
+            "    · left out: the account owns no organization, so its teams aren't changed (the README lists the other writes without a live check)",
         );
         return Ok(());
     };

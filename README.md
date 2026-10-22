@@ -1378,10 +1378,11 @@ checks; `cargo xtask live issue offline` runs only those.
     deletes it with `D`, and checks `main`'s rule ends as it began.
   - `secrets` makes an Actions variable with `a`, edits it with `e` and
     deletes it with `D`; sets a secret with `a` (GitHub has it, sealed)
-    and deletes it; and publishes a Pages site from `main` with `a` and
-    unpublishes it with `D`. It says it leaves out deleting caches when
-    the test repository has none, and custom properties on a user's
-    repository (only an organization's have them).
+    and deletes it; publishes a Pages site from `main` with `a` and
+    unpublishes it with `D`; and deletes, with `D`, a cache saved by a
+    workflow it pushes on a branch of its own. Custom properties are
+    left out on a user's repository (only an organization's have them),
+    and it says so.
   - `actions` runs `actions.yml` by hand with `:run workflow`, with its `seconds`
     input set, and follows the run until it fails, as it does on
     purpose.
@@ -1392,9 +1393,7 @@ checks; `cargo xtask live issue offline` runs only those.
     with `a` on its Teams page, gives it a repository with `a` on its
     page, changes the team's role there with `e`, and takes it away with
     `D`; the team is deleted after. Without an organization of yours it
-    says it's left out. Inviting someone (GitHub emails them), changing a
-    member's role and answering an invitation sent to you (it takes a
-    second account to send one) are left to the tests.
+    says it's left out.
   - `suggestion` opens a pull request of a branch of its own with a
     suggestion on it (made with `gh api`), commits it with `:commit
     suggestion`, and checks the branch has it with GitHub's message and
@@ -1418,6 +1417,15 @@ checks; `cargo xtask live issue offline` runs only those.
     the machine's network: the page stays, marked offline; a comment
     written meanwhile is queued, still queued after ghtui restarts, and
     sent exactly once when the stand-in starts again.
+- **Writes without a live check**, each with only its request and
+  state tests, because one account can't check them for real:
+  - inviting a member, cancelling an invitation, changing a member's
+    role, removing a member, and changing a team's members: they need
+    an organization the account owns, and inviting emails a real person;
+  - accepting or declining an invitation sent to you: it takes a second
+    account to send one;
+  - custom properties and issue types: only an organization's
+    repositories have them, and the test repository is a user's.
 - **What it needs:** `gh`, logged in as the owner of
   `gold-silver-copper/ghtui-test-writes`, with a classic token's `repo`
   and `workflow` scopes. Without `read:project` (or `project`),
