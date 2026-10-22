@@ -143,6 +143,15 @@ fn key_hints<'a>(theme: &Theme, bg: Bg, hints: &[(&'a str, &str)]) -> Vec<Span<'
     spans
 }
 
+/// Row `y` of `area`.
+pub fn row(area: Rect, y: u16) -> Rect {
+    Rect {
+        y,
+        height: 1,
+        ..area
+    }
+}
+
 /// `area` shrunk by the standard padding.
 pub fn padded(area: Rect) -> Rect {
     inset(area, PAD_X, PAD_Y)

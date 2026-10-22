@@ -14,7 +14,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
 use crate::ui::diff_doc::{Doc, Viewed};
-use crate::ui::{Ctx, PAD_Y, fill, fit_spans, inset, render_split, text};
+use crate::ui::{Ctx, PAD_Y, cols, fill, fit_spans, inset, render_split, row, text};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TreeRow {
@@ -152,8 +152,7 @@ pub fn fit_width(rows: &[TreeRow]) -> u16 {
         .saturating_add(indent)
     });
     // The row's inset on both sides.
-    let width = widest.max().unwrap_or(0).saturating_add(2);
-    u16::try_from(width).unwrap_or(u16::MAX)
+    cols(widest.max().unwrap_or(0).saturating_add(2))
 }
 
 /// Columns a file's row takes besides its name: its mark, a viewed tick,
@@ -198,13 +197,10 @@ impl Widget for FileTree<'_> {
         if area.height <= PAD_Y {
             return;
         }
-        let title_area = Rect {
-            y: area
-                .y
-                .saturating_add(PAD_Y.min(area.height.saturating_sub(1))),
-            height: 1,
-            ..inset(area, 1, 0)
-        };
+        let title_y = area
+            .y
+            .saturating_add(PAD_Y.min(area.height.saturating_sub(1)));
+        let title_area = row(inset(area, 1, 0), title_y);
         let (adds, dels) = self.doc.totals();
         let title = [
             Span::styled("Files", theme.title(TREE_BG)),
@@ -228,23 +224,18 @@ impl Widget for FileTree<'_> {
         Line::from(fit_spans(&title, title_area.width)).render(title_area, buf);
 
         let shown = self.rows.iter().enumerate().skip(self.scroll);
-        for ((i, row), y) in shown.zip(list_top(area)..area.bottom()) {
+        for ((i, tree_row), y) in shown.zip(list_top(area)..area.bottom()) {
             let selected = i == self.selected;
             let bg = match (selected, self.focused) {
                 (true, true) => Bg::Selected,
                 (true, false) => Bg::SelectedInactive,
                 _ => TREE_BG,
             };
-            let row_area = Rect {
-                x: area.x,
-                y,
-                width: area.width,
-                height: 1,
-            };
+            let row_area = row(area, y);
             if selected {
                 fill(buf, row_area, theme, bg);
             }
-            self.render_row(row, bg, inset(row_area, 1, 0), buf);
+            self.render_row(tree_row, bg, inset(row_area, 1, 0), buf);
         }
     }
 }
