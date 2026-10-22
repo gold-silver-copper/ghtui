@@ -106,7 +106,20 @@ fn an_owner_invites_a_member_and_the_page_follows() {
 
     let mut s = people(false);
     press(&mut s, "a");
-    says(&s, "takes being one of its owners");
+    says(&s, "Only @ratatui's owners change its people");
+    // By email too.
+    let mut s = people(true);
+    press(&mut s, "a");
+    press(&mut s, "mona@example.com<Enter>member<Enter>");
+    assert!(asked(&s).starts_with("Invite mona@example.com to @ratatui as a member?"));
+    let cmds = press(&mut s, "<Enter>");
+    assert!(matches!(
+        sent(&cmds).0,
+        OrgChange::InviteEmail {
+            role: OrgRole::Member,
+            ..
+        }
+    ));
 }
 
 /// `e` changes a member's role (the one they have is marked), `D`

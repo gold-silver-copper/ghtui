@@ -227,7 +227,7 @@ fn owner(state: &State, org: &str) -> Result<(), String> {
     let a = may(state, org)?;
     if !a.admin {
         return Err(format!(
-            "Changing @{org}'s people takes being one of its owners, which GitHub doesn't say you are"
+            "Only @{org}'s owners change its people, and GitHub doesn't say you're one"
         ));
     }
     a.lacks.clone().map_or(Ok(()), Err)
@@ -437,7 +437,7 @@ pub fn hint(state: &State, at: &At) -> String {
     match at {
         At::People(_) => {
             format!(
-                "{add} invites someone, {edit} changes the selected one's role, {delete} removes them"
+                "{add} invites someone, {edit} changes the selected one's role, {delete} removes them or cancels the invitation"
             )
         }
         At::Teams(_) => format!("{add} makes a team"),
@@ -515,6 +515,13 @@ fn next(pick: Pick) -> Option<Step> {
     Some(Step::Pick(crate::picker::Kind::Org(pick)))
 }
 
+/// An email address as typed, if it looks like one.
+fn email(q: &str) -> Option<&str> {
+    let q = q.trim();
+    let (name, domain) = q.split_once('@')?;
+    (!name.is_empty() && domain.contains('.') && !q.contains(char::is_whitespace)).then_some(q)
+}
+
 /// A login as typed, without its `@`, if it can be one.
 fn login(q: &str) -> Result<&str, String> {
     let login = q.trim().trim_start_matches('@');
@@ -532,8 +539,21 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Ste
     let row =
         |label: String, hint: &str, step: Option<Step>| (crate::picker::item(label, hint), step);
     match pick {
+        Pick::Invite { org } if email(q).is_some() => {
+            let email = email(q).unwrap_or_default().to_owned();
+            let then = Pick::Role {
+                org: org.clone(),
+                login: email.clone(),
+                now: None,
+            };
+            vec![row(
+                format!("Invite {email} by email"),
+                "then choose their role",
+                next(then),
+            )]
+        }
         Pick::Invite { org } => match login(q) {
-            Err(why) => vec![row(why, "", None)],
+            Err(why) => vec![row(format!("{why}, or their email"), "", None)],
             Ok(login) => {
                 let member = members(state, org)
                     .and_then(|m| m.items.iter().find(|m| m.login.eq_ignore_ascii_case(login)));
@@ -565,9 +585,14 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Ste
                 }
                 let at = At::People(org.clone());
                 let invite = now.is_none();
+                let who = if email(login).is_some() {
+                    login.clone()
+                } else {
+                    format!("@{login}")
+                };
                 let (title, fact, label) = if invite {
                     (
-                        format!("Invite @{login} to @{org} as {}?", article(r)),
+                        format!("Invite {who} to @{org} as {}?", article(r)),
                         format!("GitHub emails them; once they accept, they {}", r.about()),
                         "Invite",
                     )
@@ -578,11 +603,18 @@ pub fn rows(state: &State, pick: &Pick, q: &str) -> Vec<(PaletteItem, Option<Ste
                         "Change role",
                     )
                 };
-                let change = OrgChange::SetMember {
-                    org: org.clone(),
-                    login: login.clone(),
-                    role: r,
-                    invite,
+                let change = match email(login) {
+                    Some(email) => OrgChange::InviteEmail {
+                        org: org.clone(),
+                        email: email.to_owned(),
+                        role: r,
+                    },
+                    None => OrgChange::SetMember {
+                        org: org.clone(),
+                        login: login.clone(),
+                        role: r,
+                        invite,
+                    },
                 };
                 let fact = (fact, r == OrgRole::Owner);
                 let step = ask(Action::EditSetting, &at, title, vec![fact], (label, change));
@@ -841,6 +873,12 @@ pub fn shows(state: &State, c: &OrgChange, at: &At) -> bool {
             invited || member_is(state, org, login, Some(*role))
         }
         C::SetMember { login, role, .. } => member_is(state, org, login, Some(*role)),
+        C::InviteEmail { email, .. } => access(state, org).is_some_and(|a| {
+            (a.invitations.as_ref().and_then(|i| i.as_ref().ok())).is_some_and(|l| {
+                l.more
+                    || (l.items.iter()).any(|i| i.email.as_deref().is_some_and(|e| same(e, email)))
+            })
+        }),
         C::RemoveMember { login, .. } => {
             members(state, org).is_some_and(|m| !m.items.iter().any(|m| same(&m.login, login)))
         }
@@ -905,7 +943,9 @@ fn member_is(state: &State, org: &str, login: &str, role: Option<OrgRole>) -> bo
 pub fn said(c: &OrgChange) -> (&'static str, &'static str) {
     use OrgChange as C;
     match c {
-        C::SetMember { invite: true, .. } => ("Inviting them", "the invitation"),
+        C::SetMember { invite: true, .. } | C::InviteEmail { .. } => {
+            ("Inviting them", "the invitation")
+        }
         C::SetMember { .. } | C::SetTeamMember { add: false, .. } => {
             ("Changing their role", "the new role")
         }
@@ -935,6 +975,9 @@ pub fn done(c: &OrgChange) -> String {
         C::SetMember {
             org, login, role, ..
         } => format!("@{login} is {} of @{org}", article(*role)),
+        C::InviteEmail { org, email, role } => {
+            format!("Invited {email} to @{org} as {}", article(*role))
+        }
         C::RemoveMember { org, login } => format!("Removed @{login} from @{org}"),
         C::CancelInvitation { who, .. } => format!("Cancelled the invitation to {who}"),
         C::CreateTeam { org, name, .. } => format!("Made the team “{name}” in @{org}"),

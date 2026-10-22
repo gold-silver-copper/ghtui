@@ -37,8 +37,10 @@ ghtui is pre-release, but it's usable every day.
   all at once, answer and reply in discussions and mark their answer,
   add, move, archive and restore a project's cards, set their fields
   (on the board, or from an issue's or pull request's own page) and edit
-  its drafts, dismiss or reopen a security alert, put a repository in
-  your starred lists or take it out, and delete a package's version.
+  its drafts, dismiss or reopen a security alert, draft a repository's
+  security advisory, accept or decline the invitations sent to you, put
+  a repository in your starred lists or take it out, and delete a
+  package's version.
 - **Managing** an issue, a pull request or a discussion, as GitHub's
   sidebar and menus do: delete a merged pull request's branch and
   restore it, convert one back to a draft, change its base, revert it;
@@ -65,8 +67,11 @@ ghtui is pre-release, but it's usable every day.
 - **Settings**, for a repository's admins: branch protection rules
   (made, edited and deleted) and rulesets (turned on or off),
   collaborators and invitations with their roles, webhooks and their
-  deliveries (redelivered), deploy keys, and archiving. Each change asks
-  first and names what it changes; deleting a repository is left to
+  deliveries (redelivered), deploy keys, and archiving; and an
+  organization's people (members invited, by login or email, with their
+  roles, changed and removed, and invitations cancelled) and teams (made,
+  their members and repositories added, changed and removed). Each change
+  asks first and names what it changes; deleting a repository is left to
   github.com.
 - **Git first**: files, folders, history, blame, comparisons, tags,
   code search, and a repository's contributors and commit activity come
@@ -242,7 +247,36 @@ is; never the secret itself). Each list filters with `/` as GitHub's does
 `resolution:revoked`) and `t` goes between open, closed and all. Where
 GitHub lets you, `x` dismisses an open alert (for a secret, closes it):
 pick GitHub's reason, after typing a comment if you like. On a closed one
-it reopens it, after asking. A list whose alerts are off says so.
+it reopens it, after asking. A list whose alerts are off says so. On the
+advisories, `:new here` drafts one in GitHub's form, for the
+repository's admins: its title, the affected package (ecosystem, name,
+affected and patched versions), its severity (a level, or a CVSS vector
+typed), its weaknesses (CWE IDs) and CVE ID, and its description in the
+composer. `ctrl-s` makes the draft and opens its page; drafts (and
+advisories in triage or closed) are listed with their state, to their
+admins. Credits, more than one package, and publishing are done on
+github.com.
+
+**Invitations sent to you** are listed at the top of your notifications,
+and each has its page (the website's link, `/owner/repo/invitations`).
+`:answer invitation` on one asks whether to accept or decline it, as the
+page's buttons do; the inbox follows GitHub until it's gone. An
+organization's invitation is accepted the same way; declining one is
+done on github.com.
+
+**An organization's people and teams** are changed as on the website,
+with the Settings tab's keys. On its People tab, which lists each member
+with their role, its owners see the invitations waiting: `a` invites
+someone, by login or email, then a role (Member or Owner, each saying
+what it allows), `e` changes the selected member's role, and `D` removes
+them or cancels the invitation. On its Teams page `a` makes a team (its
+name, then whether it's visible or secret), where GitHub lets you. On a
+team's page, its maintainers and the organization's owners add someone
+(`a` with a login) as a member or a maintainer, or a repository (`a`
+with its name) with a role; `e` changes the selected one's role, and `D`
+removes them. Each asks first, and the page follows GitHub until it
+shows the change. Without your token's admin:org scope, each says so,
+and how to add it.
 
 **A discussion** shows its answer at the top, as GitHub does, then its
 comments with their replies and reactions. `c` writes an answer (or, in
@@ -1252,6 +1286,16 @@ checks; `cargo xtask live issue offline` runs only those.
   - `actions` runs `actions.yml` by hand with `:run workflow`, with its `seconds`
     input set, and follows the run until it fails, as it does on
     purpose.
+  - `advisory` drafts a security advisory on the Security tab with
+    `:new here`, filling GitHub's form, and checks GitHub has it as
+    written. GitHub's API can't delete one, so the draft is closed.
+  - `orgs`, when the account owns an organization, makes a secret team
+    with `a` on its Teams page, gives it a repository with `a` on its
+    page, changes the team's role there with `e`, and takes it away with
+    `D`; the team is deleted after. Without an organization of yours it
+    says it's left out. Inviting someone (GitHub emails them), changing a
+    member's role and answering an invitation sent to you (it takes a
+    second account to send one) are left to the tests.
   - `offline` runs ghtui against a stand-in Enterprise Server (below)
     on port 8451, and stops it to make GitHub go away, without touching
     the machine's network: the page stays, marked offline; a comment
@@ -1278,13 +1322,16 @@ checks; `cargo xtask live issue offline` runs only those.
   `failures/`. A stand-in `xdg-open`, first on the server's `PATH`,
   writes down the URLs ghtui opens instead of opening a browser.
 - **What it touches and cleans up:** it writes only to the test
-  repository. Each check undoes what it made, pass or fail: the issues
-  (deleted), the pull request (closed) and its branch, the release and
-  its tag, the label, the protection rule and the workflow run; and the
-  fux server and the stand-in are stopped. ctrl-c stops the run after
+  repository (and, for `orgs`, to an organization the account owns).
+  Each check undoes what it made, pass or fail: the issues (deleted), the
+  pull request (closed) and its branch, the release and its tag, the
+  label, the protection rule, the workflow run, the draft advisory
+  (closed) and the team (deleted); and the fux server and the stand-in
+  are stopped. ctrl-c stops the run after
   cleaning up. A run that was killed is swept up by the next one:
   issues and pull requests titled `[ghtui live]`, and `ghtui-live-`
-  branches, releases, tags, labels and protection rules.
+  branches, releases, tags, labels and protection rules, draft advisories
+  titled `[ghtui live]` (closed) and `ghtui-live-` teams.
 - **Enterprise Server:** `cargo xtask ghes` serves a stand-in on
   `https://localhost:8443` that relays an Enterprise Server's paths to
   github.com (`/api/v3`, `/api/graphql`, `/raw`, git) and rewrites
@@ -1486,7 +1533,12 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   github.com (and kept when a rule is edited here). A ruleset is turned
   on or off here, and written on github.com. A collaborator is invited
   by login (there's no search of people), and an organization's teams'
-  access isn't listed. Each list shows its first 100, and says when
+  access isn't listed.
+- An organization's invitation sent to you can be accepted here, not
+  declined: GitHub's API has no way to decline one. An invitation an
+  organization sent can't change its role (GitHub's API can't either):
+  cancel it and invite them again. A team's page lists its first 50
+  members and repositories; one added past those can't be seen there. Each list shows its first 100, and says when
   GitHub has more; a webhook's deliveries are its latest 100. A
   webhook's secret can be changed, not removed.
 - An issue form's dropdowns become a comment listing their options, to

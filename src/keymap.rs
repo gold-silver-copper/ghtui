@@ -196,7 +196,7 @@ actions! {
     NewWikiPage       "new_wiki_page"     []                       Page   "New wiki page";
     RunWorkflow       "run_workflow"      []                       Page   "Run the workflow by hand";
     Lists             "lists"             []                       Page   "Add the repository to your starred lists, or take it out";
-    NewHere           "new_here"          []                       Page   "New here: a label, a milestone, a branch, a tag, a file";
+    NewHere           "new_here"          []                       Page   "New here: a label, a milestone, a branch, a tag, a file, a security advisory";
     Fork              "fork"              []                       Page   "Fork the repository";
     NewRepo           "new_repository"    []                       Page   "New repository";
     Branch            "branch"            ["B"]                    Page   "Switch branches or tags";

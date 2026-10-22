@@ -131,6 +131,12 @@ pub enum OrgChange {
         role: OrgRole,
         invite: bool,
     },
+    /// Invite someone by email, with a role.
+    InviteEmail {
+        org: String,
+        email: String,
+        role: OrgRole,
+    },
     RemoveMember {
         org: String,
         login: String,
@@ -333,6 +339,14 @@ impl GitHub {
             invitations: None,
         };
         if !found.admin {
+            // A member may make teams, or maintain one: whether the token
+            // may, its scopes say.
+            if found.member {
+                let answer = self.rest_answer(&format!("/orgs/{org}")).await?;
+                found.lacks = (answer.header("x-oauth-scopes"))
+                    .filter(|s| !can_write_org(s))
+                    .map(|_| scope_missing(&format!("Changing @{org}'s teams"), "admin:org"));
+            }
             return Ok(found);
         }
         let path = format!("/orgs/{org}/invitations?per_page={PER_PAGE}");
@@ -427,6 +441,15 @@ impl GitHub {
                 let body = json!({ "role": role.wire() });
                 let path = format!("/orgs/{org}/memberships/{login}");
                 self.rest_write(Method::PUT, &path, Some(&body)).await
+            }
+            C::InviteEmail { org, email, role } => {
+                let role = match role {
+                    OrgRole::Owner => "admin",
+                    OrgRole::Member => "direct_member",
+                };
+                let body = json!({ "email": email, "role": role });
+                let path = format!("/orgs/{org}/invitations");
+                self.rest_write(Method::POST, &path, Some(&body)).await
             }
             C::RemoveMember { org, login } => {
                 let path = format!("/orgs/{org}/members/{login}");

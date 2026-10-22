@@ -285,7 +285,7 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route) {
         heading: format!("New draft security advisory in {repo}"),
         base: Some(crate::ui::markdown::LinkBase::new(repo, "HEAD", "")),
         rows: vec![
-            form_row(&f, Field::Title, "Title"),
+            form_row(&f, Field::Title, "A short summary of the vulnerability"),
             ecosystem_row,
             form_row(&f, Field::Package, "The package's name"),
             form_row(&f, Field::Affected, "e.g. < 1.2.3"),

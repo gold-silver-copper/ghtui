@@ -190,8 +190,7 @@ pub fn build(b: Build<'_>, page: &mut Page, invite: &Invite) {
     else {
         return;
     };
-    let key = b.state.first_key(Action::AnswerInvitation);
-    crate::ui::pages::invitation(page, invite, all, &key, b.cx.now);
+    crate::ui::pages::invitation(page, invite, all, b.cx.now);
 }
 
 /// Following one of an invitation page's buttons.

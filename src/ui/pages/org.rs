@@ -143,9 +143,8 @@ pub fn invited_box(page: &mut Page, all: &Invitations, now: u64) {
     page.blank();
 }
 
-/// One of an invitation's buttons, a row of its own, with the key that
-/// answers it too.
-fn answer_button(page: &mut Page, text: &str, accept: bool, key: &str) {
+/// One of an invitation's buttons, a row of its own.
+fn answer_button(page: &mut Page, text: &str, accept: bool) {
     item(page, crate::invited::button(accept), |page, link| {
         let bg = if accept {
             Bg::SuccessContainer
@@ -153,13 +152,13 @@ fn answer_button(page: &mut Page, text: &str, accept: bool, key: &str) {
             Bg::ContainerHigh
         };
         let button = Seg::linked(format!(" {text} "), Role::Chip(bg), link);
-        page.line(vec![button, meta(format!("  {key}"))]);
+        page.line(vec![button]);
     });
 }
 
 /// An invitation sent to you, as its page on GitHub shows it: what it's
-/// to, who sent it, what it gives, and its buttons (`key` answers it).
-pub fn invitation(page: &mut Page, invite: &Invite, all: &Invitations, key: &str, now: u64) {
+/// to, who sent it, what it gives, and its buttons.
+pub fn invitation(page: &mut Page, invite: &Invite, all: &Invitations, now: u64) {
     match invite {
         Invite::Repo(repo) => {
             let Some(i) = all.repos.iter().find(|i| i.repo == *repo) else {
@@ -193,8 +192,8 @@ pub fn invitation(page: &mut Page, invite: &Invite, all: &Invitations, key: &str
                 );
                 return;
             }
-            answer_button(page, "Accept invitation", true, key);
-            answer_button(page, "Decline", false, key);
+            answer_button(page, "Accept invitation", true);
+            answer_button(page, "Decline", false);
         }
         Invite::Org(org) => {
             let orgs = match &all.orgs {
@@ -207,6 +206,13 @@ pub fn invitation(page: &mut Page, invite: &Invite, all: &Invitations, key: &str
                     format!("No invitation to @{org} is waiting for you."),
                     Role::Body,
                 );
+                page.blank();
+                let link = link_seg(page, format!("@{org}"), url::user(org), Role::Link);
+                page.wrapped(
+                    vec![meta("If you joined it, it's at "), link],
+                    0,
+                    Frame::None,
+                );
                 return;
             };
             say(page, format!("@{} invited you to join", i.org), Role::Title);
@@ -217,7 +223,7 @@ pub fn invitation(page: &mut Page, invite: &Invite, all: &Invitations, key: &str
                 Role::Body,
             );
             page.blank();
-            answer_button(page, &format!("Join @{}", i.org), true, key);
+            answer_button(page, &format!("Join @{}", i.org), true);
             say(
                 page,
                 "Declining is done on github.com: GitHub's API can't decline an organization's invitation.",

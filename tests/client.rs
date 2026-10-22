@@ -4279,7 +4279,7 @@ async fn organization_changes_and_invitations_send_githubs_requests() {
         Reply::new(200, yours).on("/user/repository_invitations"),
         Reply::new(200, orgs).on("/user/memberships/orgs"),
     ];
-    replies.extend((0..10).map(|_| Reply::new(204, "")));
+    replies.extend((0..11).map(|_| Reply::new(204, "")));
     replies.push(Reply::new(201, r#"{"ghsa_id":"GHSA-aaaa-bbbb-cccc"}"#));
     let (gh, seen) = github(replies).await;
 
@@ -4308,6 +4308,11 @@ async fn organization_changes_and_invitations_send_githubs_requests() {
             login: "hubot".into(),
             role: OrgRole::Owner,
             invite: false,
+        },
+        C::InviteEmail {
+            org: org.clone(),
+            email: "mona@example.com".into(),
+            role: OrgRole::Member,
         },
         C::RemoveMember {
             org: org.clone(),
@@ -4398,6 +4403,10 @@ async fn organization_changes_and_invitations_send_githubs_requests() {
             (
                 "PUT /orgs/octo-org/memberships/hubot".into(),
                 json(serde_json::json!({"role": "admin"}))
+            ),
+            (
+                "POST /orgs/octo-org/invitations".into(),
+                json(serde_json::json!({"email": "mona@example.com", "role": "direct_member"})),
             ),
             ("DELETE /orgs/octo-org/members/hubot".into(), None),
             ("DELETE /orgs/octo-org/invitations/41".into(), None),
