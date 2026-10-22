@@ -110,11 +110,7 @@ fn outdated_threads_that_beat_the_diff_are_mapped_when_it_lists() {
     let detail = fixtures::pr_detail();
     let head = detail.head_oid.clone();
     let (mut state, pr, job) = diff_of(detail);
-    let early = diff_msg(
-        &mut state,
-        &pr,
-        DiffMsg::ThreadsLoaded(Ok(vec![thread("old", None, false, true)])),
-    );
+    let early = threads_loaded(&mut state, &pr, vec![thread("old", None, false, true)]);
     assert!(
         !early
             .iter()

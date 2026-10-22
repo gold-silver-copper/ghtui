@@ -204,11 +204,7 @@ fn a_revert_opens_the_pull_request_github_makes() {
 fn an_issue_closes_as_a_duplicate_of_one_chosen() {
     let mut s = issue_with(|_| {});
     press(&mut s, "x");
-    let labels: Vec<&str> = overlay!(s, Ask)
-        .choices
-        .iter()
-        .map(|(l, _)| l.as_str())
-        .collect();
+    let labels = ask_labels(&s);
     assert_eq!(
         labels,
         ["Close as completed", "Close as not planned", "Duplicate…"]
@@ -415,11 +411,7 @@ fn an_issue_is_pinned_and_transferred() {
 fn a_discussion_closes_with_a_reason() {
     let mut s = with_discussion();
     press(&mut s, "x");
-    let labels: Vec<&str> = overlay!(s, Ask)
-        .choices
-        .iter()
-        .map(|(l, _)| l.as_str())
-        .collect();
+    let labels = ask_labels(&s);
     assert_eq!(
         labels,
         [

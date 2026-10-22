@@ -10,13 +10,13 @@ fn to_line(s: &mut State, text: &str) {
 #[test]
 fn threads_show_navigate_and_resolve() {
     let (mut s, pr) = diff_state(120);
-    diff_msg(
+    threads_loaded(
         &mut s,
         &pr,
-        DiffMsg::ThreadsLoaded(Ok(vec![
+        vec![
             thread("done", Some(1), true, false),
             thread("open", Some(14), false, false),
-        ])),
+        ],
     );
     assert_eq!(s.diffs[&DiffOf::Pr(pr.clone())].doc.annotations().len(), 2);
     press(&mut s, "<Home>");
@@ -59,7 +59,7 @@ fn threads_show_navigate_and_resolve() {
 fn c_comments_on_selected_lines_even_across_a_thread() {
     let (mut s, pr) = diff_state(120);
     let open = thread("open", Some(14), false, false);
-    diff_msg(&mut s, &pr, DiffMsg::ThreadsLoaded(Ok(vec![open])));
+    threads_loaded(&mut s, &pr, vec![open]);
     press(&mut s, "<Home>");
     act(&mut s, Action::NextThread);
     press(&mut s, "c");
@@ -303,11 +303,7 @@ fn request_changes_needs_a_summary() {
 #[test]
 fn replies_post_right_away() {
     let (mut s, pr) = diff_state(120);
-    diff_msg(
-        &mut s,
-        &pr,
-        DiffMsg::ThreadsLoaded(Ok(vec![thread("t", Some(14), false, false)])),
-    );
+    threads_loaded(&mut s, &pr, vec![thread("t", Some(14), false, false)]);
     press(&mut s, "<Home>");
     act(&mut s, Action::NextThread);
     press(&mut s, "c");
@@ -358,11 +354,7 @@ fn suggestions_go_through_the_editor_with_a_preview() {
 #[test]
 fn outdated_threads_are_mapped_forward() {
     let (mut s, pr) = diff_state(120);
-    let cmds = diff_msg(
-        &mut s,
-        &pr,
-        DiffMsg::ThreadsLoaded(Ok(vec![thread("old", None, false, true)])),
-    );
+    let cmds = threads_loaded(&mut s, &pr, vec![thread("old", None, false, true)]);
     assert!(cmds.iter().any(|c| matches!(c, Cmd::Git(Git::MapOutdated(j)) if j.get().3.len() == 1 && *j.get().2 == "e".repeat(40))));
     let ann = &s.diffs[&DiffOf::Pr(pr.clone())].doc.annotations()[0];
     assert_eq!(ann.place, Place::Outdated(Some(3)), "unplaced until mapped");
@@ -380,8 +372,7 @@ fn outdated_threads_are_mapped_forward() {
 fn an_outdated_mapping_is_for_its_own_job() {
     let (mut s, pr) = diff_state(120);
     let of = DiffOf::Pr(pr.clone());
-    let thread = DiffMsg::ThreadsLoaded(Ok(vec![thread("old", None, false, true)]));
-    let _ = diff_msg(&mut s, &pr, thread);
+    threads_loaded(&mut s, &pr, vec![thread("old", None, false, true)]);
     let old = s.diffs[&of].job;
     let line = |n| JobMsg::Mapped(vec![(NodeId::new("old"), Some(n))]);
     diff_msg(&mut s, &pr, DiffMsg::Job(old, line(4)));
@@ -483,11 +474,7 @@ fn a_draft_is_edited_and_deleted_by_the_comment_keys() {
 #[test]
 fn the_cursor_stays_on_a_thread_it_resolves() {
     let (mut s, pr) = diff_state(120);
-    diff_msg(
-        &mut s,
-        &pr,
-        DiffMsg::ThreadsLoaded(Ok(vec![thread("open", Some(14), false, false)])),
-    );
+    threads_loaded(&mut s, &pr, vec![thread("open", Some(14), false, false)]);
     let of = DiffOf::Pr(pr);
     // The thread's last row, below its fold.
     let (doc, ann) = (&s.diffs[&of].doc, 0);
@@ -545,11 +532,7 @@ fn g_ends_in_the_last_file_and_c_between_files_says_why() {
 fn a_match_shows_with_its_thread() {
     let (mut s, pr) = diff_state(120);
     s.size.1 = 14;
-    diff_msg(
-        &mut s,
-        &pr,
-        DiffMsg::ThreadsLoaded(Ok(vec![thread("open", Some(14), false, false)])),
-    );
+    threads_loaded(&mut s, &pr, vec![thread("open", Some(14), false, false)]);
     press(&mut s, "<Home>");
     to_line(&mut s, "origin");
     let doc = &s.diffs[&DiffOf::Pr(pr)].doc;

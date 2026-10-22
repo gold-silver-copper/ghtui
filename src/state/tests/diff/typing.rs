@@ -9,7 +9,7 @@ fn composer(s: &State) -> &Compose {
 fn composing() -> (State, PrRef, Cmds) {
     let (mut s, pr) = diff_state(120);
     let thread = thread("t", Some(1), false, false);
-    diff_msg(&mut s, &pr, DiffMsg::ThreadsLoaded(Ok(vec![thread])));
+    threads_loaded(&mut s, &pr, vec![thread]);
     press(&mut s, "/origin<Enter>");
     let cmds = press(&mut s, "c");
     (s, pr, cmds)

@@ -86,7 +86,7 @@ fn only_a_review_that_went_through_counts_as_a_write() {
     assert_eq!(state.load_visible(false), Vec::new());
     outcome.accepted.push(1);
     fixtures::done(&mut state, submit, Ok(outcome));
-    let refetch = Cmd::Api(Api::Fetch { key, cached: false });
+    let refetch = refetch(key);
     assert!(state.load_visible(false).contains(&refetch));
 }
 
@@ -121,10 +121,7 @@ fn issue_comments_post_and_refresh() {
     assert_eq!(cmds, sent);
     let cmds = answer(&mut state, &sent, Ok(()));
     assert!(state.overlay.is_none());
-    let refetch = Cmd::Api(Api::Fetch {
-        key: key.clone(),
-        cached: false,
-    });
+    let refetch = refetch(key.clone());
     assert!(cmds.contains(&refetch), "{cmds:?}");
     // Another comment, posted while that fetch is on its way: the fetch
     // may miss it, so the page is fetched again once it lands.

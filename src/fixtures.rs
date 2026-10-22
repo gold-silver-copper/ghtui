@@ -281,6 +281,11 @@ pub(crate) fn diff_msg(state: &mut State, pr: &PrRef, msg: DiffMsg) -> Cmds {
     update(state, Msg::Diff(DiffOf::Pr(pr.clone()), msg))
 }
 
+/// GitHub's review threads for `pr`'s diff.
+pub(crate) fn threads_loaded(state: &mut State, pr: &PrRef, threads: Vec<ReviewThread>) -> Cmds {
+    diff_msg(state, pr, DiffMsg::ThreadsLoaded(Ok(threads)))
+}
+
 /// The diff job `cmds` start.
 #[track_caller]
 pub(crate) fn diff_job(cmds: &[Cmd]) -> crate::diff_job::JobId {

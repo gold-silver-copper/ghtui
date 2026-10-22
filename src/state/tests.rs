@@ -12,7 +12,9 @@ use crate::api::change::Change;
 use crate::api::model::{ChecksState, PrDetail, RepoId, ReviewDecision};
 use crate::api::rate_limit::{Bucket, RateLimits};
 use crate::fixtures;
-use crate::fixtures::{answer, diff_msg, fetched, pr_detail, press, says, thread, warns};
+use crate::fixtures::{
+    answer, diff_msg, fetched, pr_detail, press, says, thread, threads_loaded, warns,
+};
 use crate::picker::{Choice, fuzzy_score};
 use crate::route::{Dest, OPEN, issues};
 use crate::theme::{ColorDepth, DEFAULT_SEED, Mode, Theme};
@@ -88,6 +90,12 @@ fn picked_labels(state: &State) -> Vec<String> {
     picked(state).into_iter().map(|(label, _)| label).collect()
 }
 
+/// The labels of the question asked.
+fn ask_labels(state: &State) -> Vec<&str> {
+    let ask = overlay!(state, Ask);
+    ask.choices.iter().map(|(l, _)| l.as_str()).collect()
+}
+
 fn route(state: &State) -> Route {
     page(state).route.clone()
 }
@@ -120,6 +128,11 @@ fn changed(etag: &str, body: &str) -> Result<crate::api::Polled, ApiError> {
 /// Fetching `key`, the cached copy first.
 fn fetch(key: DataKey) -> Cmd {
     Cmd::Api(Api::Fetch { key, cached: true })
+}
+
+/// Fetching `key` again, past what the cache has.
+fn refetch(key: DataKey) -> Cmd {
+    Cmd::Api(Api::Fetch { key, cached: false })
 }
 
 /// Asking for `key`'s next page, after `after`.

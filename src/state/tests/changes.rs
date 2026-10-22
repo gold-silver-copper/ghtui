@@ -379,11 +379,7 @@ fn approving_from_the_page_takes_your_saved_drafts() {
 fn runs_rerun_and_cancel() {
     let mut s = with_run();
     press(&mut s, "R");
-    let choices: Vec<&str> = overlay!(s, Ask)
-        .choices
-        .iter()
-        .map(|(l, _)| l.as_str())
-        .collect();
+    let choices = ask_labels(&s);
     assert_eq!(choices, ["Re-run failed jobs", "Re-run all jobs"]);
     assert_eq!(
         press(&mut s, "<Enter>"),
@@ -602,9 +598,6 @@ fn a_rerun_job_is_followed_to_its_new_attempt() {
         "{:?}",
         s.route()
     );
-    let fetch = Cmd::Api(Api::Fetch {
-        key: DataKey::Job(ghtui(), 9),
-        cached: true,
-    });
+    let fetch = fetch(DataKey::Job(ghtui(), 9));
     assert!(cmds.contains(&fetch), "{cmds:?}");
 }

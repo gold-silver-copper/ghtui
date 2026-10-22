@@ -216,11 +216,7 @@ fn a_pull_request_from_the_clones_branch_is_pushed_then_made() {
     head(&mut s, Some("a"));
 
     press(&mut s, "<C-s>");
-    let choices: Vec<&str> = overlay!(s, Ask)
-        .choices
-        .iter()
-        .map(|(l, _)| l.as_str())
-        .collect();
+    let choices = ask_labels(&s);
     assert_eq!(
         choices,
         ["Create pull request", "Create draft pull request"]

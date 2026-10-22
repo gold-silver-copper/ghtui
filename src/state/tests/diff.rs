@@ -103,7 +103,7 @@ fn the_review_tab_lists_drafts_and_threads_and_opens_them() {
     let mut open = thread("open", Some(14), false, false);
     open.comments[0].url = url.into();
     let threads = vec![thread("done", Some(3), true, false), open];
-    diff_msg(&mut s, &pr, DiffMsg::ThreadsLoaded(Ok(threads)));
+    threads_loaded(&mut s, &pr, threads);
     let text = super::page_text(&s);
     assert!(text.contains("src/point.rs:5"), "{text}");
     assert!(text.contains("Name it for what it holds"), "{text}");
@@ -142,7 +142,7 @@ fn review_tab(drafts: Vec<crate::store::DraftComment>) -> (State, PrRef) {
         ..ReviewState::default()
     };
     diff_msg(&mut s, &pr, DiffMsg::ReviewLoaded(Ok(review)));
-    diff_msg(&mut s, &pr, DiffMsg::ThreadsLoaded(Ok(Vec::new())));
+    threads_loaded(&mut s, &pr, Vec::new());
     (s, pr)
 }
 
@@ -234,7 +234,7 @@ fn threads_arriving_keep_the_cursor_on_its_line() {
         d.cursor = last;
     }
     let threads = vec![thread("t", Some(14), false, false)];
-    diff_msg(&mut s, &pr, DiffMsg::ThreadsLoaded(Ok(threads)));
+    threads_loaded(&mut s, &pr, threads);
     let (pos, doc) = cursor(&s);
     assert!(pos.row > last.row, "the thread is above the cursor");
     assert_eq!(doc.row_text(pos), text);
@@ -245,11 +245,7 @@ fn threads_arriving_keep_the_cursor_on_its_line() {
 #[test]
 fn a_thread_row_keeps_the_cursor_across_a_rebuild() {
     let (mut s, pr) = diff_state(120);
-    diff_msg(
-        &mut s,
-        &pr,
-        DiffMsg::ThreadsLoaded(Ok(vec![thread("t", Some(14), false, false)])),
-    );
+    threads_loaded(&mut s, &pr, vec![thread("t", Some(14), false, false)]);
     let (_, doc) = cursor(&s);
     let rows = doc.files()[0].rows().len();
     let on_thread = (0..rows)
