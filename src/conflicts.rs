@@ -19,6 +19,7 @@ use crate::diff_screen::{self, DiffOf, Pane};
 use crate::follow::{Expectation, Shown};
 use crate::forms::Answer;
 use crate::git::branch::{self, refused};
+use crate::git::files::{ChangedFile, FileStatus, ZERO_OID};
 use crate::git::merge::{self, Content, Entry, Part};
 use crate::git::{Oid, commit};
 use crate::keymap::Action;
@@ -149,6 +150,46 @@ impl File {
     fn diff(&self, m: &Merging) -> FileDiff {
         let now = self.now(m);
         FileDiff::compute(&self.path, self.ours.as_deref(), now.as_deref())
+    }
+
+    /// Its change from the head's as it's being resolved, the diff's
+    /// listing of it (`was`) brought up to date: a side taken whole may
+    /// keep what the other deleted, or delete it.
+    fn change(&self, was: &ChangedFile) -> ChangedFile {
+        let How::Whole {
+            ours,
+            theirs,
+            chosen: Some(pick),
+        } = &self.how
+        else {
+            return was.clone();
+        };
+        let side = match pick {
+            Pick::Ours => ours,
+            Pick::Theirs => theirs,
+        };
+        let mut now = was.clone();
+        let had = self.ours.is_some();
+        let path = Some(self.path.clone());
+        (now.old_path, now.new_path) = (path.clone().filter(|_| had), None);
+        match side {
+            Some((entry, _)) => {
+                now.new_path = path;
+                now.new_oid = entry.oid.clone();
+                now.new_mode = u32::from_str_radix(&entry.mode, 8).unwrap_or(0o100644);
+                now.status = if had {
+                    FileStatus::Modified
+                } else {
+                    FileStatus::Added
+                };
+            }
+            None => {
+                now.new_oid = Oid::parse(ZERO_OID).unwrap_or_else(|_| was.new_oid.clone());
+                now.new_mode = 0;
+                now.status = FileStatus::Deleted;
+            }
+        }
+        now
     }
 
     /// What it holds in the merge commit, once it's resolved.
@@ -415,11 +456,15 @@ pub(crate) fn edited(state: &mut State, path: &str, part: usize, mut text: Strin
 
 /// File `index` of diff `of`, as resolving it has made it so far: a
 /// diff loaded again shows what was resolved before.
-pub(crate) fn as_resolved(state: &State, of: &DiffOf, index: usize) -> Option<FileDiff> {
+pub(crate) fn as_resolved(
+    state: &State,
+    of: &DiffOf,
+    index: usize,
+) -> Option<(ChangedFile, FileDiff)> {
     let m = state.merging.as_ref().filter(|m| m.of() == *of)?;
     let doc = &state.diffs.get(of)?.doc;
-    let path = doc.files().get(index)?.meta.path();
-    let file = m.files.iter().find(|f| f.path == path)?;
+    let was = &doc.files().get(index)?.meta;
+    let file = m.files.iter().find(|f| f.path == was.path())?;
     let begun = match &file.how {
         How::Hunks(parts) => (parts.iter()).any(|p| {
             matches!(
@@ -432,21 +477,27 @@ pub(crate) fn as_resolved(state: &State, of: &DiffOf, index: usize) -> Option<Fi
         }),
         How::Whole { chosen, .. } => chosen.is_some(),
     };
-    begun.then(|| file.diff(m))
+    begun.then(|| (file.change(was), file.diff(m)))
 }
 
 /// One of file `at`'s conflicts was resolved: the diff shows it, and
 /// what's left is said.
 fn resolved(state: &mut State, m: Merging, at: usize, done: &str) -> Cmds {
-    let Some(file) = m.files.get(at) else { return Cmds::new() };
-    let diff = file.diff(&m);
-    let path = file.path.clone();
+    let Some(path) = m.files.get(at).map(|f| f.path.clone()) else {
+        return Cmds::new();
+    };
     let left = m.left();
+    let of = m.of();
     state.merging = Some(m);
+    let index = (state.diffs.get(&of))
+        .and_then(|d| d.doc.files().iter().position(|f| f.meta.path() == path));
+    let now = index.and_then(|i| Some((i, as_resolved(state, &of, i)?)));
     if let Some((screen, d)) = state.diff_parts()
-        && let Some(index) = d.doc.files().iter().position(|f| f.meta.path() == path)
+        && let Some((index, (meta, diff))) = now
     {
-        diff_screen::preserving_position(screen, d, |d| d.set_file(index, Arc::new(diff)));
+        diff_screen::preserving_position(screen, d, |d| {
+            d.set_change(index, meta, Arc::new(diff));
+        });
     }
     let what = match left {
         0 => {
@@ -477,23 +528,13 @@ fn ask(state: &mut State, m: &Merging) -> Cmds {
         .collect();
     let n = files.len();
     let facts = vec![
-        (
-            format!(
-                "A merge commit: “{}”, as GitHub's conflict editor makes",
-                m.message()
-            ),
-            false,
-        ),
-        (
-            format!(
-                "Pushed to {}:{}, unless it moved on GitHub since ({})",
-                m.head_repo,
-                m.head_ref,
-                short_sha(&m.head)
-            ),
-            false,
-        ),
+        (format!("“{}”", m.message()), false),
         (format!("{} resolved", count(n, "file")), false),
+        (format!("Pushed to {}:{}", m.head_repo, m.head_ref), false),
+        (
+            format!("Not pushed if it moved past {}", short_sha(&m.head)),
+            false,
+        ),
     ];
     let job = Finish {
         pr: m.pr.clone(),
@@ -692,13 +733,14 @@ impl Job for Start {
             Ok(Some(m)) => {
                 let of = m.of();
                 let n = m.left();
+                state.merging = Some(m);
+                let cmds = state.open_diff(of, None);
+                // The diff's keys, now that it's on screen.
                 let (ours, theirs) = (
                     state.first_key(Action::TakeOurs),
                     state.first_key(Action::TakeTheirs),
                 );
                 let edit = state.first_key(Action::EditComment);
-                state.merging = Some(m);
-                let cmds = state.open_diff(of, None);
                 state.info(format!(
                     "{} to resolve: {ours} takes your branch's side, {theirs} the base's, {edit} edits",
                     count(n, "conflict")

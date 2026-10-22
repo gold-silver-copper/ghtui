@@ -171,10 +171,26 @@ fn conflicts(cx: &mut Cx) -> Result<()> {
 
     let url = format!("https://github.com/{}/pull/{number}", gh::REPO);
     let ghtui = cx.ghtui(&[&url])?;
-    ghtui.wait_for("This branch has conflicts")?;
+    ghtui.wait_for("wants to merge into")?;
+    ghtui.wait_followed()?;
     cx.step(":resolve conflicts merges the base in, and shows the conflict")?;
-    palette(&ghtui, "resolve conflicts")?;
-    ghtui.wait_for(&format!(">>>>>>> {base}"))?;
+    let marker = format!(">>>>>>> {base}");
+    let mut shown = false;
+    // The pull request ghtui loaded may predate GitHub finding the
+    // conflict: then it says so, and `r` loads it again.
+    for _ in 0..5 {
+        palette(&ghtui, "resolve conflicts")?;
+        if ghtui
+            .wait_for_within(&marker, Duration::from_secs(20))
+            .is_ok()
+        {
+            shown = true;
+            break;
+        }
+        ghtui.keys("r")?;
+        ghtui.wait_followed()?;
+    }
+    ensure!(shown, "the conflict never showed");
     ghtui.keys("/")?;
     ghtui.type_text("theirs")?;
     ghtui.keys("Enter")?;

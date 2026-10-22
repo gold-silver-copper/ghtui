@@ -392,11 +392,9 @@ fn ask(state: &mut State, pr: PrRef, head: String, items: Vec<Suggestion>) -> Cm
         n => format!("Commit {n} suggestions to {branch}?"),
     };
     let mut facts = vec![
+        (format!("“{}”", headline(&items)), false),
         (
-            format!(
-                "With git, on GitHub's latest commit of {head_repo}:{branch}, pushed there: “{}”",
-                headline(&items)
-            ),
+            format!("On GitHub's latest {head_repo}:{branch}, pushed there"),
             false,
         ),
         (
@@ -408,10 +406,7 @@ fn ask(state: &mut State, pr: PrRef, head: String, items: Vec<Suggestion>) -> Cm
     ];
     let unresolvable = items.iter().filter(|s| !s.can_resolve).count();
     facts.push(match unresolvable {
-        0 => (
-            format!("Then {} resolved, as GitHub does", noun_the(n)),
-            false,
-        ),
+        0 => (format!("Then {} resolved", noun_the(n)), false),
         _ if n == 1 => (
             "You can't resolve its thread: it stays open".to_owned(),
             false,

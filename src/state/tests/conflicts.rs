@@ -162,6 +162,9 @@ fn conflicts_are_resolved_one_by_one_and_the_merge_pushed() {
 
     press(&mut s, "<S-Down><lt>");
     says(&s, "Took syntax-palette's side · all resolved");
+    // The file the base deleted is kept, and listed so.
+    let kept = &s.diffs[&on_diff(&s).of].doc.files()[1].meta;
+    assert_eq!(kept.status, FileStatus::Modified);
 
     act(&mut s, Action::CommitMerge);
     assert_eq!(

@@ -7,6 +7,7 @@ use crate::api::model::{NodeId, PatchFile, PrRef, RepoId, ReviewThread, ViewedFi
 use crate::diff::anchor::{Commentable, LinePos, Side};
 use crate::diff::{FileDiff, Whitespace};
 use crate::git::Oid;
+use crate::git::files::ChangedFile;
 use crate::git::repo::{Commit, PrRefs};
 use crate::store::ReviewState;
 use crate::ui::annotations::Annotation;
@@ -487,6 +488,14 @@ impl DiffState {
         if self.doc.ready_count() == self.doc.files().len() {
             self.progress = None;
         }
+    }
+
+    /// File `index` as it changes now, and its diff: a conflict resolved
+    /// with one side may keep a file the other deleted.
+    pub fn set_change(&mut self, index: usize, meta: ChangedFile, diff: Arc<FileDiff>) {
+        self.doc.set_meta(index, meta);
+        self.set_file(index, diff);
+        self.tree = tree_rows(&self.doc);
     }
 
     pub fn status(&self) -> Option<String> {
@@ -1321,9 +1330,12 @@ pub(crate) fn on_job(state: &mut State, of: &DiffOf, msg: JobMsg) -> Cmds {
         }
         JobMsg::File(index, file) => {
             // A conflict already resolved shows as it is.
-            let file = crate::conflicts::as_resolved(state, of, index).map_or(file, Arc::new);
+            let resolved = crate::conflicts::as_resolved(state, of, index);
             if let Some(diff) = state.diffs.get_mut(of) {
-                diff.set_file(index, file);
+                match resolved {
+                    Some((meta, now)) => diff.set_change(index, meta, Arc::new(now)),
+                    None => diff.set_file(index, file),
+                }
             }
         }
         JobMsg::Moves(moves) => {

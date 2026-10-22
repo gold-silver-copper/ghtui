@@ -1,7 +1,9 @@
 //! Commits made from objects alone, through an index of their own, to
 //! push by their IDs: a clone's branches, index and working tree stay as
-//! they are. A wiki's pages ([`crate::wiki`]) and the files housekeeping
-//! commits ([`crate::housekeeping`]) are saved this way.
+//! they are. A wiki's pages ([`crate::wiki`]), the files housekeeping
+//! commits ([`crate::housekeeping`]) and a review's suggestions
+//! (`crate::suggest`) are saved this way; a merge resolving conflicts
+//! ([`crate::git::merge`]) shares its index and its author.
 
 use crate::git::GitError;
 use crate::git::repo::Repo;

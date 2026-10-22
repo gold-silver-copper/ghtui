@@ -1246,6 +1246,12 @@ impl Doc {
             (self.files.iter().map(|f| f.counts)).fold((0, 0), |(a, d), (fa, fd)| (a + fa, d + fd));
     }
 
+    /// What file `index`'s change is now: a conflict resolved with one
+    /// side may keep a file the other deleted.
+    pub fn set_meta(&mut self, index: usize, meta: ChangedFile) {
+        self.update(index, |file| file.meta = meta);
+    }
+
     pub fn set_diff(&mut self, index: usize, diff: Arc<FileDiff>) {
         self.update(index, |file| {
             file.local_commentable = match &diff.content {

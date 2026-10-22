@@ -138,6 +138,10 @@ impl State {
                     (label, c.active.and_then(|i| c.tabs.get_mut(i)))
                 {
                     tab.label = label;
+                    // The files that conflict, not the ones it changes.
+                    if conflicts {
+                        tab.count = self.merging.as_ref().map(|m| m.files.len() as u64);
+                    }
                 }
                 c.title = Some(pr.clone());
             }
