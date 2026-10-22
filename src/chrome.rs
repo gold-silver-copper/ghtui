@@ -100,8 +100,9 @@ impl State {
             Screen::Page(p) => p.route.family().chrome(self, &mut c),
             Screen::Diff(d) => {
                 repo_crumbs(d.of.repo(), &mut c);
-                let pr = match &d.of {
-                    DiffOf::Pr(pr) => pr,
+                let (pr, conflicts) = match &d.of {
+                    DiffOf::Pr(pr) => (pr, false),
+                    DiffOf::Conflicts(pr, ..) => (pr, true),
                     DiffOf::Commit(repo, oid) => {
                         self.commit_tabs(repo, oid, None, &mut c);
                         c.active = Some(2);
@@ -118,6 +119,7 @@ impl State {
                 // The tab says which changes are shown.
                 let diff = self.diffs.get(&d.of);
                 let label = match diff.and_then(|d| d.range()) {
+                    _ if conflicts => Some("Conflicts".to_owned()),
                     Some(range) => Some(format!("Files · {}", range.label)),
                     None if diff.is_some_and(|d| d.doc.since_active()) => {
                         let since = diff.and_then(|d| d.since_commit.as_deref());

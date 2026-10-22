@@ -542,6 +542,10 @@ pub struct State {
     /// Whether GitHub can be reached, the writes waiting for it, and the
     /// repositories kept offline.
     pub offline: crate::offline::Offline,
+    /// Suggestions batched to commit, and the commit a diff waits for.
+    pub suggestions: crate::suggest::Suggestions,
+    /// A pull request's conflicts being resolved.
+    pub merging: Option<crate::conflicts::Merging>,
     pub quit: bool,
 }
 
@@ -590,6 +594,8 @@ impl State {
             housekeeping: crate::housekeeping::Housekeeping::default(),
             talk: crate::talk::Talk::default(),
             offline: crate::offline::Offline::default(),
+            suggestions: crate::suggest::Suggestions::default(),
+            merging: None,
             quit: false,
         };
         state.sync_page();

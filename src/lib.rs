@@ -49,6 +49,7 @@ mod code_index;
 mod code_nav;
 mod compose;
 mod config;
+mod conflicts;
 #[cfg(test)]
 mod crawl;
 mod create;
@@ -85,6 +86,7 @@ mod settings;
 mod site;
 mod source;
 mod state;
+mod suggest;
 mod tabs;
 mod talk;
 mod typing;

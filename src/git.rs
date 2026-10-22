@@ -6,11 +6,13 @@
 //! long-lived `cat-file --batch` reader.
 
 pub mod blobs;
+pub mod branch;
 pub mod commit;
 pub mod credentials;
 pub mod files;
 pub mod index;
 pub mod local;
+pub mod merge;
 pub mod read;
 pub mod repo;
 

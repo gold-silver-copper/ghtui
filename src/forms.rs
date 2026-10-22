@@ -560,6 +560,10 @@ pub enum Answer {
     DeleteGist,
     Site(crate::site::Answer),
     Housekeeping(crate::housekeeping::Answer),
+    /// Suggestions committed ([`crate::suggest`]).
+    CommitSuggestions(Box<crate::suggest::Commit>),
+    /// A merge resolving conflicts, committed ([`crate::conflicts`]).
+    CommitMerge(Box<crate::conflicts::Finish>),
     /// A change to GitHub, about what [`About::Act`] says.
     Change(crate::api::change::Change),
 }
@@ -581,6 +585,8 @@ impl Answer {
             Answer::DeleteGist => "Deleting the gist…",
             Answer::Site(a) => a.busy(),
             Answer::Housekeeping(a) => a.busy(),
+            Answer::CommitSuggestions(_) => "Committing and pushing…",
+            Answer::CommitMerge(_) => "Committing the merge and pushing…",
         };
         busy.to_owned()
     }
@@ -648,6 +654,8 @@ fn answered(state: &mut State, route: &Route, answer: Answer) -> Cmds {
         Answer::DeleteGist => crate::gist::delete(state, route),
         Answer::Site(a) => crate::site::answer(state, route, a),
         Answer::Housekeeping(a) => crate::housekeeping::answer(state, route, a),
+        Answer::CommitSuggestions(job) => crate::suggest::send(state, *job),
+        Answer::CommitMerge(job) => crate::conflicts::send(state, *job),
         Answer::Change(_) => Cmds::new(),
     }
 }

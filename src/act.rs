@@ -621,8 +621,9 @@ fn pr_plan(state: &State, pr: &PrRef, d: &PrDetail, action: Action) -> Result<Pl
         Action::Merge | Action::UpdateBranch | Action::Approve if !open => Err(not_open()),
         Action::Merge => merge::plan(state, pr, d),
         Action::UpdateBranch if readiness == Readiness::Conflicts => Err(format!(
-            "It conflicts with {}: resolve that on GitHub",
-            d.base_ref
+            "It conflicts with {}: {} resolves that",
+            d.base_ref,
+            key(Action::ResolveConflicts)
         )),
         Action::Close => {
             let (title, label, reopen) = match d.state {

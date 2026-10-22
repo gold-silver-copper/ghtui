@@ -261,6 +261,14 @@ pub fn schedule(state: &mut State) -> Cmds {
     cmds
 }
 
+/// Something was just pushed to the watched pull request: the next ask
+/// is soon, to see GitHub show it.
+pub fn soon(state: &mut State) {
+    if let Some(w) = &mut state.watch {
+        w.pace.refocus();
+    }
+}
+
 /// The terminal came into focus (`true`) or left it. Back in focus, the
 /// next ask is soon.
 pub fn on_focus(state: &mut State, focused: bool) {

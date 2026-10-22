@@ -188,7 +188,9 @@ async fn run_inner(
                 .await?
         }
         DiffOf::Commit(_, oid) => repo.commit_refs(oid, &progress).await?,
-        DiffOf::Range(_, from, to) => repo.range_refs(from, to, &progress).await?,
+        DiffOf::Range(_, from, to) | DiffOf::Conflicts(_, from, to) => {
+            repo.range_refs(from, to, &progress).await?
+        }
     };
     if let Some((from, to)) = range {
         // A commit a push left behind (a review's) is fetched by its SHA.

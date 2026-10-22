@@ -1834,6 +1834,27 @@ async fn review_submission_calls() {
     assert!(seen[7].query().contains("resolveReviewThread"));
 }
 
+/// A suggestion's author as its commit's co-author: their name at the
+/// no-reply address GitHub links to their account, else their login's.
+#[tokio::test]
+async fn a_co_author_is_named_at_their_noreply_address() {
+    let (gh, seen) = github(vec![
+        Reply::new(200, r#"{"login":"alice","id":42,"name":"Alice Doe"}"#),
+        Reply::new(404, r#"{"message":"Not Found"}"#),
+    ])
+    .await;
+    assert_eq!(
+        gh.co_author("alice").await,
+        "Alice Doe <42+alice@users.noreply.github.com>"
+    );
+    assert_eq!(
+        gh.co_author("gone").await,
+        "gone <gone@users.noreply.github.com>"
+    );
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].request_line.starts_with("GET /users/alice "));
+}
+
 #[tokio::test]
 async fn last_review_commit_skips_pending_reviews() {
     let (gh, seen) = github(vec![

@@ -860,6 +860,8 @@ says where it works.
 | `s`      | Select lines |
 | `x`      | Resolve or unresolve the thread |
 | `ctrl-s` | Submit your review |
+| `<`      | Resolve the conflict with your branch's side (the old, left one) |
+| `>`      | Resolve the conflict with the base's side (the new, right one) |
 
 **In Files changed's file tree** (`tree:`)
 

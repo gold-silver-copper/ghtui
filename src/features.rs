@@ -55,6 +55,8 @@ pub const FEATURES: &[Feature] = &[
     crate::site::FEATURE,
     crate::act::FEATURE,
     crate::review::FEATURE,
+    crate::suggest::FEATURE,
+    crate::conflicts::FEATURE,
     crate::edit::FEATURE,
     crate::manage::FEATURE,
     crate::settings::FEATURE,
