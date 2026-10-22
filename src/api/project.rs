@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::api::browse::{Page, Results, UserLogin as Login, wire};
-use crate::api::client::{ApiError, GitHub};
+use crate::api::client::{ApiError, GitHub, repo_vars};
 use crate::api::model::{Capped, IssueState, Label, NodeId, PrState, RepoId, Status};
 use crate::api::raw;
 use crate::ui::time::day_of;
@@ -737,7 +737,7 @@ impl GitHub {
             ),
             ProjectsOf::Repo(repo) => (
                 raw::REPO_PROJECTS,
-                serde_json::json!({ "owner": repo.owner, "name": repo.name, "after": after }),
+                repo_vars!(repo, "after": after),
                 "/repository/projectsV2",
                 format!("{repo}'s projects"),
             ),
@@ -822,7 +822,7 @@ impl GitHub {
         repo: &RepoId,
         number: u64,
     ) -> Result<Capped<InProject>, ApiError> {
-        let vars = serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number });
+        let vars = repo_vars!(repo, "number": number);
         let what = format!("{repo}#{number}'s projects");
         let items: wire::Counted<WireInProject> = (self.graphql_json(
             &raw::projects_of(),
@@ -885,8 +885,7 @@ impl GitHub {
                 struct Found {
                     id: NodeId,
                 }
-                let vars =
-                    serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number });
+                let vars = repo_vars!(repo, "number": number);
                 let found: Found = (self.graphql_json(
                     raw::ISSUE_OR_PR_ID,
                     vars,
@@ -1260,9 +1259,7 @@ impl WireValue {
             WireValue::Text { text, field } => (field.id?, FieldValue::Text(text?)),
             WireValue::Number { number, field } => {
                 let n = number?.to_string();
-                let n = n
-                    .strip_suffix(".0")
-                    .map_or_else(|| n.clone(), str::to_owned);
+                let n = n.strip_suffix(".0").map(str::to_owned).unwrap_or(n);
                 (field.id?, FieldValue::Number(n))
             }
             WireValue::Date { date, field } => (field.id?, FieldValue::Date(date?)),

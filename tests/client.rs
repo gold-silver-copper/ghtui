@@ -27,6 +27,12 @@ async fn github(replies: Vec<Reply>) -> (GitHub, Arc<Mutex<Vec<Seen>>>) {
     (client(&base, Store::disabled()), seen)
 }
 
+/// GitHub's answer to a mutation `field` that only has to succeed.
+fn ok(field: &str) -> Reply {
+    let body = format!(r#"{{"data":{{"{field}":{{"clientMutationId":null}}}}}}"#);
+    Reply::new(200, body)
+}
+
 /// "Done", replying to thread T_9.
 fn reply() -> ghtui::api::change::Change {
     let (thread, body) = (NodeId::new("T_9"), "Done".into());
@@ -371,14 +377,8 @@ async fn viewed_files_paginate() {
 #[tokio::test]
 async fn set_viewed_sends_the_right_mutation() {
     let (gh, seen) = github(vec![
-        Reply::new(
-            200,
-            r#"{"data":{"markFileAsViewed":{"clientMutationId":null}}}"#,
-        ),
-        Reply::new(
-            200,
-            r#"{"data":{"unmarkFileAsViewed":{"clientMutationId":null}}}"#,
-        ),
+        ok("markFileAsViewed"),
+        ok("unmarkFileAsViewed"),
         Reply::new(
             200,
             r#"{"errors":[{"message":"Could not resolve to a node"}]}"#,
@@ -408,7 +408,7 @@ async fn set_viewed_sends_the_right_mutation() {
 async fn a_merge_sends_its_method_and_head_and_a_refusal_says_why() {
     use ghtui::api::change::{Change, MergeMethod};
     let (gh, seen) = github(vec![
-        Reply::new(200, r#"{"data":{"mergePullRequest":{"clientMutationId":null}}}"#),
+        ok("mergePullRequest"),
         Reply::new(
             200,
             r#"{"data":{"mergePullRequest":null},"errors":[{"type":"UNPROCESSABLE","message":"Pull Request is not mergeable"}]}"#,
@@ -439,12 +439,6 @@ async fn a_merge_sends_its_method_and_head_and_a_refusal_says_why() {
 #[tokio::test]
 async fn auto_merge_and_the_merge_queue_send_their_mutations() {
     use ghtui::api::change::{Change, MergeMethod};
-    let ok = |field: &str| {
-        Reply::new(
-            200,
-            format!(r#"{{"data":{{"{field}":{{"clientMutationId":null}}}}}}"#),
-        )
-    };
     let (gh, seen) = github(vec![
         ok("enablePullRequestAutoMerge"),
         ok("disablePullRequestAutoMerge"),
@@ -542,12 +536,6 @@ async fn actions_changes_post_to_their_paths() {
 async fn edits_send_their_mutations() {
     use ghtui::api::change::Change;
     use ghtui::api::edit::{Edit, Named, ReactionContent, Written};
-    let ok = |field: &str| {
-        Reply::new(
-            200,
-            format!(r#"{{"data":{{"{field}":{{"clientMutationId":null}}}}}}"#),
-        )
-    };
     let (gh, seen) = github(vec![
         ok("updateIssueComment"),
         ok("updatePullRequestReviewComment"),
@@ -685,12 +673,6 @@ async fn edits_send_their_mutations() {
 async fn manage_changes_send_their_mutations() {
     use ghtui::api::change::Change;
     use ghtui::api::manage::{DiscussionReason, HideReason, IssueAt, LockReason, Manage};
-    let ok = |field: &str| {
-        Reply::new(
-            200,
-            format!(r#"{{"data":{{"{field}":{{"clientMutationId":null}}}}}}"#),
-        )
-    };
     let id_of = |id: &str| {
         Reply::new(
             200,
@@ -3482,11 +3464,10 @@ async fn subscriptions_are_read_and_set() {
     use ghtui::api::watch::{SubscriptionState, Watched};
     let thread = r#"{"data":{"repository":{"issueOrPullRequest":{"__typename":"PullRequest","id":"PR_1","viewerSubscription":"UNSUBSCRIBED","viewerCanSubscribe":true}}}}"#;
     let repo = r#"{"data":{"repository":{"id":"R_1","viewerSubscription":"SUBSCRIBED","viewerCanSubscribe":true}}}"#;
-    let set = r#"{"data":{"updateSubscription":{"clientMutationId":null}}}"#;
     let (gh, seen) = github(vec![
         Reply::new(200, thread),
         Reply::new(200, repo),
-        Reply::new(200, set),
+        ok("updateSubscription"),
         Reply::new(200, "{}"),
         Reply::new(204, ""),
     ])
@@ -3631,12 +3612,6 @@ async fn a_jobs_annotations_come_with_it() {
 async fn reviews_and_commit_comments_send_their_requests() {
     use ghtui::api::change::Change;
     use ghtui::api::edit::{Edit, Written};
-    let ok = |field: &str| {
-        Reply::new(
-            200,
-            format!(r#"{{"data":{{"{field}":{{"clientMutationId":null}}}}}}"#),
-        )
-    };
     let comments = r#"[{"id":5,"node_id":"CC_5","user":{"login":"alice"},"body":"Nice",
         "created_at":"2026-10-01T00:00:00Z","path":"src/a.rs","line":3,
         "html_url":"https://github.com/o/r/commit/abc#commitcomment-5"},
@@ -3782,10 +3757,7 @@ async fn starred_lists_are_read_and_set() {
         Reply::new(200, more),
         Reply::new(200, r#"{"data":{"updateUserListsForItem":{"lists":[]}}}"#),
         Reply::new(200, r#"{"data":{"createUserList":{"list":{"id":"UL_9"}}}}"#),
-        Reply::new(
-            200,
-            r#"{"data":{"deleteUserList":{"clientMutationId":null}}}"#,
-        ),
+        ok("deleteUserList"),
     ])
     .await;
     let lists = gh.my_lists(&RepoId::new("o", "r")).await.unwrap();
@@ -4148,12 +4120,6 @@ async fn settings_send_their_requests_and_read_their_pages() {
     use ghtui::api::change::Change;
     use ghtui::api::settings::{
         Enforcement, HookForm, Permission, RuleForm, Settings, SettingsChange as C, SettingsPage,
-    };
-    let ok = |field: &str| {
-        Reply::new(
-            200,
-            format!(r#"{{"data":{{"{field}":{{"clientMutationId":null}}}}}}"#),
-        )
     };
     let (gh, seen) = github(vec![
         ok("createBranchProtectionRule"),
