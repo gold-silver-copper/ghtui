@@ -1009,15 +1009,7 @@ pub fn draw_hints(theme: &crate::theme::Theme, hints: &[HintLabel], area: Rect, 
             .checked_sub(width)
             .filter(|x| *x >= area.x)
             .unwrap_or(hint.x);
-        Span::styled(hint.label.as_str(), style).render(
-            Rect {
-                x,
-                y: hint.y,
-                width,
-                height: 1,
-            },
-            buf,
-        );
+        Span::styled(hint.label.as_str(), style).render(Rect::new(x, hint.y, width, 1), buf);
     }
 }
 
@@ -1078,13 +1070,7 @@ impl Widget for PageView<'_> {
                 {
                     // Just inside its box's edges, as a framed line's.
                     let x = layout.main_x.saturating_add(from).saturating_add(1);
-                    let band = Rect {
-                        x,
-                        y,
-                        width: width.saturating_sub(2),
-                        height: 1,
-                    }
-                    .intersection(area);
+                    let band = Rect::new(x, y, width.saturating_sub(2), 1).intersection(area);
                     if let Some(bg) = theme.fill(Bg::Selected).bg {
                         buf.set_style(band, Style::new().bg(bg));
                     }
@@ -1118,12 +1104,7 @@ impl PageView<'_> {
         current: bool,
     ) {
         let theme = self.ctx.theme;
-        let row = |x: u16, w: u16| Rect {
-            x,
-            y,
-            width: w,
-            height: 1,
-        };
+        let row = |x: u16, w: u16| Rect::new(x, y, w, 1);
         let inner_bg = match (line.tone, sel) {
             _ if current => Bg::Selected,
             (Tone::Code, _) => CODE_BG,
@@ -1220,12 +1201,7 @@ impl PageView<'_> {
             u16::try_from(c.min(end)).unwrap_or(u16::MAX)
         };
         let from = at(cols.start);
-        let area = Rect {
-            x: from,
-            y,
-            width: at(cols.end).saturating_sub(from),
-            height: 1,
-        };
+        let area = Rect::new(from, y, at(cols.end).saturating_sub(from), 1);
         buf.set_style(area, Style::new().add_modifier(Modifier::REVERSED));
     }
 

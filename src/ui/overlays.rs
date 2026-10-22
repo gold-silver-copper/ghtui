@@ -10,7 +10,7 @@ use ratatui::text::Span;
 use ratatui::widgets::Widget;
 use ratatui_textarea::TextArea;
 
-use crate::ui::{Ctx, PAD_Y, centered, cols, fill, list_row, padded, render_split, text};
+use crate::ui::{Ctx, PAD_Y, centered, cols, fill, list_row, padded, render_split, row, text};
 
 const POPUP: Bg = Bg::ContainerHigh;
 
@@ -56,7 +56,7 @@ impl Widget for Palette<'_> {
         fill(buf, area, theme, POPUP);
         let inner = padded(area);
 
-        let prompt = Rect { height: 1, ..inner };
+        let prompt = row(inner, inner.y);
         Span::styled(
             self.prompt,
             theme.accent(POPUP).add_modifier(Modifier::BOLD),
@@ -129,14 +129,7 @@ impl Widget for Palette<'_> {
             return;
         }
         if self.items.is_empty() {
-            Span::styled("No matches", theme.meta(POPUP)).render(
-                Rect {
-                    y: list_top,
-                    height: 1,
-                    ..inner
-                },
-                buf,
-            );
+            Span::styled("No matches", theme.meta(POPUP)).render(row(inner, list_top), buf);
             return;
         }
         let first = self.selected.saturating_add(1).saturating_sub(rows);

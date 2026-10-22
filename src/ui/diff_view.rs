@@ -19,7 +19,8 @@ use crate::ui::annotations::{Annotation, Place, ThreadRowKind};
 use crate::ui::diff_doc::{Doc, DocFile, FoldReason, Note, Pos, Row, Viewed};
 use crate::ui::page::{Tone, role_style};
 use crate::ui::{
-    Ctx, PAD_X, chips, cols, fill, fit_spans, inset, key_hints, render_split, text, time,
+    Ctx, PAD_X, changes, chips, cols, fill, fit_spans, inset, key_hints, render_split, row, text,
+    time,
 };
 
 const PANE: Bg = Bg::Surface;
@@ -80,12 +81,7 @@ impl Widget for DiffView<'_> {
         }
         let rows = self.doc.to_global(self.top)..self.doc.total_rows();
         for (g, y) in rows.zip(area.top()..area.bottom()) {
-            let row_area = Rect {
-                y,
-                height: 1,
-                ..area
-            };
-            self.render_row(self.doc.to_pos(g), row_area, buf);
+            self.render_row(self.doc.to_pos(g), row(area, y), buf);
         }
         // Sticky header: the file (and function) you're in stays named at
         // the top.
@@ -96,7 +92,7 @@ impl Widget for DiffView<'_> {
                 row: top.row + 1,
                 ..top
             });
-            self.header(top.file, cursor, &scope, Rect { height: 1, ..area }, buf);
+            self.header(top.file, cursor, &scope, row(area, area.y), buf);
         }
     }
 }
@@ -126,13 +122,13 @@ impl DiffView<'_> {
             Row::Note(note) => self.note(file, note, quiet_bg, area, buf),
             Row::Gap { start, end } => {
                 let n = end - start;
-                let what = match (self.doc.since_active, n == 1) {
-                    (true, true) => "line without new changes",
-                    (true, false) => "lines without new changes",
-                    (false, true) => "unchanged line",
-                    (false, false) => "unchanged lines",
+                let lines = text::noun(n.into(), "line");
+                let what = if self.doc.since_active {
+                    format!("{pad}⋯ {n} {lines} without new changes · ")
+                } else {
+                    format!("{pad}⋯ {n} unchanged {lines} · ")
                 };
-                let what = Span::styled(format!("{pad}⋯ {n} {what} · "), theme.meta(quiet_bg));
+                let what = Span::styled(what, theme.meta(quiet_bg));
                 action(buf, what, self.keys.expand, "to expand");
             }
             Row::Hunk { seg } => {
@@ -299,12 +295,7 @@ impl DiffView<'_> {
             ));
         }
         if file.diff.is_some() {
-            let (adds, dels) = self.doc.file_counts(file);
-            right.extend([
-                Span::styled(format!("+{adds}"), theme.style(Fg::DiffAddedSign, bg)),
-                Span::styled(" ", theme.body(bg)),
-                Span::styled(format!("−{dels}"), theme.style(Fg::DiffRemovedSign, bg)),
-            ]);
+            right.extend(changes(theme, bg, self.doc.file_counts(file)));
         }
         if !scope.is_empty() {
             // What's left between the file name and the counts.

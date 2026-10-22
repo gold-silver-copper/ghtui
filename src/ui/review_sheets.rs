@@ -12,7 +12,9 @@ use ratatui::widgets::Widget;
 use ratatui_textarea::TextArea;
 use std::fmt::Display;
 
-use crate::ui::{Ctx, PAD_Y, centered, chips, cols, fill, fit_spans, idx, key_hints, padded, text};
+use crate::ui::{
+    Ctx, PAD_Y, centered, chips, cols, fill, fit_spans, idx, key_hints, padded, row, text,
+};
 
 const SHEET: Bg = Bg::ContainerHigh;
 const INPUT_ROWS: u16 = 8;
@@ -165,12 +167,7 @@ fn completion_list(
         } else {
             LIST
         };
-        let row = Rect {
-            x: left,
-            y: top.saturating_add(cols(i)),
-            width,
-            height: 1,
-        };
+        let row = Rect::new(left, top.saturating_add(cols(i)), width, 1);
         fill(buf, row, theme, bg);
         let shown = text::truncate(choice, usize::from(width.saturating_sub(2)));
         Span::styled(format!(" {shown}"), theme.body(bg)).render(row, buf);
@@ -181,15 +178,6 @@ fn completion_list(
 fn sheet(theme: &Theme, area: Rect, buf: &mut Buffer) -> Rect {
     fill(buf, area, theme, SHEET);
     padded(area)
-}
-
-/// Line `y` of a sheet's `inner` room.
-fn row(inner: Rect, y: u16) -> Rect {
-    Rect {
-        y,
-        height: 1,
-        ..inner
-    }
 }
 
 /// Writes `text` on one line of `area`, cut to fit.
