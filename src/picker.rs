@@ -63,6 +63,8 @@ pub enum Kind {
     Alert(crate::security::Dismissing),
     /// How you're notified of it ([`crate::watch`]).
     Watch(Watched),
+    /// Your status ([`crate::social`]); the field is its emoji and message.
+    Status(crate::social::Composing),
     /// A release's tag, on its form's page ([`crate::release`]).
     Tag(Route),
     /// What a new tag is made at.
@@ -118,6 +120,7 @@ impl Picker {
             Kind::Alert(ref d) => d.title(),
             Kind::Watch(Watched::Repo(_)) => "Watch the repository",
             Kind::Watch(_) => "Notifications",
+            Kind::Status(_) => "Your status",
             Kind::Tag(_) => "Choose a tag",
             Kind::Target(_) => "Target: a branch or commit",
             Kind::SaveAsset(_) => "Save the asset",
@@ -295,6 +298,7 @@ impl State {
                 "Type to filter · ↵ picks or unpicks · esc when done"
             }
             Kind::Form(_) | Kind::Watch(_) => "Type to filter",
+            Kind::Status(_) => "An emoji and a message: 🌴 On vacation",
             Kind::Code { .. } => "Type a name",
             Kind::Project(ref pick) => pick.placeholder(),
             Kind::Alert(ref d) => d.placeholder(),
@@ -315,6 +319,7 @@ impl State {
             Kind::Branches { repo, .. } => Some(DataKey::Refs(repo.clone())),
             Kind::Edit(c) => c.need(),
             Kind::Watch(w) => Some(DataKey::Subscription(w.clone())),
+            Kind::Status(_) => crate::social::need(self),
             Kind::Tag(route) => route.repo().map(|r| DataKey::Tags(r.clone())),
             Kind::Target(route) => route.repo().map(|r| DataKey::Branches(r.clone())),
             Kind::Site(pick) => pick.need(),
@@ -333,6 +338,7 @@ impl State {
             Kind::FileName(route, Some(i)) => crate::gist::file_name(self, route, *i),
             Kind::Housekeeping(pick) => pick.start(self),
             Kind::Manage(pick) => pick.start(),
+            Kind::Status(c) => c.start(self),
             _ => None,
         };
         let mut input = new_input(&self.theme, Bg::ContainerHigh);
@@ -411,6 +417,7 @@ impl State {
             Kind::Project(pick) => crate::projects::rows(self, pick, q),
             Kind::Alert(d) => crate::security::rows(d, q),
             Kind::Watch(w) => crate::watch::rows(self, w, q),
+            Kind::Status(c) => crate::social::rows(self, c, q),
             Kind::Tag(route) => crate::release::tag_rows(self, route, q),
             Kind::Target(route) => crate::release::target_rows(self, route, q),
             Kind::SaveAsset(of) => crate::release::assets::save_rows(of, q),

@@ -59,6 +59,7 @@ pub const FEATURES: &[Feature] = &[
     crate::manage::FEATURE,
     crate::settings::FEATURE,
     crate::watch::FEATURE,
+    crate::social::FEATURE,
     crate::housekeeping::FEATURE,
     crate::workflows::FEATURE,
     crate::offline::FEATURE,

@@ -336,6 +336,19 @@ raw! {
     /// Your saved replies, most recently changed first.
     SAVED_REPLIES = "query { viewer { savedReplies(first: 100) { totalCount nodes { id title body } } } }";
 
+    // ---- following people, and your status ([`crate::api::social`]) ----
+
+    FOLLOW_USER = "mutation($id: ID!) { followUser(input: {userId: $id}) { user { id } } }";
+
+    UNFOLLOW_USER = "mutation($id: ID!) { unfollowUser(input: {userId: $id}) { user { id } } }";
+
+    FOLLOW_ORG = "mutation($id: ID!) { followOrganization(input: {organizationId: $id}) { organization { id } } }";
+
+    UNFOLLOW_ORG = "mutation($id: ID!) { unfollowOrganization(input: {organizationId: $id}) { organization { id } } }";
+
+    /// Sets your status; with no emoji and no message, clears it.
+    CHANGE_STATUS = "mutation($emoji: String, $message: String, $busy: Boolean, $expires: DateTime) { changeUserStatus(input: {emoji: $emoji, message: $message, limitedAvailability: $busy, expiresAt: $expires}) { status { id } } }";
+
     // ---- a repository's settings ([`crate::api::settings`]) ----
 
     /// A repository's branch protection rules, with what each asks.

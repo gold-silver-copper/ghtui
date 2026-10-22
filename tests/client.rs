@@ -549,6 +549,8 @@ async fn edits_send_their_mutations() {
         ok("removeAssigneesFromAssignable"),
         ok("requestReviews"),
         ok("updateIssue"),
+        ok("updateIssueIssueType"),
+        ok("updateIssueIssueType"),
     ])
     .await;
     let id = |s: &str| NodeId::new(s);
@@ -612,6 +614,14 @@ async fn edits_send_their_mutations() {
             id: id("I_3"),
             milestone: None,
         },
+        Edit::IssueType {
+            issue: id("I_3"),
+            issue_type: Some(named("IT_bug")),
+        },
+        Edit::IssueType {
+            issue: id("I_3"),
+            issue_type: None,
+        },
     ];
     for edit in edits {
         gh.change(&Change::Edit(edit)).await.unwrap();
@@ -663,7 +673,61 @@ async fn edits_send_their_mutations() {
     );
     field(11, "milestoneId: $milestone");
     assert_eq!(var(11, "milestone"), serde_json::Value::Null);
-    assert_eq!(sent.len(), 12);
+    field(
+        12,
+        "updateIssueIssueType(input: {issueId: $issue, issueTypeId: $issueType})",
+    );
+    assert_eq!(
+        (var(12, "issue"), var(12, "issueType")),
+        ("I_3".into(), "IT_bug".into())
+    );
+    assert_eq!(var(13, "issueType"), serde_json::Value::Null);
+    assert_eq!(sent.len(), 14);
+}
+
+/// Following names a user or an organization by its node ID; a status
+/// sends its emoji, message, busy flag and expiry, and clearing sends
+/// none of them.
+#[tokio::test]
+async fn follows_and_statuses_send_their_mutations() {
+    use ghtui::api::social::NewStatus;
+    let (gh, seen) = github(vec![
+        ok("followUser"),
+        ok("unfollowOrganization"),
+        ok("changeUserStatus"),
+        ok("changeUserStatus"),
+    ])
+    .await;
+    gh.follow(&NodeId::new("U_1"), false, true).await.unwrap();
+    gh.follow(&NodeId::new("O_1"), true, false).await.unwrap();
+    let status = NewStatus {
+        emoji: Some(":palm_tree:".into()),
+        message: "On vacation".into(),
+        busy: true,
+        expires_at: Some("2026-10-22T00:00:00Z".into()),
+    };
+    gh.set_status(Some(&status)).await.unwrap();
+    gh.set_status(None).await.unwrap();
+    let seen = seen.lock().unwrap();
+    let vars = |i: usize| seen[i].json()["variables"].clone();
+    assert!(seen[0].query().contains("followUser(input: {userId: $id})"));
+    assert_eq!(vars(0)["id"], "U_1");
+    assert!(
+        seen[1]
+            .query()
+            .contains("unfollowOrganization(input: {organizationId: $id})")
+    );
+    assert_eq!(vars(1)["id"], "O_1");
+    assert!(seen[2].query().contains("changeUserStatus"));
+    assert_eq!(
+        vars(2),
+        serde_json::json!({"emoji": ":palm_tree:", "message": "On vacation", "busy": true, "expires": "2026-10-22T00:00:00Z"})
+    );
+    assert_eq!(
+        vars(3),
+        serde_json::json!({"emoji": null, "message": null, "busy": false, "expires": null})
+    );
+    assert_eq!(seen.len(), 4);
 }
 
 /// Managing an issue, a pull request or a discussion sends GitHub's own

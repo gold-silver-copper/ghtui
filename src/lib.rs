@@ -83,6 +83,7 @@ mod security;
 mod sequence_tests;
 mod settings;
 mod site;
+mod social;
 mod source;
 mod state;
 mod tabs;

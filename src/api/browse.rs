@@ -605,8 +605,8 @@ pub struct Profile {
     pub star_count: u64,
     /// The profile README, as markdown.
     pub readme: Option<String>,
-    /// "🌴 On vacation".
-    pub status: Option<String>,
+    /// What they say they're up to, if anything.
+    pub status: Option<UserStatus>,
     pub pronouns: Option<String>,
     /// Social accounts: (how it's shown, link).
     pub socials: Vec<(String, String)>,
@@ -618,6 +618,38 @@ pub struct Profile {
     pub people: Capped<String>,
     /// A user's contributions in the last year.
     pub contributions: Option<Contributions>,
+    /// Its node ID, which following names it by.
+    pub id: Option<NodeId>,
+    /// It's you.
+    pub is_viewer: bool,
+    /// Whether you follow them; `None` where GitHub doesn't say (an
+    /// organization, on an Enterprise Server without following).
+    pub followed: Option<bool>,
+}
+
+/// A user's status, as their avatar menu sets it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UserStatus {
+    /// A glyph or a `:name:`.
+    pub emoji: Option<String>,
+    pub message: Option<String>,
+    /// Busy: they may be slow to answer.
+    pub busy: bool,
+    /// When it clears itself.
+    pub expires_at: Option<String>,
+}
+
+impl UserStatus {
+    /// "🌴 On vacation", or `None` when there's nothing to say.
+    pub fn text(&self) -> Option<String> {
+        let words: Vec<&str> = [&self.emoji, &self.message]
+            .into_iter()
+            .flatten()
+            .map(|t| t.trim())
+            .filter(|t| !t.is_empty())
+            .collect();
+        (!words.is_empty()).then(|| words.join(" "))
+    }
 }
 
 /// The contribution graph and recent activity on a user's profile.
@@ -3773,6 +3805,8 @@ fragments! { text: Option<String>; ReadmeBlob = "Blob" }
 pub struct WireStatus {
     pub emoji: Option<String>,
     pub message: Option<String>,
+    pub indicates_limited_availability: bool,
+    pub expires_at: Option<DateTime>,
 }
 
 fragments! { nodes: SocialList = "SocialAccountConnection" => WireSocial }
@@ -4039,6 +4073,9 @@ pub struct ProfileQuery {
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "User")]
 pub struct UserFull {
+    pub id: cynic::Id,
+    pub is_viewer: bool,
+    pub viewer_is_following: bool,
     pub login: String,
     pub name: Option<String>,
     pub bio: Option<String>,
@@ -4064,6 +4101,8 @@ pub struct UserFull {
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Organization")]
 pub struct OrgFull {
+    pub id: cynic::Id,
+    pub viewer_is_following: Option<bool>,
     pub login: String,
     pub name: Option<String>,
     pub description: Option<String>,
@@ -4651,16 +4690,17 @@ fn readme_text(object: Option<ReadmeObject>) -> Option<String> {
 impl ProfileQuery {
     pub(crate) fn into_profile(self) -> Option<Profile> {
         if let Some(u) = self.user {
-            let status = u.status.and_then(|s| {
-                let text = [s.emoji, s.message]
-                    .into_iter()
-                    .flatten()
-                    .filter(|t| !t.trim().is_empty())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                (!text.is_empty()).then_some(text)
+            let status = u.status.map(|s| UserStatus {
+                emoji: s.emoji.filter(|e| !e.trim().is_empty()),
+                message: s.message.filter(|m| !m.trim().is_empty()),
+                busy: s.indicates_limited_availability,
+                expires_at: s.expires_at.map(|at| at.0),
             });
+            let status = status.filter(|s| s.text().is_some() || s.busy);
             return Some(Profile {
+                id: Some(u.id.into()),
+                is_viewer: u.is_viewer,
+                followed: Some(u.viewer_is_following),
                 readme: readme_text(self.user_readme.and_then(|r| r.object)),
                 status,
                 pronouns: u.pronouns.filter(|p| !p.trim().is_empty()),
@@ -4685,6 +4725,8 @@ impl ProfileQuery {
         }
         let o = self.organization?;
         Some(Profile {
+            id: Some(o.id.into()),
+            followed: o.viewer_is_following,
             login: o.login,
             name: o.name.filter(|n| !n.is_empty()),
             bio: o.description.filter(|b| !b.trim().is_empty()),

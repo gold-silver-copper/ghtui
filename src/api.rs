@@ -35,6 +35,7 @@ pub mod release;
 pub mod replies;
 pub mod security;
 pub mod settings;
+pub mod social;
 pub mod timeline;
 pub mod watch;
 pub mod workflows;

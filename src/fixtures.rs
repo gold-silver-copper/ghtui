@@ -412,6 +412,13 @@ pub fn sidebar() -> crate::api::edit::Sidebar {
             named("T_docs", "octo-org/docs"),
         ]
         .into())),
+        issue_type: Some(named("IT_bug", "Bug")),
+        issue_types: vec![
+            named("IT_bug", "Bug"),
+            named("IT_feature", "Feature"),
+            named("IT_task", "Task"),
+        ]
+        .into(),
     }
 }
 
@@ -1348,7 +1355,13 @@ pub fn profile() -> Profile {
         ),
         star_count: 120,
         readme: Some("### Hi there 👋\n\nI'm the Octocat. I like **terminals**.\n".into()),
-        status: Some("🐙 Reviewing pull requests".into()),
+        status: Some(crate::api::browse::UserStatus {
+            emoji: Some("🐙".into()),
+            message: Some("Reviewing pull requests".into()),
+            ..Default::default()
+        }),
+        id: Some(NodeId::new("U_octocat")),
+        followed: Some(false),
         pronouns: Some("they/them".into()),
         socials: vec![(
             "@octocat@hachyderm.io".into(),
@@ -1460,6 +1473,8 @@ pub fn org_profile() -> Profile {
         ),
         verified: true,
         people: Capped::new(vec!["joshka".into(), "orhun".into(), "kdheepak".into()], 14),
+        id: Some(NodeId::new("O_ratatui")),
+        followed: Some(true),
         ..Default::default()
     }
 }

@@ -256,6 +256,7 @@ mod security;
 mod settings;
 mod site;
 mod smoke;
+mod social;
 mod workflows;
 mod writes;
 

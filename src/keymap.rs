@@ -169,6 +169,7 @@ actions! {
     React             "react"             ["+"]                    Global "React to the comment, issue or pull request";
     Checkout          "checkout"          []                       Global "Check out the pull request in your clone (an issue: a new branch for it)";
     Watch             "watch"             []                       Global "Subscribe to or ignore the thread; watch the repository";
+    SetStatus         "set_status"        []                       Global "Set your status, or clear it";
     Delete            "delete"            ["<Delete>"]             Global "Delete the selection (a draft comment, a Home section, a write waiting for GitHub)";
     UndoDelete        "undo_delete"       ["<C-z>"]                Global "Bring back what was just deleted";
     Quit              "quit"              ["q"]                    Global "Quit";
@@ -184,6 +185,7 @@ actions! {
     EditAssignees     "edit_assignees"    []                       Page   "Edit the assignees";
     RequestReviews    "request_reviews"   []                       Page   "Ask for reviews";
     EditMilestone     "edit_milestone"    []                       Page   "Set the milestone";
+    EditIssueType     "edit_issue_type"   []                       Page   "Set the issue's type";
     NewIssue          "new_issue"         []                       Page   "New issue";
     NewPr             "new_pull_request"  []                       Page   "New pull request";
     Create            "create"            ["<C-s>"]                Page   "Create or save the form on screen (an issue, a release, a label, a file…)";
@@ -195,6 +197,7 @@ actions! {
     NewWikiPage       "new_wiki_page"     []                       Page   "New wiki page";
     RunWorkflow       "run_workflow"      []                       Page   "Run the workflow by hand";
     Lists             "lists"             []                       Page   "Add the repository to your starred lists, or take it out";
+    Follow            "follow"            []                       Page   "Follow the person or organization, or unfollow them";
     NewHere           "new_here"          []                       Page   "New here: a label, a milestone, a branch, a tag, a file";
     Fork              "fork"              []                       Page   "Fork the repository";
     NewRepo           "new_repository"    []                       Page   "New repository";

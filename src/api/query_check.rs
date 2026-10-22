@@ -377,6 +377,7 @@ fn typed() -> Vec<(&'static str, String)> {
         Mutation e::RequestReviews, e::ReviewersVariables;
         Mutation e::SetIssueMilestone, e::MilestoneVariables;
         Mutation e::SetPrMilestone, e::MilestoneVariables;
+        Mutation e::SetIssueType, e::IssueTypeVariables;
         Mutation crate::api::create::CreateIssue, crate::api::create::CreateIssueVariables;
         Mutation crate::api::create::CreatePr, crate::api::create::CreatePrVariables;
         Query crate::api::watch::RepoWatchQuery, crate::api::watch::RepoNameVariables;

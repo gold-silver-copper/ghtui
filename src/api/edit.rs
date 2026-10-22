@@ -1,6 +1,6 @@
 //! Editing what's already on GitHub: comments and descriptions, titles,
 //! reactions, and an issue's or pull request's sidebar (labels,
-//! assignees, reviewers, milestone). Each edit is an [`Edit`], sent as a
+//! assignees, reviewers, milestone, an issue's type). Each edit is an [`Edit`], sent as a
 //! [`Change::Edit`](crate::api::change::Change::Edit) by [`GitHub::edit`].
 
 use crate::schema::schema;
@@ -133,6 +133,11 @@ pub enum Edit {
         id: NodeId,
         milestone: Option<Named>,
     },
+    /// Set (or, with `None`, clear) an issue's type.
+    IssueType {
+        issue: NodeId,
+        issue_type: Option<Named>,
+    },
 }
 
 /// An issue's or pull request's sidebar as it is, with the node IDs
@@ -156,6 +161,11 @@ pub struct Sidebar {
     /// them (a token that can't read the organization); `None` for an
     /// issue, or a user's repository.
     pub teams: Option<Result<Capped<Named>, String>>,
+    /// An issue's type.
+    pub issue_type: Option<Named>,
+    /// The types its repository's issues may have (those turned on): none
+    /// for a pull request, or where the owner has none.
+    pub issue_types: Capped<Named>,
 }
 
 /// The reviewers a pull request asks, by kind.
@@ -262,6 +272,13 @@ impl GitHub {
                     self.run::<SetIssueMilestone, _>(vars).await
                 }
             }
+            Edit::IssueType { issue, issue_type } => {
+                self.run::<SetIssueType, _>(IssueTypeVariables {
+                    issue: issue.gql(),
+                    issue_type: issue_type.as_ref().map(|t| t.id.gql()),
+                })
+                .await
+            }
         }
     }
 
@@ -367,6 +384,8 @@ pub struct SidebarRepo {
     pub assignable_users: UserNames,
     #[arguments(first: 100, states: [OPEN])]
     pub milestones: Option<MilestoneNames>,
+    #[arguments(first: 100)]
+    pub issue_types: Option<IssueTypeNames>,
     pub owner: SidebarOwner,
 }
 
@@ -387,6 +406,7 @@ pub struct SidebarIssue {
     #[arguments(first: 100)]
     pub assignees: UserNames,
     pub milestone: Option<MilestoneNamed>,
+    pub issue_type: Option<IssueTypeNamed>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -437,6 +457,31 @@ fragments! {
     MilestoneNames = "MilestoneConnection" => MilestoneNamed,
     TeamNames = "TeamConnection" => TeamNamed,
     RequestNames = "ReviewRequestConnection" => RequestNamed,
+    IssueTypeNames = "IssueTypeConnection" => IssueTypeOption,
+}
+
+/// One of a repository's issue types, and whether it's turned on.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "IssueType")]
+pub struct IssueTypeOption {
+    pub id: cynic::Id,
+    pub name: String,
+    pub is_enabled: bool,
+}
+
+/// The types turned on, of all a repository has.
+fn issue_types(list: Option<IssueTypeNames>) -> Capped<Named> {
+    let Some(list) = list else { return Capped::default() };
+    let all = list.into_capped(|t| t);
+    let off = all.items.iter().filter(|t| !t.is_enabled).count() as u64;
+    let total = all.total().saturating_sub(off);
+    let on = (all.items.into_iter())
+        .filter(|t| t.is_enabled)
+        .map(|t| Named {
+            id: t.id.into(),
+            name: t.name,
+        });
+    Capped::new(on.collect(), total)
 }
 
 /// Node IDs and the names they go by, each a [`Named`].
@@ -465,6 +510,7 @@ named! {
     UserNamed = "User".login,
     BotNamed = "Bot".login,
     MilestoneNamed = "Milestone".title,
+    IssueTypeNamed = "IssueType".name,
     // `org/slug`.
     TeamNamed = "Team".combined_slug,
 }
@@ -493,14 +539,17 @@ impl SidebarRepo {
     /// The sidebar, and for a pull request in an organization's
     /// repository, the organization, whose teams it may ask.
     fn into_sidebar(self) -> Option<(Sidebar, Option<String>)> {
-        let (labels, assignees, milestone, requests, author) = match self.issue_or_pull_request? {
-            SidebarOf::Issue(i) => (i.labels, i.assignees, i.milestone, None, None),
+        let (labels, assignees, milestone, requests, author, issue_type) = match self
+            .issue_or_pull_request?
+        {
+            SidebarOf::Issue(i) => (i.labels, i.assignees, i.milestone, None, None, i.issue_type),
             SidebarOf::PullRequest(p) => (
                 p.labels,
                 p.assignees,
                 p.milestone,
                 p.review_requests,
                 Some(crate::api::model::author(p.author)),
+                None,
             ),
             SidebarOf::Other => return None,
         };
@@ -523,6 +572,8 @@ impl SidebarRepo {
             SidebarOwner::Organization(o) if author.is_some() => Some(o.login),
             _ => None,
         };
+        // A pull request has an author here, and no type.
+        let pr = author.is_some();
         let sidebar = Sidebar {
             labels: label_names(labels),
             assignees: assignees.into_capped(Named::from),
@@ -534,6 +585,12 @@ impl SidebarRepo {
             milestones: (self.milestones)
                 .map_or_else(Capped::default, |m| m.into_capped(Named::from)),
             teams: None,
+            issue_types: if pr {
+                Capped::default()
+            } else {
+                issue_types(self.issue_types)
+            },
+            issue_type: issue_type.map(Named::from),
         };
         Some((sidebar, org))
     }
@@ -559,6 +616,7 @@ fragments! {
     AddAssigneesPayload = "AddAssigneesToAssignablePayload",
     RemoveAssigneesPayload = "RemoveAssigneesFromAssignablePayload",
     RequestReviewsPayload = "RequestReviewsPayload",
+    UpdateIssueTypePayload = "UpdateIssueIssueTypePayload",
 }
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -608,6 +666,13 @@ pub struct MilestoneVariables {
     pub milestone: Option<cynic::Id>,
 }
 
+#[derive(cynic::QueryVariables, Debug)]
+pub struct IssueTypeVariables {
+    pub issue: cynic::Id,
+    /// `None` clears it: sent as null.
+    pub issue_type: Option<cynic::Id>,
+}
+
 mutations! {
     UpdateIssueBody("BodyVariables") update_issue: UpdateIssuePayload { id: $id, body: $body }
     UpdatePrBody("BodyVariables") update_pull_request: UpdatePrPayload { pullRequestId: $id, body: $body }
@@ -630,4 +695,5 @@ mutations! {
     RequestReviews("ReviewersVariables") request_reviews: RequestReviewsPayload { pullRequestId: $pr, userIds: $users, teamIds: $teams, botIds: $bots }
     SetIssueMilestone("MilestoneVariables") update_issue: UpdateIssuePayload { id: $id, milestoneId: $milestone }
     SetPrMilestone("MilestoneVariables") update_pull_request: UpdatePrPayload { pullRequestId: $id, milestoneId: $milestone }
+    SetIssueType("IssueTypeVariables") update_issue_issue_type: UpdateIssueTypePayload { issueId: $issue, issueTypeId: $issue_type }
 }

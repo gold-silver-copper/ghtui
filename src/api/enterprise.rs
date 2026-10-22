@@ -182,6 +182,7 @@ pub fn table() -> Vec<Lack> {
         field("subIssues", &[], json(r#"{"totalCount":0,"nodes":[]}"#), v(16), "sub-issues"),
         field("subIssuesSummary", &[], json(r#"{"completed":0,"total":0}"#), v(16), "sub-issues"),
         field("issueType", &[], Fill::Null, v(17), "issue types"),
+        field("issueTypes", &[], Fill::Null, v(17), "issue types"),
         field("projectItems", &[], Fill::Null, v(15), "the projects an issue or pull request is in"),
         field("projectsV2", &["repository"], Fill::Null, v(15), "a repository's projects"),
         field("fullDatabaseId", &["items.nodes", "ProjectV2Item"], alias("databaseId"), v(13), "a project item's full ID"),

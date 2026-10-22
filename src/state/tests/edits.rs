@@ -316,6 +316,40 @@ fn reviewers_include_teams() {
     assert!(s.following.is_none());
 }
 
+/// An issue's type is one of its repository's, or none, set from the
+/// picker; the page follows GitHub until it shows it. A pull request has
+/// none to set.
+#[test]
+fn an_issue_type_is_set_and_followed() {
+    let mut s = issue_with(|_| {});
+    let cmds = act(&mut s, Action::EditIssueType);
+    fixtures::served(&mut s, &cmds);
+    let rows = picked_labels(&s);
+    assert_eq!(rows, ["  No type", "✓ Bug", "  Feature", "  Task"]);
+    let cmds = press(&mut s, "Feat<Enter>");
+    let set = Edit::IssueType {
+        issue: NodeId::new("I_14"),
+        issue_type: Some(Named {
+            id: NodeId::new("IT_feature"),
+            name: "Feature".into(),
+        }),
+    };
+    assert_eq!(
+        fixtures::sent_change(&cmds),
+        (&Change::Edit(set), &By::Edit(issue()))
+    );
+    answer(&mut s, &cmds, Ok(()));
+    says(&s, "Type set");
+    issue_shows(&mut s, |_| {});
+    assert!(s.following.is_some(), "GitHub still says Bug");
+    issue_shows(&mut s, |d| d.issue_type = Some("Feature".into()));
+    assert!(s.following.is_none());
+
+    let mut s = with_pr();
+    act(&mut s, Action::EditIssueType);
+    says(&s, "a pull request has none");
+}
+
 /// One milestone, or none; and a title in a one-line box.
 #[test]
 fn milestone_and_title() {
