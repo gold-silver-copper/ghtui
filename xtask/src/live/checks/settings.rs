@@ -21,12 +21,12 @@ pub const CHECK: Check = Check::new(
 
 const GITHUB: Duration = Duration::from_secs(30);
 
-fn settings_url(page: &str) -> String {
+pub(super) fn settings_url(page: &str) -> String {
     format!("https://github.com/{}/settings{page}", gh::REPO)
 }
 
 /// ghtui with `$EDITOR` applying the sed script at `edits`.
-fn launch(cx: &mut Cx, url: &str, edits: &Path) -> Result<Pane> {
+pub(super) fn launch(cx: &mut Cx, url: &str, edits: &Path) -> Result<Pane> {
     let editor = format!("sed -i -f '{}'", path(edits));
     let env = [
         ("EDITOR".to_owned(), editor.clone()),
@@ -37,7 +37,7 @@ fn launch(cx: &mut Cx, url: &str, edits: &Path) -> Result<Pane> {
 
 /// Writes `script` for the next `ctrl-e`, then opens the form in it and
 /// asks to save it: the confirmation saying `asks` shows.
-fn write_form(ghtui: &Pane, edits: &Path, script: &str, asks: &str) -> Result<()> {
+pub(super) fn write_form(ghtui: &Pane, edits: &Path, script: &str, asks: &str) -> Result<()> {
     std::fs::write(edits, script)?;
     ghtui.keys("C-e")?;
     ghtui.wait_for("ctrl-s")?;
@@ -47,7 +47,7 @@ fn write_form(ghtui: &Pane, edits: &Path, script: &str, asks: &str) -> Result<()
 }
 
 /// Moves the selection to the row showing `text`.
-fn select_row(ghtui: &Pane, text: &str) -> Result<()> {
+pub(super) fn select_row(ghtui: &Pane, text: &str) -> Result<()> {
     ghtui.keys("g g")?;
     if selected(&ghtui.screen_marked()?, text) {
         return Ok(());

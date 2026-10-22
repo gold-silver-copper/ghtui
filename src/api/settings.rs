@@ -1,6 +1,8 @@
 //! A repository's settings, as its Settings tab shows them to admins:
 //! branch protection rules and rulesets, collaborators and invitations,
-//! webhooks and their deliveries, deploy keys, and whether it's archived.
+//! webhooks and their deliveries, deploy keys, and whether it's archived;
+//! Actions secrets, variables and caches ([`actions`]), its Pages site
+//! ([`pages`]) and custom properties ([`properties`]).
 //! Reading is [`GitHub::settings`]; every change is a [`SettingsChange`],
 //! sent by [`GitHub::change_setting`].
 

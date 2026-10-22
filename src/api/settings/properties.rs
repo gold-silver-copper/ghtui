@@ -102,12 +102,22 @@ impl GitHub {
                 )
             })
         });
-        let (values, schema) = tokio::join!(
-            self.rest_json::<Vec<wire::Value>>(&values, format!("{repo}'s custom properties")),
-            schema
-        );
-        let values = values?
-            .into_iter()
+        // A user's repository has none: GitHub answers 404.
+        let values = self.rest_refusable(&values, "its custom properties", |status, _, _| {
+            (status == 404).then_some(())
+        });
+        let (values, schema) = tokio::join!(values, schema);
+        let Ok(values) = values? else {
+            let none = format!(
+                "Only an organization's repositories have custom properties, and {repo} isn't one"
+            );
+            return Ok(Properties {
+                values: Vec::new(),
+                schema: Err(none),
+            });
+        };
+        let values: Vec<wire::Value> = serde_json::from_str(values.body())?;
+        let values = (values.into_iter())
             .map(|v| (v.property_name, v.value))
             .collect();
         let schema = match schema? {

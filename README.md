@@ -65,9 +65,16 @@ ghtui is pre-release, but it's usable every day.
 - **Settings**, for a repository's admins: branch protection rules
   (made, edited and deleted) and rulesets (turned on or off),
   collaborators and invitations with their roles, webhooks and their
-  deliveries (redelivered), deploy keys, and archiving. Each change asks
-  first and names what it changes; deleting a repository is left to
-  github.com.
+  deliveries (redelivered), deploy keys, archiving, Actions secrets and
+  variables (the repository's and its environments', with the
+  organization's it may use listed), and its GitHub Pages site (its
+  source, custom domain, HTTPS and latest builds; published, changed and
+  unpublished). A secret is sealed with GitHub's public key before it's
+  sent, and its value is never shown. Actions' caches are listed with
+  their size and last use against the repository's limit, and deleted
+  one at a time or by key; a repository's custom properties are shown,
+  and set where its admins may. Each change asks first and names what it
+  changes; deleting a repository is left to github.com.
 - **Git first**: files, folders, history, blame, comparisons, tags,
   code search, and a repository's contributors and commit activity come
   from your clone (or ghtui's own partial one), at
@@ -1249,6 +1256,12 @@ checks; `cargo xtask live issue offline` runs only those.
   - `settings` writes a protection rule for `ghtui-live-` branches in
     its form (with `$EDITOR` set to a `sed` script) and saves it, then
     deletes it with `D`, and checks `main`'s rule ends as it began.
+  - `secrets` makes an Actions variable with `a`, edits it with `e` and
+    deletes it with `D`; sets a secret with `a` (GitHub has it, sealed)
+    and deletes it; and publishes a Pages site from `main` with `a` and
+    unpublishes it with `D`. It says it leaves out deleting caches when
+    the test repository has none, and custom properties on a user's
+    repository (only an organization's have them).
   - `actions` runs `actions.yml` by hand with `:run workflow`, with its `seconds`
     input set, and follows the run until it fails, as it does on
     purpose.
@@ -1269,7 +1282,8 @@ checks; `cargo xtask live issue offline` runs only those.
   with `bot-bot-1791523358.txt` in its files; `actions.yml`, a workflow
   run by hand with a `seconds` input whose job fails; a protection rule
   on `main`; and, for `pages`, code scanning alert #1 and a discussion
-  if those pages are to be opened (they're left out otherwise).
+  if those pages are to be opened (they're left out otherwise); no Pages
+  site of its own (`secrets` leaves Pages out if it has one).
 - **Where it runs:** ghtui runs in a private fux server, one pane at a
   time, at 216 columns, with its own socket and `XDG_RUNTIME_DIR` and a
   scratch cache, config and clone, all under
@@ -1280,11 +1294,13 @@ checks; `cargo xtask live issue offline` runs only those.
 - **What it touches and cleans up:** it writes only to the test
   repository. Each check undoes what it made, pass or fail: the issues
   (deleted), the pull request (closed) and its branch, the release and
-  its tag, the label, the protection rule and the workflow run; and the
+  its tag, the label, the protection rule, the workflow run, the
+  variable, the secret and the Pages site; and the
   fux server and the stand-in are stopped. ctrl-c stops the run after
   cleaning up. A run that was killed is swept up by the next one:
   issues and pull requests titled `[ghtui live]`, and `ghtui-live-`
-  branches, releases, tags, labels and protection rules.
+  branches, releases, tags, labels and protection rules, and
+  `GHTUI_LIVE_` variables and secrets.
 - **Enterprise Server:** `cargo xtask ghes` serves a stand-in on
   `https://localhost:8443` that relays an Enterprise Server's paths to
   github.com (`/api/v3`, `/api/graphql`, `/raw`, git) and rewrites
@@ -1346,6 +1362,16 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
   registries as `containers.HOST`, `npm.HOST` and so on (with subdomain
   isolation). A package's link opens under `/users/` (GitHub sends an
   organization's on).
+- An organization's Actions secrets and variables are listed on its
+  repositories' pages, but changed in the organization's settings on
+  github.com: choosing which repositories may use one isn't here. The
+  first 10 environments' secrets and variables are listed, and the page
+  says when there are more. A custom property that only the
+  organization's admins may set (GitHub's `values_editable_by`) isn't in
+  the form, even for an organization admin: GitHub doesn't say to a
+  repository who its organization's admins are.
+- A repository's cache limit is said only to its admins (GitHub's API);
+  others see the usual 10 GB, marked as GitHub's usual limit.
 - `:lists` reads up to 1,000 of a list's repositories to say whether one is
   in it, and says when a list is longer. A new list is public; its
   name, description and privacy are changed on github.com.

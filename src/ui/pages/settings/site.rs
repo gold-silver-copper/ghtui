@@ -152,6 +152,9 @@ pub(super) fn properties(page: &mut Page, repo: &RepoId, p: &Properties, keys: S
                 );
             });
         }
+        Err(why) if p.values.is_empty() => {
+            empty_box(page, strong("Custom properties"), &format!("{why}."));
+        }
         Err(why) => {
             let set = Whole(&p.values);
             let title = vec![strong(format!("Custom properties  {}", p.values.len()))];
