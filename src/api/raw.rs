@@ -311,6 +311,10 @@ raw! {
     /// dependencies of each (under the hawkgirl preview).
     DEPENDENCY_GRAPH = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { dependencyGraphManifests(first: 20) { totalCount nodes { filename blobPath parseable exceedsMaxSize dependenciesCount dependencies(first: 100) { totalCount nodes { packageName packageManager requirements repository { nameWithOwner } } } } } } }";
 
+    /// Where a repository's security policy is, if it has one: what the
+    /// community profile leaves out.
+    SECURITY_POLICY = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { securityPolicyUrl } }";
+
     /// A topic's stars and the topics GitHub relates to it.
     TOPIC = "query($name: String!) { topic(name: $name) { name stargazerCount relatedTopics(first: 10) { name } } }";
 

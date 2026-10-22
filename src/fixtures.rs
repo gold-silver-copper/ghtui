@@ -927,6 +927,36 @@ pub fn wiki() -> WikiPage {
         file: Some("Home.md".into()),
     }
 }
+/// A wiki's change to its Home and FAQ.
+fn wiki_revision() -> crate::api::browse::WikiRevision {
+    crate::api::browse::WikiRevision {
+        oid: "4b7d0c2e9a1f3d5b6c8e0a2b4d6f8a0c2e4b6d8f".into(),
+        author: "The Octocat".into(),
+        at: "2026-10-01T12:00:00Z".into(),
+        message: "Updated Home (markdown)".into(),
+        pages: vec!["Home".into(), "FAQ".into()],
+    }
+}
+/// A wiki's history: one change.
+pub fn wiki_history() -> crate::api::browse::WikiHistory {
+    crate::api::browse::WikiHistory {
+        page: None,
+        revisions: Capped::new(vec![wiki_revision()], 3),
+    }
+}
+/// What a wiki's change did to its Home.
+pub fn wiki_diff() -> crate::api::browse::WikiDiff {
+    let lines = ["@@ -1 +1 @@", "-Welcome.", "+Welcome to the wiki."];
+    crate::api::browse::WikiDiff {
+        to: wiki_revision(),
+        from: None,
+        files: vec![crate::api::browse::WikiFileDiff {
+            title: "Home".into(),
+            lines: lines.map(str::to_owned).to_vec(),
+        }],
+        cut: false,
+    }
+}
 /// octocat's commit `oid`.
 fn commit_info(oid: impl Into<String>, headline: &str, date: &str) -> CommitInfo {
     CommitInfo {
@@ -2356,6 +2386,8 @@ pub(crate) fn sample(key: &DataKey) -> Data {
         K::Tags(_) => Data::from(tags()),
         K::Branches(_) => Data::from(branches()),
         K::Wiki(..) => Data::from(wiki()),
+        K::WikiHistory(..) => Data::from(wiki_history()),
+        K::WikiDiff(..) => Data::from(wiki_diff()),
         K::Advisories(_) => {
             let items = advisories();
             let total = items.len() as u64;
@@ -2388,6 +2420,7 @@ pub(crate) fn sample(key: &DataKey) -> Data {
         K::Activity(_) => Data::from(site::activity()),
         K::Traffic(_) => Data::from(site::traffic()),
         K::Dependencies(_) => Data::from(site::dependencies()),
+        K::Community(_) => Data::from(site::community()),
         K::Featured => Data::from(site::featured()),
         K::Topic(_) => Data::from(site::rust()),
         K::StarLists(_) => Data::from(site::star_lists()),

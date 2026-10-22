@@ -1,10 +1,11 @@
-//! A repository's Insights: contributors, commit activity, traffic and
-//! the dependency graph, each a tab of GitHub's Insights menu.
+//! A repository's Insights: contributors, commit activity, traffic, the
+//! dependency graph and community standards, each a tab of GitHub's
+//! Insights menu.
 
 use super::charts::{bar, buckets, column_dates, columns, date, month, sparkline};
 use super::*;
 use crate::api::insights::{
-    Activity, Counted, Counter, Dependencies, Popular, Traffic, WEEK, YEAR_WEEKS,
+    Activity, Community, Counted, Counter, Dependencies, Popular, Traffic, WEEK, YEAR_WEEKS,
 };
 
 words! {
@@ -19,6 +20,7 @@ words! {
     Commits      "Commit activity"  "graphs/commit-activity";
     Traffic      "Traffic"          "graphs/traffic";
     Dependencies "Dependency graph" "network/dependencies";
+    Community    "Community"        "community";
 }
 
 /// The columns a chart of weeks takes at most.
@@ -341,4 +343,46 @@ pub fn dependencies(page: &mut Page, d: &Dependencies) {
         let text = left_out_text(n, "more manifest", "more manifests");
         say(page, text, Role::Meta);
     }
+}
+
+/// Community standards: how healthy GitHub counts the repository, and
+/// each standard, met (opening its file) or not (opening the form for a
+/// new file on `branch`, where a file meets it).
+pub fn community(page: &mut Page, repo: &RepoId, c: &Community, branch: Option<&str>) {
+    let title = vec![strong("Community standards")];
+    let health = vec![meta(format!("{}% healthy", c.health))];
+    let none = "GitHub lists no standards.";
+    list_box(
+        page,
+        title,
+        health,
+        &Whole(&c.standards),
+        none,
+        |page, s| {
+            let (mark, role) = if s.done {
+                ("✓ ", Role::Success)
+            } else {
+                ("✗ ", Role::Meta)
+            };
+            let add = match (s.done, branch, s.note.as_deref()) {
+                (false, Some(b), Some(file)) if !file.ends_with('/') => {
+                    Some(format!("{}/new/{b}", url::repo(repo)))
+                }
+                _ => None,
+            };
+            let note = s.note.as_ref().map(|n| match s.done {
+                true => meta(format!("  {n}")),
+                false => meta(format!("  add {n}")),
+            });
+            maybe_item(page, s.url.clone().or(add), |page, link| {
+                let name = link.map_or(Role::Body, |_| Role::Link);
+                let mut segs = vec![
+                    Seg::new(mark, role),
+                    Seg::linked(s.name.clone(), name, link),
+                ];
+                segs.extend(note);
+                body(page, segs);
+            });
+        },
+    );
 }

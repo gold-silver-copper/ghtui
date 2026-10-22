@@ -554,6 +554,10 @@ fn lined(url: String, lines: Option<(u32, u32)>) -> String {
     }
 }
 
+/// The anchor that opens Go to file on a tree once it's on screen: what
+/// GitHub's `/<owner>/<repo>/find/<ref>` is ([`crate::route::Dest::from_url`]).
+pub const FIND_FILE: &str = "ghtui:find-file";
+
 /// The repository's code pages, from what follows `/<owner>/<repo>` in
 /// their URLs.
 pub(super) fn parse_repo(repo: &RepoId, rest: &[&str], url: &Url<'_>) -> Option<Target> {
@@ -563,6 +567,12 @@ pub(super) fn parse_repo(repo: &RepoId, rest: &[&str], url: &Url<'_>) -> Option<
     let files = fragment.is_some_and(|f| f == "files" || f.starts_with("diff-"));
     let page = match rest {
         [] => Repo(repo),
+        // Go to file, at a ref (which may have slashes): its tree.
+        ["find", rev @ ..] if !rev.is_empty() && rev.iter().all(|r| valid_rev(r)) => Tree {
+            repo,
+            rev: rev.join("/"),
+            path: String::new(),
+        },
         [view @ ("tree" | "blob" | "blame" | "commits"), rest @ ..] => {
             rev_page(repo, view, rest, fragment)?
         }

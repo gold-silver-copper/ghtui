@@ -3091,6 +3091,53 @@ async fn a_page_loads_without_what_a_missing_scope_guards() {
     assert_eq!(seen.len(), 3);
 }
 
+/// A repository's community standards are its community profile's,
+/// with its security policy, which the profile leaves out.
+#[tokio::test]
+async fn community_standards_are_the_profile_and_the_security_policy() {
+    let profile = r#"{"health_percentage":71,"description":"A TUI","documentation":null,"files":{"code_of_conduct":null,"code_of_conduct_file":null,"contributing":{"url":"u","html_url":"https://github.com/o/r/blob/main/CONTRIBUTING.md"},"issue_template":null,"pull_request_template":null,"license":{"key":"mit","name":"MIT License","spdx_id":"MIT","url":"u","html_url":"https://github.com/o/r/blob/main/LICENSE"},"readme":{"url":"u","html_url":"https://github.com/o/r/blob/main/README.md"}},"updated_at":"2026-10-01T00:00:00Z","content_reports_enabled":false}"#;
+    let policy =
+        r#"{"data":{"repository":{"securityPolicyUrl":"https://github.com/o/r/security/policy"}}}"#;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = common::answer_on(listener, move |seen| {
+        if seen
+            .request_line
+            .starts_with("GET /repos/o/r/community/profile ")
+        {
+            Reply::new(200, profile)
+        } else if seen.query().contains("securityPolicyUrl") {
+            Reply::new(200, policy)
+        } else {
+            Reply::new(404, r#"{"message":"Not Found"}"#)
+        }
+    });
+    let gh = client(&base, Store::disabled());
+    let c = gh.community(&RepoId::new("o", "r")).await.unwrap();
+    assert_eq!(c.health, 71);
+    let met = |name: &str| {
+        let s = c.standards.iter().find(|s| s.name == name).unwrap();
+        (s.done, s.url.as_deref(), s.note.as_deref())
+    };
+    assert_eq!(met("Description"), (true, None, None));
+    assert_eq!(
+        met("License"),
+        (
+            true,
+            Some("https://github.com/o/r/blob/main/LICENSE"),
+            Some("MIT License")
+        )
+    );
+    assert_eq!(
+        met("Code of conduct"),
+        (false, None, Some("CODE_OF_CONDUCT.md"))
+    );
+    assert_eq!(
+        met("Security policy"),
+        (true, Some("https://github.com/o/r/security/policy"), None)
+    );
+    assert_eq!(met("Content reports"), (false, None, None));
+}
+
 // ---- the Security tab's alerts ------------------------------------------------
 
 /// A code scanning alert as GitHub sends it.

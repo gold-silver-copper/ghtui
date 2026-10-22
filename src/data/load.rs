@@ -139,6 +139,12 @@ async fn answer(
         K::Tags(repo) => gh.tags(repo, after).await?.into(),
         K::Branches(repo) => gh.branches(repo, after).await?.into(),
         K::Wiki(repo, page) => crate::wiki::page(git, repo, page.as_deref()).await?.into(),
+        K::WikiHistory(repo, page) => {
+            (crate::wiki::history(git, repo, page.as_deref()).await?).into()
+        }
+        K::WikiDiff(repo, page, spec) => {
+            (crate::wiki::diff(git, repo, page.as_deref(), spec).await?).into()
+        }
         K::Advisories(repo) => gh.advisories(repo.as_ref(), after).await?.into(),
         K::Advisory(repo, ghsa) => gh.advisory(repo.as_ref(), ghsa).await?.into(),
         K::Teams(org) => gh.teams(org, after).await?.into(),
@@ -174,6 +180,7 @@ async fn answer(
         K::Activity(repo) => gh.activity(repo).await?.into(),
         K::Traffic(repo) => gh.traffic(repo).await?.into(),
         K::Dependencies(repo) => gh.dependencies(repo).await?.into(),
+        K::Community(repo) => gh.community(repo).await?.into(),
         K::Featured => gh.featured_topics().await?.into(),
         K::Topic(name) => gh.topic(name).await?.into(),
         K::StarLists(login) => gh.star_lists(login).await?.into(),

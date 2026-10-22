@@ -3397,6 +3397,47 @@ pub struct WikiPage {
     pub commit: Option<String>,
     pub file: Option<String>,
 }
+
+/// A change to a wiki, as its history lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WikiRevision {
+    pub oid: String,
+    /// Its author's git name.
+    pub author: String,
+    /// ISO 8601.
+    pub at: String,
+    pub message: String,
+    /// The titles of the pages it changed.
+    pub pages: Vec<String>,
+}
+
+/// A wiki's history (a page's, with its title), newest first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WikiHistory {
+    pub page: Option<String>,
+    pub revisions: Capped<WikiRevision>,
+}
+
+/// What a wiki's change did (or what changed between two of its
+/// revisions), page by page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WikiDiff {
+    /// The revision (or the later of two) and what it says.
+    pub to: WikiRevision,
+    /// The earlier of two revisions compared.
+    pub from: Option<String>,
+    pub files: Vec<WikiFileDiff>,
+    /// The diff was longer than is shown.
+    pub cut: bool,
+}
+
+/// One page's changes in a [`WikiDiff`]: its hunks' lines, as git
+/// prints them (`@@ … @@`, then ` `, `+` and `-` lines).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WikiFileDiff {
+    pub title: String,
+    pub lines: Vec<String>,
+}
 // ---- search: discussions, commits, code -------------------------------------------------------
 
 pub(crate) mod rest_search {

@@ -136,6 +136,7 @@ impl Family for Page {
                     }
                     InsightsTab::Traffic => DataKey::Traffic(repo.clone()),
                     InsightsTab::Dependencies => DataKey::Dependencies(repo.clone()),
+                    InsightsTab::Community => DataKey::Community(repo.clone()),
                 };
                 vec![header(repo), own]
             }
@@ -251,6 +252,14 @@ impl Family for Page {
                             pages::dependencies(page, d);
                         }
                     }
+                    InsightsTab::Community => {
+                        let key = DataKey::Community(repo.clone());
+                        if let Some(c) = b.get(&key).show(page, "the community profile") {
+                            let branch =
+                                (b.state.overview(repo)).and_then(|o| o.default_branch.as_deref());
+                            pages::community(page, repo, c, branch);
+                        }
+                    }
                 }
             }
             Page::Explore { language, since } => {
@@ -359,6 +368,7 @@ pub fn parse(segments: &[&str], param: impl Fn(&str) -> Option<String>) -> Optio
                 ["graphs", "commit-activity"] => tab(InsightsTab::Commits),
                 ["graphs", "traffic"] => tab(InsightsTab::Traffic),
                 ["network", "dependencies"] => tab(InsightsTab::Dependencies),
+                ["community"] => tab(InsightsTab::Community),
                 ["packages"] => Page::Packages(PackagesOf::Repo(repo)),
                 ["pkgs", kind, name] => Page::Package {
                     at: PackageRef {
