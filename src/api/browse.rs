@@ -288,14 +288,13 @@ impl RepoSort {
 }
 
 /// A list of people: a repository's stargazers or watchers, someone's
-/// followers or who they follow, an organization's public members.
+/// followers or who they follow.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum UserList {
     Stargazers(RepoId),
     Watchers(RepoId),
     Followers(String),
     Following(String),
-    People(String),
 }
 
 /// One page of search results.
@@ -3136,6 +3135,8 @@ pub struct TeamRepo {
     pub repo: RepoId,
     pub description: String,
     pub stars: u64,
+    /// The team's role there.
+    pub permission: Option<crate::api::settings::Permission>,
 }
 
 /// A team: its members, repositories and child teams (the first 50 of
@@ -3144,7 +3145,12 @@ pub struct TeamRepo {
 pub struct TeamDetail {
     pub team: TeamSummary,
     pub parent: Option<TeamSummary>,
+    /// You may change its members and repositories: you maintain it, or
+    /// own its organization.
+    pub can_admin: bool,
     pub members: Capped<UserSummary>,
+    /// Those of its members listed who maintain it.
+    pub maintainers: Vec<String>,
     pub repos: Capped<TeamRepo>,
     pub children: Capped<TeamSummary>,
 }
@@ -3179,16 +3185,38 @@ pub(crate) mod wire_teams {
         pub stargazer_count: u64,
     }
 
+    /// A connection's edges, each with what it says of its node.
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Edged<T> {
+        pub total_count: u64,
+        pub edges: Vec<Option<T>>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct MemberEdge {
+        pub role: Option<String>,
+        pub node: Option<Member>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct RepoEdge {
+        pub permission: Option<String>,
+        pub node: Option<Repo>,
+    }
+
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct Detail {
         #[serde(flatten)]
         pub team: Team,
+        #[serde(default)]
+        pub viewer_can_administer: bool,
         pub parent_team: Option<Team>,
         #[serde(rename = "memberList")]
-        pub member_list: Counted<Member>,
+        pub member_list: Edged<MemberEdge>,
         #[serde(rename = "repoList")]
-        pub repo_list: Counted<Repo>,
+        pub repo_list: Edged<RepoEdge>,
         pub child_teams: Counted<Team>,
     }
 }
@@ -3208,24 +3236,42 @@ impl wire_teams::Team {
 
 impl wire_teams::Detail {
     pub(crate) fn into_detail(self) -> TeamDetail {
-        TeamDetail {
-            team: self.team.into_summary(),
-            parent: self.parent_team.map(wire_teams::Team::into_summary),
-            members: self.member_list.into_capped(|m| {
-                Some(UserSummary {
-                    login: m.login,
-                    name: m.name,
-                    bio: None,
-                    is_org: false,
-                })
-            }),
-            repos: self.repo_list.into_capped(|r| {
+        let members = self.member_list;
+        let edges: Vec<wire_teams::MemberEdge> = members.edges.into_iter().flatten().collect();
+        let maintainers = (edges.iter())
+            .filter(|e| e.role.as_deref() == Some("MAINTAINER"))
+            .filter_map(|e| Some(e.node.as_ref()?.login.clone()))
+            .collect();
+        let people = (edges.into_iter())
+            .filter_map(|e| e.node)
+            .map(|m| UserSummary {
+                login: m.login,
+                name: m.name,
+                bio: None,
+                is_org: false,
+            })
+            .collect();
+        let repos = (self.repo_list.edges.into_iter().flatten())
+            .filter_map(|e| {
+                let r = e.node?;
                 Some(TeamRepo {
                     repo: RepoId::parse(&r.name_with_owner)?,
                     description: r.description.unwrap_or_default(),
                     stars: r.stargazer_count,
+                    permission: e
+                        .permission
+                        .as_deref()
+                        .and_then(|p| crate::api::settings::Permission::parse(&p.to_lowercase())),
                 })
-            }),
+            })
+            .collect();
+        TeamDetail {
+            team: self.team.into_summary(),
+            parent: self.parent_team.map(wire_teams::Team::into_summary),
+            can_admin: self.viewer_can_administer,
+            members: Capped::new(people, members.total_count),
+            maintainers,
+            repos: Capped::new(repos, self.repo_list.total_count),
             children: self.child_teams.into_capped(|t| Some(t.into_summary())),
         }
     }
@@ -3270,6 +3316,9 @@ pub struct Advisory {
     pub packages: Vec<AdvisoryPackage>,
     pub credits: Vec<String>,
     pub references: Vec<String>,
+    /// A repository's: `draft`, `triage`, `published` or `closed`.
+    #[serde(default)]
+    pub state: Option<String>,
 }
 
 pub(crate) mod rest_advisories {
@@ -3328,12 +3377,15 @@ pub(crate) mod rest_advisories {
         pub credits: Option<Vec<Credit>>,
         #[serde(default)]
         pub references: Option<Vec<String>>,
+        #[serde(default)]
+        pub state: Option<String>,
     }
 }
 
 impl rest_advisories::Advisory {
     pub(crate) fn into_advisory(self) -> Advisory {
         Advisory {
+            state: self.state,
             ghsa: self.ghsa_id,
             cve: self.cve_id,
             summary: self.summary,

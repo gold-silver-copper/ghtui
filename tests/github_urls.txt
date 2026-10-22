@@ -38,9 +38,10 @@
 #            anchors (the page opens at the top), tracking parameters
 #
 # GraphQL types with a URL that have no example below: the ~80
-# organization and enterprise audit-log entries, identity providers,
-# migrations and repository invitations need admin or the invitee's
-# session; StripeConnectAccount is Stripe's site; the rest (Blob, Tree,
+# organization and enterprise audit-log entries, identity providers and
+# migrations need admin or a browser's session; StripeConnectAccount is
+# Stripe's site; a RepositoryInvitation's is the repository's
+# invitations page, below; the rest (Blob, Tree,
 # Tag, GitObject, Submodule, GitActor, contributions, Push,
 # DependencyGraphDependency, DeploymentStatus, StatusContext, TeamMemberEdge,
 # CheckAnnotation, ProfileOwner, ProjectOwner, App) link to shapes listed
@@ -112,7 +113,7 @@ https://gist.github.com/discover                                            exte
 # Team
 https://github.com/orgs/github/teams/justice-league                         Team
 https://github.com/orgs/rust-lang/teams                                     Teams
-https://github.com/orgs/rust-lang/teams/new                                 external session
+https://github.com/orgs/rust-lang/teams/new                                 Teams
 # SecurityAdvisoryReference, SecurityAdvisory permalink
 https://github.com/advisories/GHSA-6r3q-mjv7-xr8m                           Advisory
 https://github.com/advisories                                               Advisories
@@ -169,7 +170,8 @@ https://github.com/octocat/Hello-World/security/code-scanning/tools         exte
 https://github.com/owner/private-repo/security/secret-scanning/42           Alert
 https://github.com/owner/private-repo/security/secret-scanning              Alerts
 https://github.com/owner/repo/secret_scanning_exemptions/1                  external session
-https://github.com/octocat/Hello-World/invitations                          external session
+https://github.com/octocat/Hello-World/invitations                          Invitation
+https://github.com/orgs/octo-org/invitation                                 Invitation
 https://github.com/organizations/octo-org/settings/installations/1          external session
 https://github.com/settings/connections/applications/abc                    external session
 https://github.com/octocat/hello-world/copilot/tasks/abc-123                external session
@@ -217,6 +219,7 @@ https://github.com/stars/torvalds                                           User
 https://github.com/stars/torvalds/lists/rust-tools                          StarList
 https://github.com/orgs/rust-lang/repositories                              User
 https://github.com/orgs/rust-lang/people                                    User
+https://github.com/orgs/rust-lang/people/pending_invitations                User
 https://github.com/orgs/rust-lang/projects                                  Projects
 https://github.com/orgs/rust-lang/packages                                  Packages
 https://github.com/orgs/rust-lang/discussions                               Discussions
@@ -240,7 +243,7 @@ https://github.com/rust-lang/rust/wiki/_history                             exte
 https://github.com/rust-lang/rust/wiki/_compare/029a999f7a641ee25596aa00ca09f6b760f1d10e external rare
 https://github.com/rust-lang/rust/security                                  Advisories
 https://github.com/rust-lang/rust/security/advisories                       Advisories
-https://github.com/rust-lang/rust/security/advisories/new                   external session
+https://github.com/rust-lang/rust/security/advisories/new                   Housekeeping
 https://github.com/rust-lang/rust/pulse                                     external rare
 https://github.com/rust-lang/rust/graphs/contributors                       Insights
 https://github.com/rust-lang/rust/graphs/commit-activity                    Insights

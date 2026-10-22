@@ -84,6 +84,8 @@ pub enum Kind {
     Manage(crate::manage::Pick),
     /// Someone to invite, a role, a repository's name ([`crate::settings`]).
     Settings(crate::settings::Pick),
+    /// Someone to invite, a role, a team ([`crate::org`]).
+    Org(crate::org::Pick),
 }
 
 /// What a section's title is for.
@@ -130,6 +132,7 @@ impl Picker {
             Kind::Workflows(ref pick) => pick.title(),
             Kind::Manage(ref pick) => pick.title(),
             Kind::Settings(ref pick) => pick.title(),
+            Kind::Org(ref pick) => pick.title(),
         }
     }
 }
@@ -309,6 +312,7 @@ impl State {
             Kind::Workflows(ref pick) => pick.placeholder(),
             Kind::Manage(ref pick) => pick.placeholder(),
             Kind::Settings(ref pick) => pick.placeholder(),
+            Kind::Org(ref pick) => pick.placeholder(),
         };
         let need = match &kind {
             Kind::Files { repo, rev } => Some(DataKey::Files(repo.clone(), rev.clone())),
@@ -423,6 +427,9 @@ impl State {
                 .map(|(row, chosen)| (row, chosen.map(Choice::Step)))
                 .collect(),
             Kind::Settings(pick) => (crate::settings::rows(pick, q).into_iter())
+                .map(|(row, chosen)| (row, chosen.map(Choice::Step)))
+                .collect(),
+            Kind::Org(pick) => (crate::org::rows(self, pick, q).into_iter())
                 .map(|(row, chosen)| (row, chosen.map(Choice::Step)))
                 .collect(),
         }

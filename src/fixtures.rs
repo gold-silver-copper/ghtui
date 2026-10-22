@@ -790,6 +790,8 @@ pub fn team() -> TeamDetail {
     TeamDetail {
         team: team_summary("core", "Core", false),
         parent: Some(team_summary("maintainers", "Maintainers", false)),
+        can_admin: false,
+        maintainers: vec!["octocat".into()],
         members: Capped::new(
             vec![
                 member("octocat", Some("The Octocat")),
@@ -802,6 +804,7 @@ pub fn team() -> TeamDetail {
                 repo: RepoId::new("gold-silver-copper", "ghtui"),
                 description: "GitHub in the terminal".into(),
                 stars: 1200,
+                permission: Some(crate::api::settings::Permission::Write),
             }],
             2,
         ),
@@ -2365,6 +2368,9 @@ pub(crate) fn sample(key: &DataKey) -> Data {
         K::Sidebar(..) => Data::from(sidebar()),
         K::Teams(_) => Data::from(teams()),
         K::Team(..) => Data::from(team()),
+        K::Members(_) => Data::from(crate::org::fixtures::members()),
+        K::OrgAccess(_) => Data::from(crate::org::fixtures::access(false)),
+        K::Invitations => Data::from(crate::invited::fixtures::none()),
         K::Gist(_) => Data::from(gist()),
         K::Gists(_) => Data::from(gists()),
         K::Blame(..) => Data::from(blame()),

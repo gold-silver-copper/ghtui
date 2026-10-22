@@ -1,5 +1,6 @@
 //! GitHub API access: auth, GraphQL and REST, rate limits, retries, caching.
 
+pub mod advisory;
 pub mod auth;
 pub mod browse;
 pub mod change;
@@ -22,6 +23,7 @@ pub mod manage;
 pub mod mention;
 pub mod model;
 pub mod notifications;
+pub mod org;
 pub mod packages;
 mod person;
 pub mod project;

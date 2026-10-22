@@ -39,6 +39,12 @@ pub enum SettingLink {
     /// Unpublishing the Pages site.
     Unpublish,
     Property(String),
+    /// An organization's invitation, by its ID, and whom it's to when
+    /// that's a login ([`crate::org`]).
+    OrgInvitation(u64, Option<String>),
+    /// An invitation sent to you, accepted or declined
+    /// ([`crate::invited`]).
+    Answer(bool),
 }
 
 mod actions;

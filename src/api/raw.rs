@@ -106,7 +106,7 @@ pub(crate) fn teams() -> String {
 /// A team: its members, repositories and child teams.
 pub(crate) fn team() -> String {
     format!(
-        "query($org: String!, $slug: String!) {{ organization(login: $org) {{ team(slug: $slug) {{ {TEAM} parentTeam {{ {TEAM} }} memberList: members(first: 50) {{ totalCount nodes {{ login name }} }} repoList: repositories(first: 50) {{ totalCount nodes {{ nameWithOwner description stargazerCount }} }} childTeams(first: 50) {{ totalCount nodes {{ {TEAM} }} }} }} }} }}"
+        "query($org: String!, $slug: String!) {{ organization(login: $org) {{ team(slug: $slug) {{ {TEAM} viewerCanAdminister parentTeam {{ {TEAM} }} memberList: members(first: 50) {{ totalCount edges {{ role node {{ login name }} }} }} repoList: repositories(first: 50) {{ totalCount edges {{ permission node {{ nameWithOwner description stargazerCount }} }} }} childTeams(first: 50) {{ totalCount nodes {{ {TEAM} }} }} }} }} }}"
     )
 }
 
@@ -378,13 +378,10 @@ pub(crate) fn all() -> Vec<(&'static str, String)> {
         ),
         ("users(user)", users("user(login: $login)", "followers")),
         ("users(user)", users("user(login: $login)", "following")),
-        (
-            "users(organization)",
-            users("organization(login: $login)", "membersWithRole"),
-        ),
     ];
     RAW.iter()
         .chain(crate::api::housekeeping::RAW)
+        .chain(crate::api::org::RAW)
         .map(|&(name, query)| (name, query.to_owned()))
         .chain(built)
         .collect()

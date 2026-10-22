@@ -27,8 +27,9 @@ words! {
     Log      "log"      "in job logs";
     /// A project: its board or table, or an item.
     Project  "project"  "in projects";
-    /// A repository's Settings tab.
-    Settings "settings" "in a repository's settings";
+    /// A repository's Settings tab, and an organization's people and
+    /// teams.
+    Settings "settings" "in settings, and an organization's people and teams";
     /// A pull request's (or commit's) files: the diff and its file tree.
     Diff     "diff"     "in Files changed";
     /// The diff's file tree, when it has the focus.
@@ -195,7 +196,7 @@ actions! {
     NewWikiPage       "new_wiki_page"     []                       Page   "New wiki page";
     RunWorkflow       "run_workflow"      []                       Page   "Run the workflow by hand";
     Lists             "lists"             []                       Page   "Add the repository to your starred lists, or take it out";
-    NewHere           "new_here"          []                       Page   "New here: a label, a milestone, a branch, a tag, a file";
+    NewHere           "new_here"          []                       Page   "New here: a label, a milestone, a branch, a tag, a file, a security advisory";
     Fork              "fork"              []                       Page   "Fork the repository";
     NewRepo           "new_repository"    []                       Page   "New repository";
     Branch            "branch"            ["B"]                    Page   "Switch branches or tags";
@@ -237,11 +238,12 @@ actions! {
     SetField          "set_field"         []                       Page   "Set a field of the item in its project";
     AddItem           "add_item"          ["a"]                    Project "Add an issue, a pull request or a draft";
     ArchiveItem       "archive_item"      []                       Project "Archive the item, or restore it";
-    AddSetting        "add_setting"       ["a"]                    Settings "Add a branch rule, a collaborator, a webhook, a deploy key, a secret or a variable; publish a Pages site";
-    EditSetting       "edit_setting"      ["e"]                    Settings "Edit the rule, webhook, variable, Pages site or custom properties; set a secret; change the collaborator's role";
-    DeleteSetting     "delete_setting"    ["D"]                    Settings "Delete the rule, webhook, deploy key, secret, variable or cache; remove the collaborator or invitation; unpublish the site";
+    AddSetting        "add_setting"       ["a"]                    Settings "Add a branch rule, a collaborator, a webhook, a deploy key, a secret or a variable; publish a Pages site; invite a member, make a team, add to a team";
+    EditSetting       "edit_setting"      ["e"]                    Settings "Edit the rule, webhook, variable, Pages site or custom properties; set a secret; change a collaborator's, member's or team's role";
+    DeleteSetting     "delete_setting"    ["D"]                    Settings "Delete the rule, webhook, deploy key, secret, variable or cache; remove a collaborator, member or invitation, or from a team; unpublish the site";
     ToggleSetting     "toggle_setting"    ["x"]                    Settings "Turn the ruleset or webhook on or off; archive or unarchive the repository";
     Redeliver         "redeliver"         []                       Settings "Redeliver the webhook delivery";
+    AnswerInvitation  "answer_invitation" []                       Page   "Accept or decline the invitation";
 
     NextHunk          "next_change"       ["]"]                    Diff   "Next change";
     PrevHunk          "prev_change"       ["["]                    Diff   "Previous change";

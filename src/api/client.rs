@@ -1958,13 +1958,11 @@ impl GitHub {
             L::Watchers(repo) => of_repo("watchers", repo),
             L::Followers(login) => of_login("user(login: $login)", "followers", login),
             L::Following(login) => of_login("user(login: $login)", "following", login),
-            L::People(login) => of_login("organization(login: $login)", "membersWithRole", login),
         };
         let query = raw::users(root, field);
         let wire: browse::wire::Connection<browse::wire::Person> =
             self.graphql_json(&query, vars, &who, "/node/list").await?;
-        let people = field.trim_end_matches("WithRole");
-        self.check_connection(&wire, 30, format!("{who}'s {people}"));
+        self.check_connection(&wire, 30, format!("{who}'s {field}"));
         Ok(wire.into_results(browse::wire::Person::into_summary))
     }
 
@@ -2310,7 +2308,8 @@ impl GitHub {
     ) -> Result<browse::Results<browse::Advisory>, ApiError> {
         let mut path = match repo {
             Some(r) => {
-                format!("/repos/{r}/security-advisories?state=published&per_page={REST_PAGE}")
+                // Its drafts too, for whoever may see them.
+                format!("/repos/{r}/security-advisories?per_page={REST_PAGE}")
             }
             None => format!("/advisories?type=reviewed&per_page={REST_PAGE}"),
         };

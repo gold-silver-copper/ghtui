@@ -79,8 +79,8 @@ impl Row {
 }
 
 words! {
-    /// A field of a label's, a milestone's, a fork's, a new repository's or
-    /// a file's form.
+    /// A field of a label's, a milestone's, a fork's, a new repository's,
+    /// a file's or a security advisory's form.
     #[derive(Hash, PartialOrd, Ord)]
     pub enum Field {
         /// Its row's name.
@@ -102,6 +102,15 @@ words! {
     /// A file's commit's branch: empty for the one it's on, else a new one.
     Branch      "Commit to"   "Choose the branch to commit to";
     Message     "Message"     "Write the commit message";
+    /// A security advisory's package's ecosystem (`npm`, `rust`…).
+    Ecosystem   "Ecosystem"   "Choose the package's ecosystem";
+    Package     "Package"     "Name the affected package";
+    Affected    "Affected"    "Say which versions are affected";
+    Patched     "Patched"     "Say which versions are fixed";
+    /// A level, or a CVSS vector.
+    Severity    "Severity"    "Choose the severity, or type a CVSS vector";
+    Cwes        "Weaknesses"  "Name its weaknesses (CWE IDs)";
+    Cve         "CVE ID"      "Give its CVE ID, if it has one";
 }
 
 impl Field {

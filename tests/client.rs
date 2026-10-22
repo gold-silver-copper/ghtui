@@ -4392,3 +4392,200 @@ async fn actions_settings_send_their_requests_and_read_their_pages() {
         ]})
     );
 }
+
+/// An organization's members come with their roles, and its owners'
+/// invitations with what the token may do; each change to its people
+/// and teams, and each answer to an invitation sent to you, is GitHub's
+/// request.
+#[tokio::test]
+async fn organization_changes_and_invitations_send_githubs_requests() {
+    use ghtui::api::advisory::{NewAdvisory, Severity};
+    use ghtui::api::change::Change;
+    use ghtui::api::org::{OrgChange as C, OrgRole};
+    use ghtui::api::settings::Permission;
+    let members = r#"{"data":{"organization":{"membersWithRole":{"totalCount":2,"pageInfo":{"hasNextPage":true,"endCursor":"c1"},"edges":[{"role":"ADMIN","node":{"login":"octocat","name":null}},{"role":null,"node":{"login":"hubot","name":"Hubot"}}]}}}}"#;
+    let access = r#"{"data":{"organization":{"viewerCanAdminister":true,"viewerCanCreateTeams":true,"viewerIsAMember":true}}}"#;
+    let invited = r#"[{"id":41,"login":null,"email":"a@example.com","role":"direct_member","created_at":"2026-10-01T00:00:00Z","failed_at":null,"inviter":{"login":"octocat"}}]"#;
+    let yours = r#"[{"id":77,"repository":{"full_name":"octocat/secret"},"inviter":{"login":"octocat"},"permissions":"write","created_at":"2026-10-01T00:00:00Z","expired":false}]"#;
+    let orgs = r#"[{"state":"pending","role":"member","organization":{"login":"octo-org"}}]"#;
+    let mut replies = vec![
+        Reply::new(200, members),
+        Reply::new(200, access),
+        Reply::new(200, invited).header("x-oauth-scopes", "repo, read:org"),
+        Reply::new(200, yours).on("/user/repository_invitations"),
+        Reply::new(200, orgs).on("/user/memberships/orgs"),
+    ];
+    replies.extend((0..11).map(|_| Reply::new(204, "")));
+    replies.push(Reply::new(201, r#"{"ghsa_id":"GHSA-aaaa-bbbb-cccc"}"#));
+    let (gh, seen) = github(replies).await;
+
+    let page = gh.members("octo-org", None).await.unwrap();
+    assert_eq!(page.items[0].role, Some(OrgRole::Owner));
+    assert_eq!(page.items[1].role, None);
+    assert_eq!(page.next.as_deref(), Some("c1"));
+    let a = gh.org_access("octo-org").await.unwrap();
+    assert!(a.admin && a.create_teams);
+    let listed = a.invitations.unwrap().unwrap();
+    assert_eq!(listed.items[0].who(), "a@example.com");
+    assert_eq!(listed.items[0].role, "Member");
+    assert!(
+        a.lacks.unwrap().contains("gh auth refresh -s admin:org"),
+        "read:org can't change its people"
+    );
+    let yours = gh.invitations().await.unwrap();
+    assert_eq!(yours.repos[0].permission, Some(Permission::Write));
+    assert_eq!(yours.orgs.unwrap()[0].org, "octo-org");
+
+    let (org, team) = ("octo-org".to_owned(), "core".to_owned());
+    let repo = RepoId::new("octo-org", "app");
+    let changes = [
+        C::SetMember {
+            org: org.clone(),
+            login: "hubot".into(),
+            role: OrgRole::Owner,
+            invite: false,
+        },
+        C::InviteEmail {
+            org: org.clone(),
+            email: "mona@example.com".into(),
+            role: OrgRole::Member,
+        },
+        C::RemoveMember {
+            org: org.clone(),
+            login: "hubot".into(),
+        },
+        C::CancelInvitation {
+            org: org.clone(),
+            id: 41,
+            who: "a@example.com".into(),
+        },
+        C::CreateTeam {
+            org: org.clone(),
+            name: "Docs".into(),
+            secret: true,
+        },
+        C::SetTeamMember {
+            org: org.clone(),
+            team: team.clone(),
+            login: "mona".into(),
+            maintainer: true,
+            add: true,
+        },
+        C::RemoveTeamMember {
+            org: org.clone(),
+            team: team.clone(),
+            login: "mona".into(),
+        },
+        C::SetTeamRepo {
+            org: org.clone(),
+            team: team.clone(),
+            repo: repo.clone(),
+            permission: Permission::Maintain,
+            add: true,
+        },
+        C::RemoveTeamRepo {
+            org: org.clone(),
+            team,
+            repo,
+        },
+        C::AnswerRepo {
+            id: 77,
+            repo: RepoId::new("octocat", "secret"),
+            accept: true,
+        },
+        C::JoinOrg { org },
+    ];
+    for change in changes {
+        gh.change(&Change::Org(change)).await.unwrap();
+    }
+    let advisory = NewAdvisory {
+        summary: "Path traversal".into(),
+        description: "It escapes.".into(),
+        ecosystem: "rust".into(),
+        package: "app".into(),
+        affected: "< 1.0".into(),
+        patched: String::new(),
+        severity: Severity::Level("high".into()),
+        cve: None,
+        cwes: vec!["CWE-22".into()],
+    };
+    let ghsa = gh
+        .draft_advisory(&RepoId::new("o", "r"), &advisory)
+        .await
+        .unwrap();
+    assert_eq!(ghsa, "GHSA-aaaa-bbbb-cccc");
+
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].query().contains("membersWithRole(first: 30"));
+    assert!(
+        seen[2]
+            .request_line
+            .starts_with("GET /orgs/octo-org/invitations?per_page=100 ")
+    );
+    let writes: Vec<(String, Option<serde_json::Value>)> = (seen.iter().skip(5))
+        .map(|s| {
+            let line = s
+                .request_line
+                .rsplit_once(' ')
+                .map_or("", |(l, _)| l)
+                .to_owned();
+            (line, (!s.body.is_empty()).then(|| s.json()))
+        })
+        .collect();
+    let json = |v: serde_json::Value| Some(v);
+    assert_eq!(
+        writes,
+        [
+            (
+                "PUT /orgs/octo-org/memberships/hubot".into(),
+                json(serde_json::json!({"role": "admin"}))
+            ),
+            (
+                "POST /orgs/octo-org/invitations".into(),
+                json(serde_json::json!({"email": "mona@example.com", "role": "direct_member"})),
+            ),
+            ("DELETE /orgs/octo-org/members/hubot".into(), None),
+            ("DELETE /orgs/octo-org/invitations/41".into(), None),
+            (
+                "POST /orgs/octo-org/teams".into(),
+                json(serde_json::json!({"name": "Docs", "privacy": "secret"}))
+            ),
+            (
+                "PUT /orgs/octo-org/teams/core/memberships/mona".into(),
+                json(serde_json::json!({"role": "maintainer"}))
+            ),
+            (
+                "DELETE /orgs/octo-org/teams/core/memberships/mona".into(),
+                None
+            ),
+            (
+                "PUT /orgs/octo-org/teams/core/repos/octo-org/app".into(),
+                json(serde_json::json!({"permission": "maintain"}))
+            ),
+            (
+                "DELETE /orgs/octo-org/teams/core/repos/octo-org/app".into(),
+                None
+            ),
+            ("PATCH /user/repository_invitations/77".into(), None),
+            (
+                "PATCH /user/memberships/orgs/octo-org".into(),
+                json(serde_json::json!({"state": "active"}))
+            ),
+            (
+                "POST /repos/o/r/security-advisories".into(),
+                json(serde_json::json!({
+                    "summary": "Path traversal",
+                    "description": "It escapes.",
+                    "severity": "high",
+                    "cve_id": null,
+                    "cwe_ids": ["CWE-22"],
+                    "vulnerabilities": [{
+                        "package": {"ecosystem": "rust", "name": "app"},
+                        "vulnerable_version_range": "< 1.0",
+                        "patched_versions": null,
+                    }],
+                }))
+            ),
+        ]
+    );
+}

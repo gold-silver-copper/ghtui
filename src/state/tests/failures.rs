@@ -172,8 +172,11 @@ fn decoration(route: &Route, need: &DataKey) -> bool {
     crate::browse::is_header(route, need)
         || matches!(
             (route, need),
-            (_, K::LastCommits(..) | K::Clone(_))
-                | (Route::Code(code::CommitChecks { .. }), K::Commit(..))
+            // What you may change, said when you try to.
+            (
+                _,
+                K::LastCommits(..) | K::Clone(_) | K::OrgAccess(_) | K::Invitations
+            ) | (Route::Code(code::CommitChecks { .. }), K::Commit(..))
                 | (
                     Route::Pulls(pulls::Pr {
                         tab: PrTab::Checks,

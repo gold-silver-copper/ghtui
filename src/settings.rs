@@ -552,7 +552,9 @@ pub fn doables(state: &State, out: &mut Vec<Doable>) {
 /// Following one of the page's rows.
 pub fn follow_link(state: &mut State, link: &SettingLink) -> Cmds {
     match link {
-        SettingLink::Add | SettingLink::AddIn(_) => act(state, Action::AddSetting),
+        // An organization's pages add their own way ([`crate::org`]).
+        SettingLink::Add => crate::state::apply(state, Action::AddSetting),
+        SettingLink::AddIn(_) => act(state, Action::AddSetting),
         SettingLink::Rule(_)
         | SettingLink::Secret(..)
         | SettingLink::Variable(..)
@@ -566,9 +568,16 @@ pub fn follow_link(state: &mut State, link: &SettingLink) -> Cmds {
             ))
         }
         SettingLink::Archive => act(state, Action::ToggleSetting),
-        SettingLink::Person(login) | SettingLink::Invitation(_, login) => {
-            state.push(Route::user(login))
+        SettingLink::Person(login)
+        | SettingLink::Invitation(_, login)
+        | SettingLink::OrgInvitation(_, Some(login)) => state.push(Route::user(login)),
+        SettingLink::OrgInvitation(_, None) => {
+            let delete = state.first_key(Action::DeleteSetting);
+            state.just_say(format!(
+                "It's to an email, not a GitHub account; {delete} cancels it"
+            ))
         }
+        SettingLink::Answer(accept) => crate::invited::follow_link(state, *accept),
         SettingLink::Hook(id) => match here(state) {
             Some((repo, _)) => state.push(Route::Settings(settings::Page {
                 repo,
@@ -603,7 +612,11 @@ pub fn describe(link: &SettingLink) -> &'static str {
         SettingLink::Add => "Add one",
         SettingLink::Rule(_) => "Edit the rule",
         SettingLink::Archive => "Archive or unarchive the repository",
-        SettingLink::Person(_) | SettingLink::Invitation(..) => "Open their profile",
+        SettingLink::Person(_) | SettingLink::Invitation(..) | SettingLink::OrgInvitation(..) => {
+            "Open their profile"
+        }
+        SettingLink::Answer(true) => "Accept the invitation",
+        SettingLink::Answer(false) => "Decline the invitation",
         SettingLink::Hook(_) => "Open the webhook and its deliveries",
         SettingLink::Ruleset(_) => "Say how to turn the ruleset on or off",
         SettingLink::Delivery(_) => "Say how to redeliver it",

@@ -640,6 +640,9 @@ impl State {
                 Route::Projects(projects::Project { .. })
                 | Route::Projects(projects::ProjectItem { .. }) => Context::Project,
                 Route::Settings(settings::Page { .. }) => Context::Settings,
+                // An organization's people and teams are changed as
+                // settings are.
+                route if crate::org::here(route).is_some() => Context::Settings,
                 route if route.family().query().is_some() => Context::List,
                 _ => Context::Page,
             },

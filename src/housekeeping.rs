@@ -34,6 +34,7 @@ use crate::keymap::Action;
 use crate::nav::{Doable, row};
 use crate::state::{Cmds, State};
 
+pub mod advisory;
 pub mod files;
 pub mod git;
 pub mod labels;
@@ -77,6 +78,8 @@ pub enum FormOf {
         path: String,
         change: FileChange,
     },
+    /// A new draft security advisory ([`advisory`]).
+    Advisory(RepoId),
 }
 
 /// What a file's form does.
@@ -98,6 +101,7 @@ impl Family for FormOf {
             },
             FormOf::Fork(repo) => format!("{}/fork", links::repo(repo)),
             FormOf::NewRepo => format!("{}/new", links::base()),
+            FormOf::Advisory(repo) => format!("{}/security/advisories/new", links::repo(repo)),
             FormOf::File {
                 repo,
                 rev,
@@ -137,6 +141,7 @@ impl Family for FormOf {
             } => format!("{repo} · Editing milestone {n}"),
             FormOf::Fork(repo) => format!("{repo} · Fork"),
             FormOf::NewRepo => "New repository".to_owned(),
+            FormOf::Advisory(repo) => format!("{repo} · New advisory"),
             FormOf::File {
                 repo, path, change, ..
             } => match change {
@@ -153,6 +158,7 @@ impl Family for FormOf {
             FormOf::Label { repo, .. }
             | FormOf::Milestone { repo, .. }
             | FormOf::Fork(repo)
+            | FormOf::Advisory(repo)
             | FormOf::File { repo, .. } => Some(repo),
             FormOf::NewRepo => None,
         }
@@ -168,6 +174,9 @@ impl Family for FormOf {
             }),
             FormOf::Fork(repo) => Route::code(repo.clone()),
             FormOf::NewRepo => return None,
+            FormOf::Advisory(repo) => {
+                Route::Security(crate::route::security::Advisories(Some(repo.clone())))
+            }
             FormOf::File {
                 repo,
                 rev,
@@ -201,7 +210,7 @@ impl Family for FormOf {
                 DataKey::Clone(repo.clone()),
                 DataKey::FileLook(repo.clone(), rev.clone(), path.clone()),
             ],
-            FormOf::Milestone { number: None, .. } => Vec::new(),
+            FormOf::Milestone { number: None, .. } | FormOf::Advisory(_) => Vec::new(),
         };
         header.into_iter().chain(own).collect()
     }
@@ -213,6 +222,7 @@ impl Family for FormOf {
     fn section(&self) -> Section {
         match self {
             FormOf::Label { .. } | FormOf::Milestone { .. } => Section::Issues,
+            FormOf::Advisory(_) => Section::Security,
             _ => Section::Code,
         }
     }
@@ -228,6 +238,7 @@ impl Family for FormOf {
             FormOf::Milestone { .. } => milestones::build(b.state, page, &route),
             FormOf::Fork(_) | FormOf::NewRepo => repos::build(b.state, page, &route, self),
             FormOf::File { .. } => files::build(b.state, page, &route, self),
+            FormOf::Advisory(_) => advisory::build(b.state, page, &route),
         }
     }
 }
@@ -239,6 +250,7 @@ impl FormOf {
         let repo = repo.clone();
         Some(match rest {
             ["fork"] => FormOf::Fork(repo),
+            ["security", "advisories", "new"] => FormOf::Advisory(repo),
             ["milestones", "new"] => FormOf::Milestone { repo, number: None },
             ["milestones", n, "edit"] => FormOf::Milestone {
                 repo,
@@ -297,6 +309,7 @@ impl crate::forms::Fields for Form {
     fn title(&self, route: &Route, _: usize) -> String {
         match route {
             Route::Housekeeping(FormOf::Milestone { .. }) => "The milestone's description".into(),
+            Route::Housekeeping(FormOf::Advisory(_)) => "The advisory's description".into(),
             Route::Housekeeping(FormOf::File { path, change, .. }) => match change {
                 FileChange::New => "The new file's text".into(),
                 _ => format!("Editing {path}"),
@@ -309,6 +322,7 @@ impl crate::forms::Fields for Form {
         match route {
             Route::Housekeeping(FormOf::File { .. }) => "commit…",
             Route::Housekeeping(FormOf::Milestone { number: None, .. }) => "create",
+            Route::Housekeeping(FormOf::Advisory(_)) => "create draft",
             _ => "save",
         }
     }
@@ -492,9 +506,12 @@ fn new_here(state: &mut State, route: Route) -> Cmds {
             };
             files::open(state, repo, branch, String::new(), FileChange::New)
         }
+        Route::Security(crate::route::security::Advisories(Some(repo))) => {
+            advisory::open(state, &repo)
+        }
         _ => {
             state.just_say(
-                "New works on a repository's labels, milestones, branches, tags and files (a folder for a new file)",
+                "New works on a repository's labels, milestones, branches, tags, files (a folder for a new file) and security advisories",
             )
         }
     }
@@ -526,6 +543,7 @@ fn submit(state: &mut State) -> Cmds {
         FormOf::Fork(repo) => repos::fork(state, &route, repo),
         FormOf::NewRepo => repos::create(state, &route),
         FormOf::File { .. } => files::ask_commit(state, &route),
+        FormOf::Advisory(repo) => advisory::submit(state, &route, repo),
     }
 }
 
@@ -596,6 +614,11 @@ fn page_doables(state: &State, route: &Route, out: &mut Vec<Doable>) {
         Route::Code(code::Tree { .. } | code::Blob { .. } | code::Repo(_)) => {
             files::doables(state, route, out);
         }
+        Route::Security(crate::route::security::Advisories(Some(repo))) => {
+            let why = advisory::refused(state, repo);
+            let label = "New draft security advisory";
+            out.push(row("New", Action::NewHere, label, "new", why));
+        }
         _ => {}
     }
 }
@@ -605,6 +628,7 @@ fn form_doables(state: &State, route: &Route, of: &FormOf, out: &mut Vec<Doable>
     let written = matches!(
         of,
         FormOf::Milestone { .. }
+            | FormOf::Advisory(_)
             | FormOf::File {
                 change: FileChange::Edit | FileChange::New,
                 ..
@@ -632,6 +656,7 @@ fn button(of: &FormOf, f: &Form) -> String {
         FormOf::Milestone { .. } => "Create milestone".into(),
         FormOf::Fork(_) => "Create fork".into(),
         FormOf::NewRepo => "Create repository".into(),
+        FormOf::Advisory(_) => "Create draft security advisory".into(),
         FormOf::File { change, .. } => {
             let verb = if *change == FileChange::Delete {
                 "Delete the file"
@@ -660,6 +685,9 @@ fn problem(state: &State, route: &Route, of: &FormOf) -> Option<String> {
         FormOf::Fork(repo) => repos::fork_problem(state, repo, &f),
         FormOf::NewRepo => repos::repo_problem(&f),
         FormOf::File { .. } => files::problem(state, route, of),
+        FormOf::Advisory(repo) => {
+            advisory::refused(state, repo).or_else(|| advisory::draft(&f).err())
+        }
     }
 }
 
@@ -675,6 +703,7 @@ fn follow(state: &mut State) -> Cmds {
         FormOf::Fork(repo) => repos::follow(state, &route, Some(repo)),
         FormOf::NewRepo => repos::follow(state, &route, None),
         FormOf::File { .. } => files::follow(state, &route, &of),
+        FormOf::Advisory(_) => advisory::follow(state, &route),
     }
 }
 
@@ -849,7 +878,7 @@ fn loaded(b: Build<'_>, page: &mut Page, of: &FormOf) -> bool {
 fn compose(state: &mut State) -> Cmds {
     let Some((route, of)) = here(state) else { return Cmds::new() };
     match of {
-        FormOf::Milestone { .. } => {}
+        FormOf::Milestone { .. } | FormOf::Advisory(_) => {}
         FormOf::File { change, .. } if change != FileChange::Delete => {
             if !form(state, &route).started {
                 return state.just_say("The file hasn't loaded yet");
@@ -891,8 +920,11 @@ impl Pick {
         match self {
             Pick::Field(_, Field::Colour) => "Type a colour (#rrggbb), or choose one",
             Pick::Field(_, Field::Due) => "Type the date: YYYY-MM-DD",
-            Pick::Field(_, Field::Owner | Field::Gitignore | Field::License) => "Type to filter",
+            Pick::Field(_, Field::Owner | Field::Gitignore | Field::License | Field::Ecosystem) => {
+                "Type to filter"
+            }
             Pick::Field(_, Field::Branch) => "Type a new branch's name, or choose",
+            Pick::Field(_, Field::Severity) => "Choose, or type a CVSS vector",
             Pick::Field(..) => "Type it",
             Pick::RefName(..) => "Type the name",
             Pick::RefFrom(..) => "Find a branch or tag, or type a commit's SHA",
@@ -925,7 +957,7 @@ impl Pick {
 fn field_lists(field: Field) -> bool {
     matches!(
         field,
-        Field::Owner | Field::Gitignore | Field::License | Field::Branch
+        Field::Owner | Field::Gitignore | Field::License | Field::Branch | Field::Ecosystem
     )
 }
 
@@ -952,7 +984,11 @@ fn field_rows(state: &State, route: &Route, field: Field, q: &str) -> crate::pic
         Field::Gitignore | Field::License => repos::template_rows(state, route, field, q),
         Field::Branch => files::branch_rows(state, route, q),
         Field::Due => milestones::due_rows(route, q),
-        Field::Name | Field::Title | Field::Path | Field::Message if q.is_empty() => {
+        Field::Ecosystem => advisory::ecosystem_rows(route, q),
+        Field::Severity => advisory::severity_rows(route, q),
+        Field::Name | Field::Title | Field::Path | Field::Message | Field::Package
+            if q.is_empty() =>
+        {
             vec![item(
                 format!("Type the {}", field.name().to_lowercase()),
                 "",
@@ -986,6 +1022,7 @@ fn check(route: &Route, field: Field, value: &str) -> Option<String> {
             repos::name_problem(value)
         }
         (Route::Housekeeping(FormOf::File { .. }), Field::Path) => files::path_problem(value),
+        (Route::Housekeeping(FormOf::Advisory(_)), field) => advisory::check(field, value),
         _ => None,
     }
 }
