@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::api::client::{ApiError, GitHub};
+use crate::api::housekeeping::RefKind;
 use crate::api::model::{Capped, NodeId, RepoId};
 use crate::api::raw;
 pub use crate::api::timeline::LockReason;
@@ -255,15 +256,10 @@ impl GitHub {
     pub(crate) async fn manage(&self, change: &Manage) -> Result<(), ApiError> {
         let (query, vars) = match change {
             Manage::DeleteBranch { repo, branch } => {
-                let path = format!("/repos/{repo}/git/refs/heads/{branch}");
-                return self.rest_write(http::Method::DELETE, &path, None).await;
+                return self.delete_ref(repo, RefKind::Branch, branch).await;
             }
             Manage::RestoreBranch { repo, branch, oid } => {
-                let body = json!({ "ref": format!("refs/heads/{branch}"), "sha": oid });
-                let path = format!("/repos/{repo}/git/refs");
-                return self
-                    .rest_write(http::Method::POST, &path, Some(&body))
-                    .await;
+                return self.create_ref(repo, RefKind::Branch, branch, oid).await;
             }
             Manage::ConvertToDraft { pr } => (raw::CONVERT_TO_DRAFT, json!({ "id": pr })),
             Manage::ChangeBase { pr, base } => {

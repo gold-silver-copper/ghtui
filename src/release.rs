@@ -16,6 +16,7 @@ pub mod assets;
 use std::borrow::Cow;
 
 use crate::api::browse::{BranchInfo, Release, Results, TagInfo};
+use crate::api::housekeeping::RefKind;
 use crate::api::model::RepoId;
 use crate::api::release::{Made, NewRelease, Notes, TagLook};
 use crate::create::templates;
@@ -787,7 +788,8 @@ impl Job for DeleteTag {
     type Out = ();
 
     async fn run(&self, cx: &Cx) -> Result<(), Failure> {
-        Ok(cx.gh.delete_tag(&self.repo, &self.tag).await?)
+        let deleted = cx.gh.delete_ref(&self.repo, RefKind::Tag, &self.tag);
+        Ok(deleted.await?)
     }
 
     fn done(self, state: &mut State, result: Result<(), Failure>) -> Cmds {

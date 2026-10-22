@@ -3307,7 +3307,8 @@ async fn a_release_is_edited_and_deleted_with_its_tag_apart() {
     };
     assert!(gh.update_release(7, &edit).await.unwrap().draft);
     gh.delete_release(&repo, 7).await.unwrap();
-    gh.delete_tag(&repo, "v1.3").await.unwrap();
+    let tag = ghtui::api::housekeeping::RefKind::Tag;
+    gh.delete_ref(&repo, tag, "v1.3").await.unwrap();
     let seen = seen.lock().unwrap();
     assert!(
         seen[0]
