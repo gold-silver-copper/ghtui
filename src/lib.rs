@@ -250,9 +250,7 @@ async fn run(started: Instant) -> Result<()> {
             // The home page stays underneath (Esc goes there) and loads
             // when you get there. With tabs reopened, it's a new tab after
             // them.
-            let mut cmds = state::Cmds::from(state::Cmd::Api(Api::FetchViewer));
-            cmds.extend(state.start_at(at));
-            cmds
+            state::Cmds::from(state::Cmd::Api(Api::FetchViewer)).and(state.start_at(at))
         }
         None => state.load_visible(true),
     };

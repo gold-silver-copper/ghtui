@@ -155,6 +155,12 @@ impl Cmds {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// These, then `more`.
+    pub fn and(mut self, more: Cmds) -> Self {
+        self.0.extend(more.0);
+        self
+    }
 }
 
 impl std::ops::Deref for Cmds {

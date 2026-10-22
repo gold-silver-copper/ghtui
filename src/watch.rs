@@ -43,10 +43,8 @@ impl Job for Subscribe {
                     crate::follow::expect(state, route, what);
                 }
                 let key = DataKey::Subscription(self.of);
-                let mut cmds = state.ensure(key, true);
                 // What the page shows of it (a repository's watchers) follows.
-                cmds.extend(state.load_visible(false));
-                cmds
+                state.ensure(key, true).and(state.load_visible(false))
             }
             Err(why) => {
                 let why = why.to_string();
@@ -146,9 +144,8 @@ pub fn open(state: &mut State) -> Cmds {
         );
     };
     // What GitHub has now, not what was read before.
-    let mut cmds = state.ensure(DataKey::Subscription(of.clone()), true);
-    cmds.extend(state.open_picker(crate::picker::Kind::Watch(of)));
-    cmds
+    let cmds = state.ensure(DataKey::Subscription(of.clone()), true);
+    cmds.and(state.open_picker(crate::picker::Kind::Watch(of)))
 }
 
 /// The choices, with what each means, as GitHub words them.

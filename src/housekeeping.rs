@@ -389,9 +389,8 @@ fn open(state: &mut State, of: FormOf) -> Cmds {
         return compose(state);
     }
     state.forms.take::<Form>(&route);
-    let mut cmds = file.map_or_else(Cmds::new, |file| state.ensure(file, true));
-    cmds.extend(crate::forms::open(state, route));
-    cmds
+    let cmds = file.map_or_else(Cmds::new, |file| state.ensure(file, true));
+    cmds.and(crate::forms::open(state, route))
 }
 
 /// Your clone of `repo`, once known: `Err` while it's being looked for.

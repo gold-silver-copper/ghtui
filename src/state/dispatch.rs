@@ -6,9 +6,7 @@ use crate::route::{app, issues, runs, search};
 /// Handles a message and settles the screen.
 #[cfg(test)]
 pub fn update(state: &mut State, msg: Msg) -> Cmds {
-    let mut cmds = apply_msg(state, msg);
-    cmds.extend(state.settle());
-    cmds
+    apply_msg(state, msg).and(state.settle())
 }
 
 /// Handles a message without settling the screen: the runtime handles a

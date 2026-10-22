@@ -122,10 +122,8 @@ pub fn open(state: &mut State) -> Cmds {
     let Some(repo) = subject(state) else {
         return state.just_say(Action::Lists.not_here());
     };
-    let mut cmds = state.ensure(DataKey::MyLists(repo.clone()), true);
-    let pick = crate::picker::Kind::Site(super::Pick::Lists(repo));
-    cmds.extend(state.open_picker(pick));
-    cmds
+    let cmds = state.ensure(DataKey::MyLists(repo.clone()), true);
+    cmds.and(state.open_picker(crate::picker::Kind::Site(super::Pick::Lists(repo))))
 }
 
 /// The picker's rows: each of your lists that fits what's typed, checked
@@ -232,9 +230,8 @@ impl Job for SetLists {
                     };
                     crate::follow::expect(state, route, what);
                 }
-                let mut cmds = state.ensure(DataKey::MyLists(self.repo), true);
-                cmds.extend(state.load_visible(false));
-                cmds
+                let cmds = state.ensure(DataKey::MyLists(self.repo), true);
+                cmds.and(state.load_visible(false))
             }
             Err(why) => {
                 state.error(refused("change your lists", &why));

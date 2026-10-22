@@ -18,11 +18,7 @@ pub fn on_mouse(state: &mut State, ev: MouseEvent) -> Cmds {
                 }
                 Screen::Diff(_) => {
                     let action = if down { Action::Down } else { Action::Up };
-                    let mut cmds = Cmds::new();
-                    for _ in 0..3 {
-                        cmds.extend(apply(state, action));
-                    }
-                    return cmds;
+                    return (0..3).flat_map(|_| apply(state, action)).collect();
                 }
             }
             Cmds::new()

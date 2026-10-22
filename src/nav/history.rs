@@ -63,9 +63,8 @@ impl State {
             Screen::Page(p) => **p = PageScreen::new(route.clone(), anchor),
             Screen::Diff(_) => return self.push(route),
         }
-        let mut cmds = self.ensure_route(&route, force);
-        cmds.extend(self.record_visit(&route));
-        cmds
+        self.ensure_route(&route, force)
+            .and(self.record_visit(&route))
     }
 
     pub fn back(&mut self) -> Cmds {
