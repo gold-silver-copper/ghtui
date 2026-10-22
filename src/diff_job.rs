@@ -252,7 +252,7 @@ async fn run_inner(
         tasks.spawn(async move {
             let firsts = first.and_then(|i| files.get(i));
             for (stage, batch) in [(1u8, blobs(firsts)), (2, blobs(files.iter()))] {
-                match repo.prefetch(&batch).await {
+                match repo.prefetch(batch).await {
                     Ok(n) if n > 0 => tracing::info!(n, stage, "prefetched blobs"),
                     Ok(_) => {}
                     // Reads still work through lazy fetching, just slower.
@@ -354,7 +354,7 @@ pub async fn since_review_hashes(
         .await?;
     let merge_base = repo.merge_base(&base, old_head).await?;
     let files = repo.changed_files(&merge_base, old_head).await?;
-    if let Err(err) = repo.prefetch(&blobs(&files)).await {
+    if let Err(err) = repo.prefetch(blobs(&files)).await {
         tracing::warn!(%err, "prefetch for the earlier diff failed");
     }
     // Diffed a few at once, as the job does.

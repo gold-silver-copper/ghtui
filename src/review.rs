@@ -507,13 +507,10 @@ pub(crate) fn on_edited(
     purpose: EditPurpose,
     result: Result<String, crate::work::Failure>,
 ) -> Cmds {
-    let text = match result {
-        Ok(text) => text,
-        Err(err) => {
-            state.error(format!("Couldn't run the editor: {err}"));
-            return Cmds::new();
-        }
-    };
+    let text = or_return!(result, |err| {
+        state.error(format!("Couldn't run the editor: {err}"));
+        Cmds::new()
+    });
     let theme = &state.theme;
     match purpose {
         EditPurpose::Compose => {
@@ -821,7 +818,7 @@ fn edit_draft(state: &mut State, pr: &PrRef, id: u64) -> Cmds {
         .page()
         .and_then(|p| p.selected_link())
         .cloned();
-    let mut cmds = link.map_or_else(Cmds::new, |link| state.follow(&link));
+    let cmds = link.map_or_else(Cmds::new, |link| state.follow(&link));
     let of = DiffOf::Pr(pr.clone());
     let pending = state.diffs.get(&of).map(|d| &d.inputs().review.pending);
     let Some(body) = pending
@@ -830,8 +827,7 @@ fn edit_draft(state: &mut State, pr: &PrRef, id: u64) -> Cmds {
     else {
         return cmds;
     };
-    cmds.extend(state.compose(Target::Review(Comment::Draft { id }), &body));
-    cmds
+    cmds.and(state.compose(Target::Review(Comment::Draft { id }), &body))
 }
 
 /// Deletes your draft `id`, which `ctrl-z` brings back.
