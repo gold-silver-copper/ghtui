@@ -1525,6 +1525,11 @@ today), and diffing a 50,000-line file to under 100ms (about 32ms).
 
 ## Known limitations
 
+[docs/website-gaps.md](docs/website-gaps.md) lists what the website does
+that ghtui doesn't, and why: what GitHub's API can't do, what's partly
+done, what's left out on purpose, and which writes the live check hasn't
+run against GitHub yet. The smaller limits:
+
 - Explore isn't GitHub's Trending: GitHub's API doesn't say which
   repositories got stars lately, so Explore lists new repositories, most
   starred, and says so. A repository's dependents (who depends on it)
