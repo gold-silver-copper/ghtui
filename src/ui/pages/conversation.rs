@@ -206,7 +206,7 @@ fn comment_box(page: &mut Page, title: &str, press: String) {
 /// The sidebar's assignees.
 pub(super) fn assignees(side: &mut Page, list: &Capped<String>) {
     let more = (list.left_out() > 0).then(|| left_out_text(list.left_out(), "more", "more"));
-    people(side, "Assignees", list, more, "No one assigned");
+    people(side, "Assignees", list, more.as_deref(), "No one assigned");
 }
 
 /// A discussion's row: its title, whether it's answered, and what it is;
@@ -247,7 +247,7 @@ pub(super) fn people(
     page: &mut Page,
     heading: &str,
     logins: &[String],
-    more: Option<String>,
+    more: Option<&str>,
     none: &str,
 ) {
     aside_heading(page, heading);
@@ -261,12 +261,6 @@ pub(super) fn people(
     if let Some(more) = more {
         say(page, more, Role::Meta);
     }
-}
-
-/// For people found in a conversation's comments, when its earlier ones
-/// weren't loaded.
-pub(super) fn maybe_others(earlier: bool) -> Option<String> {
-    earlier.then(|| "and maybe others, earlier on GitHub".to_owned())
 }
 
 /// The sidebar's milestone, linked to its page.
@@ -314,8 +308,9 @@ pub fn issue(
         milestone_aside(a, &d.repo, d.milestone.as_ref());
         timeline::relations_aside(a, icons, d);
         timeline::projects_aside(a, projects);
-        let earlier = d.timeline.left_out() > 0;
-        people(a, "Participants", &participants, maybe_others(earlier), "");
+        // Found in its comments: its earlier ones weren't loaded.
+        let others = (d.timeline.left_out() > 0).then_some("and maybe others, earlier on GitHub");
+        people(a, "Participants", &participants, others, "");
     });
     numbered_title(page, &d.title, d.number);
     let author = login_seg(page, &d.author, Role::Strong);

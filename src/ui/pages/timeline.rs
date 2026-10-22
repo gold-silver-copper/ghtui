@@ -12,7 +12,7 @@ use crate::api::timeline::{Closer, Event, Item, Latest, Linked, Requested, Revie
 use crate::ui::page::ReviewLink;
 
 /// Files' lines at commits, by commit and path.
-pub type LinesAt<'a> = std::collections::HashMap<(String, String), &'a [String]>;
+pub type LinesAt<'a> = HashMap<(&'a str, &'a str), &'a [String]>;
 
 /// What's marked on a timeline, and what's unfolded.
 #[derive(Debug, Clone, Copy)]
@@ -579,14 +579,19 @@ pub(super) fn reviewer_link(who: &Reviewer) -> (String, String) {
     }
 }
 
-/// How a review's state reads: its mark, and what its author did.
-pub(super) fn review_said(state: ReviewState) -> ((&'static str, Role), &'static str) {
+/// How a review's state reads: its mark, what its author did, and that
+/// said briefly (for a sidebar).
+pub(super) fn review_said(
+    state: ReviewState,
+) -> ((&'static str, Role), &'static str, &'static str) {
     match state {
-        ReviewState::Approved => (("✓", Role::Success), "approved these changes"),
-        ReviewState::ChangesRequested => (("✗", Role::Error), "requested changes"),
-        ReviewState::Dismissed => (("○", Role::Meta), "reviewed (dismissed)"),
-        ReviewState::Commented => (("◉", Role::Meta), "reviewed"),
-        ReviewState::Pending => (("◌", Role::Accent), "started a review"),
+        ReviewState::Approved => (("✓", Role::Success), "approved these changes", "approved"),
+        ReviewState::ChangesRequested => {
+            (("✗", Role::Error), "requested changes", "requested changes")
+        }
+        ReviewState::Dismissed => (("○", Role::Meta), "reviewed (dismissed)", "dismissed"),
+        ReviewState::Commented => (("◉", Role::Meta), "reviewed", "commented"),
+        ReviewState::Pending => (("◌", Role::Accent), "started a review", "pending"),
     }
 }
 
@@ -653,7 +658,7 @@ pub(super) fn review(
     let threads = r.id.and_then(|id| place.threads.get(&id)).unwrap_or(&none);
     let (started, replied) = (&threads.started, &threads.replied);
     let new = r.id.is_some_and(|id| marks.reviews.contains(&id));
-    let (icon, what) = review_said(r.state);
+    let (icon, what, _) = review_said(r.state);
     // A review that only decided: one line.
     if r.body.trim().is_empty() && started.is_empty() && replied.is_empty() && !pending {
         let who = login_seg(page, &r.author, Role::Strong);
@@ -750,11 +755,7 @@ pub(super) fn review(
 /// comments. A resolved one shows only its first line, as GitHub folds it.
 fn thread(page: &mut Page, place: &Place<'_>, t: &ReviewThread, marks: Marks<'_>, now: u64) {
     let Some(first) = t.comments.first() else { return };
-    let line = if t.file_level {
-        None
-    } else {
-        t.line.or(t.original_line)
-    };
+    let line = t.line.or(t.original_line).filter(|_| !t.file_level);
     let at = super::review::place(&t.path, line);
     let target = Some(first.url.clone()).filter(|u| !u.is_empty());
     let target = target.unwrap_or_else(|| match place.pr {
@@ -826,7 +827,7 @@ fn git_lines(page: &mut Page, t: &ReviewThread, lines: &LinesAt<'_>) -> bool {
         return false;
     }
     let Some(commit) = &first.original_commit else { return false };
-    let Some(text) = lines.get(&(commit.clone(), t.path.clone())) else { return false };
+    let Some(text) = lines.get(&(&**commit, &*t.path)) else { return false };
     let on = t.original_start_line.unwrap_or(end)..=end;
     let start = if on.start() == on.end() {
         end.saturating_sub(CONTEXT).max(1)
@@ -908,13 +909,7 @@ pub(super) fn reviewers_aside(
         say(page, "No reviews", Role::Meta);
     }
     for l in latest {
-        let ((mark, role), what) = match l.state {
-            ReviewState::Approved => (("✓", Role::Success), "approved"),
-            ReviewState::ChangesRequested => (("✗", Role::Error), "requested changes"),
-            ReviewState::Dismissed => (("○", Role::Meta), "dismissed"),
-            ReviewState::Commented => (("◉", Role::Meta), "commented"),
-            ReviewState::Pending => (("◌", Role::Accent), "pending"),
-        };
+        let ((mark, role), _, what) = review_said(l.state);
         let target = match l.id {
             Some(id) => format!("{}#pullrequestreview-{id}", url::pull(pr)),
             None => url::user(&l.author),
@@ -1162,7 +1157,7 @@ pub(super) fn pr_inline(page: &mut Page, icons: Icons, pr: &PrRef, d: &PrDetail,
     let mut segs = Vec::new();
     for l in a.latest.iter().filter(|l| l.author != d.author) {
         sep(&mut segs, " · ");
-        let ((mark, role), _) = review_said(l.state);
+        let ((mark, role), ..) = review_said(l.state);
         segs.push(Seg::new(format!("{mark} "), role));
         segs.push(login_seg(page, &l.author, Role::Link));
         if stale(l, &d.head_oid) {

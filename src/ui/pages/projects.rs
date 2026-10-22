@@ -455,12 +455,9 @@ fn value_segs(it: &ProjectItem, field: &ProjectField) -> Vec<Seg> {
         FieldKind::Milestone => (linked.and_then(|l| l.milestone.clone()))
             .map(text)
             .unwrap_or_default(),
-        FieldKind::SingleSelect(options) => {
+        FieldKind::SingleSelect(_) => {
             let Some(value) = it.value(&field.id) else { return Vec::new() };
-            let color = options
-                .iter()
-                .find(|o| o.name == value.text())
-                .map(|o| o.color.as_str());
+            let color = option_color(field, it);
             vec![Seg::new(format!(" {} ", value.text()), colored(color))]
         }
         FieldKind::Text | FieldKind::Number | FieldKind::Date | FieldKind::Iteration(_) => it
@@ -774,19 +771,14 @@ fn row(
     let mut cells = Vec::new();
     for (field, w) in columns {
         let text = truncate(&cell_text(it, field), *w);
-        let shown = pad(&text, w + 2);
-        cells.extend(match &field.kind {
-            FieldKind::SingleSelect(options) if !text.is_empty() => {
-                let color = (it.value(&field.id))
-                    .and_then(|v| options.iter().find(|o| o.name == v.text()))
-                    .map(|o| o.color.as_str());
-                vec![
-                    Seg::new(text.clone(), colored(color)),
-                    Seg::new(" ".repeat(w + 2 - width(&text)), Role::Body),
-                ]
+        let fill = " ".repeat((w + 2).saturating_sub(width(&text)));
+        match &field.kind {
+            FieldKind::SingleSelect(_) if !text.is_empty() => {
+                let color = colored(option_color(field, it));
+                cells.extend([Seg::new(text, color), Seg::new(fill, Role::Body)]);
             }
-            _ => vec![Seg::new(shown, Role::Body)],
-        });
+            _ => cells.push(Seg::new(text + &fill, Role::Body)),
+        }
     }
     item_row(page, at, it, title_width, cells, cx);
 }
