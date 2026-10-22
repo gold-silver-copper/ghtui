@@ -1,5 +1,6 @@
 //! People: a profile at one of its tabs, an organization's teams, and a
-//! repository's stargazers, watchers and forks.
+//! repository's stargazers, watchers and forks; and the repositories you
+//! watch.
 
 use super::{Family, RESERVED, Route, Target, Url, valid_login, valid_slug};
 use crate::api::browse::{RepoSort, UserList};
@@ -25,6 +26,8 @@ pub enum Page {
         org: String,
         slug: String,
     },
+    /// The repositories you watch.
+    Watching,
 }
 
 pub use Page::*;
@@ -52,12 +55,14 @@ impl Family for Page {
             Forks(repo) => format!("{}/forks", links::repo(repo)),
             Teams(org) => format!("{}/orgs/{org}/teams", links::base()),
             Team { org, slug } => format!("{}/orgs/{org}/teams/{slug}", links::base()),
+            Watching => format!("{}/watching", links::base()),
         }
     }
 
     fn title(&self) -> String {
         match self {
             User { login, .. } => format!("@{login}"),
+            Watching => "Watching".to_owned(),
             Stargazers(repo) => format!("{repo} · Stargazers"),
             Watchers(repo) => format!("{repo} · Watchers"),
             Forks(repo) => format!("{repo} · Forks"),
@@ -69,13 +74,13 @@ impl Family for Page {
     fn repo(&self) -> Option<&RepoId> {
         match self {
             Stargazers(repo) | Watchers(repo) | Forks(repo) => Some(repo),
-            User { .. } | Teams(_) | Team { .. } => None,
+            User { .. } | Teams(_) | Team { .. } | Watching => None,
         }
     }
 
     fn up(&self, _: &State) -> Option<Route> {
         Some(match self {
-            User { .. } => Route::App(super::app::Home),
+            User { .. } | Watching => Route::App(super::app::Home),
             Stargazers(repo) | Watchers(repo) | Forks(repo) => Route::code(repo.clone()),
             Teams(login) => Route::user(login),
             Team { org, .. } => Route::People(Teams(org.clone())),
@@ -98,7 +103,7 @@ impl Family for Page {
                     .chain(self.paged())
                     .collect()
             }
-            Teams(_) => self.paged().into_iter().collect(),
+            Teams(_) | Watching => self.paged().into_iter().collect(),
             Team { org, slug } => vec![DataKey::Team(org.to_lowercase(), slug.clone())],
         }
     }
@@ -120,6 +125,7 @@ impl Family for Page {
             Watchers(repo) => DataKey::Users(UserList::Watchers(repo.clone())),
             Forks(repo) => DataKey::Forks(repo.clone()),
             Teams(org) => DataKey::Teams(org.to_lowercase()),
+            Watching => DataKey::Watching,
             Team { .. } => return None,
         })
     }
@@ -135,6 +141,7 @@ impl Family for Page {
                 c.crumb(org, user(org));
                 c.crumb("Teams", None);
             }
+            Watching => c.crumb("Watching", None),
             Team { org, slug } => {
                 c.crumb(org, user(org));
                 c.crumb(
@@ -183,6 +190,7 @@ impl Family for Page {
                 pages::people_list(page, "Watchers", b.list(self.paged()), "Nobody here yet.");
             }
             Forks(_) => pages::repos(page, "Forks", b.list(self.paged()), now),
+            Watching => pages::repos(page, "Watching", b.list(self.paged()), now),
             Teams(org) => pages::teams(page, org, b.list(self.paged())),
             Team { org, slug } => {
                 let key = DataKey::Team(org.to_lowercase(), slug.clone());
@@ -210,6 +218,7 @@ pub(super) fn parse(url: &Url<'_>) -> Option<Target> {
     };
     let page = match url.segments {
         ["stars", login] => user(login, ProfileTab::Stars),
+        ["watching"] => Watching,
         ["orgs", login] => user(login, ProfileTab::Overview),
         ["orgs", org, "teams"] => Teams((*org).to_owned()),
         // GitHub's form for a new team.
@@ -276,6 +285,7 @@ pub(crate) fn arb() -> impl proptest::strategy::Strategy<Value = Route> {
         (login(), segment())
             .prop_filter("not the new-team form", |(_, slug)| slug != "new")
             .prop_map(|(org, slug)| Team { org, slug }),
+        Just(Watching),
     ];
     page.prop_map(Route::People)
 }

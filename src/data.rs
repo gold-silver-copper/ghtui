@@ -117,6 +117,8 @@ pub enum DataKey {
     OwnerRepos(String, RepoSort),
     /// What someone starred.
     Stars(String),
+    /// The repositories you watch.
+    Watching,
     /// Your notifications, filtered as the inbox filters them
     /// ([`InboxFilter`](crate::api::notifications::InboxFilter)).
     Notifications(String),

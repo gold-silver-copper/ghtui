@@ -2408,7 +2408,7 @@ pub(crate) fn sample(key: &DataKey) -> Data {
         K::PrChecks(_) | K::CommitChecks(..) => Data::from(checks()),
         K::Users(_) => Data::from(people()),
         K::Forks(_) => Data::from(forks()),
-        K::OwnerRepos(..) | K::Stars(_) => Data::from(profile_repos()),
+        K::OwnerRepos(..) | K::Stars(_) | K::Watching => Data::from(profile_repos()),
         K::Releases(_) => Data::from(releases()),
         K::Release(..) => Data::from(release(true)),
         K::Tags(_) => Data::from(tags()),

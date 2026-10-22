@@ -469,6 +469,7 @@ const RESERVED: &[&str] = &[
     "trust-center",
     "user-attachments",
     "users",
+    "watching",
     "why-github",
 ];
 

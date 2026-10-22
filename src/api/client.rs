@@ -2043,6 +2043,22 @@ impl GitHub {
         Ok(self.checked(stars.await?, format!("{login}'s stars")))
     }
 
+    /// The repositories you watch, 30 at a time from `after`.
+    pub async fn watching(
+        &self,
+        after: Option<String>,
+    ) -> Result<browse::Results<browse::RepoSummary>, ApiError> {
+        let op = browse::WatchingQuery::build(browse::AfterVariables { after });
+        let watched = self.find(op, "the repositories you watch", |q| {
+            Some(
+                q.viewer
+                    .watching
+                    .filter_results(browse::RepoCard::into_summary),
+            )
+        });
+        Ok(self.checked(watched.await?, "the repositories you watch"))
+    }
+
     /// A repository's forks, most starred first, 30 at a time from
     /// `after`; the first page is cached.
     pub async fn forks(

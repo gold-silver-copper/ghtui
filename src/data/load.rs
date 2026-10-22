@@ -168,6 +168,7 @@ async fn answer(
         K::CommitChecks(repo, oid) => gh.commit_checks(repo, oid).await?.into(),
         K::OwnerRepos(login, sort) => gh.owner_repos(login, *sort, after).await?.into(),
         K::Stars(login) => gh.starred(login, after).await?.into(),
+        K::Watching => gh.watching(after).await?.into(),
         K::Notifications(query) => gh.notifications(query, after).await?.into(),
         K::Sidebar(repo, number) => gh.sidebar(repo, *number).await?.into(),
         K::NewForm(repo) => gh.new_form(repo).await?.into(),

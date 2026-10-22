@@ -338,6 +338,7 @@ fn typed() -> Vec<(&'static str, String)> {
         Query b::ForksQuery, b::ListVariables;
         Query b::OwnerReposQuery, b::OwnerReposVariables;
         Query b::StarredQuery, b::LoginPageVariables;
+        Query b::WatchingQuery, b::AfterVariables;
         Query b::ReleasesQuery, b::ListVariables;
         Query b::ReleaseQuery, b::ReleaseVariables;
         Query b::TagsQuery, b::ListVariables;

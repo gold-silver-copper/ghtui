@@ -52,6 +52,16 @@ pub fn notifications(page: &mut Page, query: &str, inbox: Fetched<'_, Inbox>, cx
         page.blank();
         say(page, text, Role::Meta);
     }
+    // What you watch, as GitHub's notification settings link it.
+    page.blank();
+    let watching = format!("{}/watching", url::base());
+    let segs = vec![link_seg(
+        page,
+        "Repositories you watch",
+        watching,
+        Role::Link,
+    )];
+    page.wrapped(segs, 0, Frame::None);
 }
 
 /// What a notification is about, as an icon.

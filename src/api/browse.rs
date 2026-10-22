@@ -4216,6 +4216,25 @@ pub struct UserStarred {
     pub starred_repositories: PagedStars,
 }
 
+#[derive(cynic::QueryVariables, Debug)]
+pub struct AfterVariables {
+    pub after: Option<String>,
+}
+
+/// The repositories you watch.
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Query", variables = "AfterVariables")]
+pub struct WatchingQuery {
+    pub viewer: ViewerWatching,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "User", variables = "AfterVariables")]
+pub struct ViewerWatching {
+    #[arguments(first: 30, after: $after)]
+    pub watching: PagedRepos,
+}
+
 // ---- releases and tags ---------------------------------------------------------------------
 
 #[derive(cynic::QueryFragment, Debug)]

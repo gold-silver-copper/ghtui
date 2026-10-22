@@ -191,7 +191,8 @@ https://github.com/issues/assigned                                          Sear
 https://github.com/issues/mentioned                                         Search
 https://github.com/notifications                                            Notifications
 https://github.com/notifications?query=is%3Aunread+reason%3Amention         Notifications
-https://github.com/notifications/subscriptions                              external rare
+https://github.com/notifications/subscriptions                              external no-api
+https://github.com/watching                                                 Watching
 # Search, every type
 https://github.com/search?q=tui&type=repositories                           Search
 https://github.com/search?q=tui&type=issues                                 Search
