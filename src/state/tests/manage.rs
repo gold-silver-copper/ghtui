@@ -8,7 +8,6 @@ use crate::api::timeline::{Linked, LinkedState};
 use crate::route::{discussions, issues};
 
 use super::*;
-use crate::fixtures::{self};
 use crate::manage::{Pick, Revert, Start, Transfer};
 use crate::ui::page::{Link, ReviewLink};
 
@@ -230,10 +229,7 @@ fn an_issue_closes_as_a_duplicate_of_one_chosen() {
 #[test]
 fn a_comment_is_hidden_with_a_reason_and_shows_folded() {
     let mut s = issue_with(|_| {});
-    fixtures::select_by(
-        &mut s,
-        |l| matches!(l, Link::Quote { author, .. } if author == "hubot"),
-    );
+    select_comment(&mut s, "hubot", "");
     act(&mut s, Action::HideComment);
     press(&mut s, "topic");
     let cmds = press(&mut s, "<Enter>");

@@ -9,7 +9,6 @@ use crate::route::{gists, releases, wiki};
 use ratatui_textarea::CursorMove;
 
 use super::*;
-use crate::fixtures::{self};
 
 /// Replaces the composer's text with `text`.
 fn write(s: &mut State, text: &str) {

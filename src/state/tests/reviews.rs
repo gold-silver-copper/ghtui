@@ -9,7 +9,6 @@ use crate::api::timeline::{Item, What};
 use crate::route::pulls;
 
 use super::*;
-use crate::fixtures::{self};
 use crate::ui::page::{Link, ReviewLink};
 
 /// The page on screen, as text.
@@ -144,10 +143,7 @@ fn the_review_tab_lists_reviews_and_one_opens_its_page() {
 #[test]
 fn a_reviews_summary_is_edited() {
     let mut s = conversation();
-    fixtures::select_by(
-        &mut s,
-        |l| matches!(l, Link::Quote { author, body, .. } if author == "hubot" && body.starts_with("Yes")),
-    );
+    select_comment(&mut s, "hubot", "Yes");
     press(&mut s, "e");
     let c = fixtures::composer(&mut s);
     assert_eq!(c.text(), "Yes: every role is checked at both depths.");

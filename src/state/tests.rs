@@ -13,7 +13,8 @@ use crate::api::model::{ChecksState, PrDetail, RepoId, ReviewDecision};
 use crate::api::rate_limit::{Bucket, RateLimits};
 use crate::fixtures;
 use crate::fixtures::{
-    answer, diff_msg, fetched, pr_detail, press, says, thread, threads_loaded, warns,
+    answer, diff_msg, fetched, pr_detail, press, says, select_comment, thread, threads_loaded,
+    warns,
 };
 use crate::picker::{Choice, fuzzy_score};
 use crate::route::{Dest, OPEN, issues};

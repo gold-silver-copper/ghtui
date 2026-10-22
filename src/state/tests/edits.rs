@@ -2,19 +2,9 @@ use crate::act::{By, Subject};
 use crate::api::edit::{Edit, Named, Reaction, ReactionContent, Written};
 
 use super::*;
-use crate::fixtures::{self};
-use crate::ui::page::Link;
 
 fn issue() -> Subject {
     Subject::Issue(ghtui(), 14)
-}
-
-/// Selects hubot's comment.
-fn on_hubot(s: &mut State) {
-    fixtures::select_by(
-        s,
-        |l| matches!(l, Link::Quote { author, .. } if author == "hubot"),
-    );
 }
 
 fn hooray(count: u64, mine: bool) -> Reaction {
@@ -31,7 +21,7 @@ fn hooray(count: u64, mine: bool) -> Reaction {
 #[test]
 fn a_comment_is_edited_in_place_and_followed() {
     let mut s = issue_with(|_| {});
-    on_hubot(&mut s);
+    select_comment(&mut s, "hubot", "");
     let before = screen_text(&s);
     let comment = before.lines().position(|l| l.contains("hubot commented"));
     // Opening it changes nothing on GitHub; it only looks up who can be
@@ -85,7 +75,7 @@ fn edits_are_offered_only_where_github_allows_them() {
         let mine = d.first_comment().unwrap().editable.as_mut().unwrap();
         (mine.can_update, mine.can_delete) = (false, false);
     });
-    on_hubot(&mut s);
+    select_comment(&mut s, "hubot", "");
     let why = |s: &State, action| {
         let row = s.doables().into_iter().find(|d| d.action == action);
         row.and_then(|d| d.unavailable).unwrap_or_default()
@@ -123,7 +113,7 @@ fn edits_are_offered_only_where_github_allows_them() {
 #[test]
 fn deleting_a_comment_asks_first() {
     let mut s = issue_with(|_| {});
-    on_hubot(&mut s);
+    select_comment(&mut s, "hubot", "");
     assert!(press(&mut s, "D").is_empty());
     let c = overlay!(s, Ask);
     assert!(c.title.starts_with("Delete hubot's comment"), "{}", c.title);
@@ -145,7 +135,7 @@ fn deleting_a_comment_asks_first() {
     issue_shows(&mut s, |_| {});
     assert!(s.following.is_some());
     // Meanwhile, another edit waits too, and says so.
-    on_hubot(&mut s);
+    select_comment(&mut s, "hubot", "");
     assert!(press(&mut s, "D").is_empty());
     assert!(s.overlay.is_none());
     says(&s, "GitHub hasn't shown the last change yet");
@@ -215,7 +205,7 @@ fn reacting_toggles_yours() {
     issue_shows(&mut s, |d| d.editable.reactions = vec![hooray(1, false)]);
     assert!(s.following.is_none());
 
-    on_hubot(&mut s);
+    select_comment(&mut s, "hubot", "");
     press(&mut s, "+");
     let cmds = press(&mut s, "<Enter>");
     let give = Edit::React {

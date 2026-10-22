@@ -12,6 +12,14 @@ fn roadmap() -> ProjectRef {
     }
 }
 
+/// The Roadmap project's page at `view`.
+fn board(view: Option<u64>) -> Route {
+    Route::Projects(projects::Project {
+        project: roadmap(),
+        view,
+    })
+}
+
 /// The Roadmap project at `view`: its board (the first view), or its
 /// table (view 2), which leaves out what's done.
 pub(super) fn with_project(view: Option<u64>) -> State {
@@ -22,11 +30,7 @@ pub(super) fn with_project(view: Option<u64>) -> State {
         p.items.items.retain(|it| it.number != 1004);
         p.items.total = 4;
     }
-    let route = Route::Projects(projects::Project {
-        project: roadmap(),
-        view,
-    });
-    open(&mut s, route, Data::from(p));
+    open(&mut s, board(view), Data::from(p));
     s
 }
 
@@ -78,11 +82,7 @@ fn projects_are_reached_from_profiles_and_repositories() {
         "{text}"
     );
     press(&mut s, "<Enter>");
-    let expect = Route::Projects(projects::Project {
-        project: roadmap(),
-        view: None,
-    });
-    assert_eq!(s.route(), Some(&expect));
+    assert_eq!(s.route(), Some(&board(None)));
 }
 
 /// `h` and `l` go to the card at the same place in the column before or
@@ -121,11 +121,7 @@ fn with_lanes() -> State {
     let mut s = sized(state(), 100, 60);
     let mut p = fixtures::project();
     p.views.items[0].group = Some(NodeId::new("F_assignees"));
-    let route = Route::Projects(projects::Project {
-        project: roadmap(),
-        view: None,
-    });
-    open(&mut s, route, Data::from(p));
+    open(&mut s, board(None), Data::from(p));
     s
 }
 
@@ -168,10 +164,7 @@ fn a_roadmap_puts_items_on_a_timeline() {
     let date = |d: &str| (NodeId::new("F_start"), FieldValue::Date(d.into()));
     p.items.items[0].values.push(date("2026-10-05"));
     p.items.items[1].values.push(date("2026-10-12"));
-    let route = Route::Projects(projects::Project {
-        project: roadmap(),
-        view: Some(2),
-    });
+    let route = board(Some(2));
     open(&mut s, route, Data::from(p));
     let text = page_text(&s);
     assert!(text.contains("On a timeline by Start date → Due"), "{text}");
@@ -282,11 +275,7 @@ fn a_project_you_cant_change_says_so() {
     let mut s = state();
     let mut p = fixtures::project();
     p.can_update = false;
-    let route = Route::Projects(projects::Project {
-        project: roadmap(),
-        view: None,
-    });
-    open(&mut s, route, Data::from(p));
+    open(&mut s, board(None), Data::from(p));
     assert!(press(&mut s, "m").is_empty());
     says(&s, "GitHub doesn't let you change this project");
     assert!(s.overlay.is_none());

@@ -3,7 +3,6 @@ use crate::route::settings;
 
 use super::*;
 use crate::act::{By, Subject};
-use crate::fixtures::{self};
 use crate::settings::fixtures::page;
 use crate::ui::page::Link;
 use crate::ui::pages::SettingLink;

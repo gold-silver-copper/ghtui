@@ -126,6 +126,15 @@ pub(crate) fn select_by(state: &mut State, is: impl Fn(&crate::ui::page::Link) -
     select_where(state, |p| p.selected_link().is_some_and(&is));
 }
 
+/// Selects the comment `author` wrote that starts with `text`.
+pub(crate) fn select_comment(state: &mut State, author: &str, text: &str) {
+    use crate::ui::page::Link;
+    select_by(
+        state,
+        |l| matches!(l, Link::Quote { author: a, body, .. } if a == author && body.starts_with(text)),
+    );
+}
+
 /// Selects the row on screen whose link is `link`.
 pub(crate) fn select_link(state: &mut State, link: &crate::ui::page::Link) {
     let height = state.page_height();

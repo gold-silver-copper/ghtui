@@ -10,7 +10,6 @@ use crate::route::releases;
 use ratatui_textarea::CursorMove;
 
 use super::*;
-use crate::fixtures::{self};
 use crate::ui::page::Link;
 
 const ID: u64 = 272_100_001;

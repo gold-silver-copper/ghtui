@@ -600,12 +600,8 @@ fn pr_commits_step_and_go_up() {
 /// it; Enter on a comment doesn't start writing.
 #[test]
 fn a_quote_reply_opens_under_the_comment() {
-    use crate::ui::page::Link;
     let mut s = super::sized(super::with_issue(), 100, 40);
-    fixtures::select_by(
-        &mut s,
-        |l| matches!(l, Link::Quote { author, .. } if author == "hubot"),
-    );
+    select_comment(&mut s, "hubot", "");
     press(&mut s, "<Enter>");
     assert!(s.overlay.is_none(), "Enter doesn't start writing");
     press(&mut s, ">");

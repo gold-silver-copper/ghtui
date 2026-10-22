@@ -13,7 +13,6 @@ use crate::housekeeping::{FileChange, FormOf, MilestoneWrite, RefWrite};
 use crate::housekeeping::{files, labels, milestones, refs, repos};
 
 use super::*;
-use crate::fixtures::{self};
 
 fn picker(s: &State) -> bool {
     matches!(&s.overlay, Some(Overlay::Picker(_)))
@@ -391,11 +390,10 @@ fn look() -> FileLook {
 
 /// The form for `change` to the fixture file.
 fn main_rs(change: FileChange) -> Route {
-    let (repo, rev, path) = (ghtui(), "main".into(), "src/main.rs".into());
     Route::Housekeeping(FormOf::File {
-        repo,
-        rev,
-        path,
+        repo: ghtui(),
+        rev: "main".into(),
+        path: "src/main.rs".into(),
         change,
     })
 }
