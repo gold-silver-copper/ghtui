@@ -2,8 +2,8 @@
 //! the Security tab and closed after (GitHub's API can't delete one); and
 //! an organization's team, made from its Teams page, given a repository
 //! and its role changed and taken away, then deleted, when the account
-//! owns an organization. The README lists the organization writes it
-//! leaves to their tests, and why.
+//! owns an organization. Its people, custom properties and issue types
+//! have checks of their own (`members`, `properties`).
 
 use std::time::Duration;
 
@@ -11,7 +11,7 @@ use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 
 use crate::live::fux::Pane;
-use crate::live::{Check, Cx, gh, say, until};
+use crate::live::{Check, Cx, gh, until};
 
 pub const ADVISORY: Check = Check::new(
     "advisory",
@@ -31,7 +31,7 @@ const GITHUB: Duration = Duration::from_secs(60);
 
 /// Moves the selection from the top down to the row that starts with
 /// `name`, on the marked screen.
-fn select(ghtui: &Pane, name: &str) -> Result<()> {
+pub(super) fn select(ghtui: &Pane, name: &str) -> Result<()> {
     let at = |marked: &str| {
         marked.lines().any(|l| {
             l.split_once("⟦▌")
@@ -139,7 +139,7 @@ fn sweep_advisories() -> Result<()> {
 }
 
 /// An organization the account owns, if it owns one.
-fn owned_org() -> Result<Option<String>> {
+pub(super) fn owned_org() -> Result<Option<String>> {
     let orgs = gh::rest_list("user/memberships/orgs?state=active&per_page=100")?;
     Ok(orgs.into_iter().find_map(|m| {
         (m["role"] == "admin").then(|| m["organization"]["login"].as_str().map(str::to_owned))?
@@ -150,7 +150,7 @@ fn team(org: &str, slug: &str) -> Result<Option<Value>> {
     Ok(gh::get(&format!("orgs/{org}/teams/{slug}")).ok())
 }
 
-fn delete_team(org: &str, slug: &str) -> Result<()> {
+pub(super) fn delete_team(org: &str, slug: &str) -> Result<()> {
     if team(org, slug)?.is_some() {
         gh::send("DELETE", &format!("orgs/{org}/teams/{slug}"), None)?;
     }
@@ -159,10 +159,7 @@ fn delete_team(org: &str, slug: &str) -> Result<()> {
 
 fn orgs(cx: &mut Cx) -> Result<()> {
     let Some(org) = owned_org()? else {
-        say(
-            "    · left out: the account owns no organization, so its teams aren't changed (the README lists the other writes without a live check)",
-        );
-        return Ok(());
+        return cx.step("left out: a team's repositories (needs an organization you own)");
     };
     let repos = gh::rest_list(&format!("orgs/{org}/repos?per_page=1"))?;
     let Some(repo) = repos
@@ -170,10 +167,9 @@ fn orgs(cx: &mut Cx) -> Result<()> {
         .and_then(|r| r["name"].as_str())
         .map(str::to_owned)
     else {
-        say(&format!(
-            "    · left out: @{org} has no repository to give a team"
+        return cx.step(&format!(
+            "left out: a team's repositories (needs a repository in @{org})"
         ));
-        return Ok(());
     };
     let name = format!("{}{}", gh::BRANCH_PREFIX, cx.env.run_id);
     let (undo_org, undo_slug) = (org.clone(), name.clone());

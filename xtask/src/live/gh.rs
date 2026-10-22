@@ -16,8 +16,20 @@ pub const BRANCH_PREFIX: &str = "ghtui-live-";
 
 /// `gh api ARGS…`, with `body` as the JSON request body.
 pub fn api(args: &[&str], body: Option<&Value>) -> Result<Value> {
+    call(None, args, body)
+}
+
+/// A request as another account: `token` is its `GH_TOKEN`, never shown.
+pub fn send_as(token: &str, method: &str, path: &str, body: Option<&Value>) -> Result<Value> {
+    call(Some(token), &["-X", method, path], body)
+}
+
+fn call(token: Option<&str>, args: &[&str], body: Option<&Value>) -> Result<Value> {
     let mut cmd = Command::new("gh");
     cmd.arg("api").args(args);
+    if let Some(token) = token {
+        cmd.env("GH_TOKEN", token);
+    }
     if body.is_some() {
         cmd.args(["--input", "-"]);
     }

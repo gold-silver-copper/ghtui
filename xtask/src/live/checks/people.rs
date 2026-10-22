@@ -1,9 +1,8 @@
-//! Following, your status and an issue's type: `:follow` on an
-//! organization's profile follows it and unfollows it again, `:set status`
-//! sets your status (clearing in 30 minutes, should the cleanup fail) and
-//! clears it, and `:edit issue type` sets a new issue's type where the
-//! test repository has types. These write to the account, not only the
-//! test repository: each puts back what was there, pass or fail.
+//! Following and your status: `:follow` on an organization's profile
+//! follows it and unfollows it again, and `:set status` sets your status
+//! (clearing in 30 minutes, should the cleanup fail) and clears it. These
+//! write to the account, not the test repository: each puts back what was
+//! there, pass or fail.
 
 use std::time::Duration;
 
@@ -14,7 +13,7 @@ use crate::live::{Check, Cx, gh, until};
 
 pub const CHECK: Check = Check::new(
     "people",
-    ":follow follows an organization and unfollows it, :set status sets your status and clears it, :edit issue type sets an issue's type",
+    ":follow follows an organization and unfollows it, :set status sets your status and clears it",
     run,
 );
 
@@ -43,7 +42,7 @@ fn run(cx: &mut Cx) -> Result<()> {
     } else {
         cx.step("your status: left out, the token lacks user (gh auth refresh -s user)")?;
     }
-    issue_type(cx)
+    Ok(())
 }
 
 /// Whether you follow [`ORG`], as GitHub says.
@@ -158,48 +157,6 @@ fn status(cx: &mut Cx) -> Result<()> {
         Ok((now.is_null() || now["message"].is_null()).then_some(()))
     })?;
     ghtui.wait_for("Status cleared")?;
-    ghtui.wait_followed()?;
-    Ok(())
-}
-
-fn issue_type(cx: &mut Cx) -> Result<()> {
-    let types = gh::graphql(
-        "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { issueTypes(first: 10) { nodes { name isEnabled } } } }",
-        json!({ "owner": gh::OWNER, "name": gh::NAME }),
-    )?;
-    let first = (types["repository"]["issueTypes"]["nodes"].as_array())
-        .into_iter()
-        .flatten()
-        .find(|t| t["isEnabled"] == true)
-        .and_then(|t| t["name"].as_str())
-        .map(str::to_owned);
-    let Some(kind) = first else {
-        return cx.step(&format!(
-            "issue types: left out, {} has none (they're an organization's)",
-            gh::REPO
-        ));
-    };
-    let title = cx.mark("issue type");
-    let number = gh::create_issue(&title, "Written by ghtui's live check.")?;
-    cx.defer(format!("delete issue #{number}"), move || {
-        gh::delete_issue(number)
-    });
-    let ghtui = cx.ghtui(&[&format!("https://github.com/{}/issues/{number}", gh::REPO)])?;
-    ghtui.wait_for(&title)?;
-    ghtui.wait_followed()?;
-
-    cx.step(&format!(":edit issue type sets it to {kind}"))?;
-    ghtui.palette("edit issue type")?;
-    ghtui.wait_for("No type")?;
-    ghtui.type_text(&kind)?;
-    ghtui.keys("Enter")?;
-    let query = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issue(number: $number) { issueType { name } } } }";
-    let vars = json!({ "owner": gh::OWNER, "name": gh::NAME, "number": number });
-    until("the type on GitHub", GITHUB, || {
-        let now = gh::graphql(query, vars.clone())?;
-        Ok((now["repository"]["issue"]["issueType"]["name"] == kind.as_str()).then_some(()))
-    })?;
-    ghtui.wait_for("Type set")?;
     ghtui.wait_followed()?;
     Ok(())
 }

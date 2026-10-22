@@ -1,10 +1,8 @@
-//! Actions secrets and variables, caches, GitHub Pages and custom
-//! properties, on the test repository: a variable made, edited and
-//! deleted; a secret set (sealed) and deleted; a Pages site published
-//! from `main` and unpublished; a cache saved by a workflow on a branch of
-//! its own, deleted. Custom properties are set only on an organization's
-//! repository: the check says when it leaves them out. Forms are written
-//! with `$EDITOR`, as the settings check does.
+//! Actions secrets and variables, caches and GitHub Pages, on the test
+//! repository: a variable made, edited and deleted; a secret set (sealed)
+//! and deleted; a Pages site published from `main` and unpublished; a
+//! cache saved by a workflow on a branch of its own, deleted. Forms are
+//! written with `$EDITOR`, as the settings check does.
 
 use std::time::Duration;
 
@@ -181,12 +179,6 @@ fn run(cx: &mut Cx) -> Result<()> {
         Ok(cache(&key)?.is_none().then_some(()))
     })?;
     ghtui.wait_gone(&key)?;
-
-    cx.step("custom properties")?;
-    let owner = gh::get(&format!("users/{}", gh::OWNER))?;
-    if owner["type"] != "Organization" {
-        cx.step("custom properties are an organization's: left out on a user's repository")?;
-    }
     Ok(())
 }
 

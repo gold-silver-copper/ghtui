@@ -1380,9 +1380,7 @@ checks; `cargo xtask live issue offline` runs only those.
     deletes it with `D`; sets a secret with `a` (GitHub has it, sealed)
     and deletes it; publishes a Pages site from `main` with `a` and
     unpublishes it with `D`; and deletes, with `D`, a cache saved by a
-    workflow it pushes on a branch of its own. Custom properties are
-    left out on a user's repository (only an organization's have them),
-    and it says so.
+    workflow it pushes on a branch of its own.
   - `actions` runs `actions.yml` by hand with `:run workflow`, with its `seconds`
     input set, and follows the run until it fails, as it does on
     purpose.
@@ -1394,6 +1392,35 @@ checks; `cargo xtask live issue offline` runs only those.
     page, changes the team's role there with `e`, and takes it away with
     `D`; the team is deleted after. Without an organization of yours it
     says it's left out.
+  - `invitations`, with a second account, runs ghtui as it: it declines
+    an invitation to the test repository with the invitation page's
+    Decline, and accepts another from the inbox with `:answer
+    invitation`, checking GitHub has it a collaborator only then; in an
+    organization you own, ghtui as you invites it by login with `a` on
+    the People tab, and ghtui as it joins with `:answer invitation` on
+    the invitation's page. Its access and membership are taken away
+    after.
+  - `members`, in an organization you own, invites
+    `ghtui-live+…@example.com` (a reserved domain: nobody is emailed)
+    with `a` on the People tab and cancels the invitation with `D`; with
+    a second account made a member, it makes them an owner and a member
+    again with `e`, adds them to a team of its own with `a` on its page,
+    makes them its maintainer with `e` and removes them with `D`, and
+    removes them from the organization with `D`.
+  - `properties`, in an organization you own, defines a custom property
+    (with `gh api`) and sets its value on one of its repositories with
+    `e` on the Custom properties page, in the form; the definition is
+    deleted after, which clears the value.
+  - `issue-types`, in an organization you own, makes an issue type and
+    an issue (with `gh api`) in one of its repositories, sets the
+    issue's type with `:edit issue type` and clears it again; both are
+    deleted after.
+  - Without an organization you own (or the token's `admin:org`, for
+    `members` and the invitation to one), without a second account, or
+    where GitHub refuses a custom property or an issue type (its plan),
+    those steps are left out, and it says which and what they need. A
+    second account that's a collaborator or a member already is left as
+    it is: those steps are left out, and it says so.
   - `suggestion` opens a pull request of a branch of its own with a
     suggestion on it (made with `gh api`), commits it with `:commit
     suggestion`, and checks the branch has it with GitHub's message and
@@ -1404,32 +1431,25 @@ checks; `cargo xtask live issue offline` runs only those.
     the base's side and `:commit merge` pushes the merge, which GitHub
     then has with both parents and GitHub's message.
   - `people` follows the `github` organization with `:follow` and
-    unfollows it again, sets your status with `:set status` (clearing in
-    30 minutes) and clears it, and sets a new issue's type with `:edit
-    issue type` where the test repository has types. Following and the
-    status write to the account, not the test repository: each is put
-    back as it was, pass or fail. Without the token's `user:follow`
-    (following) or `user` (the status) scope, or with a test repository
-    that has no issue types (a user's has none), those steps are left
-    out, and it says so.
+    unfollows it again, and sets your status with `:set status` (clearing
+    in 30 minutes) and clears it. Both write to the account, not the test
+    repository: each is put back as it was, pass or fail. Without the
+    token's `user:follow` (following) or `user` (the status) scope, those
+    steps are left out, and it says so.
   - `offline` runs ghtui against a stand-in Enterprise Server (below)
     on port 8451, and stops it to make GitHub go away, without touching
     the machine's network: the page stays, marked offline; a comment
     written meanwhile is queued, still queued after ghtui restarts, and
     sent exactly once when the stand-in starts again.
-- **Writes without a live check**, each with only its request and
-  state tests, because one account can't check them for real:
-  - inviting a member, cancelling an invitation, changing a member's
-    role, removing a member, and changing a team's members: they need
-    an organization the account owns, and inviting emails a real person;
-  - accepting or declining an invitation sent to you: it takes a second
-    account to send one;
-  - custom properties and issue types: only an organization's
-    repositories have them, and the test repository is a user's.
 - **What it needs:** `gh`, logged in as the owner of
   `gold-silver-copper/ghtui-test-writes`, with a classic token's `repo`
   and `workflow` scopes. Without `read:project` (or `project`),
-  `pages` leaves the Projects tab out, and says so. It also needs git,
+  `pages` leaves the Projects tab out, and says so. The organization
+  checks need an organization the account owns, with a repository that
+  has issues, and `admin:org` for its people; the invitations and a
+  member's changes need a second account: `GHTUI_LIVE_SECOND_TOKEN`, a
+  classic token of another GitHub account with `repo` and `admin:org`
+  (never shown). It also needs git,
   openssl (for the stand-in's certificates), and a fux that speaks
   fuxth (`fux help-agents`): on `PATH`, `~/code/fux`'s release build,
   or `--fux PATH`. It builds `target/release/ghtui` unless given
@@ -1448,19 +1468,25 @@ checks; `cargo xtask live issue offline` runs only those.
   `failures/`. A stand-in `xdg-open`, first on the server's `PATH`,
   writes down the URLs ghtui opens instead of opening a browser.
 - **What it touches and cleans up:** it writes only to the test
-  repository (and, for `orgs`, to an organization the account owns),
-  but for `people`'s follow and status (put back as they were; a killed
-  run's status clears itself in 30 minutes).
+  repository (and, for the organization checks, to an organization the
+  account owns, and to the second account's invitations and
+  memberships there), but for `people`'s follow and status (put back as
+  they were; a killed run's status clears itself in 30 minutes).
   Each check undoes what it made, pass or fail: the issues (deleted), the
   pull requests (closed) and their branches, the release and its tag, the
   label, the protection rule, the workflow run, the variable, the secret,
-  the Pages site, the draft advisory (closed) and the team (deleted); and
+  the Pages site, the draft advisory (closed), the team (deleted), the
+  invitations, the second account's access and membership, the custom
+  property and the issue type (deleted); and
   the fux server and the stand-in are stopped. ctrl-c stops the run after
   cleaning up. A run that was killed is swept up by the next one:
   issues and pull requests titled `[ghtui live]`, and `ghtui-live-`
   branches, releases, tags, labels and protection rules, `GHTUI_LIVE_`
   variables and secrets, draft advisories titled `[ghtui live]` (closed)
-  and `ghtui-live-` teams.
+  `ghtui-live-` teams and issue types, `ghtui_live_` custom properties,
+  invitations to `ghtui-live+…@example.com` and the second account's
+  pending invitations, and issues titled `[ghtui live]` in the
+  organization's repository.
 - **Enterprise Server:** `cargo xtask ghes` serves a stand-in on
   `https://localhost:8443` that relays an Enterprise Server's paths to
   github.com (`/api/v3`, `/api/graphql`, `/raw`, git) and rewrites
