@@ -19,7 +19,8 @@ use crate::ui::annotations::{Annotation, Place, ThreadRowKind};
 use crate::ui::diff_doc::{Doc, DocFile, FoldReason, Note, Pos, Row, Viewed};
 use crate::ui::page::{Tone, role_style};
 use crate::ui::{
-    Ctx, PAD_X, chips, cols, fill, fit_spans, inset, key_hints, render_split, row, text, time,
+    Ctx, PAD_X, changes, chips, cols, fill, fit_spans, inset, key_hints, render_split, row, text,
+    time,
 };
 
 const PANE: Bg = Bg::Surface;
@@ -294,12 +295,7 @@ impl DiffView<'_> {
             ));
         }
         if file.diff.is_some() {
-            let (adds, dels) = self.doc.file_counts(file);
-            right.extend([
-                Span::styled(format!("+{adds}"), theme.style(Fg::DiffAddedSign, bg)),
-                Span::styled(" ", theme.body(bg)),
-                Span::styled(format!("−{dels}"), theme.style(Fg::DiffRemovedSign, bg)),
-            ]);
+            right.extend(changes(theme, bg, self.doc.file_counts(file)));
         }
         if !scope.is_empty() {
             // What's left between the file name and the counts.

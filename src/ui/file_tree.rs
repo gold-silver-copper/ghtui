@@ -14,7 +14,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
 use crate::ui::diff_doc::{Doc, Viewed};
-use crate::ui::{Ctx, PAD_Y, cols, fill, fit_spans, inset, render_split, row, text};
+use crate::ui::{Ctx, PAD_Y, changes, cols, fill, fit_spans, inset, render_split, row, text};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TreeRow {
@@ -201,7 +201,7 @@ impl Widget for FileTree<'_> {
             .y
             .saturating_add(PAD_Y.min(area.height.saturating_sub(1)));
         let title_area = row(inset(area, 1, 0), title_y);
-        let (adds, dels) = self.doc.totals();
+        let [adds, dels] = changes(theme, TREE_BG, self.doc.totals());
         let title = [
             Span::styled("Files", theme.title(TREE_BG)),
             Span::styled(format!("  {}", self.doc.files.len()), theme.meta(TREE_BG)),
@@ -212,14 +212,9 @@ impl Widget for FileTree<'_> {
                 },
                 theme.style(Fg::Success, TREE_BG),
             ),
-            Span::styled(
-                format!("  +{adds}"),
-                theme.style(Fg::DiffAddedSign, TREE_BG),
-            ),
-            Span::styled(
-                format!(" −{dels}"),
-                theme.style(Fg::DiffRemovedSign, TREE_BG),
-            ),
+            Span::styled("  ", theme.body(TREE_BG)),
+            adds,
+            dels,
         ];
         Line::from(fit_spans(&title, title_area.width)).render(title_area, buf);
 
@@ -269,15 +264,8 @@ impl FileTree<'_> {
                     FileStatus::TypeChanged => ("T", Fg::OnSurfaceVariant),
                     FileStatus::Modified => ("M", Fg::OnSurfaceVariant),
                 };
-                let counts = self.doc.file_counts(file);
-                let right = match file.diff.as_deref() {
-                    Some(_) => vec![
-                        Span::styled(format!("+{}", counts.0), theme.style(Fg::DiffAddedSign, bg)),
-                        Span::styled(
-                            format!(" −{}", counts.1),
-                            theme.style(Fg::DiffRemovedSign, bg),
-                        ),
-                    ],
+                let right = match file.diff {
+                    Some(_) => changes(theme, bg, self.doc.file_counts(file)).to_vec(),
                     None => Vec::new(),
                 };
                 let right_width = text::spans_width(&right);
