@@ -96,16 +96,19 @@ pub(super) fn follow(state: &mut State, route: &Route, of: &FormOf) -> Cmds {
     let Some(Ok(look)) = looked(state, of).filter(|_| !form(state, route).started) else {
         return Cmds::new();
     };
-    let look = look.clone();
-    let login = state.viewer.clone().unwrap_or_else(|| "patch".into());
+    let text = (look.file.as_ref()).and_then(|file| file.text.clone());
+    // A tag or a commit isn't a branch: the change goes on a new one.
+    let patch = look.branch_head.is_none().then(|| {
+        let login = state.viewer.as_deref().unwrap_or("patch");
+        format!("{login}-patch-1")
+    });
     let f = form_mut(state, route);
     f.started = true;
     if change == FileChange::Edit {
-        f.text = look.file.and_then(|file| file.text).unwrap_or_default();
+        f.text = text.unwrap_or_default();
     }
-    // A tag or a commit isn't a branch: the change goes on a new one.
-    if look.branch_head.is_none() {
-        f.set(Field::Branch, format!("{login}-patch-1"));
+    if let Some(branch) = patch {
+        f.set(Field::Branch, branch);
     }
     if state.overlay.is_some() {
         return Cmds::new();
@@ -400,36 +403,29 @@ impl Job for Commit {
                 head
             }
         };
-        let (headline, body) = match c.message.split_once('\n') {
-            Some((headline, body)) => (headline.trim().to_owned(), body.trim().to_owned()),
-            None => (c.message.trim().to_owned(), String::new()),
-        };
+        let (headline, body) = c.message.split_once('\n').unwrap_or((&c.message, ""));
         let commit = FileCommit {
             repo: w.repo.clone(),
             branch: c.branch.clone(),
             head,
-            headline,
-            body,
+            headline: headline.trim().to_owned(),
+            body: body.trim().to_owned(),
             additions: c.additions.clone(),
             deletions: c.deletions.clone(),
         };
-        match gh.commit_files(&commit).await {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                // A new branch with nothing on it isn't left behind.
-                if c.from.is_some() {
-                    let _ = gh.delete_ref(&w.repo, RefKind::Branch, &c.branch).await;
-                }
-                let failure = Failure::from(err);
-                if failure.to_string().contains("Expected branch to point to") {
-                    return Err(Failure::msg(format!(
-                        "{} moved on GitHub while committing: commit again",
-                        c.branch
-                    )));
-                }
-                Err(failure)
-            }
+        let Err(err) = gh.commit_files(&commit).await else { return Ok(()) };
+        // A new branch with nothing on it isn't left behind.
+        if c.from.is_some() {
+            let _ = gh.delete_ref(&w.repo, RefKind::Branch, &c.branch).await;
         }
+        let failure = Failure::from(err);
+        if failure.to_string().contains("Expected branch to point to") {
+            return Err(Failure::msg(format!(
+                "{} moved on GitHub while committing: commit again",
+                c.branch
+            )));
+        }
+        Err(failure)
     }
 
     /// Committed: the file (a deleted one's folder) opens at the branch, and
@@ -551,12 +547,9 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
         FileChange::Delete => format!("Deleting {was} from {repo}"),
         FileChange::New => format!("New file in {repo}"),
     };
-    let mut status = Vec::new();
-    match looked(state, of) {
-        None => {
-            status.push((format!("Reading {rev} from GitHub…"), Mark::Waiting, None));
-        }
-        Some(Err(why)) => status.push((format!("Couldn't read it: {why}"), Mark::Problem, None)),
+    let read = match looked(state, of) {
+        None => (format!("Reading {rev} from GitHub…"), Mark::Waiting, None),
+        Some(Err(why)) => (format!("Couldn't read it: {why}"), Mark::Problem, None),
         Some(Ok(look)) => {
             let at = crate::ui::text::short_sha(&look.commit);
             let what = if change == FileChange::New {
@@ -566,25 +559,22 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
                     "As GitHub had it on {rev} at {at}: if it changes meanwhile, committing says so"
                 )
             };
-            status.push((what, Mark::Fine, None));
+            (what, Mark::Fine, None)
         }
-    }
-    match state.clone_of(repo) {
-        Some(Some(c)) => status.push((
-            format!(
-                "Will be committed with git in your clone ({}) and pushed",
-                c.top.display()
-            ),
-            Mark::Fine,
-            None,
-        )),
-        None => status.push(("Looking for your clone…".into(), Mark::Waiting, None)),
-        _ => status.push((
+    };
+    let committed = match state.clone_of(repo) {
+        Some(Some(c)) => {
+            let top = c.top.display();
+            let with = format!("Will be committed with git in your clone ({top}) and pushed");
+            (with, Mark::Fine, None)
+        }
+        None => ("Looking for your clone…".into(), Mark::Waiting, None),
+        _ => (
             "Will be committed on GitHub, as you".into(),
             Mark::Fine,
             None,
-        )),
-    }
+        ),
+    };
     let composing = crate::forms::composing(state, route, 0);
     let now = path(&f).to_owned();
     let hint = "ctrl-e for $EDITOR";
@@ -626,7 +616,7 @@ pub(super) fn build(state: &State, page: &mut Page, route: &Route, of: &FormOf) 
         heading,
         base: Some(crate::ui::markdown::LinkBase::new(repo, rev, "")),
         rows: vec![path_row, branch_row, message_row],
-        status,
+        status: vec![read, committed],
         boxes,
         button: super::button(of, &f),
         why_not: problem(state, route, of),

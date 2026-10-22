@@ -8,7 +8,7 @@
 //! then follows GitHub until it shows the change ([`Shows`]).
 
 use crate::api::ApiError;
-use crate::api::browse::{CheckOutcome, IssueState, Job, PrState, WorkflowRun};
+use crate::api::browse::{CheckOutcome, IssueDetail, IssueState, Job, PrState, WorkflowRun};
 use crate::api::change::{Change, CloseReason, MergeMethod};
 use crate::api::model::{
     ChecksState, MergeState, PrDetail, PrRef, Readiness, RepoId, ReviewDecision,
@@ -193,13 +193,12 @@ pub fn act(state: &mut State, action: Action) -> Cmds {
     // A row's may be an old copy (from the cache, before a change); a
     // page keeps its own fresh.
     let row = state.route().is_some_and(|r| Subject::of(r).is_none());
-    let mut cmds = if row {
+    let fresh = if row {
         state.ensure(subject.need(), false)
     } else {
         Cmds::new()
     };
-    cmds.extend(act_on(state, subject, action));
-    cmds
+    fresh.and(act_on(state, subject, action))
 }
 
 fn act_on(state: &mut State, subject: Subject, action: Action) -> Cmds {
@@ -430,15 +429,9 @@ fn here(state: &State) -> Option<Subject> {
 }
 
 /// The issue `number` in `repo`, loaded.
-pub(crate) fn issue<'a>(
-    state: &'a State,
-    repo: &RepoId,
-    number: u64,
-) -> Option<&'a crate::api::browse::IssueDetail> {
+pub(crate) fn issue<'a>(state: &'a State, repo: &RepoId, number: u64) -> Option<&'a IssueDetail> {
     let key = DataKey::Issue(repo.clone(), number);
-    state
-        .picked::<Option<Box<crate::api::browse::IssueDetail>>>(&key)?
-        .as_deref()
+    state.picked::<Option<Box<IssueDetail>>>(&key)?.as_deref()
 }
 
 /// The selected notification's thread: the inbox's rows are its
@@ -490,6 +483,18 @@ fn loaded<'a, T>(
     }
 }
 
+/// `key`'s data, as a `T`; `None` until it's loaded; why it couldn't
+/// load, or what GitHub sent instead.
+fn loaded_as<'a, T: Picked + ?Sized>(
+    state: &'a State,
+    key: &DataKey,
+    name: &str,
+) -> Result<Option<&'a T>, String> {
+    let Some(data) = loaded(state.remote(key), name)? else { return Ok(None) };
+    let picked = T::pick(data).ok_or_else(|| format!("GitHub sent something else for {name}"));
+    picked.map(Some)
+}
+
 fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, String> {
     if !subject.fits(action) {
         return Err(elsewhere(action).to_owned());
@@ -503,11 +508,10 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         }
         Subject::Issue(repo, number) => {
             let key = DataKey::Issue(repo.clone(), *number);
-            let Some(data) = loaded(state.remote(&key), &name)? else { return Ok(Plan::Load) };
+            let issue = loaded_as::<Option<Box<IssueDetail>>>(state, &key, &name)?;
+            let Some(issue) = issue else { return Ok(Plan::Load) };
             // A number that's a pull request is one.
-            let crate::data::Data::Issue(Some(issue)) = data else {
-                return Err(elsewhere(action).to_owned());
-            };
+            let Some(issue) = issue else { return Err(elsewhere(action).to_owned()) };
             let id = || issue.id.clone();
             let close = |reason| Change::CloseIssue {
                 issue: id(),
@@ -544,12 +548,9 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         }
         Subject::Run(repo, run, attempt) => {
             let key = DataKey::Run(repo.clone(), *run, *attempt);
-            if loaded(state.remote(&key), &name)?.is_none() {
+            let Some(run) = loaded_as::<WorkflowRun>(state, &key, &name)? else {
                 return Ok(Plan::Load);
-            }
-            let run = state
-                .picked::<WorkflowRun>(&key)
-                .ok_or("GitHub sent something else for the run")?;
+            };
             let about = RunAbout {
                 id: run.id,
                 name: format!("{} #{}", run.name, run.number),
@@ -559,12 +560,9 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         }
         Subject::Job(repo, _, job) => {
             let key = DataKey::Job(repo.clone(), *job);
-            if loaded(state.remote(&key), &name)?.is_none() {
+            let Some(job) = loaded_as::<Job>(state, &key, &name)? else {
                 return Ok(Plan::Load);
-            }
-            let job = state
-                .picked::<Job>(&key)
-                .ok_or("GitHub sent something else for the job")?;
+            };
             // A job can end while its run goes on: it's the run that's
             // cancelled or re-run.
             let about = RunAbout {
@@ -576,12 +574,11 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         }
         Subject::Thread { id, query } => {
             let key = DataKey::Notifications(query.clone());
-            if loaded(state.remote(&key), &name)?.is_none() {
+            let Some(inbox) = loaded_as::<Inbox>(state, &key, &name)? else {
                 return Ok(Plan::Load);
-            }
-            let n = state
-                .picked::<Inbox>(&key)
-                .and_then(|inbox| inbox.list.items.iter().find(|n| n.id == *id))
+            };
+            let n = (inbox.list.items.iter())
+                .find(|n| n.id == *id)
                 .ok_or("It's no longer in your inbox")?;
             match action {
                 Action::MarkRead if !n.unread => Err("It's read already".into()),
@@ -593,9 +590,8 @@ fn plan_here(state: &State, subject: &Subject, action: Action) -> Result<Plan, S
         }
         Subject::Inbox { query } => {
             let key = DataKey::Notifications(query.clone());
-            let Some(data) = loaded(state.remote(&key), &name)? else { return Ok(Plan::Load) };
-            let crate::data::Data::Notifications(list) = data else {
-                return Err("GitHub sent something else for your notifications".into());
+            let Some(list) = loaded_as::<Inbox>(state, &key, &name)? else {
+                return Ok(Plan::Load);
             };
             let fetched = (state.remote(&key)).and_then(|r| r.cached_at.or(r.asked_at));
             inbox::plan(query, list, fetched, action)

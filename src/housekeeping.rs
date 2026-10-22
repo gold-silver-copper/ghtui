@@ -511,8 +511,8 @@ pub const FORM: crate::forms::Kind = crate::forms::Kind {
     submit,
     follow,
     offers: |state, out| {
-        if let Some((route, of)) = here(state) {
-            form_doables(state, &route, &of, out);
+        if let Some(route @ Route::Housekeeping(of)) = state.route() {
+            form_doables(state, route, of, out);
         }
     },
 };

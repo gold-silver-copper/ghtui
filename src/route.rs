@@ -20,6 +20,8 @@ pub mod security;
 pub mod settings;
 pub mod wiki;
 
+use std::borrow::Cow;
+
 use crate::api::browse::SearchKind;
 use crate::api::model::{PrRef, RepoId};
 use crate::ui::pages::{PrTab, ProfileTab};
@@ -277,12 +279,12 @@ impl Dest {
     /// with or without its scheme. Other URLs, another GitHub's too, are
     /// external.
     pub fn from_url(s: &str) -> Dest {
-        let with_scheme = if has_host_prefix(s) {
-            format!("https://{s}")
+        let parsed = if has_host_prefix(s) {
+            url::Url::parse(&format!("https://{s}"))
         } else {
-            s.to_owned()
+            url::Url::parse(s)
         };
-        let parsed = url::Url::parse(&with_scheme).ok();
+        let parsed = parsed.ok();
         let anchor = parsed
             .as_ref()
             .and_then(url::Url::fragment)
@@ -372,11 +374,11 @@ fn parse(parsed: &url::Url) -> Option<Target> {
     {
         return gists::parse(segments);
     }
-    let segments: Vec<String> = parsed
+    let segments: Vec<Cow<'_, str>> = parsed
         .path_segments()
         .map(|s| s.filter(|p| !p.is_empty()).map(decode).collect())
         .unwrap_or_default();
-    let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
+    let segments: Vec<&str> = segments.iter().map(|s| &**s).collect();
     let url = Url {
         segments: &segments,
         url: parsed,
@@ -461,7 +463,10 @@ const RESERVED: &[&str] = &[
     "why-github",
 ];
 
-fn decode(segment: &str) -> String {
+fn decode(segment: &str) -> Cow<'_, str> {
+    if !segment.contains('%') {
+        return Cow::Borrowed(segment);
+    }
     let mut out = Vec::with_capacity(segment.len());
     let mut rest = segment.as_bytes();
     while let Some((&b, tail)) = rest.split_first() {
@@ -482,7 +487,7 @@ fn decode(segment: &str) -> String {
             }
         }
     }
-    String::from_utf8_lossy(&out).into_owned()
+    Cow::Owned(String::from_utf8_lossy(&out).into_owned())
 }
 
 /// What the command palette makes of its input. A web link ghtui

@@ -38,8 +38,8 @@ pub(super) fn plan(
         // one you saw, and stays unread. Not up to the newest shown: GitHub
         // keeps a thread's time a little past the one it says, and leaves
         // a thread marked read up to the time it says unread.
-        let newest = rows.iter().map(|n| n.updated_at.clone()).max();
-        let upto = loaded.map(crate::ui::time::iso8601).or(newest);
+        let newest = || rows.iter().map(|n| &n.updated_at).max().cloned();
+        let upto = loaded.map(crate::ui::time::iso8601).or_else(newest);
         let change = match upto {
             Some(upto) if whole => {
                 if more {
