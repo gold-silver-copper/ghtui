@@ -76,13 +76,9 @@ fn arrows_move_comment_by_comment_and_enter_quotes() {
     let mut state = state();
     update(&mut state, Msg::Resize(100, 14));
     let _ = state.push(issue(14));
-    let mut issue = fixtures::issue();
-    issue.body = (1..=30).map(|n| format!("Line {n}.\n\n")).collect();
-    fetched(
-        &mut state,
-        DataKey::Issue(ghtui(), 14),
-        Data::Issue(Some(Box::new(issue))),
-    );
+    issue_shows(&mut state, |d| {
+        d.body = (1..=30).map(|n| format!("Line {n}.\n\n")).collect();
+    });
     assert_eq!(
         page(&state).selected,
         None,

@@ -23,6 +23,13 @@ fn text(s: &State) -> String {
     lines.collect::<Vec<_>>().join("\n")
 }
 
+/// The page's sidebar, as text.
+fn aside(s: &State) -> String {
+    let aside = page(s).page().aside.as_ref().expect("a sidebar");
+    let lines = aside.lines.iter().map(crate::ui::page::PageLine::text);
+    lines.collect::<Vec<_>>().join("\n")
+}
+
 /// The pull request's conversation in a tall, wide terminal.
 fn conversation() -> State {
     sized(with_pr(), 200, 80)
@@ -61,15 +68,7 @@ fn a_review_shows_its_threads_and_opens_them() {
 /// closes.
 #[test]
 fn the_sidebar_says_where_each_reviewer_stands() {
-    let s = conversation();
-    let p = page(&s);
-    let aside = p.page().aside.as_ref().expect("a sidebar");
-    let aside: Vec<String> = aside
-        .lines
-        .iter()
-        .map(crate::ui::page::PageLine::text)
-        .collect();
-    let aside = aside.join("\n");
+    let aside = aside(&conversation());
     for part in [
         "✓ monalisa approved · before the",
         "for octo-org/design",
@@ -212,14 +211,7 @@ fn an_issues_timeline_and_development() {
         page.contains("monalisa linked a pull request that will close this issue"),
         "{page}"
     );
-    let p = super::page(&s);
-    let aside = p.page().aside.as_ref().expect("a sidebar");
-    let aside: Vec<String> = aside
-        .lines
-        .iter()
-        .map(crate::ui::page::PageLine::text)
-        .collect();
-    let aside = aside.join("\n");
+    let aside = aside(&s);
     assert!(aside.contains("Development"), "{aside}");
     assert!(aside.contains("#12 Cap the reading width"), "{aside}");
     assert!(aside.contains("Bug"), "{aside}");

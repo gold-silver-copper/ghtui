@@ -33,7 +33,7 @@ fn merging_asks_first_and_ends_up_as_github_has_it() {
         "{:?}",
         c.facts
     );
-    let methods: Vec<&str> = c.choices.iter().map(|(l, _)| l.as_str()).collect();
+    let methods = ask_labels(&s);
     assert_eq!(methods, ["Squash and merge", "Create a merge commit"]);
     press(&mut s, "<Tab>");
     let merge = Change::Merge {
